@@ -320,7 +320,7 @@ function getStreamingTabIndex(key: StreamingTab): number {
 const emit = defineEmits<{
   toggleMenu: []
   backToLocal: []
-  login: []
+  login: [providerId?: string | null]
 }>()
 
 const {
@@ -2309,7 +2309,7 @@ onMounted(async () => {
             type="button"
             class="streaming-avatar-btn"
             title="个人资料"
-            @click="$emit('toggleMenu')"
+            @click="emit('login', activeProvider)"
           >
             <img
               v-if="activeProfile?.avatarUrl && !avatarLoadFailed"
@@ -2478,7 +2478,11 @@ onMounted(async () => {
                   : '登录后即可加载我收藏的歌曲和在线歌单'
               }}
             </p>
-            <button type="button" class="stream-action-btn" @click="emit('login')">
+            <button
+              type="button"
+              class="stream-action-btn"
+              @click="emit('login', activeProvider)"
+            >
               <i class="pi pi-user"></i>
               <span>账号登录</span>
             </button>

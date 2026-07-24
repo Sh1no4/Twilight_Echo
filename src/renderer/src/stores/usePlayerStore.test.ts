@@ -121,6 +121,30 @@ test('desktop lyrics window replays cached track and time on creation', () => {
   assert.match(desktopLyricsSource, /clampNumber\(Math\.round\(data\.x\)/)
 })
 
+test('desktop lyrics window is destroyed on quit so the process can exit', () => {
+  const desktopLyricsSource = readFileSync(
+    new URL('../../../main/integrations/desktopLyrics.ts', import.meta.url),
+    'utf8'
+  )
+  const lifecycleSource = readFileSync(
+    new URL('../../../main/app/lifecycle.ts', import.meta.url),
+    'utf8'
+  )
+  const windowSource = readFileSync(new URL('../../../main/app/window.ts', import.meta.url), 'utf8')
+
+  assert.match(desktopLyricsSource, /export function destroyDesktopLyrics\(\): void/)
+  assert.match(desktopLyricsSource, /win\.destroy\(\)/)
+  assert.match(desktopLyricsSource, /export function hideDesktopLyrics\(\): void \{\s*destroyDesktopLyrics\(\)/)
+  assert.match(lifecycleSource, /destroyDesktopLyrics/)
+  assert.match(lifecycleSource, /app\.on\('before-quit'[\s\S]*destroyDesktopLyrics\(\)/)
+  assert.match(lifecycleSource, /app\.on\('will-quit'[\s\S]*destroyDesktopLyrics\(\)/)
+  assert.match(windowSource, /destroyDesktopLyrics\(\)/)
+  assert.match(
+    windowSource,
+    /function closeMainWindowAfterSuccessfulPersistence[\s\S]*destroyDesktopLyrics\(\)/
+  )
+})
+
 test('desktop lyrics html falls back to untimed plain lyrics', () => {
   const source = readFileSync(
     new URL('../../../../resources/desktop-lyrics.html', import.meta.url),
@@ -198,6 +222,9 @@ test('player lyric loading records local and provider lyric sources', () => {
     'ensureCurrentTrackLyricsLoaded'
   )
   const commitResolvedLyrics = extractInternalFunctionBody(source, 'commitResolvedLyrics')
+  const findLibraryTrackHint = extractInternalFunctionBody(source, 'findLibraryTrackHint')
+  const loadAndPlay = extractInternalFunctionBody(source, 'loadAndPlay')
+  const tickRendererPlaybackClock = extractInternalFunctionBody(source, 'tickRendererPlaybackClock')
 
   assert.match(
     source,
@@ -212,6 +239,14 @@ test('player lyric loading records local and provider lyric sources', () => {
   )
   assert.match(commitResolvedLyrics, /lyricsSource: resolved\.lyricsSource/)
   assert.match(commitResolvedLyrics, /translatedLyricsSource: resolved\.translatedLyricsSource/)
+  // Switch hot path must use O(1) trackById — linear find freezes PlayingMusic.
+  assert.match(findLibraryTrackHint, /getTrackById\(/)
+  assert.doesNotMatch(findLibraryTrackHint, /tracks\.value\.find/)
+  // Superseded/abandoned loads must clear isLoading when they still own the token.
+  assert.match(loadAndPlay, /releaseLoadIfOwned/)
+  assert.match(loadAndPlay, /if \(loadToken === activeLoadToken\) isLoading\.value = false/)
+  // Keep the playbar clock alive during intentional load hand-off.
+  assert.match(tickRendererPlaybackClock, /!isPlaying\.value && !isLoading\.value/)
 })
 
 test('plugin playback resume waits for plugin providers while local sessions restore immediately', () => {
@@ -1084,16 +1119,15 @@ test('player bar exposes a HiFi console drawer instead of visualization meters',
   assert.doesNotMatch(playerBarSource, /class="visualization-panel"/)
   assert.doesNotMatch(playerBarSource, /oscilloscopeCanvasRef/)
   assert.doesNotMatch(playerBarSource, /spectrogramCanvasRef/)
-  assert.match(hifiSidebarSource, /Signal Path/)
-  assert.match(hifiSidebarSource, /Master DSP/)
-  assert.match(hifiSidebarSource, /Devices/)
-  assert.match(hifiSidebarSource, /Lyrics Source/)
-  assert.match(hifiSidebarSource, /Source Quality/)
-  assert.match(hifiSidebarSource, /Sleep Timer/)
-  assert.match(hifiSidebarSource, /Playback Rate/)
-  assert.match(hifiSidebarSource, /A-B Loop/)
-  assert.match(hifiSidebarSource, /Cast \/ DLNA/)
-  assert.match(hifiSidebarSource, /Bookmarks/)
+  assert.match(hifiSidebarSource, /链路|Signal Path/)
+  assert.match(hifiSidebarSource, /Master DSP|DSP/)
+  assert.match(hifiSidebarSource, /输出|Devices/)
+  assert.match(hifiSidebarSource, /歌词|Lyrics/)
+  assert.match(hifiSidebarSource, /Sleep Timer|定时/)
+  assert.match(hifiSidebarSource, /Playback Rate|倍速/)
+  assert.match(hifiSidebarSource, /A-B Loop|A-B/)
+  assert.match(hifiSidebarSource, /Cast \/ DLNA|投送|DLNA/)
+  assert.match(hifiSidebarSource, /Bookmarks|书签/)
   assert.match(hifiSidebarSource, /id: 'tools'/)
   assert.match(playerBarSource, /@cycle-playback-rate="cyclePlaybackRate"/)
   assert.match(playerBarSource, /@toggle-ab-loop="toggleAbLoopAtCurrentTime"/)
@@ -1118,7 +1152,7 @@ test('player bar exposes a HiFi console drawer instead of visualization meters',
   assert.match(hifiSidebarSource, /VOLUME_NORMALIZATION_OPTIONS/)
   assert.match(hifiSidebarSource, /openEqualizer/)
   assert.match(hifiSidebarSource, /DSP_OUTPUT_SAMPLE_RATE_OPTIONS/)
-  assert.match(hifiSidebarSource, /Output Stage/)
+  assert.match(hifiSidebarSource, /OUTPUT STAGE|Output Stage|采样率锁/)
   assert.match(playerBarSource, /dsp-output-stage/)
   assert.match(playerBarSource, /@set-output-stage="setOutputStage"/)
 })
@@ -1163,18 +1197,22 @@ test('player store exposes audio service recovery notice state', () => {
 
 test('renderer audio device normalization derives tri-state capability fallbacks', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
-  const helper = extractInternalFunctionBody(source, 'normalizeAudioDeviceOptions')
+  const normalizeSource = readFileSync(
+    new URL('./player/audioOutputNormalize.ts', import.meta.url),
+    'utf8'
+  )
+  const helper = extractInternalFunctionBody(normalizeSource, 'normalizeAudioDeviceOptions')
 
-  assert.match(source, /function deriveDopSupportState/)
-  assert.match(source, /function deriveNativeDsdSupportState/)
-  assert.match(source, /fallbackBackend: AudioOutputId \| '' = ''/)
-  assert.match(source, /id\.startsWith\('hw:'\)/)
+  assert.match(normalizeSource, /function deriveDopSupportState/)
+  assert.match(normalizeSource, /function deriveNativeDsdSupportState/)
+  assert.match(normalizeSource, /fallbackBackend: AudioOutputId \| '' = ''/)
+  assert.match(normalizeSource, /id\.startsWith\('hw:'\)/)
   assert.match(
     source,
     /normalizeAudioDeviceOptions\(\s*state\.deviceOptions,\s*state\.device,\s*state\.output\s*\)/
   )
-  assert.match(source, /dopSupportState: 'runtime-probed'/)
-  assert.match(source, /nativeDsdSupportState: 'unsupported'/)
+  assert.match(normalizeSource, /dopSupportState: 'runtime-probed'/)
+  assert.match(normalizeSource, /nativeDsdSupportState: 'unsupported'/)
   assert.match(
     helper,
     /withAudioCapabilitySupportStates\(\s*\{\s*id,\s*label: formatAudioDeviceLabel\(id\),\s*isDefault: id === 'auto'\s*\},\s*selectedOutput\s*\)/

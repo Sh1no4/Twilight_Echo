@@ -1,4 +1,5 @@
-import { loadNativeBinding, type NativeAudioBinding } from './audioEngineManager'
+import { loadNativeBinding } from './audio/nativeBinding.ts'
+import type { NativeAudioBinding } from './audio/audioEngineTypes.ts'
 import {
   createAudioServiceCapabilities,
   REQUIRED_AUDIO_SERVICE_DSP_METHODS,

@@ -409,10 +409,37 @@ function formatDuration(seconds: number): string {
 
 <style scoped>
 .radio-podcast-page {
-  padding: 24px 28px 96px;
-  max-width: 1100px;
-  margin: 0 auto;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100vh;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 24px 28px 126px;
   color: var(--te-text, #0f172a);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--te-primary-rgb, 37, 99, 235), 0.28) transparent;
+}
+
+.radio-podcast-page::-webkit-scrollbar {
+  width: 8px;
+}
+
+.radio-podcast-page::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.radio-podcast-page::-webkit-scrollbar-thumb {
+  background: rgba(var(--te-primary-rgb, 37, 99, 235), 0.28);
+  border-radius: 999px;
+}
+
+.radio-podcast-page > * {
+  max-width: 1100px;
+  margin-left: auto;
+  margin-right: auto;
 }
 .page-header {
   display: flex;

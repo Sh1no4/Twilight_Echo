@@ -1255,7 +1255,16 @@ test('Settings and HiFi shared options both require loudnorm (no forbid-loudnorm
   const { volumeNormalizationValues, VOLUME_NORMALIZATION_OPTIONS } =
     await import('../shared/audioProcessingOptions.ts')
   const settingsSource = await import('node:fs').then((fs) =>
-    fs.readFileSync(new URL('../renderer/src/components/SettingsPage.vue', import.meta.url), 'utf8')
+    [
+      fs.readFileSync(
+        new URL('../renderer/src/components/SettingsPage.vue', import.meta.url),
+        'utf8'
+      ),
+      fs.readFileSync(
+        new URL('../renderer/src/components/settings-page/types.ts', import.meta.url),
+        'utf8'
+      )
+    ].join('\n')
   )
   const hifiSource = await import('node:fs').then((fs) =>
     fs.readFileSync(
@@ -1293,6 +1302,9 @@ test('gapless runtime fields and HiFi Active/Preload/Blocked wiring stay present
   const managerSource = await import('node:fs').then((fs) =>
     fs.readFileSync(new URL('./audioEngineManager.ts', import.meta.url), 'utf8')
   )
+  const playbackControllerSource = await import('node:fs').then((fs) =>
+    fs.readFileSync(new URL('./audio/playbackController.ts', import.meta.url), 'utf8')
+  )
   const playerBarSource = await import('node:fs').then((fs) =>
     fs.readFileSync(new URL('../renderer/src/components/PlayerBar.vue', import.meta.url), 'utf8')
   )
@@ -1306,8 +1318,9 @@ test('gapless runtime fields and HiFi Active/Preload/Blocked wiring stay present
     }),
     HIFI_STATUS_COPY.gaplessPreload
   )
-  assert.match(managerSource, /gaplessBlockedReason/)
-  assert.match(managerSource, /gaplessActive:\s*info\.gaplessActive === true/)
+  assert.match(playbackControllerSource, /gaplessBlockedReason/)
+  assert.match(playbackControllerSource, /gaplessActive:\s*info\.gaplessActive === true/)
+  assert.match(managerSource, /PlaybackController/)
   assert.match(hifiSource, /gaplessRuntimeStatusCopy/)
   assert.match(hifiSource, /Active/)
   assert.match(hifiSource, /Preload/)
@@ -1361,8 +1374,11 @@ test('setStereoImage patches default scene balance/phase and preserves it across
   const managerSource = await import('node:fs').then((fs) =>
     fs.readFileSync(new URL('./audioEngineManager.ts', import.meta.url), 'utf8')
   )
+  const dspOrchestratorSource = await import('node:fs').then((fs) =>
+    fs.readFileSync(new URL('./audio/dspOrchestrator.ts', import.meta.url), 'utf8')
+  )
   assert.match(managerSource, /async setStereoImage\(/)
-  assert.match(managerSource, /stereoImage: extractStereoImageFromGraph/)
+  assert.match(dspOrchestratorSource, /stereoImage: extractStereoImageFromGraph/)
   assert.match(hifiSource, /Balance \/ Phase/)
   assert.match(hifiSource, /setStereoImage/)
   assert.match(playerBarSource, /dsp-stereo-image/)
@@ -1417,10 +1433,13 @@ test('setOutputStage patches default scene graph.outputStage and preserves it ac
   const managerSource = await import('node:fs').then((fs) =>
     fs.readFileSync(new URL('./audioEngineManager.ts', import.meta.url), 'utf8')
   )
+  const dspOrchestratorSource = await import('node:fs').then((fs) =>
+    fs.readFileSync(new URL('./audio/dspOrchestrator.ts', import.meta.url), 'utf8')
+  )
   assert.match(managerSource, /async setOutputStage\(/)
-  assert.match(managerSource, /outputStage: defaultScene\.graph\.outputStage/)
+  assert.match(dspOrchestratorSource, /outputStage: defaultScene\.graph\.outputStage/)
   assert.match(hifiSource, /DSP_OUTPUT_SAMPLE_RATE_OPTIONS/)
-  assert.match(hifiSource, /Output Stage/)
+  assert.match(hifiSource, /采样率锁/)
   assert.match(hifiSource, /setOutputStage/)
   assert.match(playerBarSource, /dsp-output-stage/)
   assert.match(playerBarSource, /@set-output-stage="setOutputStage"/)
@@ -4681,8 +4700,11 @@ test('getVisualizationData can omit unused visualization payloads', () => {
 })
 
 test('getVisualizationData reuses native visualization data within one visual frame', () => {
-  const source = readFileSync(new URL('./audioEngineManager.ts', import.meta.url), 'utf8')
-  assert.match(source, /const VISUALIZATION_CACHE_TTL_MS = 24/)
+  const helpersSource = readFileSync(
+    new URL('./audio/audioEngineHelpers.ts', import.meta.url),
+    'utf8'
+  )
+  assert.match(helpersSource, /export const VISUALIZATION_CACHE_TTL_MS = 24/)
 
   const nativeBinding = new FakeNativeBinding()
   let now = 1000
@@ -5869,11 +5891,18 @@ test('loudnorm status event, library RG queue fields, and cancel IPC are wired e
     'utf8'
   )
 
+  const dspOrchestratorSource = readFileSync(
+    new URL('./audio/dspOrchestrator.ts', import.meta.url),
+    'utf8'
+  )
   assert.ok(managerSource.includes("emit('loudnorm-status'"))
   assert.ok(managerSource.includes('syncLoudnormModeTransition'))
   assert.ok(managerSource.includes('notifyLoudnessCacheCleared'))
   // setReplayGainMode must rewrite legacy graph via setAudioProcessing (no dual-path drift).
-  assert.match(managerSource, /async setReplayGainMode[\s\S]*?return this\.setAudioProcessing\(/)
+  assert.match(
+    dspOrchestratorSource,
+    /async setReplayGainMode[\s\S]*?return this\.setAudioProcessing\(/
+  )
   assert.ok(
     managerSource.includes('loudnessAnalysisManager.cancel') ||
       managerSource.includes('this.loudnessAnalysisManager.cancel') ||

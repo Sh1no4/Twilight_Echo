@@ -710,14 +710,25 @@ const api = {
   },
   app: {
     relaunch: (): Promise<void> => ipcRenderer.invoke('app:relaunch'),
-    checkForUpdates: (): Promise<{
-      hasUpdate: boolean
-      currentVersion: string
-      latestVersion?: string
-      releaseUrl?: string
-      releaseNotes?: string
-      error?: string
-    }> => ipcRenderer.invoke('app:checkForUpdates'),
+    checkForUpdates: (): Promise<import('../shared/appUpdate').AppUpdateCheckResult> =>
+      ipcRenderer.invoke('app:checkForUpdates'),
+    downloadUpdate: (): Promise<import('../shared/appUpdate').AppUpdateDownloadResult> =>
+      ipcRenderer.invoke('app:downloadUpdate'),
+    cancelUpdateDownload: (): Promise<boolean> => ipcRenderer.invoke('app:cancelUpdateDownload'),
+    installUpdate: (): Promise<import('../shared/appUpdate').AppUpdateInstallResult> =>
+      ipcRenderer.invoke('app:installUpdate'),
+    onUpdateProgress: (
+      cb: (progress: import('../shared/appUpdate').AppUpdateProgress) => void
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        progress: import('../shared/appUpdate').AppUpdateProgress
+      ): void => {
+        cb(progress)
+      }
+      ipcRenderer.on('app:update-progress', handler)
+      return () => ipcRenderer.removeListener('app:update-progress', handler)
+    },
     onSavePlaybackSession: (cb: () => Promise<void> | void): (() => void) => {
       savePlaybackSessionCallbacks.add(cb)
       return () => savePlaybackSessionCallbacks.delete(cb)

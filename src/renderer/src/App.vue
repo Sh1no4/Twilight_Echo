@@ -129,6 +129,14 @@ function enterStreamingLogin(): void {
   }
 }
 
+function handleStreamingLogin(providerId?: string | null): void {
+  openLoginPage(providerId ?? null)
+}
+
+function handleTitleLogin(providerId?: string | null): void {
+  openLoginPage(providerId ?? 'ncm')
+}
+
 function handleLoginSuccess(): void {
   if (loginInitialProviderId.value === 'ncm') {
     streamingInitialTab.value = 'library'
@@ -493,7 +501,7 @@ const titleSurface = computed<TitleSurface>(() => {
     @toggle-menu="toggleMenu"
     @collapse-menu="collapseMenu"
     @back="handleTitleBack"
-    @login="openLoginPage"
+    @login="handleTitleLogin"
     @settings="toggleSettingsPage"
     @plugins="togglePluginPage"
   />
@@ -514,7 +522,8 @@ const titleSurface = computed<TitleSurface>(() => {
       'menu-open': menuOpen && showLocalSidebar,
       'playing-open': showPlayingPage,
       'plugin-open': showPluginPage,
-      'dsp-rack-open': showDspRackPage
+      'dsp-rack-open': showDspRackPage,
+      'radio-podcast-open': showRadioPodcastPage
     }"
     :style="{ minHeight: mainContentMinHeight }"
   >
@@ -538,7 +547,6 @@ const titleSurface = computed<TitleSurface>(() => {
     <Transition name="playing-page">
       <PlayingMusic
         v-if="showPlayingPage"
-        :key="`playing:${currentTrack?.id ?? 'none'}`"
         :style="{ transformOrigin: coverTransformOrigin }"
         @back="closePlayingPage"
         @customize-appearance="openThemeStudioPage('player')"
@@ -551,7 +559,7 @@ const titleSurface = computed<TitleSurface>(() => {
       :initial-tab="streamingInitialTab ?? undefined"
       @toggle-menu="toggleStreamingMenu"
       @back-to-local="returnToLocalMode"
-      @login="openLoginPage"
+      @login="handleStreamingLogin"
     />
     <RadioPodcastPage v-if="showRadioPodcastPage" @back="closeRadioPodcastPage" />
     <Transition name="login-page">
@@ -708,6 +716,16 @@ body.te-no-blur .login-page-leave-to {
 }
 
 .main-content.dsp-rack-open > .dsp-rack-page {
+  height: 100%;
+  min-height: 0;
+}
+
+.main-content.radio-podcast-open {
+  height: 100vh;
+  min-height: 0 !important;
+}
+
+.main-content.radio-podcast-open > .radio-podcast-page {
   height: 100%;
   min-height: 0;
 }

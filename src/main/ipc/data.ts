@@ -17,11 +17,10 @@ import {
   type PlaybackBookmarksDocument
 } from '../../shared/playbackBookmarks.ts'
 import { createDuplicateDetectionIpcHandlers } from '../library/duplicateDetectionIpc.ts'
-import { runtime, type DiscordActivityData } from '../core/runtime'
+import { runtime } from '../core/runtime'
 import type { AppSettings, PlaybackSession } from '../core/types'
 import {
-  compareVersions,
-  createSettingsSnapshot,
+    createSettingsSnapshot,
   getDefaultCachePath,
   normalizeAppSettings
 } from '../core/settings'
@@ -48,6 +47,10 @@ import { getLibraryWatcherStatusSnapshot } from '../library/watcher.ts'
 import { createTagWriteIpcHandlers } from '../library/tagWriteIpc.ts'
 import { sleepTimerService } from '../sleepTimer.ts'
 import { registerSleepTimerIpc } from './sleepTimerIpc.ts'
+import { registerWindowIpc } from './windowIpc.ts'
+import { registerShellIpc } from './shellIpc.ts'
+import { registerDiscordIpc } from './discordIpc.ts'
+import { registerAppIpc } from './appIpc.ts'
 import { synchronizeLocalLibraryFileIndexRevision } from '../library/fileIndex.ts'
 import type { LocalLibraryScanRunner } from '../library/libraryScanServiceClient.ts'
 import {
@@ -90,11 +93,8 @@ import {
   unprotectString
 } from '../security/secureStorage.ts'
 import { normalizeIpcString, stringifyJsonForIpcStorage } from '../security/ipcValidation.ts'
-import { assertTrustedIpcSender, shouldAcceptIpcEvent } from '../security/electronSecurity.ts'
-import { updateDiscordActivity, clearDiscordActivity } from '../integrations/discord'
-import { updateAppSettings, relaunchApplication } from '../audio/state'
-import { resolvePlaybackSessionSave } from '../app/window'
-import type { RendererClosePersistenceOutcome } from '../../shared/closePersistence.ts'
+import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
+import { updateAppSettings } from '../audio/state'
 import { getPlayerShortcutStatuses } from '../integrations/shortcutsTray'
 import {
   resolveAuthorizedAudioFile,
@@ -102,8 +102,6 @@ import {
   resolveAuthorizedImpulseResponseFile,
   resolveAuthorizedLibraryDirectory,
   resolveAuthorizedLibraryRootSettings,
-  resolveAuthorizedOpenPath,
-  resolveAuthorizedShowItemPath,
   filterAuthorizedLibraryRoots,
   grantUserSelectedCacheRoot,
   grantUserSelectedLibraryRoot
@@ -130,11 +128,7 @@ const MAX_LYRICS_FILE_NAME_LENGTH = 512
 const MAX_BACKGROUND_IMAGE_FILE_NAME_LENGTH = 255
 const MAX_SETTINGS_PATCH_BYTES = 512 * 1024
 const MAX_SETTINGS_BACKUP_BYTES = 2 * 1024 * 1024
-const MAX_DISCORD_ACTIVITY_BYTES = 16 * 1024
-const MAX_EXTERNAL_URL_LENGTH = 8192
 const MAX_NCM_COOKIE_BYTES = 16 * 1024
-const MAX_PLAYBACK_SAVE_REQUEST_ID_LENGTH = 128
-const MAX_PLAYBACK_SAVE_ERROR_LENGTH = 2048
 const MAX_LIBRARY_MUTATION_ITEMS = 10_000
 
 const persistenceNotifications = new Set<string>()
@@ -180,26 +174,10 @@ async function authorizeSettingsPathPatch(
 }
 
 export function setupDataIpc(): void {
-  ipcMain.on('window:minimize', (event) => {
-    if (!shouldAcceptIpcEvent(event, 'window control IPC')) return
-    BrowserWindow.fromWebContents(event.sender)?.minimize()
-  })
-
-  ipcMain.on('window:toggleMaximize', (event) => {
-    if (!shouldAcceptIpcEvent(event, 'window control IPC')) return
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win) return
-    if (win.isMaximized()) {
-      win.unmaximize()
-    } else {
-      win.maximize()
-    }
-  })
-
-  ipcMain.on('window:close', (event) => {
-    if (!shouldAcceptIpcEvent(event, 'window control IPC')) return
-    BrowserWindow.fromWebContents(event.sender)?.close()
-  })
+  registerWindowIpc(ipcMain)
+  registerShellIpc(ipcMain)
+  registerDiscordIpc(ipcMain)
+  registerAppIpc(ipcMain)
 
   ipcMain.handle('dialog:openFolder', async (event) => {
     assertTrustedIpcSender(event, 'dialog IPC')
@@ -249,86 +227,6 @@ export function setupDataIpc(): void {
       )
     }
   )
-
-  ipcMain.handle('app:relaunch', (event) => {
-    assertTrustedIpcSender(event, 'app IPC')
-    setTimeout(() => {
-      relaunchApplication()
-    }, 0)
-    return true
-  })
-
-  ipcMain.handle(
-    'app:playback-session-saved',
-    async (event, requestId: string, outcome: unknown) => {
-      assertTrustedIpcSender(event, 'app IPC')
-      resolvePlaybackSessionSave(
-        normalizeIpcString(
-          requestId,
-          'playback session save request id',
-          MAX_PLAYBACK_SAVE_REQUEST_ID_LENGTH
-        ),
-        normalizeRendererClosePersistenceOutcome(outcome)
-      )
-      return true
-    }
-  )
-
-  ipcMain.handle('shell:openPath', async (event, targetPath: string) => {
-    assertTrustedIpcSender(event, 'shell IPC')
-    const resolvedPath = await resolveAuthorizedOpenPath(
-      normalizeLocalPath(targetPath, 'open path')
-    )
-    return await shell.openPath(resolvedPath)
-  })
-
-  ipcMain.handle('shell:openExternal', async (event, url: string) => {
-    assertTrustedIpcSender(event, 'shell IPC')
-    if (!isSafeExternalUrl(url)) return
-    await shell.openExternal(url)
-  })
-
-  ipcMain.handle('discord:updateActivity', (event, data: DiscordActivityData) => {
-    assertTrustedIpcSender(event, 'Discord IPC')
-    stringifyJsonForIpcStorage(data, 'Discord activity', MAX_DISCORD_ACTIVITY_BYTES)
-    if (runtime.appSettings.discordRpcEnabled) updateDiscordActivity(data)
-    return true
-  })
-
-  ipcMain.handle('discord:clearActivity', (event) => {
-    assertTrustedIpcSender(event, 'Discord IPC')
-    clearDiscordActivity()
-    return true
-  })
-
-  ipcMain.handle('app:checkForUpdates', async (event) => {
-    assertTrustedIpcSender(event, 'app IPC')
-    try {
-      const currentVersion = app.getVersion()
-      const response = await fetch(
-        'https://api.github.com/repos/asenyarzc-cpu/Twilight_Echo/releases/latest',
-        { headers: { 'User-Agent': 'TwilightEcho-Updater' } }
-      )
-      if (!response.ok) return { hasUpdate: false, currentVersion, error: 'network' }
-      const release = (await response.json()) as {
-        tag_name?: string
-        html_url?: string
-        body?: string
-      }
-      const latestTag = (release.tag_name || '').replace(/^v/, '')
-      if (!latestTag) return { hasUpdate: false, currentVersion }
-      const hasUpdate = compareVersions(latestTag, currentVersion) > 0
-      return {
-        hasUpdate,
-        currentVersion,
-        latestVersion: latestTag,
-        releaseUrl: release.html_url || '',
-        releaseNotes: release.body || ''
-      }
-    } catch {
-      return { hasUpdate: false, currentVersion: app.getVersion(), error: 'network' }
-    }
-  })
 
   ipcMain.handle('settings:get', async (event) => {
     assertTrustedIpcSender(event, 'settings IPC')
@@ -407,14 +305,6 @@ export function setupDataIpc(): void {
     }
     ensureMusicCacheDirectories(cachePath)
     return await getManagedMusicCacheSize(cachePath)
-  })
-
-  ipcMain.handle('shell:showItemInFolder', async (event, filePath: string) => {
-    assertTrustedIpcSender(event, 'shell IPC')
-    const resolvedPath = await resolveAuthorizedShowItemPath(
-      normalizeLocalPath(filePath, 'show item path')
-    )
-    shell.showItemInFolder(resolvedPath)
   })
 
   ipcMain.handle('fs:scanMusicFiles', async (event, folderPath: string) => {
@@ -1219,25 +1109,6 @@ async function saveVersionedData<T>(
   }
 }
 
-function normalizeRendererClosePersistenceOutcome(value: unknown): RendererClosePersistenceOutcome {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Renderer close persistence outcome must be an object')
-  }
-  const record = value as Record<string, unknown>
-  if (record.status === 'saved') return { status: 'saved' }
-  if (record.status === 'failed') {
-    return {
-      status: 'failed',
-      error: normalizeIpcString(
-        record.error,
-        'renderer close persistence error',
-        MAX_PLAYBACK_SAVE_ERROR_LENGTH
-      )
-    }
-  }
-  throw new Error('Renderer close persistence outcome has an invalid status')
-}
-
 function isPlaybackSessionFile(value: unknown): value is PlaybackSession {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const record = value as Record<string, unknown>
@@ -1329,18 +1200,6 @@ function showPersistenceMessage(
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
-}
-
-function isSafeExternalUrl(url: unknown): url is string {
-  if (typeof url !== 'string') return false
-  if (Buffer.byteLength(url, 'utf-8') > MAX_EXTERNAL_URL_LENGTH) return false
-  if (/[\0\r\n]/.test(url)) return false
-  try {
-    const parsed = new URL(url)
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:'
-  } catch {
-    return false
-  }
 }
 
 function isSafeLocalPath(path: unknown): path is string {

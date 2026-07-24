@@ -1042,8 +1042,9 @@ async function applySelected(): Promise<void> {
   try {
     await previewScheduler.flush()
     if (draft.value) {
-      const saved = await themeStore.saveProfile(draft.value)
-      const persisted = saved.data.profiles.find((profile) => profile.id === draft.value?.id)
+      const toSave = cloneProfile(draft.value)
+      const saved = await themeStore.saveProfile(toSave)
+      const persisted = saved.data.profiles.find((profile) => profile.id === toSave.id)
       if (!persisted) throw new Error('保存后的主题档案不可用')
       draft.value = cloneProfile(persisted)
       resetHistory(draft.value)
@@ -1068,7 +1069,10 @@ async function applySelected(): Promise<void> {
 }
 
 async function deleteSelected(): Promise<void> {
-  if (!draft.value || !profiles.value.some((profile) => profile.id === draft.value?.id)) return
+  if (!draft.value || !profiles.value.some((profile) => profile.id === draft.value?.id)) {
+    localError.value = '请先应用主题后再删除'
+    return
+  }
   if (!window.confirm(`删除主题“${draft.value.name}”？`)) return
   try {
     await themeStore.deleteProfile(draft.value.id)
@@ -1089,7 +1093,10 @@ async function importTheme(): Promise<void> {
 }
 
 async function exportTheme(): Promise<void> {
-  if (!draft.value || !profiles.value.some((profile) => profile.id === draft.value?.id)) return
+  if (!draft.value || !profiles.value.some((profile) => profile.id === draft.value?.id)) {
+    localError.value = '请先应用主题后再导出'
+    return
+  }
   try {
     const output = await themeStore.exportTheme(draft.value.id)
     if (output) notice.value = '主题已导出'
@@ -1454,7 +1461,7 @@ onBeforeUnmount(() => {
               class="studio-icon-button"
               title="导出主题"
               aria-label="导出主题"
-              :disabled="!draft"
+              :disabled="!draft || isUnsavedDraft"
               @click="exportTheme"
             >
               <i class="ph ph-upload-simple"></i>
@@ -1464,7 +1471,7 @@ onBeforeUnmount(() => {
               class="studio-icon-button danger"
               title="删除主题"
               aria-label="删除主题"
-              :disabled="!draft"
+              :disabled="!draft || isUnsavedDraft"
               @click="deleteSelected"
             >
               <i class="ph ph-trash"></i>

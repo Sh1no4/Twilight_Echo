@@ -1,7 +1,6 @@
 import { shallowRef, ref, computed, watch, type Ref, type ComputedRef } from 'vue'
 import type { PlaybackSession, Track } from '../types/music'
 import type {
-  AudioCapabilitySupportState,
   AudioDeviceOption,
   AudioOutputId,
   AudioOutputOption,
@@ -70,6 +69,13 @@ import { DEFAULT_SOFTWARE_VOLUME } from '../../../shared/audioProcessingOptions.
 import { createSleepTimerController, getRestorableSleepTimerState } from './sleepTimerController.ts'
 import { createSleepTimerFadeController } from './sleepTimerFade.ts'
 import { usePlaybackBookmarks } from './playbackBookmarks'
+import {
+  DEFAULT_AUDIO_DEVICE_OPTION,
+  getFallbackAudioOutput,
+  getFallbackAudioOutputOptions,
+  normalizeAudioDeviceOptions,
+  normalizeAudioOutputOptions
+} from './player/audioOutputNormalize.ts'
 
 type NativePlaybackInfo = Awaited<ReturnType<typeof window.api.audioEngine.getPlaybackInfo>>
 type NativeOutputInfo = NativePlaybackInfo['outputInfo']
@@ -97,270 +103,6 @@ export interface AudioEngineRecoveryNotice {
   canResume?: boolean
 }
 
-const FALLBACK_AUDIO_OUTPUT_OPTIONS: AudioOutputOption[] = [
-  {
-    id: 'wasapi',
-    label: 'WASAPI',
-    description: 'Windows 原生音频输出',
-    platform: 'win32',
-    supportsExclusive: true
-  },
-  {
-    id: 'asio',
-    label: 'ASIO',
-    description: '专业声卡驱动输出',
-    platform: 'win32',
-    supportsExclusive: true
-  },
-  {
-    id: 'coreaudio',
-    label: 'CoreAudio',
-    description: 'macOS 原生音频输出',
-    platform: 'darwin',
-    supportsExclusive: true
-  },
-  {
-    id: 'alsa',
-    label: 'ALSA',
-    description: 'Linux 原生音频输出',
-    platform: 'linux',
-    supportsExclusive: false
-  }
-]
-
-const DEFAULT_AUDIO_DEVICE_OPTION: AudioDeviceOption = {
-  id: 'auto',
-  label: '系统默认',
-  isDefault: true,
-  dopSupportState: 'runtime-probed',
-  nativeDsdSupportState: 'unsupported'
-}
-
-function getRendererPlatform(): NodeJS.Platform {
-  const platform = navigator.platform.toLowerCase()
-  if (platform.includes('mac')) return 'darwin'
-  if (platform.includes('linux')) return 'linux'
-  return 'win32'
-}
-
-function getFallbackAudioOutputOptions(): AudioOutputOption[] {
-  return FALLBACK_AUDIO_OUTPUT_OPTIONS.filter((option) => option.platform === getRendererPlatform())
-}
-
-function getFallbackAudioOutput(): AudioOutputId {
-  return getFallbackAudioOutputOptions()[0]?.id ?? 'alsa'
-}
-
-function formatAudioDeviceLabel(device: string): string {
-  return device === 'auto' ? DEFAULT_AUDIO_DEVICE_OPTION.label : device
-}
-
-function normalizeAudioCapabilitySupportState(value: unknown): AudioCapabilitySupportState | null {
-  return value === 'verified' ||
-    value === 'runtime-probed' ||
-    value === 'unsupported' ||
-    value === 'unknown'
-    ? value
-    : null
-}
-
-function hasNonEmptyArray(value: unknown): boolean {
-  return Array.isArray(value) && value.length > 0
-}
-
-function getDeviceBackend(option: Partial<AudioDeviceOption>): string {
-  const id = String(option.id || '').toLowerCase()
-  const raw =
-    option.backend ||
-    (id.startsWith('asio:')
-      ? 'asio'
-      : id.startsWith('wasapi:')
-        ? 'wasapi'
-        : id.startsWith('coreaudio:')
-          ? 'coreaudio'
-          : id.startsWith('alsa:') || id.startsWith('hw:') || id.startsWith('plughw:')
-            ? 'alsa'
-            : '')
-  return String(raw || '').toLowerCase()
-}
-
-function getDevicePathKind(option: Partial<AudioDeviceOption>): string {
-  const explicit = String(option.pathKind || '').toLowerCase()
-  if (explicit) return explicit
-  const id = String(option.id || '').toLowerCase()
-  if (id === 'auto' || id === 'default') return 'default'
-  if (id.startsWith('hw:') || id.startsWith('alsa:hw:')) return 'hw'
-  if (id.startsWith('plughw:') || id.startsWith('alsa:plughw:')) return 'plughw'
-  if (id.startsWith('wasapi:')) return 'endpoint'
-  if (id.startsWith('coreaudio:')) return 'hal'
-  if (id.startsWith('asio:')) return 'asio'
-  return ''
-}
-
-function deriveDopSupportState(option: Partial<AudioDeviceOption>): AudioCapabilitySupportState {
-  const explicit = normalizeAudioCapabilitySupportState(option.dopSupportState)
-  if (explicit) return explicit
-  if (
-    option.supportsDop === true ||
-    hasNonEmptyArray(option.dopCarrierSampleRates) ||
-    hasNonEmptyArray(option.dopCarrierFormats)
-  ) {
-    return 'verified'
-  }
-  if (option.supportsDop === false) return 'unsupported'
-
-  const backend = getDeviceBackend(option)
-  const pathKind = getDevicePathKind(option)
-  if (
-    option.isDefault === true ||
-    backend === 'wasapi' ||
-    backend === 'coreaudio' ||
-    pathKind === 'default' ||
-    pathKind === 'endpoint' ||
-    pathKind === 'hal'
-  ) {
-    return 'runtime-probed'
-  }
-  if (backend === 'asio' || pathKind === 'asio') return 'unknown'
-  return 'unknown'
-}
-
-function deriveNativeDsdSupportState(
-  option: Partial<AudioDeviceOption>
-): AudioCapabilitySupportState {
-  const explicit = normalizeAudioCapabilitySupportState(option.nativeDsdSupportState)
-  if (explicit) return explicit
-  if (
-    option.supportsNativeDsd === true ||
-    hasNonEmptyArray(option.nativeDsdSampleRates) ||
-    hasNonEmptyArray(option.nativeDsdSampleFormats) ||
-    hasNonEmptyArray(option.supportedDsdRates)
-  ) {
-    return 'verified'
-  }
-  if (option.supportsNativeDsd === false) return 'unsupported'
-
-  const backend = getDeviceBackend(option)
-  const pathKind = getDevicePathKind(option)
-  if (
-    backend === 'wasapi' ||
-    backend === 'coreaudio' ||
-    pathKind === 'endpoint' ||
-    pathKind === 'hal'
-  ) {
-    return 'unsupported'
-  }
-  if (backend === 'alsa' && pathKind === 'hw') return 'runtime-probed'
-  if (backend === 'asio' || pathKind === 'asio') return 'unknown'
-  if (option.isDefault === true || pathKind === 'default') return 'unsupported'
-  return 'unknown'
-}
-
-function withAudioCapabilitySupportStates(
-  option: AudioDeviceOption,
-  fallbackBackend: AudioOutputId | '' = ''
-): AudioDeviceOption {
-  const contextualOption =
-    fallbackBackend && !option.backend ? { ...option, backend: fallbackBackend } : option
-  return {
-    ...option,
-    dopSupportState: deriveDopSupportState(contextualOption),
-    nativeDsdSupportState: deriveNativeDsdSupportState(contextualOption)
-  }
-}
-
-function normalizeAudioOutputOptions(
-  options: AudioOutputOption[],
-  selectedOutput: AudioOutputId
-): AudioOutputOption[] {
-  const fallbackOptions = getFallbackAudioOutputOptions()
-  const sourceOptions = Array.isArray(options) && options.length > 0 ? options : fallbackOptions
-  const fallbackById = new Map(fallbackOptions.map((option) => [option.id, option]))
-  const normalized = sourceOptions
-    .filter((option) => option?.id && option?.label)
-    .map((option) => ({
-      ...option,
-      description: fallbackById.get(option.id)?.description ?? option.description
-    }))
-
-  if (!normalized.some((option) => option.id === selectedOutput)) {
-    const fallback = fallbackOptions.find((option) => option.id === selectedOutput)
-    if (fallback) normalized.push(fallback)
-  }
-
-  return normalized.length > 0 ? normalized : fallbackOptions
-}
-
-function normalizeAudioDeviceOptions(
-  options: AudioDeviceOption[],
-  selectedDevice: string,
-  selectedOutput: AudioOutputId | '' = ''
-): AudioDeviceOption[] {
-  const normalized: AudioDeviceOption[] = []
-  const seen = new Set<string>()
-
-  function addOption(option: unknown): void {
-    if (typeof option === 'string') {
-      const id = option.trim()
-      if (!id || seen.has(id)) return
-      seen.add(id)
-      normalized.push(
-        withAudioCapabilitySupportStates(
-          {
-            id,
-            label: formatAudioDeviceLabel(id),
-            isDefault: id === 'auto'
-          },
-          selectedOutput
-        )
-      )
-      return
-    }
-
-    if (!option || typeof option !== 'object') return
-    const record = option as Record<string, unknown>
-    const id = typeof record.id === 'string' ? record.id.trim() : ''
-    if (!id || seen.has(id)) return
-    const rawLabel = typeof record.label === 'string' ? record.label.trim() : ''
-    seen.add(id)
-    normalized.push(
-      withAudioCapabilitySupportStates(
-        {
-          ...(record as Partial<AudioDeviceOption>),
-          id,
-          label: id === 'auto' ? DEFAULT_AUDIO_DEVICE_OPTION.label : rawLabel || id,
-          isDefault: record.isDefault === true
-        },
-        selectedOutput
-      )
-    )
-  }
-
-  const sourceOptions = Array.isArray(options) ? (options as unknown[]) : []
-  for (const option of sourceOptions) {
-    addOption(option)
-  }
-
-  if (!seen.has(DEFAULT_AUDIO_DEVICE_OPTION.id)) {
-    normalized.unshift(DEFAULT_AUDIO_DEVICE_OPTION)
-    seen.add(DEFAULT_AUDIO_DEVICE_OPTION.id)
-  }
-
-  if (selectedDevice && !seen.has(selectedDevice)) {
-    normalized.push(
-      withAudioCapabilitySupportStates(
-        {
-          id: selectedDevice,
-          label: formatAudioDeviceLabel(selectedDevice),
-          isDefault: selectedDevice === 'auto'
-        },
-        selectedOutput
-      )
-    )
-  }
-
-  return normalized
-}
 
 const currentTrack = ref<Track | null>(null)
 const dominantColor = ref('#1a73e8')
@@ -1189,8 +931,9 @@ function mergeTrackTransientData(nextTrack: Track, previousTrack: Track | null):
 function findLibraryTrackHint(track: Track, _libraryHint?: Track | null): Track | null {
   // Always resolve from the real library. Callers used to pass the queue row as
   // libraryHint, which short-circuited lookup and left lyrics:null / stale cover
-  // forever (queue snapshots intentionally strip lyrics).
-  return useMusicStore().tracks.value.find((item) => item.id === track.id) ?? null
+  // forever (queue snapshots intentionally strip lyrics). O(1) via trackById —
+  // never linear-scan tracks on the switch hot path (freezes PlayingMusic).
+  return useMusicStore().getTrackById(track.id) ?? null
 }
 
 function nonEmptyString(value: unknown): string | null {
@@ -1281,8 +1024,9 @@ function rehydrateCurrentTrackFromLibrary(): void {
     }
   }
 
+  const musicStore = useMusicStore()
   const patchRow = (row: Track): Track => {
-    const library = useMusicStore().tracks.value.find((item) => item.id === row.id)
+    const library = musicStore.getTrackById(row.id)
     if (!library) return row
     const cover = nonEmptyString(row.cover) || nonEmptyString(library.cover)
     const coverSource = nonEmptyString(row.coverSource) || nonEmptyString(library.coverSource)
@@ -1981,9 +1725,12 @@ function applyPlaybackPositionSample(time: number): boolean {
       pendingPlaybackPositionTarget = null
     } else {
       const rate = Number.isFinite(playbackRate.value) ? playbackRate.value : 1
-      const elapsed = isPlaying.value
-        ? Math.max(0, (now - pending.startedAt) / 1000) * rate
-        : 0
+      // Treat isLoading as advancing: load hand-off can clear isPlaying briefly
+      // while the engine is already emitting new-track positions near 0.
+      const elapsed =
+        isPlaying.value || isLoading.value
+          ? Math.max(0, (now - pending.startedAt) / 1000) * rate
+          : 0
       const expectedPosition = pending.position + elapsed
       if (
         Math.abs(position - expectedPosition) >
@@ -2040,7 +1787,9 @@ function applyPlaybackPositionSample(time: number): boolean {
 }
 
 function tickRendererPlaybackClock(): void {
-  if (!isPlaying.value || isCurrentTrackLiveStream()) return
+  // Keep the playbar / lyric clock alive during intentional load hand-off even if
+  // a transient pause event clears isPlaying before the new track confirms.
+  if ((!isPlaying.value && !isLoading.value) || isCurrentTrackLiveStream()) return
   const now = getNowMs()
   if (now - lastAcceptedPlaybackSampleAt < RENDERER_CLOCK_STALE_AFTER_MS) return
   const rate = Number.isFinite(playbackRate.value) ? playbackRate.value : 1
@@ -2352,6 +2101,8 @@ async function ensureCurrentTrackLyricsLoaded(
 
   const lyricsManagement = useLyricsManagement()
   try {
+    // ensureLoaded itself races the IPC (3s); never block the 12s resolve path
+    // indefinitely or the now-playing pane sticks on "加载歌词…".
     await lyricsManagement.ensureLoaded()
   } catch {
     // Automatic resolution remains available when the optional management
@@ -2365,7 +2116,20 @@ async function ensureCurrentTrackLyricsLoaded(
   // the queue record means choosing Auto later can always recover
   // the resolver result instead of treating a previous edit as embedded data.
   if (requestedSource === 'manual') {
-    // Leave null so projectManagedLyrics supplies manual text; reserve column stays.
+    // Finish loading state on the track record: null means "still resolving".
+    // Manual text is projected from the override; empty override → 暂无歌词.
+    if (
+      currentTrack.value?.id === triggerTrack.id &&
+      currentTrack.value.lyrics == null &&
+      currentTrack.value.translatedLyrics == null
+    ) {
+      commitResolvedLyrics(triggerTrack, triggerTrack, {
+        lyrics: '',
+        translatedLyrics: null,
+        lyricsSource: null,
+        translatedLyricsSource: null
+      })
+    }
     return
   }
 
@@ -3081,12 +2845,24 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
     void setPlaybackRate(1)
   }
 
+  const releaseLoadIfOwned = (): void => {
+    // Only the still-current load token may clear loading. A superseded load
+    // must leave isLoading true for the newer owner.
+    if (loadToken === activeLoadToken) isLoading.value = false
+  }
+
   try {
     await stopNativeAudio()
-    if (!isActiveLoad(loadToken, track)) return
+    if (!isActiveLoad(loadToken, track)) {
+      releaseLoadIfOwned()
+      return
+    }
 
     const playTarget = await resolvePlayTarget(track)
-    if (!isActiveLoad(loadToken, track)) return
+    if (!isActiveLoad(loadToken, track)) {
+      releaseLoadIfOwned()
+      return
+    }
     patchTrackInQueues(track)
     setNativePlaybackInfoIntent(loadToken, track, playTarget)
     const useNativePlayback = shouldUseNativePlayback(track, playTarget)
@@ -3112,19 +2888,31 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         }
 
         await window.api.audioEngine.loadQueue(preparedQueue.items, preparedQueue.startIndex)
-        if (!isActiveLoad(loadToken, track)) return
+        if (!isActiveLoad(loadToken, track)) {
+          releaseLoadIfOwned()
+          return
+        }
         nativeQueueDelegated = preparedQueue.delegated
 
         const nativePlayMode = playMode.value === 'repeat' ? 'repeat' : 'sequential'
         await window.api.audioEngine.setPlayMode(nativePlayMode)
-        if (!isActiveLoad(loadToken, track)) return
+        if (!isActiveLoad(loadToken, track)) {
+          releaseLoadIfOwned()
+          return
+        }
 
         const playResult = await window.api.audioEngine.play(playTarget, normalizedStartTime)
-        if (!isActiveLoad(loadToken, track)) return
+        if (!isActiveLoad(loadToken, track)) {
+          releaseLoadIfOwned()
+          return
+        }
         nativeStarted = playResult?.nativeStarted === true
         nativeFallbackReason = playResult?.fallbackReason ?? ''
       } catch (engineErr) {
-        if (!isActiveLoad(loadToken, track)) return
+        if (!isActiveLoad(loadToken, track)) {
+          releaseLoadIfOwned()
+          return
+        }
         nativeQueueDelegated = false
         nativeFallbackReason = engineErr instanceof Error ? engineErr.message : String(engineErr)
         console.warn(
@@ -3134,7 +2922,10 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
       }
     }
 
-    if (!isActiveLoad(loadToken, track)) return
+    if (!isActiveLoad(loadToken, track)) {
+      releaseLoadIfOwned()
+      return
+    }
     nativePlaybackActive = nativeStarted
 
     if (nativePlaybackActive) {
@@ -3152,11 +2943,17 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         normalizedStartTime,
         loadToken
       )
-      if (!rendererStarted || !isActiveLoad(loadToken, track)) return
+      if (!rendererStarted || !isActiveLoad(loadToken, track)) {
+        releaseLoadIfOwned()
+        return
+      }
       scheduleRendererPlaybackWatchdog(track, loadToken)
     }
 
-    if (!isActiveLoad(loadToken, track)) return
+    if (!isActiveLoad(loadToken, track)) {
+      releaseLoadIfOwned()
+      return
+    }
     advancingFromEndedTrackId = ''
     autoAdvanceInFlight = false
     loadedTrackId = track.id
@@ -3180,7 +2977,10 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
     startVisualizationPolling()
     maybeOfferResumeForTrack(track, resumeAt)
   } catch (err) {
-    if (!isActiveLoad(loadToken, track)) return
+    if (!isActiveLoad(loadToken, track)) {
+      releaseLoadIfOwned()
+      return
+    }
     clearNativePlaybackInfoIntentForLoad(loadToken)
     if (await handlePlaybackFallback(track, err, loadToken)) return
     console.error('[audio-engine] Playback failed:', err)

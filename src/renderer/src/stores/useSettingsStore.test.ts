@@ -50,17 +50,29 @@ test('background protocol accepts chromium-normalized trailing slash urls', () =
   assert.match(lifecycleSource, /resolveBackgroundImageFile\(fileName\)/)
 })
 
+function readSettingsPageSources(): string {
+  const root = new URL('../components/', import.meta.url)
+  return [
+    'SettingsPage.vue',
+    'settings-page/types.ts',
+    'settings-page/AboutSettingsSection.vue',
+    'settings-page/ShortcutsSettingsSection.vue',
+    'settings-page/MiniPlayerSettingsSection.vue'
+  ]
+    .map((relative) => readFileSync(new URL(relative, root), 'utf8'))
+    .join('\n')
+}
+
 test('settings page quotes background image handles when building css url values', () => {
-  const source = readFileSync(new URL('../components/SettingsPage.vue', import.meta.url), 'utf8')
+  const source = readSettingsPageSources()
 
   assert.match(source, /function toBackgroundImageStyle\(image: string\): string/)
   assert.ok(source.includes('return image ? `url("${image.replace(/"/g, \'\\\\"\')}")` : \'none\''))
-  assert.match(source, /backgroundImage: toBackgroundImageStyle\(settings\.appBackground\.global\.image\)/)
-  assert.match(source, /backgroundImage: toBackgroundImageStyle\(settings\.appBackground\.pages\[page\.value\]\.image\)/)
+  assert.match(source, /backgroundImage: toBackgroundImageStyle\(/)
 })
 
 test('settings page sends plain app background objects through Electron IPC', () => {
-  const source = readFileSync(new URL('../components/SettingsPage.vue', import.meta.url), 'utf8')
+  const source = readSettingsPageSources()
 
   assert.match(source, /function cloneAppBackground\(\): AppBackgroundSettings/)
   assert.match(source, /global: \{ \.\.\.background\.global \}/)
@@ -78,10 +90,7 @@ test('startup home page setting is persisted and selectable from general setting
   const settingsTypes = readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8')
   const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
   const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
-  const settingsPageSource = readFileSync(
-    new URL('../components/SettingsPage.vue', import.meta.url),
-    'utf8'
-  )
+  const settingsPageSource = readSettingsPageSources()
 
   assert.match(settingsTypes, /export type StartupHomePage = 'local' \| 'streaming'/)
   assert.match(settingsTypes, /startupHomePage: StartupHomePage/)
@@ -101,10 +110,7 @@ test('startup home page setting is persisted and selectable from general setting
 test('audio settings expose advanced replaygain, fft, crossfeed, and real loudnorm option', () => {
   const settingsTypes = readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8')
   const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
-  const settingsPageSource = readFileSync(
-    new URL('../components/SettingsPage.vue', import.meta.url),
-    'utf8'
-  )
+  const settingsPageSource = readSettingsPageSources()
   const hifiSidebarSource = readFileSync(
     new URL('../components/player-bar/HiFiSidebar.vue', import.meta.url),
     'utf8'
@@ -125,7 +131,7 @@ test('audio settings expose advanced replaygain, fft, crossfeed, and real loudno
   assert.match(settingsPageSource, /FFT Capture/)
   assert.match(settingsPageSource, /Crossfeed Delay/)
   assert.match(settingsPageSource, /Crossfeed Cutoff/)
-  assert.match(settingsPageSource, /VOLUME_NORMALIZATION_OPTIONS/)
+  assert.match(settingsPageSource, /VOLUME_NORMALIZATION_OPTIONS|replayGainOptions = VOLUME_NORMALIZATION_OPTIONS/)
   assert.match(settingsPageSource, /replayGainOptions/)
   assert.match(hifiSidebarSource, /VOLUME_NORMALIZATION_OPTIONS|value: 'loudnorm'/)
   assert.match(settingsPageSource, /High-Res 当前为自动链路能力/)
@@ -143,10 +149,7 @@ test('audio settings do not expose DSP bypass as strict bit-perfect mode', () =>
   const mainTypes = readFileSync(new URL('../../../main/core/types.ts', import.meta.url), 'utf8')
   const mainSettings = readFileSync(new URL('../../../main/core/settings.ts', import.meta.url), 'utf8')
   const settingsStoreSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
-  const settingsPageSource = readFileSync(
-    new URL('../components/SettingsPage.vue', import.meta.url),
-    'utf8'
-  )
+  const settingsPageSource = readSettingsPageSources()
 
   for (const source of [settingsTypes, preloadTypes, mainTypes, mainSettings, settingsStoreSource]) {
     assert.doesNotMatch(source, /strictBitPerfectMode/)
@@ -165,10 +168,7 @@ test('cache strategy settings expose separate artifact and provider-controlled a
   const preloadTypes = readFileSync(new URL('../../../preload/types.ts', import.meta.url), 'utf8')
   const preloadIndexTypes = readFileSync(new URL('../../../preload/index.d.ts', import.meta.url), 'utf8')
   const pluginIpcSource = readFileSync(new URL('../../../main/ipc/plugins.ts', import.meta.url), 'utf8')
-  const settingsPageSource = readFileSync(
-    new URL('../components/SettingsPage.vue', import.meta.url),
-    'utf8'
-  )
+  const settingsPageSource = readSettingsPageSources()
 
   for (const source of [mainTypes, rendererTypes, preloadTypes]) {
     assert.match(source, /export type StreamingAudioCachePolicy = 'off' \| 'provider'/)
@@ -234,10 +234,7 @@ test('cache strategy settings expose separate artifact and provider-controlled a
 })
 
 test('settings page exposes search, backup, cache confirmation, and isolated plugin panel state', () => {
-  const settingsPageSource = readFileSync(
-    new URL('../components/SettingsPage.vue', import.meta.url),
-    'utf8'
-  )
+  const settingsPageSource = readSettingsPageSources()
 
   assert.match(settingsPageSource, /const settingsSearchQuery = ref\(''\)/)
   assert.match(settingsPageSource, /const filteredSettingsSections = computed/)

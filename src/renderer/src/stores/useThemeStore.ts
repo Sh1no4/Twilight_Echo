@@ -428,9 +428,10 @@ function applyProfileAssetBindings(
     const asset = assets.get(bindings[binding] ?? '')
     if (asset?.type !== 'font') continue
     const family = `TwilightTheme-${profile.id.replace(/[^a-zA-Z0-9_-]/g, '-')}-${asset.id}`
-    variables[variable] = `'${family}', system-ui, sans-serif`
+    variables[variable] =
+      `'${family}', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif`
     fontFaces.push(
-      `@font-face { font-family: '${family}'; src: url("${themeAssetUrl(profile.id, asset)}") format('woff2'); font-display: swap; }`
+      `@font-face { font-family: '${family}'; src: url("${themeAssetUrl(profile.id, asset)}") format('woff2'); font-display: swap; font-weight: 100 900; }`
     )
   }
   return { stylesheet: fontFaces.join('\n'), imageUrls: [...imageUrls] }
@@ -666,7 +667,9 @@ export function useThemeStore(): {
   }
 
   async function saveProfile(profile: ThemeProfileV2): Promise<ThemeLibrarySnapshot> {
-    return await runSave((revision) => window.api.themes.save(profile, revision))
+    // Vue ref/reactive drafts are Proxies; Electron IPC cannot structured-clone them.
+    const plain = JSON.parse(JSON.stringify(profile)) as ThemeProfileV2
+    return await runSave((revision) => window.api.themes.save(plain, revision))
   }
 
   async function deleteProfile(profileId: string): Promise<ThemeLibrarySnapshot> {

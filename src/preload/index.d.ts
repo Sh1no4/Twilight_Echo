@@ -1430,14 +1430,13 @@ interface WindowAPI {
   opra: OpraAPI
   app: {
     relaunch: () => Promise<void>
-    checkForUpdates: () => Promise<{
-      hasUpdate: boolean
-      currentVersion: string
-      latestVersion?: string
-      releaseUrl?: string
-      releaseNotes?: string
-      error?: string
-    }>
+    checkForUpdates: () => Promise<import('../shared/appUpdate').AppUpdateCheckResult>
+    downloadUpdate: () => Promise<import('../shared/appUpdate').AppUpdateDownloadResult>
+    cancelUpdateDownload: () => Promise<boolean>
+    installUpdate: () => Promise<import('../shared/appUpdate').AppUpdateInstallResult>
+    onUpdateProgress: (
+      cb: (progress: import('../shared/appUpdate').AppUpdateProgress) => void
+    ) => () => void
     /**
      * Reject to report a failed close-time persistence transaction. The main
      * process keeps the window open and offers the user a retry path.

@@ -40,6 +40,11 @@ test('manual lyrics take precedence without changing automatic resolver output f
   assert.equal(manual.translation, null)
   assert.equal(manual.romanizationSource, 'manual')
   assert.equal(
+    projectManagedLyrics(automatic, manualOverride()).original,
+    '',
+    'empty manual original must leave loading state (null → confirmed empty)'
+  )
+  assert.equal(
     projectManagedLyrics(automatic, { ...manualOverride(), source: 'provider' }),
     automatic
   )

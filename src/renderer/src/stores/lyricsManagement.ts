@@ -23,7 +23,12 @@ function entryFor(trackId: string): LyricTrackOverride | undefined {
 async function ensureLoaded(): Promise<void> {
   if (loading.value) return loading.value
   loading.value = (async () => {
-    const result = await window.api.data.loadLyricsManagement()
+    const result = await Promise.race([
+      window.api.data.loadLyricsManagement(),
+      new Promise<null>((resolve) => {
+        window.setTimeout(() => resolve(null), 3_000)
+      })
+    ])
     if (result) {
       document.value = cloneLyricsManagementDocument(result.data)
       revision.value = result.revision

@@ -7,9 +7,11 @@ This file provides guidance to Qoder (qoder.com) when working with code in this 
 Desktop music player: Electron + Vue 3 + TypeScript + C++20 native HiFi engine.
 Deeper architecture: `docs/DEVELOPER_README.md`. Plugin contracts (authoritative): `docs/twilight-echo-plugin-spec.md`, `docs/twilight-echo-plugin-plan.md`. Windows release gate: `docs/windows-release-gate.md`. Sibling Claude notes: `CLAUDE.md` (points here for boundaries).
 
+Supported audio formats: `.mp3 .flac .wav .wave .aac .ogg .wma .m4a .mp4 .aiff .aif .opus .webm .alac .ape .wv .dsf .dff .mqa` (actual playback depends on platform/decoder; Windows most complete).
+
 ## Non-negotiable boundaries
 
-- **pnpm only**: `packageManager` pins `pnpm@11.7.0`. Use `pnpm-lock.yaml`; never `npm install` / `package-lock.json`.
+- **pnpm only**: `packageManager` pins `pnpm@11.7.0`. Use `pnpm-lock.yaml`; never `npm install` / `package-lock.json`. Workspace `allowBuilds` permits only `electron`, `esbuild`, `electron-winstaller` native rebuilds.
 - Install: `corepack enable` then `pnpm install --frozen-lockfile` (applies NCM `patchedDependencies` from `pnpm-workspace.yaml`). Workspace uses `nodeLinker: hoisted`.
 - After install (or when touching deps): `pnpm run verify:install-policy` and `pnpm run verify:ncm-patch`.
   - `discord-rpc`'s optional `register-scheme` is intentionally excluded (`ignoredOptionalDependencies` + `blockExoticSubdeps`) so `electron-builder install-app-deps` does not rebuild an exotic native dep. App uses Electron `setAsDefaultProtocolClient`.
@@ -21,7 +23,7 @@ Deeper architecture: `docs/DEVELOPER_README.md`. Plugin contracts (authoritative
 - Plugin code runs only in `pluginHost` via the versioned `twilight` API — never import Electron, Node, or host internals.
 - Before designing/editing plugin-system behavior, read the plugin spec/plan. Do not silently simplify or rename requirements; if code conflicts with the spec, call it out first.
 - Fonts are preconverted committed `.woff2` only. Do not reintroduce install-time native font converters.
-- No in-app binary updater: UI only links to GitHub Releases. Do not add a generic `publish` URL without a signed-updater design.
+- In-app updates (Windows): download GitHub Release installer → optional SHA-256 verify → launch installer via `shell.openPath` then quit. **Not** `electron-updater` / silent asar replace / generic electron-builder `publish` URL. Prefer Release assets named `*-setup.exe` and publish `SHA256` in release body or `*.sha256` asset when possible.
 
 ## Commands (repo root)
 
@@ -154,7 +156,7 @@ Renderer → preload contextBridge → main IPC → audioEngineManager
 ```
 
 - Orchestration hub: `src/main/audioEngineManager.ts`. DSP bypassed on DSD/passthrough; auto-bypass on timeout/failure.
-- **Never** enqueue full-file BPM/loudness onto the realtime playback RPC path — use `audioAnalysisService` only.
+- **Never** enqueue full-file BPM/loudness onto the realtime playback RPC path — use `audioAnalysisService` only. Its bounded priority queue uses aging (no starvation), per-task deadlines, and higher-priority eviction when full. Cancel during cache commit → precise rollback, no `completed` broadcast.
 - Preload (`src/preload/index.ts`) is the only renderer bridge; renderer must not touch Electron/Node/main.
 - Renderer: `src/renderer/src/`, alias `@renderer`. Shared contracts: `src/shared/` (included in both node and web tsconfigs).
 - Renderer public assets come from `resources/` (`publicDir` in electron-vite).
@@ -178,8 +180,10 @@ Renderer → preload contextBridge → main IPC → audioEngineManager
 - Index with `Map`/`Set`; no hot-path full-library `find`/`map`/`filter`.
 - Throttle playback tick / spectrum / desktop lyrics; lyric seek by binary search.
 - Cross-source identity/search/favorites: reuse `logicalTrackModel` / unified helpers — do not reimplement merge rules.
+- Recent tracks / Dashboard / top-N selectors: use `createUnifiedRecentTrackResolver(localTracks)` for one-pass index reuse; never rebuild the full library index per stat entry.
 - Streaming local search: `components/streaming-page/localStreamingSearch.ts` (page materialization only).
 - Do not dynamic-import hot stores already statically imported by the shell (false chunk split + reverse deps).
+- Vendor chunk splitting (`electron.vite.config.ts`): `vendor-vue`, `vendor-music-metadata`, `vendor-qrcode`. Do not add manual chunks that duplicate these.
 
 ## Env flags
 
@@ -206,6 +210,7 @@ Renderer → preload contextBridge → main IPC → audioEngineManager
 
 - Prettier: `singleQuote`, no semis, `printWidth: 100`, `trailingComma: none`, `endOfLine: auto` (`.prettierrc.yaml`)
 - ESLint flat config; Vue SFCs require `<script lang="ts">` (`vue/block-lang`)
+- Unused vars/args: prefix with `_` (e.g. `_event`, `_index`) — enforced by `@typescript-eslint/no-unused-vars` with `argsIgnorePattern: '^_'`
 - TS strict; `.ts` import extensions allowed (`allowImportingTsExtensions`)
 - Renderer imports: `@renderer/*`, not deep relatives
 - Do not add comments unless the task asks for them

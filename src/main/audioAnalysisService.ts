@@ -3,7 +3,8 @@ import {
   type AudioAnalysisWorkerMessage,
   type AudioAnalysisWorkerRequest
 } from '../shared/audioAnalysisContract.ts'
-import { loadNativeBinding, type NativeAudioBinding } from './audioEngineManager.ts'
+import { loadNativeBinding } from './audio/nativeBinding.ts'
+import type { NativeAudioBinding } from './audio/audioEngineTypes.ts'
 
 type ParentPort = {
   postMessage: (message: AudioAnalysisWorkerMessage) => void

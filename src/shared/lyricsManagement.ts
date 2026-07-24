@@ -61,10 +61,12 @@ export function projectManagedLyrics(
   override: LyricTrackOverride | undefined
 ): ManagedLyricsProjection {
   if (override?.source !== 'manual') return automatic
+  // null means "unset" on disk; for manual presentation treat as confirmed empty
+  // so the now-playing pane shows 暂无歌词 instead of 加载歌词… forever.
   return {
-    original: override.original,
-    translation: override.translation,
-    romanization: override.romanization,
+    original: override.original ?? '',
+    translation: override.translation ?? null,
+    romanization: override.romanization ?? null,
     originalSource: 'manual',
     translationSource: override.translation ? 'manual' : null,
     romanizationSource: override.romanization ? 'manual' : null

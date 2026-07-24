@@ -7,6 +7,22 @@ import type { DesktopLyricsTrackPayload } from '../../preload/types'
 import { normalizeDesktopLyrics, writeAppSettings } from '../core/settings'
 import { assertTrustedIpcSender, shouldAcceptIpcEvent } from '../security/electronSecurity.ts'
 
+let moveSaveTimer: NodeJS.Timeout | null = null
+
+function clearMoveSaveTimer(): void {
+  if (!moveSaveTimer) return
+  clearTimeout(moveSaveTimer)
+  moveSaveTimer = null
+}
+
+function persistDesktopLyricsPosition(win: BrowserWindow): void {
+  if (win.isDestroyed()) return
+  const [px, py] = win.getPosition()
+  runtime.appSettings.desktopLyrics.windowX = px
+  runtime.appSettings.desktopLyrics.windowY = py
+  writeAppSettings(runtime.appSettings)
+}
+
 function sendDesktopLyricsSnapshot(): void {
   if (!runtime.desktopLyricsWindow || runtime.desktopLyricsWindow.isDestroyed()) return
 
@@ -60,6 +76,7 @@ function createDesktopLyricsWindow(): void {
   })
 
   runtime.desktopLyricsWindow.on('closed', () => {
+    clearMoveSaveTimer()
     runtime.desktopLyricsWindow = null
   })
 
@@ -68,22 +85,16 @@ function createDesktopLyricsWindow(): void {
     event.preventDefault()
   })
 
-  // Save position on move
-  let moveSaveTimer: NodeJS.Timeout | null = null
   runtime.desktopLyricsWindow.on('move', () => {
     if (moveSaveTimer) clearTimeout(moveSaveTimer)
     moveSaveTimer = setTimeout(() => {
+      moveSaveTimer = null
       if (!runtime.desktopLyricsWindow || runtime.desktopLyricsWindow.isDestroyed()) return
-      const [px, py] = runtime.desktopLyricsWindow.getPosition()
-      runtime.appSettings.desktopLyrics.windowX = px
-      runtime.appSettings.desktopLyrics.windowY = py
-      writeAppSettings(runtime.appSettings)
+      persistDesktopLyricsPosition(runtime.desktopLyricsWindow)
     }, 500)
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    // In dev mode, we can't load a separate HTML file from the dev server easily
-    // So load the file directly
     runtime.desktopLyricsWindow.loadFile(join(__dirname, '../../resources/desktop-lyrics.html'))
   } else {
     runtime.desktopLyricsWindow.loadFile(join(__dirname, '../../resources/desktop-lyrics.html'))
@@ -99,10 +110,20 @@ export function showDesktopLyrics(): void {
   }
 }
 
-export function hideDesktopLyrics(): void {
-  if (runtime.desktopLyricsWindow && !runtime.desktopLyricsWindow.isDestroyed()) {
-    runtime.desktopLyricsWindow.hide()
+export function destroyDesktopLyrics(): void {
+  const win = runtime.desktopLyricsWindow
+  clearMoveSaveTimer()
+  if (!win || win.isDestroyed()) {
+    runtime.desktopLyricsWindow = null
+    return
   }
+  persistDesktopLyricsPosition(win)
+  runtime.desktopLyricsWindow = null
+  win.destroy()
+}
+
+export function hideDesktopLyrics(): void {
+  destroyDesktopLyrics()
 }
 
 function toggleDesktopLyrics(): boolean {

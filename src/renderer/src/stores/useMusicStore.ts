@@ -286,6 +286,7 @@ export function useMusicStore(): {
   syncFolders: (folders: string[]) => void
   flushRebuild: () => void
   getRebuildCount: () => number
+  getTrackById: (trackId: string) => Track | undefined
 } {
   function setTracks(nextTracks: Track[], options: { rebuildIndexes?: boolean } = {}): void {
     tracks.value = nextTracks
@@ -1957,6 +1958,7 @@ export function useMusicStore(): {
     },
     flushRebuild,
     getRebuildCount: () => rebuildCount,
+    getTrackById: (trackId: string) => trackById.get(trackId),
     scheduleSaveLibrary,
     flushSaveLibrary,
     handleLibraryChange

@@ -41,19 +41,32 @@ test('development packages use maximum compression without a missing NSIS includ
   assert.doesNotMatch(builder, /^\s+include:\s*build\/installer\.nsh\s*$/m)
 })
 
-test('update checks only direct users to the project GitHub releases page', () => {
-  const updater = read('src/main/ipc/data.ts')
+test('update checks download GitHub release installers without electron-updater', () => {
+  const projectUrls = read('src/shared/projectUrls.ts')
+  const updater = read('src/main/ipc/appIpc.ts')
+  const service = read('src/main/app/appUpdateService.ts')
+  assert.match(projectUrls, /export const GITHUB_OWNER = 'asenyarzc-cpu'/)
+  assert.match(projectUrls, /export const GITHUB_REPO = 'Twilight_Echo'/)
   assert.match(
-    updater,
-    /https:\/\/api\.github\.com\/repos\/asenyarzc-cpu\/Twilight_Echo\/releases\/latest/
+    projectUrls,
+    /GITHUB_API_LATEST_RELEASE_URL = `https:\/\/api\.github\.com\/repos\/\$\{GITHUB_OWNER\}\/\$\{GITHUB_REPO\}\/releases\/latest`/
   )
+  assert.match(projectUrls, /RELEASES_URL = `\$\{GITHUB_URL\}\/releases`/)
+  assert.match(updater, /checkForAppUpdate/)
+  assert.match(updater, /downloadAppUpdate/)
+  assert.match(updater, /installDownloadedAppUpdate/)
   assert.doesNotMatch(updater, /autoUpdater/)
-  const settings = read('src/renderer/src/components/SettingsPage.vue')
-  assert.match(
-    settings,
-    /const RELEASES_URL = 'https:\/\/github\.com\/asenyarzc-cpu\/Twilight_Echo\/releases'/
-  )
-  assert.match(settings, /前往下载/)
+  assert.doesNotMatch(service, /electron-updater/)
+  assert.doesNotMatch(service, /autoUpdater/)
+  assert.match(service, /shell\.openPath/)
+  assert.match(service, /createHash\('sha256'\)/)
+  const settingsTypes = read('src/renderer/src/components/settings-page/types.ts')
+  const about = read('src/renderer/src/components/settings-page/AboutSettingsSection.vue')
+  assert.match(settingsTypes, /from '\.\.\/\.\.\/\.\.\/\.\.\/shared\/projectUrls\.ts'/)
+  assert.match(settingsTypes, /RELEASES_URL/)
+  assert.match(about, /下载更新/)
+  assert.match(about, /安装并退出/)
+  assert.match(about, /点击检查更新/)
 })
 
 test('release docs keep non-Windows audio backends explicitly unverified', () => {

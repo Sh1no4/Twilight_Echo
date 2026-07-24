@@ -365,7 +365,7 @@ export interface StructuredPluginThemeV2 {
 export type StructuredPluginTheme = StructuredPluginThemeV1 | StructuredPluginThemeV2
 
 const lightFont =
-  "'Inter', 'Plus Jakarta Sans', 'MiSans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+  "'Inter', 'Plus Jakarta Sans', 'MiSans Full', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
 
 export interface ThemePaletteEntry {
   id: string
@@ -391,31 +391,33 @@ export const BUILT_IN_THEME_FONTS: readonly BuiltInThemeFont[] = Object.freeze([
     id: 'inter',
     label: 'Inter',
     category: 'sans',
-    value: "'Inter', 'MiSans', system-ui, sans-serif"
+    value: "'Inter', 'MiSans Full', 'MiSans', 'Microsoft YaHei UI', system-ui, sans-serif"
   },
   {
     id: 'jakarta',
     label: 'Plus Jakarta Sans',
     category: 'sans',
-    value: "'Plus Jakarta Sans', 'MiSans', system-ui, sans-serif"
+    value:
+      "'Plus Jakarta Sans', 'MiSans Full', 'MiSans', 'Microsoft YaHei UI', system-ui, sans-serif"
   },
   {
     id: 'lora',
     label: 'Lora Serif',
     category: 'serif',
-    value: "'Lora', 'MiSans', Georgia, serif"
+    value: "'Lora', 'MiSans Full', 'MiSans', 'Microsoft YaHei UI', Georgia, serif"
   },
   {
     id: 'jetbrains',
     label: 'JetBrains Mono',
     category: 'mono',
-    value: "'JetBrains Mono', 'MiSans', Consolas, monospace"
+    value: "'JetBrains Mono', 'MiSans Full', 'MiSans', Consolas, monospace"
   },
   {
     id: 'space',
     label: 'Space Grotesk',
     category: 'display',
-    value: "'Space Grotesk', 'MiSans', system-ui, sans-serif"
+    value:
+      "'Space Grotesk', 'MiSans Full', 'MiSans', 'Microsoft YaHei UI', system-ui, sans-serif"
   }
 ])
 
@@ -940,7 +942,7 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'colors',
     'settings',
     'color',
-    '#f4f4f7',
+    '#f5f6f8',
     '#17181a'
   ),
   token(
@@ -1043,7 +1045,7 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'colors',
     'settings',
     'color',
-    '#111827',
+    '#1a1a1a',
     '#f7f7f2'
   ),
   token(
@@ -1053,7 +1055,7 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'colors',
     'settings',
     'color',
-    '#6b7280',
+    '#8a8f98',
     '#9b9b9b'
   ),
   token(
@@ -1073,7 +1075,7 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'materials',
     'settings',
     'color',
-    'rgba(229, 231, 235, 0.78)',
+    'rgba(15, 23, 42, 0.06)',
     'rgba(255, 255, 255, 0.1)'
   ),
   token(
@@ -1083,8 +1085,8 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'materials',
     'settings',
     'color',
-    '#ffffff',
-    'rgba(255, 255, 255, 0.09)'
+    'transparent',
+    'transparent'
   ),
   token(
     'settings.navigation.text',
@@ -1093,7 +1095,7 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'colors',
     'settings-navigation',
     'color',
-    '#4b5563',
+    '#5c6370',
     '#d8d8d8'
   ),
   token(
@@ -1103,7 +1105,7 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'materials',
     'settings-navigation',
     'color',
-    '#ffffff',
+    'rgba(15, 23, 42, 0.04)',
     'rgba(255, 255, 255, 0.065)'
   ),
   token(
@@ -1114,7 +1116,7 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'settings-navigation',
     'color',
     '#ffffff',
-    'rgba(245, 158, 11, 0.16)'
+    'rgba(255, 255, 255, 0.1)'
   ),
   token(
     'navigation.surface',

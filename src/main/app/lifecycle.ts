@@ -19,7 +19,11 @@ import {
   destroyTray,
   applyRuntimeSettings
 } from '../integrations/shortcutsTray'
-import { showDesktopLyrics, setupDesktopLyricsIpc } from '../integrations/desktopLyrics'
+import {
+  destroyDesktopLyrics,
+  showDesktopLyrics,
+  setupDesktopLyricsIpc
+} from '../integrations/desktopLyrics'
 import { restoreMainWindowFromMiniPlayer, setupMiniPlayerIpc } from '../integrations/miniPlayer'
 import { setupNcmIpc, setupNcmApi } from '../ncm/api'
 import { setupAudioEngineIpc } from '../audio/engineIpc'
@@ -326,10 +330,12 @@ export function startApp(): void {
 
     app.on('before-quit', () => {
       runtime.forceQuit = true
+      destroyDesktopLyrics()
       void runtime.pluginManager?.broadcastEvent('app:before-quit', null)
     })
 
     app.on('will-quit', () => {
+      destroyDesktopLyrics()
       unregisterPlayerShortcuts()
       destroyTray()
       void runtime.pluginManager?.destroy()

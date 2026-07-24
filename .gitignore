@@ -131,3 +131,7 @@ resources/font/_originals/
 
 # Optional personal notes that should not ship
 docs/superpowers/plans/2026-07-11-native-queue-memory-restore.md
+
+# Optional full MiSans faces (multi-MB; keep local)
+resources/font/misans/full/*.woff2
+

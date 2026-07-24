@@ -175,7 +175,10 @@ export function useAppNavigation() {
     showRadioPodcastPage.value = false
   }
 
-  function openLoginPage(initialProviderId: string | null = null): void {
+  function openLoginPage(
+    initialProviderId: string | null = null,
+    options?: { profile?: boolean }
+  ): void {
     menuOpen.value = false
     showPlayingPage.value = false
     showStreamingPage.value = false
@@ -184,13 +187,14 @@ export function useAppNavigation() {
     showThemeStudioPage.value = false
     showEqualizerPage.value = false
     activePluginPage.value = null
-    loginPageMode.value = 'login'
+    loginPageMode.value = options?.profile ? 'profile' : 'login'
     loginInitialProviderId.value = initialProviderId
     showLoginPage.value = true
   }
 
   function closeLoginPage(): void {
     showLoginPage.value = false
+    loginPageMode.value = 'login'
     loginInitialProviderId.value = null
     showStreamingPage.value = true
   }

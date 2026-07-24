@@ -1,1969 +1,126 @@
 import { EventEmitter } from 'events'
-import { existsSync, readFileSync } from 'fs'
-import { createRequire } from 'module'
+import { existsSync } from 'fs'
 import { join } from 'path'
 import { AudioEngineServiceBinding, canUseAudioEngineService } from './audioEngineServiceClient.ts'
 import { isBpmAnalysisResult, type BpmAnalysisResult } from './bpm/bpmCache.ts'
 import { isLoudnessAnalysisResult, type LoudnessAnalysisResult } from './audio/loudnessCache.ts'
 import type { LoudnessAnalysisManager } from './audio/loudnessAnalysisManager.ts'
 import {
-  applyStereoImageToGraph,
-  createLegacyDspGraph,
-  extractStereoImageFromGraph,
   graphHasEnabledProcessing,
-  mergeDspOutputStage,
-  normalizeDspScenes,
-  resolveDspScene,
-  type DspGraphConfig,
   type DspGraphStatus,
   type DspOutputStageConfig,
   type DspScene,
-  type DspSceneContext,
   type DspSceneState,
   type DspStereoImageConfig,
   type Vst3ScanDescriptor
 } from '../shared/dspGraph.ts'
-import type { DspStatePayload } from '../shared/audioServiceContract.ts'
+import type {
+  AudioEngineConfig,
+  AudioEngineManagerDependencies,
+  AudioEnginePlayResult,
+  AudioEngineQueueItem,
+  AudioEngineScheduler,
+  AudioEngineServiceNativeBinding,
+  AudioOutputId,
+  AudioOutputOption,
+  AudioOutputState,
+  AudioProcessingSettings,
+  ConvolverInfo,
+  EqMode,
+  EqualizerBand,
+  LoudnormStatus,
+  NativeAudioBinding,
+  NativeAudioMetadata,
+  NativeBpmAnalysisOptions,
+  NativeLoudnessAnalysisOptions,
+  OutputConfig,
+  OutputConfigApplyStatus,
+  PlaybackInfo,
+  PlayMode,
+  VisualizationData,
+  VisualizationOptions,
+  VolumeNormalizationMode
+} from './audio/audioEngineTypes.ts'
+import {
+  DEFAULT_AUDIO_ENGINE_SCHEDULER,
+  METADATA_CACHE_TTL_MS,
+  MAX_METADATA_CACHE_ENTRIES,
+  clampNumber,
+  createDefaultPlaybackInfo,
+  parseNativeJson,
+} from './audio/audioEngineHelpers.ts'
+import {
+  getNativeAddonCandidates,
+  loadNativeBinding,
+  rendererFallbackAllowed
+} from './audio/nativeBinding.ts'
+import { DspOrchestrator } from './audio/dspOrchestrator.ts'
+import { OutputRouter } from './audio/outputRouter.ts'
+import { PlaybackController } from './audio/playbackController.ts'
 
-const require = createRequire(import.meta.url)
-
-type ElectronModule = typeof import('electron')
-
-function resolveElectronApp(): ElectronModule['app'] | null {
-  try {
-    const electronModule = require('electron') as ElectronModule | string
-    if (typeof electronModule === 'object' && electronModule && 'app' in electronModule) {
-      return electronModule.app
-    }
-  } catch {
-    // Node-side tests can import this module without an Electron runtime.
-  }
-  return null
-}
-
-const electronApp = resolveElectronApp()
-
-export type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
-export type PlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle'
-export type EqMode = 'graphic' | 'parametric'
-export type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
-export type ChannelRoutingMode =
-  | 'auto'
-  | 'stereo'
-  | 'stereo-to-5.1'
-  | 'stereo-to-7.1'
-  | 'mono-to-stereo'
-  | 'mono-to-multichannel'
-export type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native'
-export type SacdProgramMode = 'auto' | 'stereo' | 'multichannel'
-export type EqualizerFilterType =
-  | 'peak'
-  | 'lowShelf'
-  | 'highShelf'
-  | 'bandPass'
-  | 'lowPass'
-  | 'highPass'
-  | 'allPass'
-  | 'notch'
-
-export interface EqualizerBand {
-  frequency: number
-  gain: number
-  q: number
-  filterType: EqualizerFilterType
-  enabled?: boolean
-  channelMask?: number
-}
-
-export interface AudioProcessingSettings {
-  dspEnabled: boolean
-  clipGuard: boolean
-  fftEnabled: boolean
-  fftResolution: number
-  highResolution: boolean
-  dsdToPcm: boolean
-  dsdOutputMode: DsdOutputMode
-  sacdProgramMode: SacdProgramMode
-  eqEnabled: boolean
-  eqMode: EqMode
-  eqPreamp: number
-  eqBands: EqualizerBand[]
-  volumeNormalization: VolumeNormalizationMode
-  replayGainPreamp: number
-  replayGainFallback: number
-  replayGainClip: boolean
-  convolverEnabled: boolean
-  convolverIrPath: string
-  crossfeedEnabled: boolean
-  crossfeedStrength: number
-  crossfeedDelayMs: number
-  crossfeedCutoffHz: number
-  gapless: boolean
-  crossfadeSeconds: number
-}
-
-export interface AudioOutputOption {
-  id: AudioOutputId
-  label: string
-  description: string
-  platform: NodeJS.Platform
-  supportsExclusive: boolean
-}
-
-export interface AudioDeviceOption {
-  id: string
-  label: string
-  isDefault: boolean
-  backend?: string
-  name?: string
-  channels?: number
-  sampleRates?: number[]
-  driverName?: string
-  driverVersion?: number
-  bitDepths?: number[]
-  latencyFrames?: number
-  minBufferSize?: number
-  maxBufferSize?: number
-  granularity?: number
-  preferredBufferSize?: number
-  capabilityVersion?: number
-  supportsExclusive?: boolean
-  supportsHogMode?: boolean
-  supportsDirectHw?: boolean
-  supportsDop?: boolean
-  supportsNativeDsd?: boolean
-  dopSupportState?: AudioCapabilitySupportState
-  nativeDsdSupportState?: AudioCapabilitySupportState
-  supportedDsdRates?: number[]
-  nativeDsdSampleRates?: number[]
-  nativeDsdSampleFormats?: string[]
-  dopCarrierSampleRates?: number[]
-  dopCarrierFormats?: string[]
-  pathKind?: string
-  capabilityReason?: string
-}
-
-export type AudioCapabilitySupportState = 'verified' | 'runtime-probed' | 'unsupported' | 'unknown'
-
-export interface OutputConfig {
-  preferredBufferSize: number
-  routingMode: ChannelRoutingMode
-  wasapiExclusivePushMode?: boolean
-  upmixCenterGain?: number
-  upmixLfeGain?: number
-  upmixLfeLowpassHz?: number
-  upmixSurroundGain?: number
-  upmixSideGain?: number
-  upmixSurroundDelayMs?: number
-}
-
-export interface OutputConfigApplyStatus {
-  requestedRevision: number
-  appliedRevision: number
-  failedRevision: number
-  state: 'idle' | 'pending' | 'applied' | 'failed'
-  error: string
-  generation: number
-}
-
-export interface LatencyInfo {
-  bufferLatencyMs: number
-  outputLatencyMs: number
-  totalLatencyMs: number
-}
-
-export interface OutputDiagnostics {
-  sessionUnderrunCount: number
-  sessionBufferDropCount: number
-  sessionRecoveryCount: number
-  lifetimeUnderrunCount: number
-  lifetimeBufferDropCount: number
-  lifetimeRecoveryCount: number
-  driverRestartCount: number
-  deviceLostCount: number
-  lastError: string
-}
-
-export interface AudioOutputState {
-  output: AudioOutputId
-  device: string
-  exclusiveMode: boolean
-  exclusiveAvailable: boolean
-  outputOptions: AudioOutputOption[]
-  deviceOptions: AudioDeviceOption[]
-}
-
-export interface AudioEngineConfig {
-  exclusiveMode: boolean
-  audioOutput?: AudioOutputId
-  audioDevice?: string
-  audioOutputConfig?: Partial<OutputConfig>
-  audioProcessing?: Partial<AudioProcessingSettings>
-  dspScenes?: DspScene[]
-  dspPinnedSceneId?: string | null
-}
-
-export type { DspSceneState } from '../shared/dspGraph.ts'
-
-export interface AudioEngineScheduler {
-  now: () => number
-  setInterval: (callback: () => void, delayMs: number) => NodeJS.Timeout
-  clearInterval: (handle: NodeJS.Timeout) => void
-  setImmediate: (callback: () => void) => void
-}
-
-export interface AudioEngineQueueItem {
-  id: string
-  source: string
-  title?: string
-  artist?: string
-  album?: string
-  duration?: number
-  codec?: string
-  sampleRate?: number
-  bitrate?: number
-  bitDepth?: number
-  /** Offline EBU R128 measurement for loudnorm (host-injected). */
-  measuredIntegratedLufs?: number
-  measuredTruePeakDb?: number
-  /** Library / host-injected ReplayGain + R128 tags for track/album cold start. */
-  replayGainTrackGainDb?: number
-  replayGainAlbumGainDb?: number
-  replayGainTrackPeak?: number
-  replayGainAlbumPeak?: number
-  r128TrackGainDb?: number
-  r128AlbumGainDb?: number
-  cueRange?: import('../shared/cue.ts').CueRange
-}
-
-export type PlaybackOutputInfoMirror = Pick<
+export type {
+  AudioCapabilitySupportState,
+  AudioDeviceOption,
+  AudioEngineConfig,
+  AudioEngineManagerDependencies,
+  AudioEnginePlayResult,
+  AudioEngineQueueItem,
+  AudioEngineScheduler,
+  AudioEngineServiceNativeBinding,
+  AudioOutputId,
+  AudioOutputOption,
+  AudioOutputState,
+  AudioProcessingSettings,
+  ConvolverInfo,
+  EqualizerBand,
+  EqualizerFilterType,
+  EqMode,
+  LatencyInfo,
+  LoudnormStatus,
+  NativeAudioBinding,
+  NativeAudioMetadata,
+  NativeBpmAnalysisOptions,
+  NativeLoudnessAnalysisOptions,
+  OutputConfig,
+  OutputConfigApplyStatus,
+  OutputDiagnostics,
   OutputInfo,
-  | 'actualBackend'
-  | 'actualOutputFormat'
-  | 'actualSampleRate'
-  | 'actualBitDepth'
-  | 'actualChannels'
-  | 'bufferSizeFrames'
-  | 'latencyFrames'
-  | 'latencyMs'
-  | 'latencyInfo'
-  | 'channelRoutingMode'
-  | 'supportsOutputPerfect'
-  | 'sourceExact'
-  | 'diagnostics'
-  | 'deviceRecovered'
-  | 'recoveryCount'
-  | 'outputSampleRate'
-  | 'outputBitDepth'
-  | 'outputPerfect'
-  | 'pcmPassthrough'
-  | 'perfectReason'
-  | 'perfectReasonCode'
-  | 'isDsd'
-  | 'dsdMode'
-  | 'dsdRate'
-> &
-  Partial<Pick<OutputInfo, 'accessMode' | 'devicePathKind' | 'capabilityReason'>>
-
-export interface PlaybackInfo extends PlaybackOutputInfoMirror {
-  state: 'stopped' | 'playing' | 'paused'
-  position: number
-  duration: number
-  volume: number
-  /** Application-layer playback rate; 1 = realtime. */
-  playbackRate?: number
-  requestedConfigRevision: number
-  appliedConfigRevision: number
-  queueIndex: number
-  playMode: PlayMode
-  source: string
-  codec: string
-  nativePlaybackActive: boolean
-  bitrate: number
-  sourceSampleRate: number
-  sourceBitDepth: number
-  decodedSampleRate: number
-  decodedBitDepth: number
-  decodedChannels: number
-  decodedSampleFormat: string
-  outputBackend: string
-  outputDevice: string
-  outputInfo: OutputInfo
-  actualBackend: string
-  driverName: string
-  driverVersion: number
-  actualOutputFormat: string
-  actualSampleRate: number
-  actualBitDepth: number
-  actualChannels: number
-  bufferSizeFrames: number
-  latencyFrames: number
-  latencyMs: number
-  latencyInfo: LatencyInfo
-  channelRoutingMode: string
-  supportsOutputPerfect: boolean
-  sourceExact: boolean
-  diagnostics: OutputDiagnostics
-  deviceRecovered: boolean
-  recoveryCount: number
-  outputSampleRate: number
-  outputBitDepth: number
-  channelCount: number
-  outputPerfect: boolean
-  pcmPassthrough: boolean
-  dspActive: boolean
-  replayGainActive: boolean
-  eqActive: boolean
-  convolverActive: boolean
-  crossfeedActive: boolean
-  crossfadeActive: boolean
-  fftActive: boolean
-  irResampled: boolean
-  replayGainDb: number
-  crossfeedStrength: number
-  crossfadeSeconds: number
-  convolverLatencyFrames: number
-  partitionSize: number
-  channelMappingMode: string
-  perfectReason: string
-  perfectReasonCode: string
-  isDsd: boolean
-  dsdMode: string
-  dsdRate: number
-  gaplessActive: boolean
-  preloadReady: boolean
-  /** Empty when unblocked; else disabled | dsd_path | typed_passthrough | crossfade | format_mismatch */
-  gaplessBlockedReason: string
-  upcomingTrack: AudioEngineQueueItem | null
-  /** Live ICY StreamTitle (radio). Empty when unavailable. */
-  streamTitle?: string
-}
-
-export interface OutputInfo {
-  exclusive: boolean
-  supportsOutputPerfect: boolean
-  sourceExact: boolean
-  outputPerfect: boolean
-  pcmPassthrough: boolean
-  resampled: boolean
-  perfectReason: string
-  outputSampleRate: number
-  outputBitDepth: number
-  backend: string
-  actualBackend: string
-  deviceName: string
-  actualDeviceName: string
-  driverName: string
-  actualDriverName: string
-  driverVersion: number
-  actualDriverVersion: number
-  actualOutputFormat: string
-  actualSampleRate: number
-  actualBitDepth: number
-  actualChannels: number
-  accessMode: string
-  devicePathKind: string
-  perfectReasonCode: string
-  capabilityReason: string
-  driverDopCapable: boolean
-  driverNativeDsdCapable: boolean
-  driverDopCarrierSampleRates: number[]
-  driverDopCarrierFormats: string[]
-  driverNativeDsdSampleRates: number[]
-  nativeDsdRuntimeState: string
-  nativeDsdRequestedRate: number
-  nativeDsdActualRate: number
-  nativeDsdChannels: number
-  nativeDsdExplicitlyCapable: boolean
-  nativeDsdAdvertisedSampleRates: number[]
-  nativeDsdRuntimeReason: string
-  bufferSizeFrames: number
-  latencyFrames: number
-  latencyMs: number
-  latencyInfo: LatencyInfo
-  channelRoutingMode: string
-  diagnostics: OutputDiagnostics
-  deviceRecovered: boolean
-  recoveryCount: number
-  nativeDsp?: { plugins: unknown[]; graph?: DspGraphStatus }
-  isDsd: boolean
-  dsdMode: string
-  dsdRate: number
-}
-
-export interface AudioEnginePlayResult {
-  nativeStarted: boolean
-  fallbackReason: string
-}
-
-export interface VisualizationOptions {
-  spectrumPoints?: number
-  waveformPoints?: number
-  spectrogramFrames?: number
-  oscilloscopePoints?: number
-  visualizerBarCount?: number
-}
-
-export interface VisualizationData {
-  spectrum: number[]
-  visualizerBars?: number[]
-  waveform: number[]
-  oscilloscope: number[]
-  peakDb: number
-  rmsDb: number
-  lufsMomentary: number | null
-  spectrogram: number[][]
-  sampleRate: number
-  maxFrequency: number
-  active: boolean
-  tapStatus: VisualizationTapStatus
-  reason: string
-}
-
-export interface NativeBpmAnalysisOptions {
-  maxAnalysisSeconds?: number
-  referenceBpm?: number
-}
-
-export interface NativeLoudnessAnalysisOptions {
-  maxAnalysisSeconds?: number
-}
-
-export type LoudnormStatus = 'idle' | 'measuring' | 'cached' | 'fallback' | 'unavailable'
-
-export type VisualizationTapStatus =
-  | 'active'
-  | 'stopped'
-  | 'disabled'
-  | 'no-samples'
-  | 'native-unavailable'
-  | 'synthetic-fallback'
-
-export interface NativeAudioBinding {
-  Play: (source: string, startTime?: number) => void
-  Pause: () => void
-  Stop: () => void
-  Seek: (time: number) => void
-  SetVolume: (volume: number) => void
-  SetPlaybackRate: (rate: number) => void
-  /** A-B loop; end <= start clears. Optional on older native bindings. */
-  SetLoopRange?: (startSeconds: number, endSeconds: number) => void
-  SetOutputDevice: (device: string) => void
-  SetOutputBackend: (backend: string) => void
-  SetOutputConfig?: (json: string) => void
-  LoadQueue?: (queueJson: string, startIndex: number) => void
-  Next?: () => void
-  Previous?: () => void
-  SetPlayMode?: (mode: 'sequential' | 'repeat') => void
-  SetDspConfig?: (json: string) => void
-  SetDspGraph?: (json: string) => void
-  ApplyDspState: (revision: number, json: string) => void
-  GetDspGraphStatus: () => string | DspGraphStatus
-  LoadImpulseResponse?: (path: string) => void
-  UnloadImpulseResponse?: () => void
-  GetConvolverInfo?: () => string | ConvolverInfo
-  SetEqBands?: (json: string) => void
-  SetEqPreset?: (json: string) => void
-  SetCrossfeedStrength?: (strength: number) => void
-  SetReplayGainMode?: (
-    mode: VolumeNormalizationMode,
-    preamp: number,
-    fallback: number,
-    clip: boolean
-  ) => void
-  SetDspPluginChain?: (json: string) => void
-  GetDspPluginStatus?: () => string | { plugins: unknown[] }
-  ScanVst3Module?: (modulePath: string) => string | Vst3ScanDescriptor
-  GetMetadata?: (source: string) => string | NativeAudioMetadata
-  GetPlaybackInfo?: () => string | PlaybackInfo
-  GetUpcomingTrack?: () => string | AudioEngineQueueItem | null
-  GetSpectrumData?: (points?: number) => number[]
-  GetVisualizationData?: (optionsJson: string) => string | VisualizationData
-  AnalyzeBpm?: (source: string, optionsJson?: string) => string | BpmAnalysisResult
-  AnalyzeLoudness?: (source: string, optionsJson?: string) => string | LoudnessAnalysisResult
-  EnumerateDevices?: () => string | AudioDeviceOption[]
-  EnumerateBackends?: () => string
-  GetEngineCapabilities?: () => string
-  GetLastError?: () => string
-  /** 异步调用原生方法（service 模式下等待 utility 进程返回）。直接 N-API 模式不实现此方法。 */
-  callAsync?: (method: string, args: unknown[]) => Promise<unknown>
-}
-
-export interface AudioEngineServiceNativeBinding extends NativeAudioBinding {
-  getMetadataAsync: (source: string) => Promise<string | NativeAudioMetadata>
-  applyDspState: (revision: number, payload: DspStatePayload) => Promise<DspGraphStatus>
-  applyDspGraph: (json: string) => Promise<DspGraphStatus>
-  getDspGraphStatusAsync: () => Promise<DspGraphStatus>
-  destroy: () => void
-  on: (
-    event: 'crash' | 'error-log' | 'log' | 'ready',
-    listener: (...args: any[]) => void
-  ) => unknown
-}
-
-export interface AudioEngineManagerDependencies {
-  nativeBinding?: NativeAudioBinding | null
-  scheduler?: Partial<AudioEngineScheduler>
-  deviceOptionsProvider?: () => AudioDeviceOption[] | null
-  nativeAddonCandidates?: () => string[]
-  audioServiceEntry?: string
-  audioServiceFactory?: () => AudioEngineServiceNativeBinding
-  dspAssetPathResolver?: (assetId: string) => string | null
-  vst3ModuleResolver?: (
-    catalogId: string,
-    classId: string
-  ) => {
-    modulePath: string | null
-    classId: string
-    reason: string
-  }
-  vst3StateAssetResolver?: (assetId: string) => {
-    path: string | null
-    kind: 'vst3Preset' | 'vst3State' | null
-    reason: string
-  }
-}
-
-export interface ConvolverInfo {
-  loaded: boolean
-  active: boolean
-  bypassed: boolean
-  irResampled: boolean
-  path: string
-  sampleRate: number
-  channels: number
-  lengthFrames: number
-  lengthMs: number
-  partitionSize: number
-  latencyFrames: number
-  overrunCount: number
-  lastProcessMs: number
-  maxProcessMs: number
-  channelMappingMode: string
-  warning: string
-  lastError: string
-}
-
-export interface NativeAudioMetadata {
-  source: string
-  title: string
-  artist: string
-  album: string
-  albumArtist: string
-  composer: string
-  year: string
-  genre: string
-  trackNumber: string
-  discNumber: string
-  comment: string
-  codec: string
-  container: string
-  channelLayout: string
-  sampleRate: number
-  channelCount: number
-  bitDepth: number
-  bitrate: number
-  duration: number
-  playable?: boolean
-  reasonCode?: string
-  isDsd: boolean
-  dsdMode: string
-  dsdRate: number
-  outputModes?: string[]
-  coverMime: string
-  coverDataBase64: string
-  replayGainTrackGain: number | null
-  replayGainAlbumGain: number | null
-  r128TrackGain: number | null
-  r128AlbumGain: number | null
-  error: string
-  isoTracks?: NativeAudioMetadata[]
-}
-
-const AUDIO_OUTPUT_OPTIONS: AudioOutputOption[] = [
-  {
-    id: 'wasapi',
-    label: '系统音频输出',
-    description: '系统原生输出。关闭独占时使用共享模式，开启独占时直接访问设备。',
-    platform: 'win32',
-    supportsExclusive: true
-  },
-  {
-    id: 'asio',
-    label: '专业声卡输出',
-    description: '专业声卡驱动输出；配置声卡开发包后编译启用。',
-    platform: 'win32',
-    supportsExclusive: true
-  },
-  {
-    id: 'coreaudio',
-    label: '苹果系统音频',
-    description: '苹果系统原生音频输出后端。开启独占模式时使用 Hog Mode 绕过系统混音器。',
-    platform: 'darwin',
-    supportsExclusive: true
-  },
-  {
-    id: 'alsa',
-    label: '系统音频输出',
-    description: '系统原生音频输出后端。',
-    platform: 'linux',
-    supportsExclusive: false
-  }
-]
-
-const DEFAULT_EQ_BANDS: EqualizerBand[] = [
-  31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000
-].map((frequency) => ({
-  frequency,
-  gain: 0,
-  q: 1,
-  filterType: 'peak'
-}))
-
-const MAX_PARAMETRIC_EQ_BANDS = 32
-const EQ_PREAMP_MIN_DB = -24
-const EQ_PREAMP_MAX_DB = 24
-const GRAPHIC_EQ_GAIN_MIN_DB = -12
-const GRAPHIC_EQ_GAIN_MAX_DB = 12
-const PARAMETRIC_EQ_GAIN_MIN_DB = -24
-const PARAMETRIC_EQ_GAIN_MAX_DB = 24
-const GRAPHIC_EQ_Q_MIN = 0.25
-const GRAPHIC_EQ_Q_MAX = 8
-const PARAMETRIC_EQ_Q_MIN = 0.1
-const PARAMETRIC_EQ_Q_MAX = 20
-
-export const DEFAULT_AUDIO_PROCESSING: AudioProcessingSettings = {
-  dspEnabled: false,
-  clipGuard: true,
-  fftEnabled: true,
-  fftResolution: 8192,
-  highResolution: true,
-  dsdToPcm: false,
-  dsdOutputMode: 'auto',
-  sacdProgramMode: 'auto',
-  eqEnabled: false,
-  eqMode: 'graphic',
-  eqPreamp: 0,
-  eqBands: DEFAULT_EQ_BANDS,
-  volumeNormalization: 'off',
-  replayGainPreamp: 0,
-  replayGainFallback: 0,
-  replayGainClip: true,
-  convolverEnabled: false,
-  convolverIrPath: '',
-  crossfeedEnabled: false,
-  crossfeedStrength: 0,
-  crossfeedDelayMs: 0.35,
-  crossfeedCutoffHz: 700,
-  gapless: true,
-  crossfadeSeconds: 0
-}
-
-const DEFAULT_OUTPUT_CONFIG: OutputConfig = {
-  preferredBufferSize: 0,
-  routingMode: 'auto',
-  wasapiExclusivePushMode: false,
-  upmixCenterGain: 0.7071,
-  upmixLfeGain: 0.5,
-  upmixLfeLowpassHz: 120,
-  upmixSurroundGain: 0.5,
-  upmixSideGain: 0.3,
-  upmixSurroundDelayMs: 0
-}
-const PLAYBACK_INFO_CACHE_TTL_MS = 200
-const VISUALIZATION_CACHE_TTL_MS = 24
-const AUDIO_DEVICE_OPTIONS_CACHE_TTL_MS = 1000
-const AUDIO_DEVICE_OPTIONS_HOTPLUG_POLL_MS = 5000
-/** Faster poll while following the OS default so default-speaker switches are noticed promptly. */
-const AUDIO_DEVICE_OPTIONS_DEFAULT_FOLLOW_POLL_MS = 1000
-const NATIVE_DSP_PLUGIN_STATUS_CACHE_TTL_MS = 200
-const CONVOLVER_INFO_CACHE_TTL_MS = 200
-const UPCOMING_TRACK_CACHE_TTL_MS = 200
-const METADATA_CACHE_TTL_MS = 1000
-const MAX_METADATA_CACHE_ENTRIES = 256
-const PLAYBACK_FANOUT_FIELD_SEPARATOR = '\x1f'
-const PLAYBACK_FANOUT_RECORD_SEPARATOR = '\x1e'
-
-const DEFAULT_AUDIO_ENGINE_SCHEDULER: AudioEngineScheduler = {
-  now: () => Date.now(),
-  setInterval: (callback, delayMs) => setInterval(callback, delayMs),
-  clearInterval: (handle) => clearInterval(handle),
-  setImmediate: (callback) => setImmediate(callback)
-}
-
-function isAudioOutputId(output: unknown): output is AudioOutputId {
-  return output === 'wasapi' || output === 'asio' || output === 'coreaudio' || output === 'alsa'
-}
-
-export function getAudioOutputOptions(
-  platform: NodeJS.Platform = process.platform
-): AudioOutputOption[] {
-  return AUDIO_OUTPUT_OPTIONS.filter((option) => option.platform === platform)
-}
-
-function getDefaultAudioOutput(platform: NodeJS.Platform = process.platform): AudioOutputId {
-  return getAudioOutputOptions(platform)[0]?.id ?? 'alsa'
-}
-
-export function normalizeAudioOutput(
-  output: unknown,
-  platform: NodeJS.Platform = process.platform
-): AudioOutputId {
-  const options = getAudioOutputOptions(platform)
-  if (isAudioOutputId(output) && options.some((option) => option.id === output)) return output
-  return getDefaultAudioOutput(platform)
-}
-
-function fanoutValue(value: unknown): string {
-  if (value === null || value === undefined) return ''
-  const text = String(value)
-  return text
-    .replaceAll(PLAYBACK_FANOUT_FIELD_SEPARATOR, ' ')
-    .replaceAll(PLAYBACK_FANOUT_RECORD_SEPARATOR, ' ')
-}
-
-function fanoutArray(values: unknown[] | undefined): string {
-  if (!Array.isArray(values) || values.length === 0) return ''
-  return values.map(fanoutValue).join(',')
-}
-
-function nativeDspPluginFanoutSignature(nativeDsp: OutputInfo['nativeDsp'] | undefined): string {
-  const plugins = nativeDsp?.plugins
-  if (!Array.isArray(plugins) || plugins.length === 0) return '0'
-  return plugins
-    .map((plugin, index) => {
-      if (!plugin || typeof plugin !== 'object') return `${index}:${fanoutValue(plugin)}`
-      const record = plugin as Record<string, unknown>
-      return [
-        index,
-        record.id,
-        record.name,
-        record.path,
-        record.version,
-        record.loaded,
-        record.enabled,
-        record.active,
-        record.bypassed,
-        record.bypassReason,
-        record.lastError,
-        record.lastProcessTimeUs,
-        record.maxProcessTimeUs,
-        record.timeoutCount,
-        record.overBudgetCount,
-        record.processOverBudgetCount,
-        record.prepareStatus,
-        record.state,
-        record.status
-      ]
-        .map(fanoutValue)
-        .join(':')
-    })
-    .join(PLAYBACK_FANOUT_RECORD_SEPARATOR)
-}
-
-export function createPlaybackInfoFanoutSignature(
-  info: PlaybackInfo,
-  nativePlaybackActive: boolean
-): string {
-  const outputInfo = info.outputInfo
-  const latencyInfo = outputInfo.latencyInfo ?? info.latencyInfo
-  const diagnostics = outputInfo.diagnostics ?? info.diagnostics
-  const upcomingTrack = info.upcomingTrack
-  return [
-    info.state,
-    info.duration,
-    info.volume,
-    info.playbackRate ?? 1,
-    info.requestedConfigRevision,
-    info.appliedConfigRevision,
-    info.queueIndex,
-    info.playMode,
-    info.source,
-    info.codec,
-    info.streamTitle ?? '',
-    nativePlaybackActive,
-    info.bitrate,
-    info.sourceSampleRate,
-    info.sourceBitDepth,
-    info.decodedSampleRate,
-    info.decodedBitDepth,
-    info.decodedChannels,
-    info.decodedSampleFormat,
-    info.outputBackend,
-    info.outputDevice,
-    info.actualBackend,
-    info.driverName,
-    info.driverVersion,
-    info.actualOutputFormat,
-    info.actualSampleRate,
-    info.actualBitDepth,
-    info.actualChannels,
-    info.bufferSizeFrames,
-    info.latencyFrames,
-    info.latencyMs,
-    latencyInfo.bufferLatencyMs,
-    latencyInfo.outputLatencyMs,
-    latencyInfo.totalLatencyMs,
-    info.channelRoutingMode,
-    info.supportsOutputPerfect,
-    info.sourceExact,
-    info.deviceRecovered,
-    info.recoveryCount,
-    info.outputSampleRate,
-    info.outputBitDepth,
-    info.channelCount,
-    info.outputPerfect,
-    info.pcmPassthrough,
-    info.dspActive,
-    info.replayGainActive,
-    info.eqActive,
-    info.convolverActive,
-    info.crossfeedActive,
-    info.crossfadeActive,
-    info.fftActive,
-    info.irResampled,
-    info.replayGainDb,
-    info.crossfeedStrength,
-    info.crossfadeSeconds,
-    info.convolverLatencyFrames,
-    info.partitionSize,
-    info.channelMappingMode,
-    info.perfectReason,
-    info.perfectReasonCode,
-    info.isDsd,
-    info.dsdMode,
-    info.dsdRate,
-    info.gaplessActive,
-    info.preloadReady,
-    info.gaplessBlockedReason,
-    upcomingTrack?.id,
-    upcomingTrack?.source,
-    upcomingTrack?.title,
-    upcomingTrack?.artist,
-    upcomingTrack?.album,
-    upcomingTrack?.duration,
-    upcomingTrack?.codec,
-    upcomingTrack?.sampleRate,
-    upcomingTrack?.bitrate,
-    upcomingTrack?.bitDepth,
-    outputInfo.exclusive,
-    outputInfo.supportsOutputPerfect,
-    outputInfo.sourceExact,
-    outputInfo.outputPerfect,
-    outputInfo.pcmPassthrough,
-    outputInfo.resampled,
-    outputInfo.perfectReason,
-    outputInfo.outputSampleRate,
-    outputInfo.outputBitDepth,
-    outputInfo.backend,
-    outputInfo.actualBackend,
-    outputInfo.deviceName,
-    outputInfo.actualDeviceName,
-    outputInfo.driverName,
-    outputInfo.actualDriverName,
-    outputInfo.driverVersion,
-    outputInfo.actualDriverVersion,
-    outputInfo.actualOutputFormat,
-    outputInfo.actualSampleRate,
-    outputInfo.actualBitDepth,
-    outputInfo.actualChannels,
-    outputInfo.accessMode,
-    outputInfo.devicePathKind,
-    outputInfo.perfectReasonCode,
-    outputInfo.capabilityReason,
-    outputInfo.driverDopCapable,
-    outputInfo.driverNativeDsdCapable,
-    fanoutArray(outputInfo.driverDopCarrierSampleRates),
-    fanoutArray(outputInfo.driverDopCarrierFormats),
-    fanoutArray(outputInfo.driverNativeDsdSampleRates),
-    outputInfo.nativeDsdRuntimeState,
-    outputInfo.nativeDsdRequestedRate,
-    outputInfo.nativeDsdActualRate,
-    outputInfo.nativeDsdChannels,
-    outputInfo.nativeDsdExplicitlyCapable,
-    fanoutArray(outputInfo.nativeDsdAdvertisedSampleRates),
-    outputInfo.nativeDsdRuntimeReason,
-    outputInfo.bufferSizeFrames,
-    outputInfo.latencyFrames,
-    outputInfo.latencyMs,
-    outputInfo.channelRoutingMode,
-    diagnostics.sessionUnderrunCount,
-    diagnostics.sessionBufferDropCount,
-    diagnostics.sessionRecoveryCount,
-    diagnostics.lifetimeUnderrunCount,
-    diagnostics.lifetimeBufferDropCount,
-    diagnostics.lifetimeRecoveryCount,
-    diagnostics.driverRestartCount,
-    diagnostics.deviceLostCount,
-    diagnostics.lastError,
-    outputInfo.deviceRecovered,
-    outputInfo.recoveryCount,
-    nativeDspPluginFanoutSignature(outputInfo.nativeDsp),
-    outputInfo.isDsd,
-    outputInfo.dsdMode,
-    outputInfo.dsdRate
-  ]
-    .map(fanoutValue)
-    .join(PLAYBACK_FANOUT_FIELD_SEPARATOR)
-}
-
-function supportsAudioExclusive(output: AudioOutputId): boolean {
-  return getAudioOutputOptions().some((option) => option.id === output && option.supportsExclusive)
-}
-
-function isDefaultAudioDeviceAlias(device: string): boolean {
-  const normalized = device.trim()
-  const lower = normalized.toLowerCase()
-  return (
-    lower === 'auto' ||
-    lower === 'default' ||
-    lower === 'system default' ||
-    lower === 'system-default' ||
-    normalized === '系统默认'
-  )
-}
-
-function normalizeAudioDevice(device: unknown): string {
-  if (typeof device !== 'string') return 'auto'
-  const normalized = device.trim()
-  if (!normalized || isDefaultAudioDeviceAlias(normalized)) return 'auto'
-  return normalized
-}
-
-function getAlsaPlaybackDeviceCandidates(): string[] {
-  if (process.platform !== 'linux') return []
-  try {
-    const entries = readFileSync('/proc/asound/pcm', 'utf8')
-      .split(/\r?\n/)
-      .map((line) => {
-        const match = line.match(/^(\d+)-(\d+):\s*(.*):\s*playback\b/)
-        if (!match) return null
-        const description = match[3].toLowerCase()
-        const score = description.includes('usb') ? 0 : description.includes('hdmi') ? 2 : 1
-        return {
-          card: Number(match[1]),
-          device: Number(match[2]),
-          score
-        }
-      })
-      .filter((entry): entry is { card: number; device: number; score: number } => Boolean(entry))
-      .sort(
-        (left, right) =>
-          left.score - right.score || left.card - right.card || left.device - right.device
-      )
-
-    const candidates: string[] = []
-    const seen = new Set<string>()
-    for (const entry of entries) {
-      for (const prefix of ['plughw', 'hw']) {
-        const id = `${prefix}:${entry.card},${entry.device}`
-        if (!seen.has(id)) {
-          seen.add(id)
-          candidates.push(id)
-        }
-      }
-    }
-    return candidates
-  } catch {
-    return []
-  }
-}
-
-function looksLikeWasapiEndpointId(device: string): boolean {
-  return /^\{0\.0\.0\./i.test(device.trim())
-}
-
-function deviceOptionBelongsToAsio(option: AudioDeviceOption | undefined): boolean {
-  if (!option) return false
-  return (
-    option.backend === 'asio' ||
-    option.pathKind === 'asio' ||
-    option.id.toLowerCase().startsWith('asio:')
-  )
-}
-
-function deviceCompatibleWithOutput(
-  output: AudioOutputId,
-  device: string,
-  options: AudioDeviceOption[]
-): boolean {
-  if (device === 'auto') return true
-  const option = options.find((entry) => entry.id === device)
-  if (output === 'asio') {
-    if (looksLikeWasapiEndpointId(device)) return false
-    return option ? deviceOptionBelongsToAsio(option) : true
-  }
-  return !deviceOptionBelongsToAsio(option) && !device.toLowerCase().startsWith('asio:')
-}
-
-function normalizeChannelRoutingMode(value: unknown): ChannelRoutingMode {
-  return value === 'stereo' ||
-    value === 'stereo-to-5.1' ||
-    value === 'stereo-to-7.1' ||
-    value === 'mono-to-stereo' ||
-    value === 'mono-to-multichannel'
-    ? value
-    : 'auto'
-}
-
-function normalizeOutputConfig(config?: Partial<OutputConfig>): OutputConfig {
-  return {
-    preferredBufferSize: Number.isFinite(config?.preferredBufferSize)
-      ? clampNumber(Math.trunc(config?.preferredBufferSize ?? 0), 0, 2048, 0)
-      : DEFAULT_OUTPUT_CONFIG.preferredBufferSize,
-    routingMode: normalizeChannelRoutingMode(config?.routingMode),
-    wasapiExclusivePushMode: config?.wasapiExclusivePushMode === true,
-    upmixCenterGain: clampNumber(config?.upmixCenterGain, 0, 2, 0.7071),
-    upmixLfeGain: clampNumber(config?.upmixLfeGain, 0, 2, 0.5),
-    upmixLfeLowpassHz: clampNumber(config?.upmixLfeLowpassHz, 20, 500, 120),
-    upmixSurroundGain: clampNumber(config?.upmixSurroundGain, 0, 2, 0.5),
-    upmixSideGain: clampNumber(config?.upmixSideGain, 0, 2, 0.3),
-    upmixSurroundDelayMs: clampNumber(config?.upmixSurroundDelayMs, 0, 100, 0)
-  }
-}
-
-function outputConfigsEqual(left: OutputConfig, right: OutputConfig): boolean {
-  return (
-    left.preferredBufferSize === right.preferredBufferSize &&
-    left.routingMode === right.routingMode &&
-    left.wasapiExclusivePushMode === right.wasapiExclusivePushMode &&
-    left.upmixCenterGain === right.upmixCenterGain &&
-    left.upmixLfeGain === right.upmixLfeGain &&
-    left.upmixLfeLowpassHz === right.upmixLfeLowpassHz &&
-    left.upmixSurroundGain === right.upmixSurroundGain &&
-    left.upmixSideGain === right.upmixSideGain &&
-    left.upmixSurroundDelayMs === right.upmixSurroundDelayMs
-  )
-}
-
-function eqBandsEqual(left: EqualizerBand[], right: EqualizerBand[]): boolean {
-  if (left.length !== right.length) return false
-  return left.every((band, index) => {
-    const other = right[index]
-    return (
-      band.frequency === other.frequency &&
-      band.gain === other.gain &&
-      band.q === other.q &&
-      band.filterType === other.filterType
-    )
-  })
-}
-
-function audioProcessingSettingsEqual(
-  left: AudioProcessingSettings,
-  right: AudioProcessingSettings
-): boolean {
-  return (
-    left.dspEnabled === right.dspEnabled &&
-    left.clipGuard === right.clipGuard &&
-    left.fftEnabled === right.fftEnabled &&
-    left.fftResolution === right.fftResolution &&
-    left.highResolution === right.highResolution &&
-    left.dsdToPcm === right.dsdToPcm &&
-    left.dsdOutputMode === right.dsdOutputMode &&
-    left.sacdProgramMode === right.sacdProgramMode &&
-    left.eqEnabled === right.eqEnabled &&
-    left.eqMode === right.eqMode &&
-    left.eqPreamp === right.eqPreamp &&
-    eqBandsEqual(left.eqBands, right.eqBands) &&
-    left.volumeNormalization === right.volumeNormalization &&
-    left.replayGainPreamp === right.replayGainPreamp &&
-    left.replayGainFallback === right.replayGainFallback &&
-    left.replayGainClip === right.replayGainClip &&
-    left.convolverEnabled === right.convolverEnabled &&
-    left.convolverIrPath === right.convolverIrPath &&
-    left.crossfeedEnabled === right.crossfeedEnabled &&
-    left.crossfeedStrength === right.crossfeedStrength &&
-    left.crossfeedDelayMs === right.crossfeedDelayMs &&
-    left.crossfeedCutoffHz === right.crossfeedCutoffHz &&
-    left.gapless === right.gapless &&
-    left.crossfadeSeconds === right.crossfadeSeconds
-  )
-}
-
-function normalizeVisualizationOptions(
-  options?: VisualizationOptions
-): Required<VisualizationOptions> {
-  return {
-    spectrumPoints: Math.trunc(clampNumber(options?.spectrumPoints, 8, 4096, 64)),
-    waveformPoints: Math.trunc(clampNumber(options?.waveformPoints, 16, 512, 128)),
-    spectrogramFrames: Math.trunc(clampNumber(options?.spectrogramFrames, 0, 96, 48)),
-    oscilloscopePoints: Math.trunc(clampNumber(options?.oscilloscopePoints, 0, 4096, 1024)),
-    visualizerBarCount: Math.trunc(clampNumber(options?.visualizerBarCount, 0, 256, 0))
-  }
-}
-
-function visualizationMaxFrequency(sampleRate: number): number {
-  if (!Number.isFinite(sampleRate) || sampleRate <= 0) return 20000
-  return Math.max(20, Math.min(20000, Math.trunc(sampleRate) / 2))
-}
-
-const DEFAULT_AUDIO_DEVICE_OPTION: AudioDeviceOption = {
-  id: 'auto',
-  label: '系统默认',
-  isDefault: true,
-  supportsExclusive: false,
-  supportsHogMode: false,
-  supportsDirectHw: false,
-  supportsDop: false,
-  supportsNativeDsd: false,
-  dopSupportState: 'runtime-probed',
-  nativeDsdSupportState: 'unsupported',
-  supportedDsdRates: [],
-  nativeDsdSampleRates: [],
-  nativeDsdSampleFormats: [],
-  dopCarrierSampleRates: [],
-  dopCarrierFormats: [],
-  pathKind: 'default',
-  capabilityReason: ''
-}
-
-function formatAudioDeviceLabel(device: string): string {
-  return device === DEFAULT_AUDIO_DEVICE_OPTION.id ? DEFAULT_AUDIO_DEVICE_OPTION.label : device
-}
-
-function normalizeAudioCapabilitySupportState(value: unknown): AudioCapabilitySupportState | null {
-  return value === 'verified' ||
-    value === 'runtime-probed' ||
-    value === 'unsupported' ||
-    value === 'unknown'
-    ? value
-    : null
-}
-
-function hasNonEmptyArray(value: unknown): boolean {
-  return Array.isArray(value) && value.length > 0
-}
-
-function getDeviceBackend(option: Partial<AudioDeviceOption>): string {
-  const raw = option.backend || (option.id?.startsWith('asio:') ? 'asio' : '')
-  return String(raw || '').toLowerCase()
-}
-
-function getDevicePathKind(option: Partial<AudioDeviceOption>): string {
-  return String(option.pathKind || '').toLowerCase()
-}
-
-function deriveDopSupportState(option: Partial<AudioDeviceOption>): AudioCapabilitySupportState {
-  const explicit = normalizeAudioCapabilitySupportState(option.dopSupportState)
-  if (explicit) return explicit
-  if (
-    option.supportsDop === true ||
-    hasNonEmptyArray(option.dopCarrierSampleRates) ||
-    hasNonEmptyArray(option.dopCarrierFormats)
-  ) {
-    return 'verified'
-  }
-  if (option.supportsDop === false) return 'unsupported'
-
-  const backend = getDeviceBackend(option)
-  const pathKind = getDevicePathKind(option)
-  if (
-    option.isDefault === true ||
-    backend === 'wasapi' ||
-    backend === 'coreaudio' ||
-    pathKind === 'default' ||
-    pathKind === 'endpoint' ||
-    pathKind === 'hal'
-  ) {
-    return 'runtime-probed'
-  }
-  if (backend === 'asio' || pathKind === 'asio') return 'unknown'
-  return 'unknown'
-}
-
-function deriveNativeDsdSupportState(
-  option: Partial<AudioDeviceOption>
-): AudioCapabilitySupportState {
-  const explicit = normalizeAudioCapabilitySupportState(option.nativeDsdSupportState)
-  if (explicit) return explicit
-  if (
-    option.supportsNativeDsd === true ||
-    hasNonEmptyArray(option.nativeDsdSampleRates) ||
-    hasNonEmptyArray(option.nativeDsdSampleFormats) ||
-    hasNonEmptyArray(option.supportedDsdRates)
-  ) {
-    return 'verified'
-  }
-  if (option.supportsNativeDsd === false) return 'unsupported'
-
-  const backend = getDeviceBackend(option)
-  const pathKind = getDevicePathKind(option)
-  if (
-    backend === 'wasapi' ||
-    backend === 'coreaudio' ||
-    pathKind === 'endpoint' ||
-    pathKind === 'hal'
-  ) {
-    return 'unsupported'
-  }
-  if (backend === 'alsa' && pathKind === 'hw') return 'runtime-probed'
-  if (backend === 'asio' || pathKind === 'asio') return 'unknown'
-  if (option.isDefault === true || pathKind === 'default') return 'unsupported'
-  return 'unknown'
-}
-
-function withAudioCapabilitySupportStates(option: AudioDeviceOption): AudioDeviceOption {
-  return {
-    ...option,
-    dopSupportState: deriveDopSupportState(option),
-    nativeDsdSupportState: deriveNativeDsdSupportState(option)
-  }
-}
-
-function normalizeAudioDeviceOption(option: unknown): AudioDeviceOption | null {
-  if (typeof option === 'string') {
-    const id = option.trim()
-    if (!id) return null
-    return withAudioCapabilitySupportStates({
-      id,
-      label: formatAudioDeviceLabel(id),
-      isDefault: id === DEFAULT_AUDIO_DEVICE_OPTION.id
-    })
-  }
-
-  if (!option || typeof option !== 'object') return null
-  const record = option as Record<string, unknown>
-  const id = typeof record.id === 'string' ? record.id.trim() : ''
-  if (!id) return null
-  const rawLabel = typeof record.label === 'string' ? record.label.trim() : ''
-  return withAudioCapabilitySupportStates({
-    ...(record as Partial<AudioDeviceOption>),
-    id,
-    label:
-      id === DEFAULT_AUDIO_DEVICE_OPTION.id ? DEFAULT_AUDIO_DEVICE_OPTION.label : rawLabel || id,
-    isDefault: record.isDefault === true
-  })
-}
-
-function normalizeAudioDeviceOptions(
-  rawOptions: unknown,
-  selectedDevice: string
-): AudioDeviceOption[] {
-  const options: AudioDeviceOption[] = []
-  const seen = new Set<string>()
-
-  function addOption(option: AudioDeviceOption | null): void {
-    if (!option || seen.has(option.id)) return
-    seen.add(option.id)
-    options.push(option)
-  }
-
-  if (Array.isArray(rawOptions)) {
-    for (const option of rawOptions) {
-      addOption(normalizeAudioDeviceOption(option))
-    }
-  }
-
-  if (!seen.has(DEFAULT_AUDIO_DEVICE_OPTION.id)) {
-    options.unshift({ ...DEFAULT_AUDIO_DEVICE_OPTION })
-    seen.add(DEFAULT_AUDIO_DEVICE_OPTION.id)
-  }
-
-  if (selectedDevice && !seen.has(selectedDevice)) {
-    addOption({
-      id: selectedDevice,
-      label: formatAudioDeviceLabel(selectedDevice),
-      isDefault: selectedDevice === DEFAULT_AUDIO_DEVICE_OPTION.id
-    })
-  }
-
-  return options
-}
-
-function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
-  return Math.min(max, Math.max(min, value))
-}
-
-function clampQueueItemPosition(item: AudioEngineQueueItem | undefined, value: number): number {
-  const position = Math.max(0, Number.isFinite(value) ? value : 0)
-  const range = item?.cueRange
-  if (!range) return position
-  const duration =
-    (Number.isFinite(range.virtualPregapSeconds)
-      ? Math.max(0, range.virtualPregapSeconds ?? 0)
-      : 0) +
-    range.endSeconds -
-    range.startSeconds
-  if (!Number.isFinite(duration) || duration <= 0) return position
-  return Math.min(position, duration)
-}
-
-function normalizeEqualizerFilterType(value: unknown): EqualizerFilterType {
-  if (
-    value === 'lowShelf' ||
-    value === 'highShelf' ||
-    value === 'bandPass' ||
-    value === 'lowPass' ||
-    value === 'highPass' ||
-    value === 'allPass' ||
-    value === 'notch'
-  ) {
-    return value
-  }
-  return 'peak'
-}
-
-export function normalizeAudioProcessingSettings(
-  settings?: Partial<AudioProcessingSettings>
-): AudioProcessingSettings {
-  const eqMode: EqMode = settings?.eqMode === 'parametric' ? 'parametric' : 'graphic'
-  const rawBands = Array.isArray(settings?.eqBands) ? settings.eqBands : DEFAULT_EQ_BANDS
-  const eqBands =
-    eqMode === 'parametric'
-      ? rawBands.slice(0, MAX_PARAMETRIC_EQ_BANDS).map((band, index) => {
-          const defaultBand = DEFAULT_EQ_BANDS[index % DEFAULT_EQ_BANDS.length]
-          return {
-            frequency: clampNumber(band.frequency, 20, 24000, defaultBand.frequency),
-            gain: clampNumber(band.gain, PARAMETRIC_EQ_GAIN_MIN_DB, PARAMETRIC_EQ_GAIN_MAX_DB, 0),
-            q: clampNumber(band.q, PARAMETRIC_EQ_Q_MIN, PARAMETRIC_EQ_Q_MAX, 1),
-            filterType: normalizeEqualizerFilterType(band.filterType),
-            enabled: band.enabled !== false,
-            channelMask: Math.max(
-              0,
-              Math.min(0xffffffff, Math.trunc(band.channelMask ?? 0xffffffff))
-            )
-          }
-        })
-      : DEFAULT_EQ_BANDS.map((defaultBand, index) => {
-          const band = rawBands[index] ?? defaultBand
-          return {
-            frequency: clampNumber(band.frequency, 20, 24000, defaultBand.frequency),
-            gain: clampNumber(band.gain, GRAPHIC_EQ_GAIN_MIN_DB, GRAPHIC_EQ_GAIN_MAX_DB, 0),
-            q: clampNumber(band.q, GRAPHIC_EQ_Q_MIN, GRAPHIC_EQ_Q_MAX, 1),
-            filterType: normalizeEqualizerFilterType(band.filterType),
-            enabled: band.enabled !== false,
-            channelMask: Math.max(
-              0,
-              Math.min(0xffffffff, Math.trunc(band.channelMask ?? 0xffffffff))
-            )
-          }
-        })
-
-  if (eqBands.length === 0) {
-    eqBands.push({
-      frequency: DEFAULT_EQ_BANDS[0].frequency,
-      gain: 0,
-      q: 1,
-      filterType: 'peak',
-      enabled: true,
-      channelMask: 0xffffffff
-    })
-  }
-
-  const volumeNormalization: VolumeNormalizationMode =
-    settings?.volumeNormalization === 'track' ||
-    settings?.volumeNormalization === 'album' ||
-    settings?.volumeNormalization === 'loudnorm'
-      ? settings.volumeNormalization
-      : 'off'
-  const dsdOutputMode: DsdOutputMode =
-    settings?.dsdOutputMode === 'auto' ||
-    settings?.dsdOutputMode === 'pcm' ||
-    settings?.dsdOutputMode === 'dop' ||
-    settings?.dsdOutputMode === 'native'
-      ? settings.dsdOutputMode
-      : settings?.dsdToPcm === true
-        ? 'pcm'
-        : 'auto'
-  const sacdProgramMode: SacdProgramMode =
-    settings?.sacdProgramMode === 'stereo' || settings?.sacdProgramMode === 'multichannel'
-      ? settings.sacdProgramMode
-      : 'auto'
-
-  return {
-    dspEnabled: settings?.dspEnabled === true,
-    clipGuard: settings?.clipGuard !== false,
-    fftEnabled: settings?.fftEnabled !== false,
-    fftResolution: clampNumber(settings?.fftResolution, 64, 8192, 8192),
-    highResolution: settings?.highResolution !== false,
-    dsdToPcm: dsdOutputMode === 'pcm',
-    dsdOutputMode,
-    sacdProgramMode,
-    eqEnabled: settings?.eqEnabled === true,
-    eqMode,
-    eqPreamp: clampNumber(settings?.eqPreamp, EQ_PREAMP_MIN_DB, EQ_PREAMP_MAX_DB, 0),
-    eqBands,
-    volumeNormalization,
-    replayGainPreamp: clampNumber(settings?.replayGainPreamp, -12, 12, 0),
-    replayGainFallback: clampNumber(settings?.replayGainFallback, -12, 12, 0),
-    replayGainClip: settings?.replayGainClip !== false,
-    convolverEnabled: settings?.convolverEnabled === true,
-    convolverIrPath: typeof settings?.convolverIrPath === 'string' ? settings.convolverIrPath : '',
-    crossfeedEnabled: settings?.crossfeedEnabled === true,
-    crossfeedStrength: clampNumber(settings?.crossfeedStrength, 0, 1, 0),
-    crossfeedDelayMs: clampNumber(settings?.crossfeedDelayMs, 0.05, 2, 0.35),
-    crossfeedCutoffHz: clampNumber(settings?.crossfeedCutoffHz, 80, 4000, 700),
-    gapless: settings?.gapless !== false,
-    crossfadeSeconds: clampNumber(settings?.crossfadeSeconds, 0, 12, 0)
-  }
-}
-
-function parseNativeJson<T>(value: string | T | undefined, fallback: T): T {
-  if (typeof value !== 'string') return value ?? fallback
-  try {
-    return JSON.parse(value) as T
-  } catch {
-    return fallback
-  }
-}
-
-function parseDspGraphStatusOrThrow(value: string | DspGraphStatus): DspGraphStatus {
-  let parsed: unknown = value
-  if (typeof parsed === 'string') {
-    try {
-      parsed = JSON.parse(parsed)
-    } catch {
-      throw new Error('native audio engine returned invalid DSP graph status JSON')
-    }
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('native audio engine returned an invalid DSP graph status')
-  }
-  const status = parsed as Partial<DspGraphStatus>
-  if (!Number.isSafeInteger(status.revision) || (status.revision as number) < 0) {
-    throw new Error('native audio engine returned an invalid DSP graph revision')
-  }
-  if (!Array.isArray(status.nodes)) {
-    throw new Error('native audio engine returned DSP graph status without nodes')
-  }
-  return status as DspGraphStatus
-}
-
-function isVst3ScanDescriptor(value: unknown): value is Vst3ScanDescriptor {
-  if (!value || typeof value !== 'object') return false
-  const descriptor = value as Partial<Vst3ScanDescriptor>
-  return (
-    typeof descriptor.classId === 'string' &&
-    typeof descriptor.name === 'string' &&
-    typeof descriptor.vendor === 'string' &&
-    typeof descriptor.version === 'string'
-  )
-}
-
-function normalizeNumberArray(value: unknown, length: number): number[] {
-  const source = Array.isArray(value) ? value : []
-  return Array.from({ length }, (_, index) => {
-    const item = source[index]
-    return typeof item === 'number' && Number.isFinite(item) ? item : 0
-  })
-}
-
-function normalizeSpectrogram(value: unknown, frames: number, points: number): number[][] {
-  if (frames <= 0 || points <= 0) return []
-  const source = Array.isArray(value) ? value.slice(-frames) : []
-  return source.map((row) => normalizeNumberArray(row, points))
-}
-
-export function mapSpectrumToVisualizerBars(
-  spectrum: readonly number[],
-  sampleRate: number,
-  barCount: number
-): number[] {
-  if (barCount <= 0) return []
-  const bars = Array.from({ length: barCount }, () => 0)
-  if (spectrum.length === 0) return bars
-
-  const minFrequency = 20
-  const rate = Number.isFinite(sampleRate) && sampleRate > 0 ? sampleRate : 44100
-  const maxFrequency = Math.max(minFrequency, Math.min(20000, rate / 2))
-  const fftSize = Math.max(2, spectrum.length * 2)
-  const binWidth = rate / fftSize
-  const maxBinIndex = Math.max(0, spectrum.length - 1)
-  const frequencyRatio = maxFrequency / minFrequency
-  const frequencyStepCount = Math.max(1, barCount - 1)
-
-  for (let i = 0; i < barCount; i += 1) {
-    const frequency = minFrequency * Math.pow(frequencyRatio, i / frequencyStepCount)
-    const binIndexDecimal = frequency / binWidth
-    const indexLow = Math.min(Math.floor(binIndexDecimal), maxBinIndex)
-    const indexHigh = Math.min(indexLow + 1, maxBinIndex)
-    const fract = binIndexDecimal - indexLow
-    const valLow = spectrum[indexLow] || 0
-    const valHigh = spectrum[indexHigh] || 0
-    const value = valLow + (valHigh - valLow) * fract
-    bars[i] = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0))
-  }
-
-  return bars
-}
-
-function withPrecomputedVisualizerBars(
-  data: VisualizationData,
-  options: Required<VisualizationOptions>
-): VisualizationData {
-  if (options.visualizerBarCount <= 0) return data
-  return {
-    ...data,
-    spectrum: [],
-    spectrogram: [],
-    oscilloscope: [],
-    visualizerBars: mapSpectrumToVisualizerBars(
-      data.spectrum,
-      data.sampleRate,
-      options.visualizerBarCount
-    )
-  }
-}
-
-function createFallbackVisualizationData(
-  options: Required<VisualizationOptions>,
-  sampleRate: number,
-  phaseSeconds: number,
-  reason = 'Native visualization tap unavailable'
-): VisualizationData {
-  const phase = Number.isFinite(phaseSeconds) ? phaseSeconds : 0
-  const spectrum = Array.from({ length: options.spectrumPoints }, (_, index) => {
-    const x = index / Math.max(1, options.spectrumPoints - 1)
-    const bass = Math.sin((phase * 2.2 + x * 9) * Math.PI) * 0.18
-    const mid = Math.sin((phase * 1.15 + x * 23) * Math.PI) * 0.1
-    const envelope = Math.pow(1 - x, 0.62)
-    return Math.max(0.03, Math.min(1, 0.12 + envelope * (0.34 + bass + mid)))
-  })
-  const waveform = Array.from({ length: options.waveformPoints }, (_, index) => {
-    const x = index / Math.max(1, options.waveformPoints - 1)
-    return Math.max(-1, Math.min(1, Math.sin((x * 5.5 + phase * 1.8) * Math.PI) * 0.42))
-  })
-  const oscilloscope = Array.from({ length: options.oscilloscopePoints }, (_, index) => {
-    const x = index / Math.max(1, options.oscilloscopePoints - 1)
-    const carrier = Math.sin((x * 10 + phase * 2.4) * Math.PI)
-    const harmonic = Math.sin((x * 21 + phase * 1.7) * Math.PI) * 0.22
-    return Math.max(-1, Math.min(1, (carrier + harmonic) * 0.48))
-  })
-
-  return {
-    spectrum,
-    waveform,
-    oscilloscope,
-    peakDb: -18,
-    rmsDb: -28,
-    lufsMomentary: -24,
-    spectrogram: options.spectrogramFrames > 0 ? [spectrum] : [],
-    sampleRate: Math.max(1, Math.trunc(sampleRate || 44100)),
-    maxFrequency: visualizationMaxFrequency(sampleRate || 44100),
-    active: true,
-    tapStatus: 'synthetic-fallback',
-    reason
-  }
-}
-
-function createInactiveVisualizationData(
-  options: Required<VisualizationOptions>,
-  sampleRate = 0,
-  tapStatus: VisualizationTapStatus = 'stopped',
-  reason = ''
-): VisualizationData {
-  return {
-    spectrum: Array.from({ length: options.spectrumPoints }, () => 0),
-    waveform: Array.from({ length: options.waveformPoints }, () => 0),
-    oscilloscope: Array.from({ length: options.oscilloscopePoints }, () => 0),
-    peakDb: -120,
-    rmsDb: -120,
-    lufsMomentary: null,
-    spectrogram: [],
-    sampleRate: Math.max(0, Math.trunc(sampleRate || 0)),
-    maxFrequency: visualizationMaxFrequency(sampleRate),
-    active: false,
-    tapStatus,
-    reason
-  }
-}
-
-function normalizeVisualizationTapStatus(value: unknown, active: boolean): VisualizationTapStatus {
-  if (
-    value === 'active' ||
-    value === 'stopped' ||
-    value === 'disabled' ||
-    value === 'no-samples' ||
-    value === 'native-unavailable' ||
-    value === 'synthetic-fallback'
-  ) {
-    return value
-  }
-  return active ? 'active' : 'no-samples'
-}
-
-function normalizeVisualizationData(
-  data: Partial<VisualizationData>,
-  options: Required<VisualizationOptions>
-): VisualizationData {
-  const active = data.active === true
-  const sampleRate =
-    typeof data.sampleRate === 'number' && Number.isFinite(data.sampleRate) ? data.sampleRate : 0
-  const maxFrequencyLimit = visualizationMaxFrequency(sampleRate)
-  const maxFrequency =
-    typeof data.maxFrequency === 'number' && Number.isFinite(data.maxFrequency)
-      ? Math.max(20, Math.min(maxFrequencyLimit, data.maxFrequency))
-      : maxFrequencyLimit
-
-  return {
-    spectrum: normalizeNumberArray(data.spectrum, options.spectrumPoints),
-    waveform: normalizeNumberArray(data.waveform, options.waveformPoints),
-    oscilloscope: normalizeNumberArray(data.oscilloscope, options.oscilloscopePoints),
-    peakDb: typeof data.peakDb === 'number' && Number.isFinite(data.peakDb) ? data.peakDb : -120,
-    rmsDb: typeof data.rmsDb === 'number' && Number.isFinite(data.rmsDb) ? data.rmsDb : -120,
-    lufsMomentary:
-      typeof data.lufsMomentary === 'number' && Number.isFinite(data.lufsMomentary)
-        ? data.lufsMomentary
-        : null,
-    spectrogram: normalizeSpectrogram(
-      data.spectrogram,
-      options.spectrogramFrames,
-      options.spectrumPoints
-    ),
-    sampleRate,
-    maxFrequency,
-    active,
-    tapStatus: normalizeVisualizationTapStatus(data.tapStatus, active),
-    reason: typeof data.reason === 'string' ? data.reason : ''
-  }
-}
-
-export function getNativeAddonCandidates(): string[] {
-  const binary = 'twilight_audio_node.node'
-  const appPath = electronApp?.getAppPath?.() ?? process.cwd()
-  return [
-    join(process.resourcesPath ?? '', 'audio-engine', binary),
-    join(appPath, 'resources', 'audio-engine', binary),
-    join(appPath, 'audio-engine', 'build', 'default', binary),
-    join(appPath, 'audio-engine', 'build', 'mingw-static', binary),
-    join(appPath, 'audio-engine', 'build', 'windows-msvc', binary),
-    join(appPath, '..', 'audio-engine', 'build', 'default', binary),
-    join(appPath, '..', 'audio-engine', 'build', 'mingw-static', binary),
-    join(appPath, '..', 'audio-engine', 'build', 'windows-msvc', binary)
-  ]
-}
-
-function rendererFallbackAllowed(): boolean {
-  return process.env.TWILIGHT_ENABLE_HTMLAUDIO_FALLBACK === '1'
-}
-
-export function loadNativeBinding(
-  getCandidates: () => string[] = getNativeAddonCandidates
-): NativeAudioBinding | null {
-  for (const candidate of getCandidates()) {
-    if (!existsSync(candidate)) continue
-    try {
-      // Native addons must be loaded dynamically because the file is produced by CMake.
-      return require(candidate) as NativeAudioBinding
-    } catch (err) {
-      console.warn('原生音频模块加载失败：', candidate, err)
-    }
-  }
-  return null
-}
-
-function createDefaultPlaybackInfo(
-  output: AudioOutputId,
-  device: string,
-  exclusiveMode: boolean,
-  outputConfig: OutputConfig
-): PlaybackInfo {
-  const exclusive =
-    output === 'wasapi'
-      ? exclusiveMode
-      : output === 'asio'
-        ? true
-        : output === 'coreaudio'
-          ? exclusiveMode
-          : false
-  const supportsOutputPerfect =
-    output === 'asio' ||
-    (output === 'wasapi' && exclusiveMode) ||
-    (output === 'coreaudio' && exclusiveMode)
-  const accessMode =
-    output === 'asio'
-      ? 'exclusive'
-      : output === 'wasapi' || output === 'coreaudio'
-        ? exclusiveMode
-          ? 'exclusive'
-          : 'shared'
-        : 'shared'
-  const devicePathKind = output === 'asio' ? 'asio' : output === 'coreaudio' ? 'hal' : 'default'
-  const perfectReasonCode = supportsOutputPerfect
-    ? ''
-    : output === 'wasapi' || output === 'coreaudio'
-      ? 'shared_mixer'
-      : 'backend_not_output_perfect'
-  const perfectReason = supportsOutputPerfect
-    ? ''
-    : output === 'wasapi'
-      ? '共享输出经过系统混音'
-      : output === 'coreaudio'
-        ? 'CoreAudio 默认输出可能经过系统混音或格式转换'
-        : output === 'alsa'
-          ? 'ALSA 当前设备未声明 hw 直连 bit-perfect 能力'
-          : '当前输出路径未声明 bit-perfect 能力'
-  const latencyInfo: LatencyInfo = {
-    bufferLatencyMs: 0,
-    outputLatencyMs: 0,
-    totalLatencyMs: 0
-  }
-  const diagnostics: OutputDiagnostics = {
-    sessionUnderrunCount: 0,
-    sessionBufferDropCount: 0,
-    sessionRecoveryCount: 0,
-    lifetimeUnderrunCount: 0,
-    lifetimeBufferDropCount: 0,
-    lifetimeRecoveryCount: 0,
-    driverRestartCount: 0,
-    deviceLostCount: 0,
-    lastError: ''
-  }
-  const outputInfo: OutputInfo = {
-    exclusive,
-    supportsOutputPerfect,
-    sourceExact: false,
-    outputPerfect: false,
-    pcmPassthrough: false,
-    resampled: false,
-    accessMode,
-    devicePathKind,
-    perfectReasonCode,
-    capabilityReason: perfectReason,
-    perfectReason,
-    outputSampleRate: 0,
-    outputBitDepth: 0,
-    backend: output,
-    actualBackend: output,
-    deviceName: device,
-    actualDeviceName: device,
-    driverName: '',
-    actualDriverName: '',
-    driverVersion: 0,
-    actualDriverVersion: 0,
-    actualOutputFormat: '',
-    actualSampleRate: 0,
-    actualBitDepth: 0,
-    actualChannels: 0,
-    driverDopCapable: false,
-    driverNativeDsdCapable: false,
-    driverDopCarrierSampleRates: [],
-    driverDopCarrierFormats: [],
-    driverNativeDsdSampleRates: [],
-    nativeDsdRuntimeState: 'unsupported',
-    nativeDsdRequestedRate: 0,
-    nativeDsdActualRate: 0,
-    nativeDsdChannels: 0,
-    nativeDsdExplicitlyCapable: false,
-    nativeDsdAdvertisedSampleRates: [],
-    nativeDsdRuntimeReason: '',
-    bufferSizeFrames: 0,
-    latencyFrames: 0,
-    latencyMs: 0,
-    latencyInfo,
-    channelRoutingMode: outputConfig.routingMode,
-    diagnostics,
-    deviceRecovered: false,
-    recoveryCount: 0,
-    nativeDsp: { plugins: [] },
-    isDsd: false,
-    dsdMode: 'pcm',
-    dsdRate: 0
-  }
-  return {
-    state: 'stopped',
-    position: 0,
-    duration: 0,
-    volume: 1,
-    playbackRate: 1,
-    requestedConfigRevision: 0,
-    appliedConfigRevision: 0,
-    queueIndex: -1,
-    playMode: 'sequential',
-    source: '',
-    codec: '未知',
-    bitrate: 0,
-    sourceSampleRate: 0,
-    sourceBitDepth: 0,
-    decodedSampleRate: 0,
-    decodedBitDepth: 0,
-    decodedChannels: 0,
-    decodedSampleFormat: '',
-    outputBackend: output,
-    outputDevice: device,
-    outputInfo,
-    actualBackend: output,
-    accessMode,
-    devicePathKind,
-    driverName: '',
-    driverVersion: 0,
-    actualOutputFormat: '',
-    actualSampleRate: 0,
-    actualBitDepth: 0,
-    actualChannels: 0,
-    bufferSizeFrames: 0,
-    latencyFrames: 0,
-    latencyMs: 0,
-    latencyInfo,
-    channelRoutingMode: outputConfig.routingMode,
-    supportsOutputPerfect,
-    sourceExact: false,
-    diagnostics,
-    deviceRecovered: false,
-    recoveryCount: 0,
-    outputSampleRate: 0,
-    outputBitDepth: 0,
-    channelCount: 0,
-    outputPerfect: false,
-    pcmPassthrough: false,
-    dspActive: false,
-    replayGainActive: false,
-    eqActive: false,
-    convolverActive: false,
-    crossfeedActive: false,
-    crossfadeActive: false,
-    fftActive: false,
-    irResampled: false,
-    replayGainDb: 0,
-    crossfeedStrength: 0,
-    crossfadeSeconds: 0,
-    convolverLatencyFrames: 0,
-    partitionSize: 0,
-    channelMappingMode: '',
-    perfectReason,
-    perfectReasonCode,
-    capabilityReason: perfectReason,
-    isDsd: false,
-    dsdMode: 'pcm',
-    dsdRate: 0,
-    gaplessActive: false,
-    preloadReady: false,
-    gaplessBlockedReason: '',
-    upcomingTrack: null,
-    nativePlaybackActive: false
-  }
-}
-
-function inferCodec(source: string): string {
-  const ext = source.split('.').pop()?.toLowerCase()
-  if (!ext) return '未知'
-  if (ext === 'm4a' || ext === 'mp4') return 'aac/alac'
-  if (ext === 'aif' || ext === 'aiff') return 'aiff'
-  if (ext === 'dsf' || ext === 'dff') return 'dsd'
-  return ext
-}
-
-function sourceLooksDsd(source: string): boolean {
-  return /\.(dsf|dff)$/i.test(source)
-}
-
-function normalizeDsdState(
-  canonicalOutput?: Partial<OutputInfo> | null,
-  mirror?: Partial<PlaybackInfo> | null
-): { isDsd: boolean; dsdMode: string; dsdRate: number } {
-  const canonicalMode =
-    typeof canonicalOutput?.dsdMode === 'string' ? canonicalOutput.dsdMode.trim() : ''
-  const mirrorMode = typeof mirror?.dsdMode === 'string' ? mirror.dsdMode.trim() : ''
-  const canonicalHasMode = canonicalMode.length > 0
-  const modeIndicatesDsd = (mode: string): boolean =>
-    mode === 'native' || mode === 'dop' || mode === 'unsupported'
-  const canonicalIsDsd =
-    typeof canonicalOutput?.isDsd === 'boolean'
-      ? canonicalOutput.isDsd
-      : canonicalHasMode
-        ? modeIndicatesDsd(canonicalMode)
-        : undefined
-  const isDsd = canonicalIsDsd ?? (mirror?.isDsd === true || modeIndicatesDsd(mirrorMode))
-  const rawMode = canonicalHasMode ? canonicalMode : mirrorMode
-  const dsdMode = isDsd ? rawMode || 'unsupported' : 'pcm'
-  const dsdRate = isDsd ? (canonicalOutput?.dsdRate ?? mirror?.dsdRate ?? 0) : 0
-  return { isDsd, dsdMode, dsdRate }
-}
+  PlayMode,
+  PlaybackInfo,
+  PlaybackOutputInfoMirror,
+  VisualizationData,
+  VisualizationOptions,
+  VisualizationTapStatus,
+  VolumeNormalizationMode,
+  ChannelRoutingMode,
+  DsdOutputMode,
+  SacdProgramMode
+} from './audio/audioEngineTypes.ts'
+export type { DspSceneState } from '../shared/dspGraph.ts'
+export {
+  DEFAULT_AUDIO_PROCESSING,
+  getAudioOutputOptions,
+  normalizeAudioOutput,
+  createPlaybackInfoFanoutSignature,
+  normalizeAudioProcessingSettings,
+  mapSpectrumToVisualizerBars
+} from './audio/audioEngineHelpers.ts'
+export {
+  getNativeAddonCandidates,
+  loadNativeBinding,
+  rendererFallbackAllowed
+} from './audio/nativeBinding.ts'
 
 export class AudioEngineManager extends EventEmitter {
   private native: NativeAudioBinding | null
   private audioServiceBinding: AudioEngineServiceNativeBinding | null = null
-  private output: AudioOutputId
-  private device: string
-  private exclusiveMode: boolean
-  private outputConfig: OutputConfig
-  private outputConfigRevision = 0
-  private outputConfigApplyGeneration = 0
-  private outputConfigServiceGeneration = 0
-  private outputConfigApplyQueue: Promise<void> = Promise.resolve()
-  private outputConfigApplyStatus: OutputConfigApplyStatus = {
-    requestedRevision: 0,
-    appliedRevision: 0,
-    failedRevision: 0,
-    state: 'idle',
-    error: '',
-    generation: 0
-  }
-  private processing: AudioProcessingSettings
-  private dspScenes: DspScene[]
-  private dspPinnedSceneId: string | null
-  private activeDspSceneId: string | null = null
-  private activeDspGraph: DspGraphConfig
-  private dspGraphRevision = 0
-  private dspGraphAppliedRevision = 0
-  private dspGraphApplyState: NonNullable<DspGraphStatus['applyState']> = 'idle'
-  private dspGraphApplyError = ''
-  private lastNativeDspGraphStatus: DspGraphStatus | null = null
+  private readonly outputRouter: OutputRouter
+  private readonly dsp: DspOrchestrator
+  private readonly playback: PlaybackController
   private scheduler: AudioEngineScheduler
-  private deviceOptionsProvider?: () => AudioDeviceOption[] | null
-  private queue: AudioEngineQueueItem[] = []
-  private queueJson = '[]'
   private loudnessAnalysisManager: LoudnessAnalysisManager | null = null
   private loudnormStatus: LoudnormStatus = 'idle'
   private loudnormStatusSource: string | null = null
-  private playbackInfo: PlaybackInfo
-  private timer: NodeJS.Timeout | null = null
-  private lastTick = 0
-  private lastNativePlaybackInfoTickReadAt = Number.NEGATIVE_INFINITY
-  private lastNativeReportedPosition = Number.NaN
-  private pendingNativePositionTarget: number | null = null
-  private nativeConfigRevisionObserved = false
-  private nativeConfigRevisionEpochPending = false
-  private lastRawRequestedConfigRevision = 0
-  private lastRawAppliedConfigRevision = 0
-  private configRevisionBase = 0
-  private publicRequestedConfigRevision = 0
-  private publicAppliedConfigRevision = 0
-  private lastEmittedAppliedConfigRevision = 0
-  private pendingConfigAppliedEvent: {
-    requestedConfigRevision: number
-    appliedConfigRevision: number
-  } | null = null
-  private lastPlaybackInfoFanoutKey = ''
-  private lastPublishedDuration: number | null = null
-  private lastVisualizationCache: {
-    key: string
-    state: PlaybackInfo['state']
-    source: string
-    readAt: number
-    data: VisualizationData
-  } | null = null
-  private lastSpectrumCache: {
-    points: number
-    state: PlaybackInfo['state']
-    source: string
-    readAt: number
-    data: number[]
-  } | null = null
-  private lastAudioDeviceOptionsCache: {
-    selectedDevice: string
-    readAt: number
-    options: AudioDeviceOption[]
-  } | null = null
-  private lastAudioDeviceOptionsSignature = ''
-  private lastAudioDeviceOptionsProbeAt = Number.NEGATIVE_INFINITY
-  /** Physical endpoint id last bound while selection is `auto` (empty until first observation). */
-  private lastFollowedDefaultDeviceId = ''
-  private autoDeviceRebindInFlight: Promise<void> | null = null
-  private lastNativeDspPluginStatusCache: {
-    readAt: number
-    status: unknown
-  } | null = null
-  private lastConvolverInfoCache: {
-    readAt: number
-    info: ConvolverInfo
-  } | null = null
-  private lastUpcomingTrackCache: {
-    readAt: number
-    track: AudioEngineQueueItem | null
-  } | null = null
   private metadataCache = new Map<
     string,
     {
@@ -1977,15 +134,6 @@ export class AudioEngineManager extends EventEmitter {
   private audioServiceReadyRestoreSerial = 0
   private lastNativeError = ''
   private pendingNativeSource: string | null = null
-  private nativeConvolverIrPath: string | null = null
-  private nativeDspPluginChainJson = ''
-  // A service restart must never re-launch every VST3 node that was active at
-  // the time of the crash. Keep this gate per catalog entry so recovery stays
-  // an explicit, one-plugin-at-a-time action.
-  private readonly vst3RecoveryBypassReasons = new Map<string, string>()
-  private readonly dspAssetPathResolver?: (assetId: string) => string | null
-  private readonly vst3ModuleResolver?: AudioEngineManagerDependencies['vst3ModuleResolver']
-  private readonly vst3StateAssetResolver?: AudioEngineManagerDependencies['vst3StateAssetResolver']
 
   constructor(
     config: AudioEngineConfig = { exclusiveMode: false },
@@ -1996,37 +144,238 @@ export class AudioEngineManager extends EventEmitter {
       ...DEFAULT_AUDIO_ENGINE_SCHEDULER,
       ...(dependencies.scheduler ?? {})
     }
-    this.dspAssetPathResolver = dependencies.dspAssetPathResolver
-    this.vst3ModuleResolver = dependencies.vst3ModuleResolver
-    this.vst3StateAssetResolver = dependencies.vst3StateAssetResolver
-    this.deviceOptionsProvider = dependencies.deviceOptionsProvider
     this.native =
       dependencies.nativeBinding !== undefined
         ? dependencies.nativeBinding
         : this.createNativeBinding(dependencies)
-    this.output = normalizeAudioOutput(config.audioOutput)
-    this.device = normalizeAudioDevice(config.audioDevice)
-    this.device = this.resolveCompatibleDevice(this.output, this.device)
-    this.exclusiveMode = config.exclusiveMode && supportsAudioExclusive(this.output)
-    this.outputConfig = normalizeOutputConfig(config.audioOutputConfig)
-    this.processing = normalizeAudioProcessingSettings(config.audioProcessing)
-    this.dspScenes = normalizeDspScenes(config.dspScenes, this.processing)
-    this.dspPinnedSceneId =
-      typeof config.dspPinnedSceneId === 'string' &&
-      this.dspScenes.some((scene) => scene.id === config.dspPinnedSceneId)
-        ? config.dspPinnedSceneId
-        : null
-    this.activeDspGraph = createLegacyDspGraph(this.processing)
-    this.lastTick = this.scheduler.now()
-    this.playbackInfo = createDefaultPlaybackInfo(
+    this.outputRouter = new OutputRouter(
+      {
+        getNative: () => this.native,
+        getPlaybackInfo: () => this.playbackInfo,
+        setPlaybackInfo: (info) => {
+          this.playbackInfo = info
+        },
+        getLastNativeError: () => this.lastNativeError,
+        getScheduler: () => this.scheduler,
+        isDestroyed: () => this.destroyed,
+        getNativeOutputRouteSynced: () => this.nativeOutputRouteSynced,
+        setNativeOutputRouteSynced: (value) => {
+          this.nativeOutputRouteSynced = value
+        },
+        callNativeMaybeAsync: (context, method, ...args) =>
+          this.callNativeMaybeAsync(context, method, ...args),
+        applyNativeDspGraphOrThrow: (context) => this.applyNativeDspGraphOrThrow(context),
+        readNativePlaybackInfo: () => this.readNativePlaybackInfo(),
+        readNativePlaybackInfoAsync: () => this.readNativePlaybackInfoAsync(),
+        mergeNativePlaybackInfo: (nativeInfo) => this.mergeNativePlaybackInfo(nativeInfo),
+        updateOutputPerfect: () => this.updateOutputPerfect(),
+        publishPlaybackInfo: () => this.publishPlaybackInfo(),
+        syncPlaybackOutputMirrorsFromOutputInfo: () =>
+          this.syncPlaybackOutputMirrorsFromOutputInfo(),
+        emit: (event, payload) => {
+          this.emit(event, payload)
+        }
+      },
+      config,
+      dependencies
+    )
+    this.outputRouter.initializeDeviceSelection()
+    const initialPlaybackInfo = createDefaultPlaybackInfo(
       this.output,
       this.device,
       this.exclusiveMode,
       this.outputConfig
     )
+    this.playback = new PlaybackController(
+      {
+        getNative: () => this.native,
+        getAudioServiceBinding: () => this.audioServiceBinding,
+        getScheduler: () => this.scheduler,
+        getLastNativeError: () => this.lastNativeError,
+        setLastNativeError: (error) => {
+          this.lastNativeError = error
+        },
+        isDestroyed: () => this.destroyed,
+        getNativePlaybackActive: () => this.nativePlaybackActive,
+        setNativePlaybackActive: (value) => {
+          this.nativePlaybackActive = value
+        },
+        getNativeOutputRouteSynced: () => this.nativeOutputRouteSynced,
+        setNativeOutputRouteSynced: (value) => {
+          this.nativeOutputRouteSynced = value
+        },
+        getPendingNativeSource: () => this.pendingNativeSource,
+        setPendingNativeSource: (value) => {
+          this.pendingNativeSource = value
+        },
+        getOutput: () => this.output,
+        setOutput: (value) => {
+          this.output = value
+        },
+        getDevice: () => this.device,
+        setDevice: (value) => {
+          this.device = value
+        },
+        getExclusiveMode: () => this.exclusiveMode,
+        setExclusiveMode: (value) => {
+          this.exclusiveMode = value
+        },
+        getOutputConfig: () => this.outputConfig,
+        setOutputConfig: (value) => {
+          this.outputConfig = value
+        },
+        createDeviceCapabilityRefreshSignature: (info) =>
+          this.createDeviceCapabilityRefreshSignature(info),
+        invalidateAudioDeviceOptionsCache: (reason) =>
+          this.invalidateAudioDeviceOptionsCache(reason),
+        getProcessing: () => this.processing,
+        getActiveDspGraph: () => this.dsp.activeDspGraph,
+        getNativeBackendId: () => this.getNativeBackendId(),
+        shouldFallbackFromAsio: (output) => this.shouldFallbackFromAsio(output),
+        restoreAudioServiceOutputRoute: (contextPrefix) =>
+          this.restoreAudioServiceOutputRoute(contextPrefix),
+        applyNativeDspGraph: (context) => this.applyNativeDspGraph(context),
+        applyNativeDspGraphOrThrow: (context) => this.applyNativeDspGraphOrThrow(context),
+        applyNativeDspSettings: (context, options, throwOnGraphFailure) =>
+          this.applyNativeDspSettings(context, options, throwOnGraphFailure),
+        refreshResolvedDspScene: () => this.refreshResolvedDspScene(),
+        updateOutputPerfect: () => this.updateOutputPerfect(),
+        refreshOutputInfoFromNative: (resetDefaults) =>
+          this.refreshOutputInfoFromNative(resetDefaults),
+        pollAudioDeviceOptionsForChanges: () => this.pollAudioDeviceOptionsForChanges(),
+        prepareLoudnormForPlay: (source) => this.prepareLoudnormForPlay(source),
+        tryNative: (context, command, logFailure) => this.tryNative(context, command, logFailure),
+        callNativeMaybeAsync: (context, method, ...args) =>
+          this.callNativeMaybeAsync(context, method, ...args),
+        emit: (event, payload) => {
+          this.emit(event, payload)
+        }
+      },
+      initialPlaybackInfo
+    )
+    this.dsp = new DspOrchestrator(
+      {
+        getNative: () => this.native,
+        getAudioServiceBinding: () => this.audioServiceBinding,
+        getPlaybackInfo: () => this.playbackInfo,
+        setPlaybackInfo: (info) => {
+          this.playbackInfo = info
+        },
+        getDevice: () => this.device,
+        getOutput: () => this.output,
+        getLastNativeError: () => this.lastNativeError,
+        setLastNativeError: (error) => {
+          this.lastNativeError = error
+        },
+        getScheduler: () => this.scheduler,
+        updateOutputPerfect: () => this.updateOutputPerfect(),
+        publishPlaybackInfo: () => this.publishPlaybackInfo(),
+        syncPlaybackOutputMirrorsFromOutputInfo: () =>
+          this.syncPlaybackOutputMirrorsFromOutputInfo(),
+        updateNativeInfoSnapshot: () => this.updateNativeInfoSnapshot(),
+        syncLoudnormModeTransition: (previousMode, nextMode) =>
+          this.syncLoudnormModeTransition(previousMode, nextMode),
+        tryNative: (context, action) => this.tryNative(context, action)
+      },
+      config,
+      dependencies
+    )
     this.resetOutputInfoDefaults()
-    this.refreshResolvedDspScene()
     this.updateOutputPerfect()
+  }
+
+
+
+
+  private get playbackInfo(): PlaybackInfo {
+    return this.playback.playbackInfo
+  }
+  private set playbackInfo(value: PlaybackInfo) {
+    this.playback.playbackInfo = value
+  }
+  private get queue(): AudioEngineQueueItem[] {
+    return this.playback.queue
+  }
+  private set queue(value: AudioEngineQueueItem[]) {
+    this.playback.queue = value
+  }
+  private get queueJson(): string {
+    return this.playback.queueJson
+  }
+  private set queueJson(value: string) {
+    this.playback.queueJson = value
+  }
+  private get nativeConfigRevisionEpochPending(): boolean {
+    return this.playback.nativeConfigRevisionEpochPending
+  }
+  private set nativeConfigRevisionEpochPending(value: boolean) {
+    this.playback.nativeConfigRevisionEpochPending = value
+  }
+
+  private get output(): AudioOutputId {
+    return this.outputRouter.output
+  }
+  private set output(value: AudioOutputId) {
+    this.outputRouter.output = value
+  }
+  private get device(): string {
+    return this.outputRouter.device
+  }
+  private set device(value: string) {
+    this.outputRouter.device = value
+  }
+  private get exclusiveMode(): boolean {
+    return this.outputRouter.exclusiveMode
+  }
+  private set exclusiveMode(value: boolean) {
+    this.outputRouter.exclusiveMode = value
+  }
+  private get outputConfig(): OutputConfig {
+    return this.outputRouter.outputConfig
+  }
+  private set outputConfig(value: OutputConfig) {
+    this.outputRouter.outputConfig = value
+  }
+  private get outputConfigServiceGeneration(): number {
+    return this.outputRouter.outputConfigServiceGeneration
+  }
+  private set outputConfigServiceGeneration(value: number) {
+    this.outputRouter.outputConfigServiceGeneration = value
+  }
+  private get outputConfigApplyStatus(): OutputConfigApplyStatus {
+    return this.outputRouter.outputConfigApplyStatus
+  }
+  private set outputConfigApplyStatus(value: OutputConfigApplyStatus) {
+    this.outputRouter.outputConfigApplyStatus = value
+  }
+  private get outputConfigApplyGeneration(): number {
+    return this.outputRouter.outputConfigApplyGeneration
+  }
+
+  private get processing(): AudioProcessingSettings {
+    return this.dsp.processing
+  }
+  private set processing(value: AudioProcessingSettings) {
+    this.dsp.processing = value
+  }
+  private get nativeConvolverIrPath(): string | null {
+    return this.dsp.nativeConvolverIrPath
+  }
+  private set nativeConvolverIrPath(value: string | null) {
+    this.dsp.nativeConvolverIrPath = value
+  }
+  private get nativeDspPluginChainJson(): string {
+    return this.dsp.nativeDspPluginChainJson
+  }
+  private set lastNativeDspPluginStatusCache(
+    value: { readAt: number; status: unknown } | null
+  ) {
+    this.dsp.lastNativeDspPluginStatusCache = value
+  }
+  private set lastConvolverInfoCache(
+    value: { readAt: number; info: ConvolverInfo } | null
+  ) {
+    this.dsp.lastConvolverInfoCache = value
   }
 
   private createNativeBinding(
@@ -2084,19 +433,12 @@ export class AudioEngineManager extends EventEmitter {
     this.nativePlaybackActive = false
     this.nativeOutputRouteSynced = false
     this.nativeConfigRevisionEpochPending = true
-    this.dspGraphAppliedRevision = 0
-    this.dspGraphApplyState = 'failed'
-    this.dspGraphApplyError = reason
-    this.lastNativeDspGraphStatus = null
     this.audioServiceReadyRestoreSerial += 1
-    this.nativeConvolverIrPath = null
-    // The IPC layer persists catalog quarantines asynchronously. This gate is
-    // synchronous so service recovery cannot relaunch a crashing VST3 first.
-    this.markActiveVst3NodesForManualRecovery()
+    this.dsp.resetAfterServiceCrash(reason)
     this.lastNativeDspPluginStatusCache = null
     this.lastConvolverInfoCache = null
     this.invalidateAudioDeviceOptionsCache('audio-service-crash')
-    this.invalidateUpcomingTrackCache()
+    this.playback.resetCachesOnServiceCrash()
     this.metadataCache.clear()
     const nextDiagnostics = {
       ...this.playbackInfo.outputInfo.diagnostics,
@@ -2168,54 +510,6 @@ export class AudioEngineManager extends EventEmitter {
     }
   }
 
-  private async restoreAudioServiceOutputRoute(
-    contextPrefix = '音频服务恢复后应用'
-  ): Promise<{ synced: boolean; errors: string[] }> {
-    const results: Array<{ ok: boolean; error: string }> = []
-    results.push(
-      await this.restoreAudioServiceOutputRouteStep(
-        'output-backend',
-        `${contextPrefix}输出后端`,
-        'SetOutputBackend',
-        this.getNativeBackendId()
-      )
-    )
-    results.push(
-      await this.restoreAudioServiceOutputRouteStep(
-        'output-device',
-        `${contextPrefix}输出设备`,
-        'SetOutputDevice',
-        this.device
-      )
-    )
-    results.push(
-      await this.restoreAudioServiceOutputRouteStep(
-        'output-config',
-        `${contextPrefix}输出配置`,
-        'SetOutputConfig',
-        JSON.stringify(this.outputConfig)
-      )
-    )
-    const synced = results.every((result) => result.ok)
-    if (synced) this.rememberFollowedDefaultDeviceFromOptions()
-    return {
-      synced,
-      errors: results.filter((result) => !result.ok).map((result) => result.error)
-    }
-  }
-
-  private async restoreAudioServiceOutputRouteStep(
-    id: string,
-    context: string,
-    method: keyof NativeAudioBinding,
-    ...args: unknown[]
-  ): Promise<{ ok: boolean; error: string }> {
-    const ok = await this.callNativeMaybeAsync(context, method, ...args)
-    return {
-      ok,
-      error: ok ? '' : `${id}: ${this.lastNativeError || context}`
-    }
-  }
 
   private async restoreAudioServicePlaybackState(): Promise<{ synced: boolean; errors: string[] }> {
     const results: Array<{ ok: boolean; error: string }> = []
@@ -2292,1263 +586,6 @@ export class AudioEngineManager extends EventEmitter {
     return { status: this.loudnormStatus, source: this.loudnormStatusSource }
   }
 
-  async play(source: string, startTime = 0): Promise<AudioEnginePlayResult> {
-    if (!source) throw new Error('音频地址为空')
-    this.invalidateUpcomingTrackCache()
-    await this.prepareLoudnormForPlay(source)
-    const current = this.queue[this.playbackInfo.queueIndex]
-    const duration = current?.source === source ? (current.duration ?? 0) : 0
-    const boundedStartTime = clampQueueItemPosition(current, startTime)
-    const firstErrorContext = {
-      output: this.output,
-      device: this.device,
-      exclusiveMode: this.exclusiveMode,
-      outputConfig: this.outputConfig
-    }
-    let nativeStarted = await this.tryNativePlay(
-      '播放',
-      source,
-      boundedStartTime,
-      firstErrorContext.output !== 'asio'
-    )
-    let nativeFallbackReason = ''
-    if (!nativeStarted && this.shouldFallbackFromAsio(firstErrorContext.output)) {
-      nativeFallbackReason = this.lastNativeError || 'ASIO 输出不可用'
-      this.output = 'wasapi'
-      this.device = 'auto'
-      this.exclusiveMode = false
-      this.nativeOutputRouteSynced = false
-      const fallbackRoute = await this.restoreAudioServiceOutputRoute('ASIO 失败后应用 WASAPI 兜底')
-      this.nativeOutputRouteSynced = fallbackRoute.synced
-      if (fallbackRoute.synced) {
-        nativeStarted = await this.tryNativePlay('WASAPI 兜底播放', source, boundedStartTime)
-      } else {
-        this.lastNativeError = fallbackRoute.errors.join('\n') || this.lastNativeError
-      }
-      if (!nativeStarted) {
-        this.output = firstErrorContext.output
-        this.device = firstErrorContext.device
-        this.exclusiveMode = firstErrorContext.exclusiveMode
-        this.outputConfig = firstErrorContext.outputConfig
-      }
-    }
-    if (
-      !nativeStarted &&
-      firstErrorContext.output === 'alsa' &&
-      firstErrorContext.device === 'auto'
-    ) {
-      nativeFallbackReason = this.lastNativeError || 'ALSA 默认输出不可用'
-      for (const candidate of getAlsaPlaybackDeviceCandidates()) {
-        const deviceSynced = await this.callNativeMaybeAsync(
-          `切换 ALSA 兜底输出设备 ${candidate}`,
-          'SetOutputDevice',
-          candidate
-        )
-        if (!deviceSynced) continue
-        nativeStarted = await this.tryNativePlay(
-          `ALSA 兜底播放 ${candidate}`,
-          source,
-          boundedStartTime,
-          false
-        )
-        if (nativeStarted) {
-          this.device = candidate
-          this.nativeOutputRouteSynced = true
-          break
-        }
-      }
-      if (!nativeStarted) {
-        this.device = firstErrorContext.device
-        await this.callNativeMaybeAsync('恢复 ALSA 默认输出设备', 'SetOutputDevice', this.device)
-      }
-    }
-    if (!nativeStarted && !rendererFallbackAllowed()) {
-      const detail =
-        this.lastNativeError ||
-        parseNativeJson(this.native?.GetLastError?.(), { message: '' }).message ||
-        '原生音频引擎不可用'
-      throw new Error(`原生音频播放失败：${detail}`)
-    }
-    this.nativePlaybackActive = nativeStarted
-    this.pendingNativeSource = nativeStarted ? source : null
-    const nativeInfo = nativeStarted ? this.readNativePlaybackInfo() : null
-    if (nativeInfo?.source === source) {
-      this.pendingNativeSource = null
-    }
-    const isDsd = sourceLooksDsd(source)
-    const nativeDsd = nativeInfo ? normalizeDsdState(nativeInfo.outputInfo, nativeInfo) : null
-    const playbackIsDsd = isDsd || nativeDsd?.isDsd === true
-    const playbackDsdMode = nativeDsd?.isDsd
-      ? nativeDsd.dsdMode
-      : playbackIsDsd
-        ? 'unsupported'
-        : 'pcm'
-    const playbackDsdRate = nativeDsd?.isDsd ? nativeDsd.dsdRate : 0
-    // A single-file CUE queue deliberately contains adjacent logical tracks with the same
-    // source. Preserve the selected queue index when it already points at this source; a plain
-    // findIndex(source) would incorrectly snap every later CUE track back to the first one.
-    const indexedQueueItem = this.queue[this.playbackInfo.queueIndex]
-    const sourceQueueIndex =
-      indexedQueueItem?.source === source
-        ? this.playbackInfo.queueIndex
-        : this.queue.findIndex((item) => item.source === source)
-    const preservedPlaybackRate = this.playbackInfo.playbackRate ?? 1
-    this.playbackInfo = {
-      ...this.playbackInfo,
-      ...nativeInfo,
-      state: 'playing',
-      position: boundedStartTime,
-      duration,
-      source,
-      queueIndex: sourceQueueIndex >= 0 ? sourceQueueIndex : this.playbackInfo.queueIndex,
-      codec: inferCodec(source),
-      isDsd: playbackIsDsd,
-      dsdMode: playbackDsdMode,
-      dsdRate: playbackDsdRate,
-      // Native play() does not receive rate as an argument; reassert the app-layer rate
-      // so a default 1.0 from GetPlaybackInfo cannot clobber a non-unity rate.
-      playbackRate: preservedPlaybackRate,
-      outputInfo: nativeInfo?.outputInfo
-        ? {
-            ...nativeInfo.outputInfo,
-            isDsd: playbackIsDsd,
-            dsdMode: playbackDsdMode,
-            dsdRate: playbackDsdRate
-          }
-        : this.playbackInfo.outputInfo
-    }
-    if (nativeStarted && Math.abs(preservedPlaybackRate - 1) > 0.001) {
-      this.tryNative('播放后同步倍速', (native) => native.SetPlaybackRate(preservedPlaybackRate))
-    }
-    await this.applyNativeDspGraph('播放源格式变更后解析 DSP 场景')
-    this.lastTick = this.scheduler.now()
-    const nativePositionConfirmed =
-      nativeInfo?.source === source &&
-      nativeInfo.state !== 'stopped' &&
-      Number.isFinite(nativeInfo.position) &&
-      Math.abs(nativeInfo.position - boundedStartTime) <= 5
-    this.lastNativeReportedPosition =
-      nativePositionConfirmed && nativeInfo ? nativeInfo.position : Number.NaN
-    this.pendingNativePositionTarget = nativePositionConfirmed ? null : boundedStartTime
-    this.emit('start-file')
-    this.publishDuration(this.playbackInfo.duration, { force: true })
-    this.publishProperty('pause', false)
-    this.publishPlaybackInfo()
-    return {
-      nativeStarted,
-      fallbackReason:
-        nativeFallbackReason || (nativeStarted ? '' : this.lastNativeError || '原生音频引擎不可用')
-    }
-  }
-
-  async togglePause(): Promise<void> {
-    const native = this.native
-    if (!native) {
-      this.lastNativeError = '未加载 twilight_audio_node.node'
-      return
-    }
-
-    // Service 模式：异步等待 utility 进程执行完毕，读取真实状态
-    if (typeof native.callAsync === 'function') {
-      try {
-        await native.callAsync('Pause', [])
-        // 等待原生引擎更新状态后读取真实播放信息
-        const raw = await native.callAsync('GetPlaybackInfo', [])
-        const realInfo = parseNativeJson(
-          raw as string | PlaybackInfo | undefined,
-          null as PlaybackInfo | null
-        )
-        if (realInfo) {
-          this.playbackInfo = this.mergeNativePlaybackInfo(
-            this.normalizePlaybackInfo(realInfo, true)
-          )
-        }
-        this.lastTick = this.scheduler.now()
-        this.publishProperty('pause', this.playbackInfo.state !== 'playing')
-        this.publishPlaybackInfo()
-        return
-      } catch (err) {
-        // 异步调用失败，回退到同步路径
-        const message = err instanceof Error ? err.message : String(err)
-        this.lastNativeError = message
-        console.warn('原生音频引擎异步暂停/继续失败，回退同步路径：', message)
-      }
-    }
-
-    // 直接 N-API 模式：Pause() 同步阻塞，GetPlaybackInfo() 立即返回真实状态
-    this.tryNative('暂停/继续', (n) => n.Pause())
-    const nativeInfo = this.readNativePlaybackInfo()
-    if (nativeInfo) {
-      this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
-    }
-    this.lastTick = this.scheduler.now()
-    this.publishProperty('pause', this.playbackInfo.state !== 'playing')
-    this.publishPlaybackInfo()
-  }
-
-  async pause(): Promise<void> {
-    // 真正的硬暂停：如果已经暂停则不操作，避免 toggle 语义导致的反向翻转
-    if (this.playbackInfo.state === 'paused' || this.playbackInfo.state === 'stopped') {
-      return
-    }
-    await this.togglePause()
-  }
-
-  async seek(time: number): Promise<void> {
-    const position = clampQueueItemPosition(this.queue[this.playbackInfo.queueIndex], time)
-    if (this.playbackInfo.state !== 'playing' && Object.is(position, this.playbackInfo.position)) {
-      return
-    }
-    this.tryNative('跳转', (native) => native.Seek(position))
-    this.playbackInfo.position = position
-    this.lastTick = this.scheduler.now()
-    this.lastNativeReportedPosition = Number.NaN
-    this.pendingNativePositionTarget = position
-    this.publishProperty('time-pos', position)
-    this.publishPlaybackInfo()
-  }
-
-  async setVolume(volume: number): Promise<void> {
-    const normalized = clampNumber(volume, 0, 1, 1)
-    if (Object.is(normalized, this.playbackInfo.volume)) return
-    this.tryNative('设置音量', (native) => native.SetVolume(normalized))
-    this.playbackInfo.volume = normalized
-    this.updateOutputPerfect()
-    this.publishPlaybackInfo()
-  }
-
-  async setPlaybackRate(rate: number): Promise<void> {
-    const normalized = clampNumber(rate, 0.5, 2, 1)
-    // Round to 3 decimals to avoid float chatter.
-    const rounded = Math.round(normalized * 1000) / 1000
-    if (Object.is(rounded, this.playbackInfo.playbackRate ?? 1)) return
-    this.tryNative('设置倍速', (native) => native.SetPlaybackRate(rounded))
-    this.playbackInfo.playbackRate = rounded
-    // Non-unity rate requires resampling and breaks bit-perfect, same as non-unity volume.
-    this.updateOutputPerfect()
-    this.publishPlaybackInfo()
-  }
-
-  /**
-   * Native A-B loop. Pass end <= start (or negative) to clear.
-   * Returns whether the native binding accepted the call (soft A-B remains the fallback).
-   */
-  async setLoopRange(startSeconds: number, endSeconds: number): Promise<boolean> {
-    const start =
-      typeof startSeconds === 'number' && Number.isFinite(startSeconds)
-        ? Math.max(0, startSeconds)
-        : -1
-    const end =
-      typeof endSeconds === 'number' && Number.isFinite(endSeconds) ? Math.max(0, endSeconds) : -1
-    if (!this.native || typeof this.native.SetLoopRange !== 'function') return false
-    try {
-      this.tryNative('设置 A-B 循环', (native) => {
-        native.SetLoopRange?.(start, end)
-      })
-      return true
-    } catch {
-      return false
-    }
-  }
-
-  async stop(): Promise<void> {
-    if (
-      this.playbackInfo.state === 'stopped' &&
-      this.playbackInfo.position === 0 &&
-      !this.nativePlaybackActive
-    ) {
-      return
-    }
-    if (this.nativePlaybackActive) {
-      const stopped = await this.callNativeMaybeAsync('停止', 'Stop')
-      if (!stopped) {
-        const nativeInfo = await this.readNativePlaybackInfoAsync()
-        if (nativeInfo) this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
-        this.publishPlaybackInfo()
-        throw new Error(`原生音频停止失败：${this.lastNativeError || '原生音频引擎不可用'}`)
-      }
-    } else {
-      this.tryNative('停止', (native) => native.Stop())
-    }
-    this.nativePlaybackActive = false
-    this.pendingNativeSource = null
-    this.pendingNativePositionTarget = null
-    this.lastNativeReportedPosition = Number.NaN
-    this.playbackInfo.state = 'stopped'
-    this.playbackInfo.position = 0
-    this.publishProperty('pause', true)
-    this.publishProperty('eof-reached', false)
-    this.publishPlaybackInfo()
-  }
-
-  async loadQueue(items: AudioEngineQueueItem[], startIndex = 0): Promise<void> {
-    const nextQueue = [...items]
-    const nextQueueIndex =
-      nextQueue.length > 0 ? Math.min(Math.max(0, startIndex), nextQueue.length - 1) : -1
-    const nextQueueJson = JSON.stringify(nextQueue)
-    if (nextQueueJson === this.queueJson && nextQueueIndex === this.playbackInfo.queueIndex) return
-
-    this.queue = nextQueue
-    this.queueJson = nextQueueJson
-    this.playbackInfo.queueIndex = nextQueueIndex
-    this.invalidateUpcomingTrackCache()
-    this.tryNative('加载队列', (native) => {
-      native.LoadQueue?.(nextQueueJson, nextQueueIndex)
-      native.SetPlayMode?.(this.playbackInfo.playMode === 'repeat' ? 'repeat' : 'sequential')
-    })
-    this.emit('queue-change', this.queue)
-  }
-
-  async next(): Promise<void> {
-    if (this.queue.length === 0) return
-    this.invalidateUpcomingTrackCache()
-    const fallbackIndex = (this.playbackInfo.queueIndex + 1) % this.queue.length
-    let nextIndex = fallbackIndex
-    const targetSource = this.queue[nextIndex]?.source
-    if (this.nativePlaybackActive && this.native?.Next) {
-      let nativeInfo: PlaybackInfo | null = null
-      if (typeof this.native.callAsync === 'function') {
-        try {
-          await this.native.callAsync('Next', [])
-          nativeInfo = await this.readNativePlaybackInfoAsync()
-          this.lastNativeError = ''
-        } catch (err) {
-          this.lastNativeError = err instanceof Error ? err.message : String(err)
-        }
-      } else if (this.tryNative('下一首', (native) => native.Next?.())) {
-        nativeInfo = this.readNativePlaybackInfo()
-      }
-      if (
-        nativeInfo &&
-        nativeInfo.state === 'playing' &&
-        nativeInfo.source === targetSource &&
-        nativeInfo.queueIndex >= 0 &&
-        nativeInfo.queueIndex < this.queue.length
-      ) {
-        nextIndex = nativeInfo.queueIndex
-        this.pendingNativeSource = null
-        this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
-        this.emit('start-file')
-        this.publishPlaybackInfo()
-        return
-      }
-    }
-    this.playbackInfo.queueIndex = nextIndex
-    await this.play(this.queue[nextIndex].source, 0)
-  }
-
-  async previous(): Promise<void> {
-    if (this.queue.length === 0) return
-    this.invalidateUpcomingTrackCache()
-    const fallbackIndex =
-      this.playbackInfo.queueIndex <= 0 ? this.queue.length - 1 : this.playbackInfo.queueIndex - 1
-    let nextIndex = fallbackIndex
-    const targetSource = this.queue[nextIndex]?.source
-    if (this.nativePlaybackActive && this.native?.Previous) {
-      let nativeInfo: PlaybackInfo | null = null
-      if (typeof this.native.callAsync === 'function') {
-        try {
-          await this.native.callAsync('Previous', [])
-          nativeInfo = await this.readNativePlaybackInfoAsync()
-          this.lastNativeError = ''
-        } catch (err) {
-          this.lastNativeError = err instanceof Error ? err.message : String(err)
-        }
-      } else if (this.tryNative('上一首', (native) => native.Previous?.())) {
-        nativeInfo = this.readNativePlaybackInfo()
-      }
-      if (
-        nativeInfo &&
-        nativeInfo.state === 'playing' &&
-        nativeInfo.source === targetSource &&
-        nativeInfo.queueIndex >= 0 &&
-        nativeInfo.queueIndex < this.queue.length
-      ) {
-        nextIndex = nativeInfo.queueIndex
-        this.pendingNativeSource = null
-        this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
-        this.emit('start-file')
-        this.publishPlaybackInfo()
-        return
-      }
-    }
-    this.playbackInfo.queueIndex = nextIndex
-    await this.play(this.queue[nextIndex].source, 0)
-  }
-
-  async setExclusiveMode(enabled: boolean): Promise<AudioOutputState> {
-    if (enabled && !supportsAudioExclusive(this.output)) {
-      throw new Error(`${this.output} 不支持独占模式`)
-    }
-    if (this.nativeOutputRouteSynced && enabled === this.exclusiveMode) {
-      return await this.getAudioOutputState()
-    }
-
-    const previousExclusiveMode = this.exclusiveMode
-    this.exclusiveMode = enabled
-    this.invalidateAudioDeviceOptionsCache('exclusive-mode-changed')
-    this.nativeOutputRouteSynced = false
-    const backendSynced = await this.callNativeMaybeAsync(
-      '切换独占模式',
-      'SetOutputBackend',
-      this.getNativeBackendId()
-    )
-    if (!backendSynced) {
-      this.exclusiveMode = previousExclusiveMode
-      this.invalidateAudioDeviceOptionsCache('exclusive-mode-restore-after-failure')
-      throw new Error(`原生音频独占模式切换失败：${this.lastNativeError || '原生音频引擎不可用'}`)
-    }
-    const configSynced = await this.callNativeMaybeAsync(
-      '切换输出配置',
-      'SetOutputConfig',
-      JSON.stringify(this.outputConfig)
-    )
-    if (!configSynced) {
-      this.exclusiveMode = previousExclusiveMode
-      this.invalidateAudioDeviceOptionsCache('exclusive-mode-restore-after-failure')
-      throw new Error(
-        `原生音频独占模式配置应用失败：${this.lastNativeError || '原生音频引擎不可用'}`
-      )
-    }
-    this.nativeOutputRouteSynced = true
-    this.refreshOutputInfoFromNative(true)
-    await this.applyNativeDspGraphOrThrow('独占模式切换后解析 DSP 场景')
-    return await this.getAudioOutputState()
-  }
-
-  async getExclusiveMode(): Promise<boolean> {
-    return this.exclusiveMode
-  }
-
-  async setAudioOutput(output: AudioOutputId, device?: string): Promise<AudioOutputState> {
-    const nextOutput = normalizeAudioOutput(output)
-    const outputChanged = nextOutput !== this.output
-    const nextDevice = this.resolveCompatibleDevice(
-      nextOutput,
-      normalizeAudioDevice(device ?? (outputChanged ? 'auto' : this.device))
-    )
-    const nextExclusiveMode = supportsAudioExclusive(nextOutput) ? this.exclusiveMode : false
-    if (
-      this.nativeOutputRouteSynced &&
-      nextOutput === this.output &&
-      nextDevice === this.device &&
-      nextExclusiveMode === this.exclusiveMode
-    ) {
-      return await this.getAudioOutputState()
-    }
-
-    this.output = nextOutput
-    this.device = nextDevice
-    this.exclusiveMode = nextExclusiveMode
-    this.invalidateAudioDeviceOptionsCache('audio-output-changed')
-    this.nativeOutputRouteSynced = false
-    const routeRestore = await this.restoreAudioServiceOutputRoute('切换')
-    this.nativeOutputRouteSynced = routeRestore.synced
-    this.refreshOutputInfoFromNative(true)
-    await this.applyNativeDspGraphOrThrow('输出后端切换后解析 DSP 场景')
-    return await this.getAudioOutputState()
-  }
-
-  async setAudioDevice(device: string): Promise<AudioOutputState> {
-    const nextDevice = this.resolveCompatibleDevice(this.output, normalizeAudioDevice(device))
-    if (this.nativeOutputRouteSynced && nextDevice === this.device)
-      return await this.getAudioOutputState()
-
-    const previousDevice = this.device
-    this.device = nextDevice
-    this.invalidateAudioDeviceOptionsCache('audio-device-changed')
-    this.nativeOutputRouteSynced = false
-    const deviceSynced = await this.callNativeMaybeAsync(
-      '切换输出设备',
-      'SetOutputDevice',
-      this.device
-    )
-    if (!deviceSynced) {
-      this.device = previousDevice
-      this.invalidateAudioDeviceOptionsCache('audio-device-restore-after-failure')
-      throw new Error(`原生音频输出设备切换失败：${this.lastNativeError || '原生音频引擎不可用'}`)
-    }
-    this.nativeOutputRouteSynced = true
-    this.refreshOutputInfoFromNative(true)
-    this.rememberFollowedDefaultDeviceFromOptions()
-    await this.applyNativeDspGraphOrThrow('输出设备切换后解析 DSP 场景')
-    return await this.getAudioOutputState()
-  }
-
-  async setOutputConfig(config: Partial<OutputConfig>): Promise<void> {
-    const revision = ++this.outputConfigRevision
-    const generation = ++this.outputConfigApplyGeneration
-    this.outputConfigApplyStatus = {
-      ...this.outputConfigApplyStatus,
-      requestedRevision: revision,
-      state: 'pending',
-      error: '',
-      generation
-    }
-
-    const queued = this.outputConfigApplyQueue.then(async () => {
-      const serviceGeneration = this.outputConfigServiceGeneration
-      const changed = await this.applyOutputConfigDirect(config)
-      if (serviceGeneration !== this.outputConfigServiceGeneration) {
-        throw new Error('音频服务在输出拓扑更新期间重启')
-      }
-      if (changed) {
-        const nativeInfo = await this.readNativePlaybackInfoAsync()
-        if (serviceGeneration !== this.outputConfigServiceGeneration) {
-          throw new Error('音频服务在读取输出拓扑 ACK 时重启')
-        }
-        if (nativeInfo) {
-          this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
-          this.publishPlaybackInfo()
-        }
-      }
-      if (generation === this.outputConfigApplyGeneration) {
-        this.outputConfigApplyStatus = {
-          ...this.outputConfigApplyStatus,
-          appliedRevision: revision,
-          state: 'applied',
-          error: '',
-          generation
-        }
-      }
-    })
-    this.outputConfigApplyQueue = queued.catch(() => undefined)
-    try {
-      await queued
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      if (generation === this.outputConfigApplyGeneration) {
-        this.outputConfigApplyStatus = {
-          ...this.outputConfigApplyStatus,
-          failedRevision: revision,
-          state: 'failed',
-          error: message,
-          generation
-        }
-      }
-      throw error
-    }
-  }
-
-  getOutputConfig(): OutputConfig {
-    return { ...this.outputConfig }
-  }
-
-  getOutputConfigApplyStatus(): OutputConfigApplyStatus {
-    return { ...this.outputConfigApplyStatus }
-  }
-
-  private async applyOutputConfigDirect(config: Partial<OutputConfig>): Promise<boolean> {
-    const previousConfig = this.outputConfig
-    const nextConfig = normalizeOutputConfig({ ...previousConfig, ...config })
-    if (outputConfigsEqual(nextConfig, this.outputConfig)) return false
-
-    const bufferSizeChanged = nextConfig.preferredBufferSize !== previousConfig.preferredBufferSize
-    const needsReopen = bufferSizeChanged && this.output === 'asio'
-    this.nativeOutputRouteSynced = false
-    if (needsReopen) {
-      const reopened = await this.callNativeMaybeAsync(
-        '重开 ASIO 后端以应用 buffer size',
-        'SetOutputBackend',
-        this.getNativeBackendId()
-      )
-      if (!reopened) {
-        this.outputConfig = previousConfig
-        throw new Error(`原生音频输出配置重开失败：${this.lastNativeError || '原生音频引擎不可用'}`)
-      }
-    }
-    const configSynced = await this.callNativeMaybeAsync(
-      '设置输出配置',
-      'SetOutputConfig',
-      JSON.stringify(nextConfig)
-    )
-    if (!configSynced) {
-      this.outputConfig = previousConfig
-      throw new Error(`原生音频输出配置应用失败：${this.lastNativeError || '原生音频引擎不可用'}`)
-    }
-    this.outputConfig = nextConfig
-    this.nativeOutputRouteSynced = true
-    this.playbackInfo.outputInfo.channelRoutingMode = this.outputConfig.routingMode
-    this.playbackInfo.channelRoutingMode = this.outputConfig.routingMode
-    this.refreshOutputInfoFromNative(needsReopen)
-    await this.applyNativeDspGraphOrThrow('输出配置切换后解析 DSP 场景')
-    return true
-  }
-
-  async getAudioOutput(): Promise<AudioOutputId> {
-    return this.output
-  }
-
-  getAudioOutputOptions(): AudioOutputOption[] {
-    return getAudioOutputOptions()
-  }
-
-  async getAudioOutputState(): Promise<AudioOutputState> {
-    return {
-      output: this.output,
-      device: this.device,
-      exclusiveMode: this.exclusiveMode,
-      exclusiveAvailable: supportsAudioExclusive(this.output),
-      outputOptions: getAudioOutputOptions(),
-      deviceOptions: this.getAudioDeviceOptions()
-    }
-  }
-
-  notifyAudioDeviceOptionsChanged(reason = 'platform-device-change'): void {
-    if (this.destroyed) return
-    this.lastAudioDeviceOptionsProbeAt = Number.NEGATIVE_INFINITY
-    this.invalidateAudioDeviceOptionsCache(reason)
-    void this.maybeRebindAutoOutputDevice(reason)
-  }
-
-  private dspSceneContext(): DspSceneContext {
-    const channels =
-      this.playbackInfo.outputInfo.actualChannels ||
-      this.playbackInfo.decodedChannels ||
-      this.playbackInfo.channelCount ||
-      2
-    const channelLayout =
-      channels <= 1 ? 'mono' : channels >= 8 ? '7.1' : channels >= 6 ? '5.1' : 'stereo'
-    const sourceKind =
-      sourceLooksDsd(this.playbackInfo.source) ||
-      this.playbackInfo.codec.trim().toLowerCase() === 'dsd' ||
-      this.playbackInfo.outputInfo.isDsd
-        ? 'dsd'
-        : 'pcm'
-    return {
-      deviceId: this.device,
-      backend: this.output,
-      channelLayout,
-      sourceKind,
-      sampleRate:
-        this.playbackInfo.sourceSampleRate ||
-        this.playbackInfo.decodedSampleRate ||
-        this.playbackInfo.outputInfo.actualSampleRate ||
-        48000
-    }
-  }
-
-  private refreshResolvedDspScene() {
-    const resolution = resolveDspScene(
-      this.dspScenes,
-      this.dspSceneContext(),
-      this.dspPinnedSceneId
-    )
-    this.activeDspSceneId = resolution.scene?.id ?? null
-    this.activeDspGraph = resolution.graph
-    return resolution
-  }
-
-  private graphPayload(revision = this.dspGraphRevision) {
-    const resolution = this.refreshResolvedDspScene()
-    const dsdPcmFallbackApplied =
-      resolution.requiresPcmFallback &&
-      resolution.scene?.allowDsdPcmFallback === true &&
-      this.processing.dsdOutputMode === 'pcm'
-    return {
-      revision,
-      sceneId: resolution.scene?.id ?? null,
-      graph:
-        resolution.requiresPcmFallback && !dsdPcmFallbackApplied
-          ? {
-              version: this.activeDspGraph.version,
-              nodes: [],
-              outputStage: this.activeDspGraph.outputStage
-            }
-          : this.materializeGraphAssets(this.activeDspGraph),
-      bypassReason:
-        resolution.requiresPcmFallback && !dsdPcmFallbackApplied
-          ? 'DSD Direct requires explicit PCM fallback before DSP can run'
-          : '',
-      requiresPcmFallback: resolution.requiresPcmFallback,
-      dsdPcmFallbackApplied
-    }
-  }
-
-  private dspStatePayload(revision: number): DspStatePayload {
-    return {
-      ...this.graphPayload(revision),
-      revision,
-      graphUpdateMode: 'replace',
-      processing: { ...this.processing }
-    }
-  }
-
-  private materializeGraphAssets(graph: DspGraphConfig): DspGraphConfig {
-    if (
-      !this.dspAssetPathResolver &&
-      !this.vst3ModuleResolver &&
-      !graph.nodes.some((node) => node.type === 'vst3Plugin')
-    ) {
-      return graph
-    }
-    let changed = false
-    const nodes = graph.nodes.map((node) => {
-      let params = node.params
-      const assetId = node.params.impulseResponseAssetId
-      if (typeof assetId === 'string') {
-        const path = this.dspAssetPathResolver?.(assetId)
-        if (path && params.impulseResponsePath !== path) {
-          params = { ...params, impulseResponsePath: path }
-          changed = true
-        }
-      }
-      if (node.type !== 'vst3Plugin') {
-        return params === node.params ? node : { ...node, params }
-      }
-
-      // These values are materialized only in main memory immediately before
-      // native dispatch. Persisted renderer configuration can reference a
-      // catalog ID, never an arbitrary filesystem module path.
-      const {
-        vst3ModulePath: _ignoredModulePath,
-        vst3ClassId: _ignoredClassId,
-        vst3StatePath: _ignoredStatePath,
-        vst3StateFormat: _ignoredStateFormat,
-        vst3BypassReason: _ignoredBypassReason,
-        ...safeParams
-      } = params
-      const reference = node.vst3
-      const resolution = reference
-        ? this.vst3ModuleResolver?.(reference.catalogId, reference.classId)
-        : undefined
-      const stateResolution = reference?.stateAssetId
-        ? this.vst3StateAssetResolver?.(reference.stateAssetId)
-        : undefined
-      const bypassReason =
-        (reference ? this.vst3RecoveryBypassReasons.get(reference.catalogId) : '') ||
-        (!resolution?.modulePath
-          ? resolution?.reason ||
-            (reference
-              ? 'VST3 catalog resolution is unavailable'
-              : 'VST3 graph nodes require a managed catalog reference')
-          : reference?.stateAssetId && !stateResolution?.path
-            ? stateResolution?.reason || 'VST3 state asset resolution is unavailable'
-            : '')
-      const resolvedParams = bypassReason
-        ? { ...safeParams, vst3BypassReason: bypassReason }
-        : {
-            ...safeParams,
-            vst3ModulePath: resolution?.modulePath ?? '',
-            vst3ClassId: resolution?.classId ?? reference?.classId ?? '',
-            ...(stateResolution?.path
-              ? {
-                  vst3StatePath: stateResolution.path,
-                  vst3StateFormat:
-                    stateResolution.kind === 'vst3Preset' ? 'preset' : 'componentState'
-                }
-              : {})
-          }
-      changed = true
-      return { ...node, params: resolvedParams }
-    })
-    return changed ? { ...graph, nodes } : graph
-  }
-
-  refreshDspGraph(): void {
-    void this.applyNativeDspGraph('刷新 DSP 场景资料解析')
-    this.updateOutputPerfect()
-    this.publishPlaybackInfo()
-  }
-
-  /** Called after a listener explicitly clears a VST3 quarantine. */
-  clearVst3RecoveryBypass(catalogId?: string): void {
-    const normalizedCatalogId = typeof catalogId === 'string' ? catalogId.trim() : ''
-    if (normalizedCatalogId) {
-      this.vst3RecoveryBypassReasons.delete(normalizedCatalogId)
-      return
-    }
-    this.vst3RecoveryBypassReasons.clear()
-  }
-
-  private markActiveVst3NodesForManualRecovery(): void {
-    const reason = 'VST3 node is bypassed after an audio service crash; re-enable it manually'
-    for (const node of this.activeDspGraph.nodes) {
-      const catalogId =
-        node.type === 'vst3Plugin' && node.enabled ? node.vst3?.catalogId.trim() : ''
-      if (catalogId) this.vst3RecoveryBypassReasons.set(catalogId, reason)
-    }
-  }
-
-  private createDspGraphStatusFallback(): DspGraphStatus {
-    return {
-      revision: this.dspGraphAppliedRevision,
-      activeSceneId: this.activeDspSceneId,
-      totalLatencyFrames: 0,
-      totalTailFrames: 0,
-      nodes: this.activeDspGraph.nodes.map((node) => ({
-        id: node.id,
-        type: node.type,
-        enabled: node.enabled,
-        active: false,
-        bypassed: false,
-        bypassReason: '',
-        latencyFrames: 0,
-        tailFrames: 0,
-        processCalls: 0,
-        lastProcessMs: 0,
-        maxProcessMs: 0
-      }))
-    }
-  }
-
-  private decorateDspGraphStatus(status: DspGraphStatus): DspGraphStatus {
-    return {
-      ...status,
-      requestedRevision: this.dspGraphRevision,
-      appliedRevision: this.dspGraphAppliedRevision,
-      applyState: this.dspGraphApplyState,
-      applyError: this.dspGraphApplyError
-    }
-  }
-
-  private observeNativeDspGraphStatus(status: DspGraphStatus): void {
-    if (
-      !this.lastNativeDspGraphStatus ||
-      status.revision >= this.lastNativeDspGraphStatus.revision
-    ) {
-      this.lastNativeDspGraphStatus = status
-    }
-    this.dspGraphAppliedRevision = Math.max(this.dspGraphAppliedRevision, status.revision)
-    if (status.revision >= this.dspGraphRevision && this.dspGraphRevision > 0) {
-      this.dspGraphApplyState = 'applied'
-      this.dspGraphApplyError = ''
-    }
-  }
-
-  private async applyNativeDspGraph(context: string): Promise<DspGraphStatus> {
-    const revision = ++this.dspGraphRevision
-    const payload = this.dspStatePayload(revision)
-    this.dspGraphApplyState = 'pending'
-    this.dspGraphApplyError = ''
-    try {
-      const native = this.native
-      if (!native) throw new Error('未加载 twilight_audio_node.node')
-      let status: DspGraphStatus
-      if (this.audioServiceBinding) {
-        status = await this.audioServiceBinding.applyDspState(revision, payload)
-      } else {
-        if (
-          typeof native.ApplyDspState !== 'function' ||
-          typeof native.GetDspGraphStatus !== 'function'
-        ) {
-          throw new Error(
-            'native audio binding is missing required DSP methods: ApplyDspState, GetDspGraphStatus'
-          )
-        }
-        native.ApplyDspState(revision, JSON.stringify(payload))
-        status = await this.waitForDirectNativeDspRevision(revision, native)
-      }
-      if (status.revision < revision) {
-        throw new Error(
-          `DSP graph ACK revision mismatch: requested ${revision}, applied ${status.revision}`
-        )
-      }
-      if (status.compileState === 'failed') {
-        throw new Error(status.compileError || `DSP graph revision ${revision} failed to compile`)
-      }
-      this.observeNativeDspGraphStatus(status)
-      this.lastNativeError = ''
-      return this.decorateDspGraphStatus(status)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      if (revision === this.dspGraphRevision) {
-        this.dspGraphApplyState = 'failed'
-        this.dspGraphApplyError = message
-      }
-      this.lastNativeError = message
-      console.warn(`原生音频引擎${context}失败：`, message)
-      return this.decorateDspGraphStatus(
-        this.lastNativeDspGraphStatus ?? this.createDspGraphStatusFallback()
-      )
-    }
-  }
-
-  private async waitForDirectNativeDspRevision(
-    revision: number,
-    native: NativeAudioBinding
-  ): Promise<DspGraphStatus> {
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      const status = parseDspGraphStatusOrThrow(native.GetDspGraphStatus())
-      if (status.revision >= revision) return status
-      await new Promise((resolve) => setTimeout(resolve, 5))
-    }
-    throw new Error(`DSP graph ACK revision mismatch: requested ${revision}`)
-  }
-
-  private async applyNativeDspGraphOrThrow(context: string): Promise<DspGraphStatus> {
-    const status = await this.applyNativeDspGraph(context)
-    if (status.applyState === 'failed') {
-      throw new Error(status.applyError || `${context}失败`)
-    }
-    return status
-  }
-
-  getDspSceneState(): DspSceneState {
-    const payload = this.graphPayload()
-    return {
-      scenes: this.dspScenes,
-      pinnedSceneId: this.dspPinnedSceneId,
-      activeSceneId: payload.sceneId,
-      graph: this.activeDspGraph,
-      requiresPcmFallback: payload.requiresPcmFallback,
-      dsdPcmFallbackApplied: payload.dsdPcmFallbackApplied
-    }
-  }
-
-  async setDspScenes(
-    scenes: DspScene[],
-    pinnedSceneId: string | null = this.dspPinnedSceneId
-  ): Promise<DspSceneState> {
-    const previousScenes = new Map(this.dspScenes.map((scene) => [scene.id, scene]))
-    this.dspScenes = normalizeDspScenes(scenes, this.processing)
-    for (const scene of this.dspScenes) {
-      const previous = previousScenes.get(scene.id)
-      // A confirmation applies to the exact graph the listener heard. Editing
-      // that graph, importing a new scene, or restoring an older draft always
-      // asks again before a DSD Direct/DoP path can become PCM processing.
-      if (
-        previous?.allowDsdPcmFallback !== true ||
-        JSON.stringify(previous.graph) !== JSON.stringify(scene.graph)
-      ) {
-        delete scene.allowDsdPcmFallback
-      }
-    }
-    this.dspPinnedSceneId =
-      typeof pinnedSceneId === 'string' &&
-      this.dspScenes.some((scene) => scene.id === pinnedSceneId)
-        ? pinnedSceneId
-        : null
-    await this.applyNativeDspGraphOrThrow('更新 DSP 场景')
-    this.updateOutputPerfect()
-    this.publishPlaybackInfo()
-    return this.getDspSceneState()
-  }
-
-  /**
-   * Thin HiFi / console wrapper: patch default scene graph.outputStage and fan out SetDspGraph.
-   * Does not invent OutputConfig fields; rate lock lives only on the DSP graph output stage.
-   */
-  async setOutputStage(partial: Partial<DspOutputStageConfig>): Promise<DspSceneState> {
-    const defaultScene = this.dspScenes.find((scene) => scene.id === 'default')
-    if (!defaultScene) {
-      this.dspScenes = normalizeDspScenes(this.dspScenes, {
-        ...this.processing,
-        outputStage: mergeDspOutputStage(undefined, partial)
-      })
-    } else {
-      defaultScene.graph = {
-        ...defaultScene.graph,
-        outputStage: mergeDspOutputStage(defaultScene.graph.outputStage, partial)
-      }
-      // Editing output stage invalidates any prior DSD PCM-fallback confirmation.
-      delete defaultScene.allowDsdPcmFallback
-    }
-    await this.applyNativeDspGraphOrThrow('更新输出采样率锁')
-    this.updateOutputPerfect()
-    this.publishPlaybackInfo()
-    return this.getDspSceneState()
-  }
-
-  getOutputStage(): DspOutputStageConfig {
-    const defaultScene = this.dspScenes.find((scene) => scene.id === 'default')
-    return mergeDspOutputStage(defaultScene?.graph.outputStage, {})
-  }
-
-  /**
-   * Thin HiFi wrapper: patch default-scene stereoField + channelStrip polarity.
-   * Does not invent classic audioProcessing fields — balance/phase live on the graph.
-   */
-  async setStereoImage(partial: Partial<DspStereoImageConfig>): Promise<DspSceneState> {
-    const defaultScene = this.dspScenes.find((scene) => scene.id === 'default')
-    if (!defaultScene) {
-      this.dspScenes = normalizeDspScenes(this.dspScenes, {
-        ...this.processing,
-        stereoImage: partial
-      })
-    } else {
-      defaultScene.graph = applyStereoImageToGraph(defaultScene.graph, partial)
-      delete defaultScene.allowDsdPcmFallback
-    }
-    await this.applyNativeDspGraphOrThrow('更新立体声平衡/相位')
-    this.updateOutputPerfect()
-    this.publishPlaybackInfo()
-    return this.getDspSceneState()
-  }
-
-  getStereoImage(): DspStereoImageConfig {
-    const defaultScene = this.dspScenes.find((scene) => scene.id === 'default')
-    return extractStereoImageFromGraph(defaultScene?.graph)
-  }
-
-  async applyDspScene(
-    sceneId: string | null,
-    confirmDsdPcmFallback = false
-  ): Promise<DspSceneState> {
-    this.dspPinnedSceneId =
-      typeof sceneId === 'string' && this.dspScenes.some((scene) => scene.id === sceneId)
-        ? sceneId
-        : null
-    const state = this.getDspSceneState()
-    if (state.requiresPcmFallback && !state.dsdPcmFallbackApplied) {
-      if (!confirmDsdPcmFallback) {
-        await this.applyNativeDspGraphOrThrow('保留 DSD Direct/DoP 并旁路 DSP 场景')
-        this.updateOutputPerfect()
-        this.publishPlaybackInfo()
-        return this.getDspSceneState()
-      }
-      const scene = this.dspScenes.find((candidate) => candidate.id === state.activeSceneId)
-      if (!scene) return state
-      scene.allowDsdPcmFallback = true
-      const previousProcessing = this.processing
-      this.processing = this.mergeAudioProcessingSettings({ dsdOutputMode: 'pcm', dsdToPcm: true })
-      await this.applyNativeDspSettings('确认 DSD PCM DSP 回退', { previousProcessing })
-    } else {
-      await this.applyNativeDspGraphOrThrow('应用 DSP 场景')
-    }
-    this.updateOutputPerfect()
-    this.publishPlaybackInfo()
-    return this.getDspSceneState()
-  }
-
-  async getDspGraphStatus(): Promise<DspGraphStatus> {
-    try {
-      let status: DspGraphStatus
-      if (this.audioServiceBinding) {
-        status = await this.audioServiceBinding.getDspGraphStatusAsync()
-      } else if (this.native && typeof this.native.GetDspGraphStatus === 'function') {
-        status = parseDspGraphStatusOrThrow(this.native.GetDspGraphStatus())
-      } else {
-        throw new Error('native audio binding does not support GetDspGraphStatus')
-      }
-      this.observeNativeDspGraphStatus(status)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      this.dspGraphApplyState = 'failed'
-      this.dspGraphApplyError = message
-      this.lastNativeError = message
-    }
-    return this.decorateDspGraphStatus(
-      this.lastNativeDspGraphStatus ?? this.createDspGraphStatusFallback()
-    )
-  }
-
-  async scanVst3Module(modulePath: string): Promise<Vst3ScanDescriptor> {
-    const native = this.native
-    if (!native) throw new Error('未加载 twilight_audio_node.node')
-    let raw: string | Vst3ScanDescriptor | undefined
-    try {
-      raw =
-        typeof native.callAsync === 'function'
-          ? ((await native.callAsync('ScanVst3Module', [modulePath])) as
-              | string
-              | Vst3ScanDescriptor)
-          : native.ScanVst3Module?.(modulePath)
-    } catch (error) {
-      this.lastNativeError = error instanceof Error ? error.message : String(error)
-      throw new Error(this.lastNativeError)
-    }
-    const descriptor = parseNativeJson<Vst3ScanDescriptor | null>(raw, null)
-    if (!isVst3ScanDescriptor(descriptor)) {
-      throw new Error('原生音频引擎未返回有效 VST3 描述')
-    }
-    this.lastNativeError = ''
-    return {
-      classId: descriptor.classId.trim(),
-      name: descriptor.name.trim(),
-      vendor: descriptor.vendor.trim(),
-      version: descriptor.version.trim(),
-      ...(descriptor.category ? { category: descriptor.category.trim() } : {}),
-      ...(Array.isArray(descriptor.supportedLayouts)
-        ? { supportedLayouts: [...descriptor.supportedLayouts] }
-        : {}),
-      ...(Array.isArray(descriptor.parameters)
-        ? { parameters: descriptor.parameters.map((parameter) => ({ ...parameter })) }
-        : {})
-    }
-  }
-
-  async setAudioProcessing(
-    settings: Partial<AudioProcessingSettings>
-  ): Promise<AudioProcessingSettings> {
-    const previousMode = this.processing.volumeNormalization
-    const nextProcessing = this.mergeAudioProcessingSettings(settings)
-    if (audioProcessingSettingsEqual(nextProcessing, this.processing)) return this.processing
-
-    const previousProcessing = this.processing
-    this.processing = nextProcessing
-    const defaultScene = this.dspScenes.find((scene) => scene.id === 'default')
-    if (defaultScene) {
-      // Preserve HiFi sample-rate lock and balance/phase when rewriting the legacy graph.
-      defaultScene.graph = createLegacyDspGraph({
-        ...this.processing,
-        outputStage: defaultScene.graph.outputStage,
-        stereoImage: extractStereoImageFromGraph(defaultScene.graph)
-      })
-    }
-    const sourceIsDsd =
-      sourceLooksDsd(this.playbackInfo.source) ||
-      this.playbackInfo.codec.trim().toLowerCase() === 'dsd' ||
-      this.playbackInfo.outputInfo.isDsd === true
-
-    if (sourceIsDsd) {
-      const mode = this.processing.dsdOutputMode
-      const optimisticMode = mode === 'auto' ? 'dop' : mode
-      const isForcedPcm = mode === 'pcm'
-
-      this.playbackInfo.outputInfo = {
-        ...this.playbackInfo.outputInfo,
-        isDsd: true,
-        dsdMode: optimisticMode,
-        dsdRate: this.playbackInfo.outputInfo.dsdRate || this.playbackInfo.dsdRate || 0,
-        perfectReasonCode: isForcedPcm
-          ? 'dsd_converted_to_pcm'
-          : this.playbackInfo.outputInfo.perfectReasonCode === 'dsd_converted_to_pcm'
-            ? ''
-            : this.playbackInfo.outputInfo.perfectReasonCode,
-        perfectReason: isForcedPcm
-          ? 'DSD 当前已转换为 PCM 输出'
-          : this.playbackInfo.outputInfo.perfectReason === 'DSD 当前已转换为 PCM 输出'
-            ? ''
-            : this.playbackInfo.outputInfo.perfectReason,
-        capabilityReason: isForcedPcm
-          ? 'DSD 当前已转换为 PCM 输出'
-          : this.playbackInfo.outputInfo.capabilityReason === 'DSD 当前已转换为 PCM 输出'
-            ? ''
-            : this.playbackInfo.outputInfo.capabilityReason
-      }
-      this.syncPlaybackOutputMirrorsFromOutputInfo()
-    }
-    await this.applyNativeDspSettings('更新 DSP 配置', { previousProcessing })
-    this.updateOutputPerfect()
-    this.publishPlaybackInfo()
-    await this.syncLoudnormModeTransition(previousMode, this.processing.volumeNormalization)
-    return this.processing
-  }
-
-  getAudioProcessing(): AudioProcessingSettings {
-    return this.processing
-  }
-
-  async loadImpulseResponse(path: string): Promise<ConvolverInfo> {
-    await this.setAudioProcessing({
-      convolverEnabled: true,
-      convolverIrPath: path
-    })
-    this.lastConvolverInfoCache = null
-    this.updateNativeInfoSnapshot()
-    return this.getConvolverInfo()
-  }
-
-  async unloadImpulseResponse(): Promise<ConvolverInfo> {
-    const nextProcessing = this.mergeAudioProcessingSettings({
-      convolverEnabled: false,
-      convolverIrPath: ''
-    })
-    if (audioProcessingSettingsEqual(nextProcessing, this.processing))
-      return this.getConvolverInfo()
-
-    await this.setAudioProcessing(nextProcessing)
-    this.lastConvolverInfoCache = null
-    this.updateNativeInfoSnapshot()
-    return this.getConvolverInfo()
-  }
-
-  getConvolverInfo(): ConvolverInfo {
-    const canUseIdleCache = !this.processing.convolverIrPath && !this.nativeConvolverIrPath
-    const now = this.scheduler.now()
-    const cached = this.lastConvolverInfoCache
-    if (canUseIdleCache && cached && now - cached.readAt <= CONVOLVER_INFO_CACHE_TTL_MS) {
-      return cached.info
-    }
-    const info = parseNativeJson(this.native?.GetConvolverInfo?.(), {
-      loaded: false,
-      active: false,
-      bypassed: false,
-      irResampled: false,
-      path: '',
-      sampleRate: 0,
-      channels: 0,
-      lengthFrames: 0,
-      lengthMs: 0,
-      partitionSize: 0,
-      latencyFrames: 0,
-      overrunCount: 0,
-      lastProcessMs: 0,
-      maxProcessMs: 0,
-      channelMappingMode: '',
-      warning: '',
-      lastError: ''
-    })
-    if (canUseIdleCache && !info.loaded && !info.active) {
-      this.lastConvolverInfoCache = {
-        readAt: now,
-        info
-      }
-    }
-    return info
-  }
-
-  async setEqBands(settings: Partial<AudioProcessingSettings>): Promise<AudioProcessingSettings> {
-    return this.setAudioProcessing(settings)
-  }
-
-  async setEqPreset(preset: {
-    eqMode: EqMode
-    eqPreamp: number
-    eqBands: EqualizerBand[]
-  }): Promise<AudioProcessingSettings> {
-    return this.setAudioProcessing({
-      ...preset,
-      eqEnabled: true
-    })
-  }
-
-  async setCrossfeedStrength(strength: number): Promise<AudioProcessingSettings> {
-    return this.setAudioProcessing({
-      crossfeedEnabled: strength > 0,
-      crossfeedStrength: strength
-    })
-  }
-
-  async setReplayGainMode(
-    mode: VolumeNormalizationMode,
-    preamp = this.processing.replayGainPreamp,
-    fallback = this.processing.replayGainFallback,
-    clip = this.processing.replayGainClip
-  ): Promise<AudioProcessingSettings> {
-    // Route through setAudioProcessing so default-scene graph + dual DSP path stay aligned.
-    return this.setAudioProcessing({
-      volumeNormalization: mode,
-      replayGainPreamp: preamp,
-      replayGainFallback: fallback,
-      replayGainClip: clip
-    })
-  }
-
-  setNativeDspPluginChain(chainJson: string): void {
-    if (chainJson === this.nativeDspPluginChainJson) return
-
-    this.nativeDspPluginChainJson = chainJson
-    this.lastNativeDspPluginStatusCache = null
-    this.tryNative('更新原生 DSP 插件链', (native) => {
-      native.SetDspPluginChain?.(chainJson)
-    })
-  }
-
-  getNativeDspPluginStatus(): unknown {
-    const now = this.scheduler.now()
-    const cached = this.lastNativeDspPluginStatusCache
-    if (cached && now - cached.readAt <= NATIVE_DSP_PLUGIN_STATUS_CACHE_TTL_MS) {
-      return cached.status
-    }
-    const status = parseNativeJson(this.native?.GetDspPluginStatus?.(), { plugins: [] })
-    this.lastNativeDspPluginStatusCache = {
-      readAt: now,
-      status
-    }
-    return status
-  }
 
   getMetadata(source: string): NativeAudioMetadata | null {
     const cached = this.getCachedMetadata(source)
@@ -3770,164 +807,327 @@ export class AudioEngineManager extends EventEmitter {
     )
   }
 
+
+  refreshDspGraph(): void {
+    this.dsp.refreshDspGraph()
+  }
+
+  clearVst3RecoveryBypass(catalogId?: string): void {
+    this.dsp.clearVst3RecoveryBypass(catalogId)
+  }
+
+  getDspSceneState(): DspSceneState {
+    return this.dsp.getDspSceneState()
+  }
+
+  async setDspScenes(
+    scenes: DspScene[],
+    pinnedSceneId: string | null = this.dsp.dspPinnedSceneId
+  ): Promise<DspSceneState> {
+    return this.dsp.setDspScenes(scenes, pinnedSceneId)
+  }
+
+  async setOutputStage(partial: Partial<DspOutputStageConfig>): Promise<DspSceneState> {
+    return this.dsp.setOutputStage(partial)
+  }
+
+  getOutputStage(): DspOutputStageConfig {
+    return this.dsp.getOutputStage()
+  }
+
+  async setStereoImage(partial: Partial<DspStereoImageConfig>): Promise<DspSceneState> {
+    return this.dsp.setStereoImage(partial)
+  }
+
+  getStereoImage(): DspStereoImageConfig {
+    return this.dsp.getStereoImage()
+  }
+
+  async applyDspScene(
+    sceneId: string | null,
+    confirmDsdPcmFallback = false
+  ): Promise<DspSceneState> {
+    return this.dsp.applyDspScene(sceneId, confirmDsdPcmFallback)
+  }
+
+  async getDspGraphStatus(): Promise<DspGraphStatus> {
+    return this.dsp.getDspGraphStatus()
+  }
+
+  async scanVst3Module(modulePath: string): Promise<Vst3ScanDescriptor> {
+    return this.dsp.scanVst3Module(modulePath)
+  }
+
+  async setAudioProcessing(
+    settings: Partial<AudioProcessingSettings>
+  ): Promise<AudioProcessingSettings> {
+    return this.dsp.setAudioProcessing(settings)
+  }
+
+  getAudioProcessing(): AudioProcessingSettings {
+    return this.dsp.getAudioProcessing()
+  }
+
+  async loadImpulseResponse(path: string): Promise<ConvolverInfo> {
+    return this.dsp.loadImpulseResponse(path)
+  }
+
+  async unloadImpulseResponse(): Promise<ConvolverInfo> {
+    return this.dsp.unloadImpulseResponse()
+  }
+
+  getConvolverInfo(): ConvolverInfo {
+    return this.dsp.getConvolverInfo()
+  }
+
+  async setEqBands(settings: Partial<AudioProcessingSettings>): Promise<AudioProcessingSettings> {
+    return this.dsp.setEqBands(settings)
+  }
+
+  async setEqPreset(preset: {
+    eqMode: EqMode
+    eqPreamp: number
+    eqBands: EqualizerBand[]
+  }): Promise<AudioProcessingSettings> {
+    return this.dsp.setEqPreset(preset)
+  }
+
+  async setCrossfeedStrength(strength: number): Promise<AudioProcessingSettings> {
+    return this.dsp.setCrossfeedStrength(strength)
+  }
+
+  async setReplayGainMode(
+    mode: VolumeNormalizationMode,
+    preamp = this.processing.replayGainPreamp,
+    fallback = this.processing.replayGainFallback,
+    clip = this.processing.replayGainClip
+  ): Promise<AudioProcessingSettings> {
+    return this.dsp.setReplayGainMode(mode, preamp, fallback, clip)
+  }
+
+  setNativeDspPluginChain(chainJson: string): void {
+    this.dsp.setNativeDspPluginChain(chainJson)
+  }
+
+  getNativeDspPluginStatus(): unknown {
+    return this.dsp.getNativeDspPluginStatus()
+  }
+
+  private async applyNativeDspGraph(context: string): Promise<DspGraphStatus> {
+    return this.dsp.applyNativeDspGraph(context)
+  }
+
+  private async applyNativeDspGraphOrThrow(context: string): Promise<DspGraphStatus> {
+    return this.dsp.applyNativeDspGraphOrThrow(context)
+  }
+
+  private async applyNativeDspSettings(
+    context: string,
+    options: { previousProcessing?: AudioProcessingSettings } = {},
+    throwOnGraphFailure = true
+  ): Promise<DspGraphStatus> {
+    return this.dsp.applyNativeDspSettings(context, options, throwOnGraphFailure)
+  }
+
+  private refreshResolvedDspScene() {
+    return this.dsp.refreshResolvedDspScene()
+  }
+
+
+  async setExclusiveMode(enabled: boolean): Promise<AudioOutputState> {
+    return this.outputRouter.setExclusiveMode(enabled)
+  }
+
+  async getExclusiveMode(): Promise<boolean> {
+    return this.outputRouter.getExclusiveMode()
+  }
+
+  async setAudioOutput(output: AudioOutputId, device?: string): Promise<AudioOutputState> {
+    return this.outputRouter.setAudioOutput(output, device)
+  }
+
+  async setAudioDevice(device: string): Promise<AudioOutputState> {
+    return this.outputRouter.setAudioDevice(device)
+  }
+
+  async setOutputConfig(config: Partial<OutputConfig>): Promise<void> {
+    return this.outputRouter.setOutputConfig(config)
+  }
+
+  getOutputConfig(): OutputConfig {
+    return this.outputRouter.getOutputConfig()
+  }
+
+  getOutputConfigApplyStatus(): OutputConfigApplyStatus {
+    return this.outputRouter.getOutputConfigApplyStatus()
+  }
+
+  async getAudioOutput(): Promise<AudioOutputId> {
+    return this.outputRouter.getAudioOutput()
+  }
+
+  getAudioOutputOptions(): AudioOutputOption[] {
+    return this.outputRouter.getAudioOutputOptions()
+  }
+
+  async getAudioOutputState(): Promise<AudioOutputState> {
+    return this.outputRouter.getAudioOutputState()
+  }
+
+  notifyAudioDeviceOptionsChanged(reason = 'platform-device-change'): void {
+    this.outputRouter.notifyAudioDeviceOptionsChanged(reason)
+  }
+
+  private async restoreAudioServiceOutputRoute(
+    contextPrefix = '音频服务恢复后应用'
+  ): Promise<{ synced: boolean; errors: string[] }> {
+    return this.outputRouter.restoreAudioServiceOutputRoute(contextPrefix)
+  }
+
+  private async restoreAudioServiceOutputRouteStep(
+    id: string,
+    context: string,
+    method: keyof NativeAudioBinding,
+    ...args: unknown[]
+  ): Promise<{ ok: boolean; error: string }> {
+    return this.outputRouter.restoreAudioServiceOutputRouteStep(id, context, method, ...args)
+  }
+
+  private getNativeBackendId(): string {
+    return this.outputRouter.getNativeBackendId()
+  }
+
+
+  private shouldFallbackFromAsio(output: AudioOutputId): boolean {
+    return this.outputRouter.shouldFallbackFromAsio(output)
+  }
+
+  private resetOutputInfoDefaults(): void {
+    this.outputRouter.resetOutputInfoDefaults()
+  }
+
+  private refreshOutputInfoFromNative(resetDefaults: boolean): void {
+    this.outputRouter.refreshOutputInfoFromNative(resetDefaults)
+  }
+
+
+  private pollAudioDeviceOptionsForChanges(): void {
+    this.outputRouter.pollAudioDeviceOptionsForChanges()
+  }
+
+  private invalidateAudioDeviceOptionsCache(reason: string): void {
+    this.outputRouter.invalidateAudioDeviceOptionsCache(reason)
+  }
+
+  private createDeviceCapabilityRefreshSignature(info: PlaybackInfo): string {
+    return this.outputRouter.createDeviceCapabilityRefreshSignature(info)
+  }
+
+
+  async play(source: string, startTime = 0): Promise<AudioEnginePlayResult> {
+    return this.playback.play(source, startTime)
+  }
+
+  async togglePause(): Promise<void> {
+    return this.playback.togglePause()
+  }
+
+  async pause(): Promise<void> {
+    return this.playback.pause()
+  }
+
+  async seek(time: number): Promise<void> {
+    return this.playback.seek(time)
+  }
+
+  async setVolume(volume: number): Promise<void> {
+    return this.playback.setVolume(volume)
+  }
+
+  async setPlaybackRate(rate: number): Promise<void> {
+    return this.playback.setPlaybackRate(rate)
+  }
+
+  async setLoopRange(startSeconds: number, endSeconds: number): Promise<boolean> {
+    return this.playback.setLoopRange(startSeconds, endSeconds)
+  }
+
+  async stop(): Promise<void> {
+    return this.playback.stop()
+  }
+
+  async loadQueue(items: AudioEngineQueueItem[], startIndex = 0): Promise<void> {
+    return this.playback.loadQueue(items, startIndex)
+  }
+
+  async next(): Promise<void> {
+    return this.playback.next()
+  }
+
+  async previous(): Promise<void> {
+    return this.playback.previous()
+  }
+
   async setPlayMode(mode: PlayMode): Promise<void> {
-    if (mode === this.playbackInfo.playMode) return
-    this.playbackInfo.playMode = mode
-    this.invalidateUpcomingTrackCache()
-    // The native ABI only exposes sequential/repeat. Renderer orchestrates
-    // list-loop and shuffle at queue boundaries while native remains sequential.
-    this.tryNative('切换播放模式', (native) =>
-      native.SetPlayMode?.(mode === 'repeat' ? 'repeat' : 'sequential')
-    )
-    this.publishPlaybackInfo()
+    return this.playback.setPlayMode(mode)
   }
 
   getUpcomingTrack(): AudioEngineQueueItem | null {
-    const now = this.scheduler.now()
-    const cached = this.lastUpcomingTrackCache
-    if (cached && now - cached.readAt <= UPCOMING_TRACK_CACHE_TTL_MS) {
-      return cached.track
-    }
-    try {
-      const track = parseNativeJson(
-        this.native?.GetUpcomingTrack?.(),
-        null as AudioEngineQueueItem | null
-      )
-      this.lastUpcomingTrackCache = { readAt: now, track }
-      return track
-    } catch {
-      return this.playbackInfo.upcomingTrack
-    }
+    return this.playback.getUpcomingTrack()
   }
 
   async getPlaybackInfo(): Promise<PlaybackInfo> {
-    const now = this.scheduler.now()
-    if (
-      this.nativePlaybackActive &&
-      now - this.lastNativePlaybackInfoTickReadAt > PLAYBACK_INFO_CACHE_TTL_MS
-    ) {
-      const nativeInfo = this.readNativePlaybackInfo()
-      if (nativeInfo) {
-        this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
-        this.lastNativePlaybackInfoTickReadAt = now
-      }
-    }
-    return { ...this.playbackInfo, nativePlaybackActive: this.nativePlaybackActive }
+    return this.playback.getPlaybackInfo()
   }
 
   getSpectrumData(points = 64): number[] {
-    const now = this.scheduler.now()
-    const cached = this.lastSpectrumCache
-    if (
-      cached &&
-      cached.points === points &&
-      cached.state === this.playbackInfo.state &&
-      cached.source === this.playbackInfo.source &&
-      now - cached.readAt <= VISUALIZATION_CACHE_TTL_MS
-    ) {
-      return [...cached.data]
-    }
-    const cache = (data: number[]): number[] => {
-      this.lastSpectrumCache = {
-        points,
-        state: this.playbackInfo.state,
-        source: this.playbackInfo.source,
-        readAt: now,
-        data: [...data]
-      }
-      return [...data]
-    }
-    try {
-      const nativeSpectrum = this.native?.GetSpectrumData?.(points)
-      if (nativeSpectrum) return cache(nativeSpectrum)
-    } catch {
-      // Keep the visualizer alive while native playback is still optional.
-    }
-    return cache(
-      Array.from({ length: points }, (_, index) => {
-        const x = index / Math.max(1, points - 1)
-        return (Math.sin((x * 12 + this.playbackInfo.position) * Math.PI) + 1) * 0.25
-      })
-    )
+    return this.playback.getSpectrumData(points)
   }
 
   getVisualizationData(options: VisualizationOptions = {}): VisualizationData {
-    const normalizedOptions = normalizeVisualizationOptions(options)
-    const cacheKey = JSON.stringify(normalizedOptions)
-    const now = this.scheduler.now()
-    const cached = this.lastVisualizationCache
-    if (
-      cached &&
-      cached.key === cacheKey &&
-      cached.state === this.playbackInfo.state &&
-      cached.source === this.playbackInfo.source &&
-      now - cached.readAt <= VISUALIZATION_CACHE_TTL_MS
-    ) {
-      return cached.data
-    }
-    const cache = (data: VisualizationData): VisualizationData => {
-      const cachedData = withPrecomputedVisualizerBars(data, normalizedOptions)
-      this.lastVisualizationCache = {
-        key: cacheKey,
-        state: this.playbackInfo.state,
-        source: this.playbackInfo.source,
-        readAt: now,
-        data: cachedData
-      }
-      return cachedData
-    }
-    let fallbackReason = this.native?.GetVisualizationData
-      ? 'Native visualization tap returned no samples'
-      : 'Native visualization tap unavailable'
-    try {
-      const nativeData = parseNativeJson(
-        this.native?.GetVisualizationData?.(cacheKey),
-        null as VisualizationData | null
-      )
-      if (nativeData) {
-        const normalizedData = normalizeVisualizationData(nativeData, normalizedOptions)
-        if (normalizedData.active || this.playbackInfo.state !== 'playing') {
-          return cache(normalizedData)
-        }
-        fallbackReason = normalizedData.reason || 'Native visualization tap returned no samples'
-      } else {
-        fallbackReason = 'Native visualization tap unavailable'
-      }
-    } catch {
-      fallbackReason = 'Native visualization tap unavailable'
-      // Keep the renderer visualizer alive while native playback is still optional.
-    }
-    if (this.playbackInfo.state === 'playing') {
-      return cache(
-        createFallbackVisualizationData(
-          normalizedOptions,
-          this.playbackInfo.actualSampleRate,
-          now / 1000,
-          fallbackReason
-        )
-      )
-    }
-    return cache(
-      createInactiveVisualizationData(
-        normalizedOptions,
-        this.playbackInfo.actualSampleRate,
-        fallbackReason === 'Native visualization tap unavailable'
-          ? 'native-unavailable'
-          : 'stopped',
-        fallbackReason === 'Native visualization tap unavailable' ? fallbackReason : ''
-      )
-    )
+    return this.playback.getVisualizationData(options)
   }
+
+  private startClock(): void {
+    this.playback.startClock()
+  }
+
+  private readNativePlaybackInfo(): PlaybackInfo | null {
+    return this.playback.readNativePlaybackInfo()
+  }
+
+  private async readNativePlaybackInfoAsync(): Promise<PlaybackInfo | null> {
+    return this.playback.readNativePlaybackInfoAsync()
+  }
+
+  private mergeNativePlaybackInfo(nativeInfo: PlaybackInfo): PlaybackInfo {
+    return this.playback.mergeNativePlaybackInfo(nativeInfo)
+  }
+
+  private syncPlaybackOutputMirrorsFromOutputInfo(): void {
+    this.playback.syncPlaybackOutputMirrorsFromOutputInfo()
+  }
+
+  /** Exposed for unit tests that drive the native playback clock. */
+  tick(): void {
+    this.playback.tick()
+  }
+
+  private invalidateUpcomingTrackCache(): void {
+    this.playback.invalidateUpcomingTrackCache()
+  }
+
+  private publishPlaybackInfo(options: { dedupePositionOnly?: boolean } = {}): void {
+    this.playback.publishPlaybackInfo(options)
+  }
+
 
   destroy(): void {
     if (this.destroyed) return
 
     this.destroyed = true
     this.nativePlaybackActive = false
-    if (this.timer) {
-      this.scheduler.clearInterval(this.timer)
-      this.timer = null
-    }
+    this.playback.clearTimer()
     if (this.loudnessAnalysisManager) {
       this.loudnessAnalysisManager.cancel()
     }
@@ -3964,569 +1164,11 @@ export class AudioEngineManager extends EventEmitter {
     }
   }
 
-  private startClock(): void {
-    if (this.timer) return
-    this.lastTick = this.scheduler.now()
-    this.timer = this.scheduler.setInterval(() => this.tick(), 250)
-  }
 
-  private readNativePlaybackInfo(): PlaybackInfo | null {
-    try {
-      const info = parseNativeJson(this.native?.GetPlaybackInfo?.(), null as PlaybackInfo | null)
-      if (!info) return null
-      return this.normalizePlaybackInfo(info, true)
-    } catch {
-      return null
-    }
-  }
-
-  private async readNativePlaybackInfoAsync(): Promise<PlaybackInfo | null> {
-    if (!this.native || typeof this.native.callAsync !== 'function')
-      return this.readNativePlaybackInfo()
-    try {
-      const raw = (await this.native.callAsync('GetPlaybackInfo', [])) as
-        | string
-        | PlaybackInfo
-        | undefined
-      const info = parseNativeJson<PlaybackInfo | null>(raw, null)
-      if (!info) return null
-      return this.normalizePlaybackInfo(info, true)
-    } catch {
-      return null
-    }
-  }
-
-  private resolveNativeTickPosition(
-    nativePosition: number,
-    softPosition: number,
-    canConfirmPendingTarget: boolean
-  ): number {
-    if (!Number.isFinite(nativePosition)) return softPosition
-    const soft = Number.isFinite(softPosition) ? softPosition : 0
-    const pendingTarget = this.pendingNativePositionTarget
-    if (pendingTarget !== null) {
-      if (!canConfirmPendingTarget) return soft
-      const tolerance = Math.max(5, Math.abs(soft - pendingTarget) + 0.75)
-      if (Math.abs(nativePosition - pendingTarget) <= tolerance) {
-        this.pendingNativePositionTarget = null
-        this.lastNativeReportedPosition = nativePosition
-        return Math.max(0, nativePosition)
-      }
-      return soft
-    }
-
-    const lastNative = this.lastNativeReportedPosition
-    this.lastNativeReportedPosition = nativePosition
-
-    if (Number.isFinite(lastNative) && nativePosition > lastNative + 0.02) {
-      return nativePosition
-    }
-    if (nativePosition > soft + 0.05) return nativePosition
-    if (Number.isFinite(lastNative) && nativePosition + 1.25 < lastNative) {
-      return Math.max(0, nativePosition)
-    }
-    if (nativePosition <= 0.05 && soft > 1.5) return Math.max(0, nativePosition)
-    return soft
-  }
-
-  private mergeNativePlaybackInfo(nativeInfo: PlaybackInfo): PlaybackInfo {
-    const playbackRate =
-      typeof nativeInfo.playbackRate === 'number' && Number.isFinite(nativeInfo.playbackRate)
-        ? clampNumber(nativeInfo.playbackRate, 0.5, 2, this.playbackInfo.playbackRate ?? 1)
-        : (this.playbackInfo.playbackRate ?? 1)
-    const previousPosition = this.playbackInfo.position
-    const resolvedPosition = this.resolveNativeTickPosition(
-      typeof nativeInfo.position === 'number' ? nativeInfo.position : previousPosition,
-      previousPosition,
-      (!this.pendingNativeSource || nativeInfo.source === this.pendingNativeSource) &&
-        nativeInfo.state !== 'stopped'
-    )
-    const waitingForNativePosition = this.pendingNativePositionTarget !== null
-
-    if (!this.pendingNativeSource) {
-      return this.withQueueIndexForSource({
-        ...this.playbackInfo,
-        ...nativeInfo,
-        state: waitingForNativePosition ? this.playbackInfo.state : nativeInfo.state,
-        position: resolvedPosition,
-        playbackRate,
-        nativePlaybackActive: waitingForNativePosition
-          ? this.nativePlaybackActive
-          : nativeInfo.nativePlaybackActive
-      })
-    }
-
-    if (nativeInfo.source === this.pendingNativeSource) {
-      this.pendingNativeSource = null
-      return this.withQueueIndexForSource({
-        ...this.playbackInfo,
-        ...nativeInfo,
-        state: waitingForNativePosition ? this.playbackInfo.state : nativeInfo.state,
-        position: resolvedPosition,
-        playbackRate,
-        nativePlaybackActive: waitingForNativePosition
-          ? this.nativePlaybackActive
-          : nativeInfo.nativePlaybackActive
-      })
-    }
-
-    return {
-      ...this.playbackInfo,
-      position: resolvedPosition,
-      duration: this.playbackInfo.duration || nativeInfo.duration,
-      volume: nativeInfo.volume,
-      playbackRate,
-      requestedConfigRevision: nativeInfo.requestedConfigRevision,
-      appliedConfigRevision: nativeInfo.appliedConfigRevision,
-      outputInfo: nativeInfo.outputInfo,
-      nativePlaybackActive: this.nativePlaybackActive
-    }
-  }
-
-  private withQueueIndexForSource(info: PlaybackInfo): PlaybackInfo {
-    if (!info.source) return info
-    const indexed = this.queue[info.queueIndex]
-    if (indexed?.source === info.source) return info
-    const sourceQueueIndex = this.queue.findIndex((item) => item.source === info.source)
-    if (sourceQueueIndex < 0 || sourceQueueIndex === info.queueIndex) return info
-    return {
-      ...info,
-      queueIndex: sourceQueueIndex
-    }
-  }
-
-  private mapNativeConfigRevisions(
-    requestedConfigRevision: number,
-    appliedConfigRevision: number
-  ): { requestedConfigRevision: number; appliedConfigRevision: number } {
-    const rawRequestedConfigRevision = Number.isFinite(requestedConfigRevision)
-      ? Math.max(0, Math.trunc(requestedConfigRevision))
-      : this.lastRawRequestedConfigRevision
-    const rawAppliedConfigRevision = Number.isFinite(appliedConfigRevision)
-      ? Math.max(0, Math.trunc(appliedConfigRevision))
-      : this.lastRawAppliedConfigRevision
-
-    if (
-      this.nativeConfigRevisionObserved &&
-      (this.nativeConfigRevisionEpochPending ||
-        rawRequestedConfigRevision < this.lastRawRequestedConfigRevision)
-    ) {
-      this.configRevisionBase = this.publicRequestedConfigRevision - rawRequestedConfigRevision
-    }
-
-    this.nativeConfigRevisionObserved = true
-    this.nativeConfigRevisionEpochPending = false
-    this.lastRawRequestedConfigRevision = rawRequestedConfigRevision
-    this.lastRawAppliedConfigRevision = rawAppliedConfigRevision
-    this.publicRequestedConfigRevision = Math.max(
-      this.publicRequestedConfigRevision,
-      this.configRevisionBase + rawRequestedConfigRevision
-    )
-    if (rawAppliedConfigRevision > 0) {
-      this.publicAppliedConfigRevision = Math.max(
-        this.publicAppliedConfigRevision,
-        this.configRevisionBase + rawAppliedConfigRevision
-      )
-    }
-
-    const pendingAppliedRevision = this.pendingConfigAppliedEvent?.appliedConfigRevision ?? 0
-    if (
-      this.publicAppliedConfigRevision > this.lastEmittedAppliedConfigRevision &&
-      this.publicAppliedConfigRevision > pendingAppliedRevision
-    ) {
-      this.pendingConfigAppliedEvent = {
-        requestedConfigRevision: this.publicRequestedConfigRevision,
-        appliedConfigRevision: this.publicAppliedConfigRevision
-      }
-    }
-
-    return {
-      requestedConfigRevision: this.publicRequestedConfigRevision,
-      appliedConfigRevision: this.publicAppliedConfigRevision
-    }
-  }
-
-  private normalizePlaybackInfo(info: PlaybackInfo, nativeRevisions = false): PlaybackInfo {
-    const preferNonEmpty = (...values: Array<string | undefined | null>): string => {
-      for (const value of values) {
-        if (typeof value === 'string' && value.trim().length > 0) return value
-      }
-      return ''
-    }
-    const outputInfo: OutputInfo = {
-      ...this.playbackInfo.outputInfo,
-      ...(info.outputInfo ?? {})
-    }
-    const canonicalOutput = info.outputInfo
-    const sourceExact = canonicalOutput?.sourceExact ?? info.sourceExact ?? false
-    const outputPerfect = canonicalOutput?.outputPerfect ?? info.outputPerfect ?? false
-    const perfectReason = canonicalOutput?.perfectReason ?? info.perfectReason ?? ''
-    const perfectReasonCode = canonicalOutput?.perfectReasonCode ?? info.perfectReasonCode ?? ''
-    const supportsOutputPerfect =
-      canonicalOutput?.supportsOutputPerfect ??
-      info.supportsOutputPerfect ??
-      outputInfo.supportsOutputPerfect ??
-      false
-    const normalizedDsd = normalizeDsdState(canonicalOutput, info)
-    const sourceIsDsd = sourceLooksDsd(info.source || this.playbackInfo.source)
-    const isDsd = normalizedDsd.isDsd || sourceIsDsd
-    const dsdMode = !isDsd
-      ? 'pcm'
-      : this.processing.dsdOutputMode === 'pcm'
-        ? 'pcm'
-        : normalizedDsd.isDsd
-          ? normalizedDsd.dsdMode
-          : 'unsupported'
-    const dsdRate = normalizedDsd.dsdRate
-    const latencyInfo =
-      canonicalOutput?.latencyInfo ?? info.latencyInfo ?? this.playbackInfo.latencyInfo
-    const diagnostics =
-      canonicalOutput?.diagnostics ?? info.diagnostics ?? this.playbackInfo.diagnostics
-    let requestedConfigRevision = Number.isFinite(info.requestedConfigRevision)
-      ? Math.max(0, Math.trunc(info.requestedConfigRevision))
-      : this.playbackInfo.requestedConfigRevision
-    let appliedConfigRevision = Number.isFinite(info.appliedConfigRevision)
-      ? Math.max(0, Math.trunc(info.appliedConfigRevision))
-      : this.playbackInfo.appliedConfigRevision
-    if (nativeRevisions) {
-      const mappedRevisions = this.mapNativeConfigRevisions(
-        requestedConfigRevision,
-        appliedConfigRevision
-      )
-      requestedConfigRevision = mappedRevisions.requestedConfigRevision
-      appliedConfigRevision = mappedRevisions.appliedConfigRevision
-    }
-    outputInfo.sourceExact = sourceExact
-    outputInfo.outputPerfect = outputPerfect
-    outputInfo.supportsOutputPerfect = supportsOutputPerfect
-    outputInfo.perfectReason =
-      isDsd && dsdMode === 'pcm' && normalizedDsd.dsdMode !== 'pcm'
-        ? 'DSD 当前已转换为 PCM 输出'
-        : perfectReason
-    outputInfo.perfectReasonCode =
-      isDsd && dsdMode === 'pcm' && normalizedDsd.dsdMode !== 'pcm'
-        ? 'dsd_converted_to_pcm'
-        : perfectReasonCode
-    outputInfo.isDsd = isDsd
-    outputInfo.dsdMode = dsdMode
-    outputInfo.dsdRate = dsdRate
-    outputInfo.backend = preferNonEmpty(
-      canonicalOutput?.backend,
-      info.outputBackend,
-      this.getNativeBackendId()
-    )
-    outputInfo.actualBackend = preferNonEmpty(canonicalOutput?.actualBackend, outputInfo.backend)
-    outputInfo.accessMode = preferNonEmpty(
-      canonicalOutput?.accessMode,
-      outputInfo.exclusive ? 'exclusive' : 'shared'
-    )
-    outputInfo.devicePathKind = preferNonEmpty(canonicalOutput?.devicePathKind, 'default')
-    outputInfo.capabilityReason = preferNonEmpty(canonicalOutput?.capabilityReason, perfectReason)
-    outputInfo.deviceName = preferNonEmpty(
-      canonicalOutput?.deviceName,
-      info.outputDevice,
-      this.device
-    )
-    outputInfo.actualDeviceName = preferNonEmpty(
-      canonicalOutput?.actualDeviceName,
-      outputInfo.deviceName
-    )
-    outputInfo.driverName = preferNonEmpty(canonicalOutput?.driverName, info.driverName)
-    outputInfo.actualDriverName = preferNonEmpty(
-      canonicalOutput?.actualDriverName,
-      outputInfo.driverName
-    )
-    outputInfo.driverVersion = canonicalOutput?.driverVersion ?? info.driverVersion ?? 0
-    outputInfo.actualDriverVersion = canonicalOutput?.actualDriverVersion ?? info.driverVersion ?? 0
-    outputInfo.pcmPassthrough = outputInfo.pcmPassthrough === true
-    outputInfo.actualOutputFormat =
-      canonicalOutput?.actualOutputFormat ?? info.actualOutputFormat ?? ''
-    outputInfo.actualSampleRate = canonicalOutput?.actualSampleRate ?? info.actualSampleRate ?? 0
-    outputInfo.actualBitDepth = canonicalOutput?.actualBitDepth ?? info.actualBitDepth ?? 0
-    outputInfo.actualChannels = canonicalOutput?.actualChannels ?? info.actualChannels ?? 0
-    outputInfo.outputSampleRate = canonicalOutput?.outputSampleRate ?? info.outputSampleRate ?? 0
-    outputInfo.outputBitDepth = canonicalOutput?.outputBitDepth ?? info.outputBitDepth ?? 0
-    outputInfo.bufferSizeFrames = canonicalOutput?.bufferSizeFrames ?? info.bufferSizeFrames ?? 0
-    outputInfo.latencyFrames = canonicalOutput?.latencyFrames ?? info.latencyFrames ?? 0
-    outputInfo.latencyMs = canonicalOutput?.latencyMs ?? info.latencyMs ?? 0
-    outputInfo.channelRoutingMode =
-      canonicalOutput?.channelRoutingMode ??
-      info.channelRoutingMode ??
-      this.outputConfig.routingMode
-    outputInfo.deviceRecovered = canonicalOutput?.deviceRecovered ?? info.deviceRecovered ?? false
-    outputInfo.recoveryCount = canonicalOutput?.recoveryCount ?? info.recoveryCount ?? 0
-    outputInfo.latencyInfo = latencyInfo
-    outputInfo.diagnostics = diagnostics
-    const playbackRate =
-      typeof info.playbackRate === 'number' && Number.isFinite(info.playbackRate)
-        ? clampNumber(info.playbackRate, 0.5, 2, this.playbackInfo.playbackRate ?? 1)
-        : (this.playbackInfo.playbackRate ?? 1)
-
-    return {
-      ...info,
-      playbackRate,
-      requestedConfigRevision,
-      appliedConfigRevision,
-      outputInfo,
-      outputBackend: outputInfo.backend,
-      outputDevice: outputInfo.deviceName,
-      actualBackend: outputInfo.actualBackend,
-      accessMode: outputInfo.accessMode,
-      devicePathKind: outputInfo.devicePathKind,
-      driverName: preferNonEmpty(
-        outputInfo.driverName,
-        outputInfo.actualDriverName,
-        info.driverName
-      ),
-      driverVersion:
-        outputInfo.driverVersion || outputInfo.actualDriverVersion || info.driverVersion || 0,
-      actualOutputFormat: outputInfo.actualOutputFormat,
-      actualSampleRate: outputInfo.actualSampleRate,
-      actualBitDepth: outputInfo.actualBitDepth,
-      actualChannels: outputInfo.actualChannels,
-      decodedSampleRate: info.decodedSampleRate || 0,
-      decodedBitDepth: info.decodedBitDepth || 0,
-      decodedChannels: info.decodedChannels || 0,
-      decodedSampleFormat: info.decodedSampleFormat || '',
-      bufferSizeFrames: outputInfo.bufferSizeFrames,
-      latencyFrames: outputInfo.latencyFrames,
-      latencyMs: outputInfo.latencyMs,
-      latencyInfo,
-      channelRoutingMode: outputInfo.channelRoutingMode,
-      supportsOutputPerfect,
-      sourceExact,
-      diagnostics,
-      deviceRecovered: outputInfo.deviceRecovered === true,
-      recoveryCount: outputInfo.recoveryCount,
-      outputSampleRate: outputInfo.outputSampleRate,
-      outputBitDepth: outputInfo.outputBitDepth,
-      channelCount: outputInfo.actualChannels || info.channelCount || 0,
-      outputPerfect,
-      pcmPassthrough: outputInfo.pcmPassthrough === true,
-      isDsd,
-      dsdMode,
-      dsdRate,
-      perfectReasonCode: outputInfo.perfectReasonCode,
-      capabilityReason: outputInfo.capabilityReason,
-      crossfadeActive: info.crossfadeActive === true || this.processing.crossfadeSeconds > 0,
-      crossfadeSeconds: info.crossfadeSeconds || this.processing.crossfadeSeconds || 0,
-      gaplessActive: info.gaplessActive === true,
-      preloadReady: info.preloadReady === true,
-      gaplessBlockedReason:
-        typeof info.gaplessBlockedReason === 'string' ? info.gaplessBlockedReason : '',
-      streamTitle: typeof info.streamTitle === 'string' ? info.streamTitle : '',
-      perfectReason: outputInfo.perfectReason,
-      nativePlaybackActive: this.nativePlaybackActive
-    }
-  }
-
-  private syncPlaybackOutputMirrorsFromOutputInfo(): void {
-    const outputInfo = this.playbackInfo.outputInfo
-    this.playbackInfo.actualBackend = outputInfo.actualBackend || outputInfo.backend || ''
-    this.playbackInfo.accessMode = outputInfo.accessMode || ''
-    this.playbackInfo.devicePathKind = outputInfo.devicePathKind || ''
-    this.playbackInfo.actualOutputFormat = outputInfo.actualOutputFormat || ''
-    this.playbackInfo.actualSampleRate = outputInfo.actualSampleRate || 0
-    this.playbackInfo.actualBitDepth = outputInfo.actualBitDepth || 0
-    this.playbackInfo.actualChannels = outputInfo.actualChannels || 0
-    this.playbackInfo.bufferSizeFrames = outputInfo.bufferSizeFrames || 0
-    this.playbackInfo.latencyFrames = outputInfo.latencyFrames || 0
-    this.playbackInfo.latencyMs = outputInfo.latencyMs || 0
-    this.playbackInfo.latencyInfo = outputInfo.latencyInfo
-    this.playbackInfo.channelRoutingMode =
-      outputInfo.channelRoutingMode || this.outputConfig.routingMode
-    this.playbackInfo.supportsOutputPerfect = outputInfo.supportsOutputPerfect === true
-    this.playbackInfo.sourceExact = outputInfo.sourceExact === true
-    this.playbackInfo.diagnostics = outputInfo.diagnostics
-    this.playbackInfo.deviceRecovered = outputInfo.deviceRecovered === true
-    this.playbackInfo.recoveryCount = outputInfo.recoveryCount || 0
-    this.playbackInfo.outputSampleRate = outputInfo.outputSampleRate || 0
-    this.playbackInfo.outputBitDepth = outputInfo.outputBitDepth || 0
-    this.playbackInfo.outputPerfect = outputInfo.outputPerfect === true
-    this.playbackInfo.pcmPassthrough = outputInfo.pcmPassthrough === true
-    this.playbackInfo.perfectReason = outputInfo.perfectReason || ''
-    this.playbackInfo.perfectReasonCode = outputInfo.perfectReasonCode || ''
-    this.playbackInfo.capabilityReason = outputInfo.capabilityReason || ''
-    this.playbackInfo.isDsd = outputInfo.isDsd === true
-    this.playbackInfo.dsdMode =
-      outputInfo.isDsd === true ? outputInfo.dsdMode || 'unsupported' : 'pcm'
-    this.playbackInfo.dsdRate = outputInfo.isDsd === true ? outputInfo.dsdRate || 0 : 0
-  }
-
-  private tick(): void {
-    if (this.destroyed) return
-
-    this.pollAudioDeviceOptionsForChanges()
-
-    if (this.nativePlaybackActive) {
-      const previousCapabilitySignature = this.createDeviceCapabilityRefreshSignature(
-        this.playbackInfo
-      )
-      const wasPlaying = this.playbackInfo.state === 'playing'
-      const previousSource = this.playbackInfo.source
-      const previousQueueIndex = this.playbackInfo.queueIndex
-      const previousPosition = this.playbackInfo.position
-      const now = this.scheduler.now()
-      const elapsed = Math.max(0, (now - this.lastTick) / 1000)
-      const rate = this.playbackInfo.playbackRate ?? 1
-      if (this.playbackInfo.state === 'playing' && elapsed > 0) {
-        const estimatedPosition = previousPosition + elapsed * rate
-        this.playbackInfo.position =
-          this.playbackInfo.duration > 0
-            ? Math.min(estimatedPosition, this.playbackInfo.duration)
-            : estimatedPosition
-      }
-      this.lastTick = now
-
-      const nativeInfo = this.readNativePlaybackInfo()
-      if (nativeInfo) {
-        this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
-        const nativeIdentityPending = this.pendingNativeSource !== null
-        const nextCapabilitySignature = this.createDeviceCapabilityRefreshSignature(
-          this.playbackInfo
-        )
-        if (nextCapabilitySignature !== previousCapabilitySignature) {
-          this.invalidateAudioDeviceOptionsCache('native-output-diagnostics-changed')
-        }
-        this.lastNativePlaybackInfoTickReadAt = now
-        this.publishProperty('time-pos', this.playbackInfo.position)
-        if (this.playbackInfo.duration > 0) {
-          this.publishDuration(this.playbackInfo.duration)
-        }
-        this.publishPlaybackInfo({ dedupePositionOnly: true })
-        const switchedTrack =
-          !nativeIdentityPending &&
-          nativeInfo.state !== 'stopped' &&
-          ((nativeInfo.source && nativeInfo.source !== previousSource) ||
-            (nativeInfo.queueIndex >= 0 && nativeInfo.queueIndex !== previousQueueIndex))
-        if (switchedTrack) {
-          // A fully delegated native queue advances without a renderer EOF
-          // callback. Report its boundary in the main process so sleep timers
-          // retain the same semantics as renderer-managed playback.
-          if (this.queue.length > 1) this.emit('sleep-timer-boundary', { boundary: 'trackEnd' })
-          this.emit('start-file')
-        }
-        if (
-          wasPlaying &&
-          !nativeIdentityPending &&
-          this.pendingNativePositionTarget === null &&
-          nativeInfo.state === 'stopped'
-        ) {
-          const isAtEnd = this.queue.length === 0 || nativeInfo.queueIndex >= this.queue.length - 1
-          if (isAtEnd) {
-            // 播放结束：保持 nativePlaybackActive=true 以便持续轮询原生真实状态，
-            // 避免状态发散后无法自我纠正。下次 play() 会重新设置状态。
-            this.publishProperty('eof-reached', true)
-            // A native single-track queue and the final item in a delegated
-            // queue do not produce a renderer EOF callback. They are still a
-            // track boundary before they are a queue boundary, so emit both in
-            // that order. The following tick sees `wasPlaying === false`,
-            // which prevents a duplicate terminal boundary.
-            this.emit('sleep-timer-boundary', { boundary: 'trackEnd' })
-            this.emit('sleep-timer-boundary', { boundary: 'queueEnd' })
-          }
-        }
-        return
-      }
-
-      this.publishProperty('time-pos', this.playbackInfo.position)
-      return
-    }
-
-    if (this.playbackInfo.state !== 'playing') return
-    const now = this.scheduler.now()
-    const elapsed = (now - this.lastTick) / 1000
-    this.lastTick = now
-    this.playbackInfo.position += elapsed * (this.playbackInfo.playbackRate ?? 1)
-    if (
-      this.playbackInfo.duration > 0 &&
-      this.playbackInfo.position >= this.playbackInfo.duration
-    ) {
-      this.playbackInfo.position = this.playbackInfo.duration
-      this.playbackInfo.state = 'stopped'
-      this.publishProperty('time-pos', this.playbackInfo.position)
-      this.publishProperty('eof-reached', true)
-      this.emit('end-file', { reason: 'eof' })
-      return
-    }
-    this.publishProperty('time-pos', this.playbackInfo.position)
-  }
-
-  private getNativeBackendId(): string {
-    if (this.output === 'wasapi' && this.exclusiveMode) return 'wasapi-exclusive'
-    if (this.output === 'coreaudio' && this.exclusiveMode) return 'coreaudio-exclusive'
-    return this.output
-  }
-
-  private resolveCompatibleDevice(output: AudioOutputId, device: string): string {
-    const normalized = normalizeAudioDevice(device)
-    const options = this.getAudioDeviceOptions()
-    return deviceCompatibleWithOutput(output, normalized, options) ? normalized : 'auto'
-  }
-
-  private shouldFallbackFromAsio(output: AudioOutputId): boolean {
-    return output === 'asio'
-  }
-
-  private mergeAudioProcessingSettings(
-    settings: Partial<AudioProcessingSettings>
-  ): AudioProcessingSettings {
-    const normalized = normalizeAudioProcessingSettings({ ...this.processing, ...settings })
-    const explicitlyDisabled = settings.dspEnabled === false
-    const processingModuleEnabled =
-      normalized.eqEnabled ||
-      normalized.volumeNormalization !== 'off' ||
-      normalized.convolverEnabled ||
-      normalized.convolverIrPath.length > 0 ||
-      (normalized.crossfeedEnabled && normalized.crossfeedStrength > 0) ||
-      Math.abs(normalized.eqPreamp) > 0.001
-    return {
-      ...normalized,
-      dspEnabled: explicitlyDisabled ? false : normalized.dspEnabled || processingModuleEnabled
-    }
-  }
-
-  private applyNativeDspSettings(
-    context: string,
-    _options: { previousProcessing?: AudioProcessingSettings } = {},
-    throwOnGraphFailure = true
-  ): Promise<DspGraphStatus> {
-    const application = throwOnGraphFailure
-      ? this.applyNativeDspGraphOrThrow(context)
-      : this.applyNativeDspGraph(context)
-    return application.then((status) => {
-      if (status.applyState === 'applied') {
-        this.nativeConvolverIrPath = this.processing.convolverIrPath
-      }
-      return status
-    })
-  }
-
-  private resetOutputInfoDefaults(): void {
-    const fallback = createDefaultPlaybackInfo(
-      this.output,
-      this.device,
-      this.exclusiveMode,
-      this.outputConfig
-    )
-    this.playbackInfo.outputBackend = this.getNativeBackendId()
-    this.playbackInfo.outputDevice = this.device
-    this.playbackInfo.actualBackend = this.getNativeBackendId()
-    this.playbackInfo.outputInfo = {
-      ...fallback.outputInfo,
-      backend: this.getNativeBackendId(),
-      actualBackend: this.getNativeBackendId()
-    }
-    this.syncPlaybackOutputMirrorsFromOutputInfo()
-  }
-
-  private updateNativeInfoSnapshot(): void {
+  updateNativeInfoSnapshot(): void {
     this.refreshOutputInfoFromNative(false)
   }
 
-  private invalidateUpcomingTrackCache(): void {
-    this.lastUpcomingTrackCache = null
-  }
 
   private getCachedMetadata(source: string): {
     found: boolean
@@ -4567,204 +1209,7 @@ export class AudioEngineManager extends EventEmitter {
     }
   }
 
-  private refreshOutputInfoFromNative(resetDefaults: boolean): void {
-    if (resetDefaults) this.resetOutputInfoDefaults()
-    const nativeInfo = this.readNativePlaybackInfo()
-    if (nativeInfo) this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
-    this.updateOutputPerfect()
-    this.publishPlaybackInfo()
-  }
 
-  private getAudioDeviceOptions(): AudioDeviceOption[] {
-    const injectedDevices = this.deviceOptionsProvider?.()
-    if (Array.isArray(injectedDevices) && injectedDevices.length > 0) {
-      return normalizeAudioDeviceOptions(injectedDevices, this.device)
-    }
-    const now = this.scheduler.now()
-    const cached = this.lastAudioDeviceOptionsCache
-    if (
-      cached &&
-      cached.selectedDevice === this.device &&
-      now - cached.readAt <= AUDIO_DEVICE_OPTIONS_CACHE_TTL_MS
-    ) {
-      return cached.options
-    }
-    const options = this.readNativeAudioDeviceOptions()
-    this.lastAudioDeviceOptionsCache = {
-      selectedDevice: this.device,
-      readAt: now,
-      options
-    }
-    this.lastAudioDeviceOptionsSignature = this.createAudioDeviceOptionsSignature(options)
-    return options
-  }
-
-  private readNativeAudioDeviceOptions(): AudioDeviceOption[] {
-    let nativeDevices: unknown = null
-    try {
-      nativeDevices = parseNativeJson(
-        this.native?.EnumerateDevices?.(),
-        null as AudioDeviceOption[] | null
-      )
-    } catch {
-      // Fall through to the stable default device.
-    }
-    const normalizedDevices = normalizeAudioDeviceOptions(nativeDevices, this.device)
-    return normalizedDevices.length > 0 ? normalizedDevices : [{ ...DEFAULT_AUDIO_DEVICE_OPTION }]
-  }
-
-  private invalidateAudioDeviceOptionsCache(reason: string): void {
-    this.lastAudioDeviceOptionsCache = null
-    this.emit('audio-device-options-changed', { reason })
-  }
-
-  private pollAudioDeviceOptionsForChanges(): void {
-    if (!this.native || this.deviceOptionsProvider) return
-    const now = this.scheduler.now()
-    const pollMs =
-      this.device === 'auto'
-        ? AUDIO_DEVICE_OPTIONS_DEFAULT_FOLLOW_POLL_MS
-        : AUDIO_DEVICE_OPTIONS_HOTPLUG_POLL_MS
-    if (now - this.lastAudioDeviceOptionsProbeAt < pollMs) return
-    this.lastAudioDeviceOptionsProbeAt = now
-
-    const options = this.readNativeAudioDeviceOptions()
-    const signature = this.createAudioDeviceOptionsSignature(options)
-    if (
-      this.lastAudioDeviceOptionsSignature &&
-      signature !== this.lastAudioDeviceOptionsSignature
-    ) {
-      this.lastAudioDeviceOptionsCache = {
-        selectedDevice: this.device,
-        readAt: now,
-        options
-      }
-      this.lastAudioDeviceOptionsSignature = signature
-      this.emit('audio-device-options-changed', { reason: 'audio-device-hotplug' })
-      void this.maybeRebindAutoOutputDevice('audio-device-hotplug')
-      return
-    }
-    this.lastAudioDeviceOptionsSignature = signature
-    // Signature can be stable on some hosts while the default endpoint still flips; always check.
-    void this.maybeRebindAutoOutputDevice('audio-device-default-follow-poll')
-  }
-
-  private resolvePhysicalDefaultDeviceId(options: AudioDeviceOption[]): string {
-    const physical = options.find(
-      (option) =>
-        option.isDefault === true &&
-        option.id &&
-        option.id !== DEFAULT_AUDIO_DEVICE_OPTION.id &&
-        !isDefaultAudioDeviceAlias(option.id)
-    )
-    return physical?.id || ''
-  }
-
-  private rememberFollowedDefaultDeviceFromOptions(
-    options: AudioDeviceOption[] = this.readNativeAudioDeviceOptions()
-  ): void {
-    if (this.device !== 'auto') {
-      this.lastFollowedDefaultDeviceId = ''
-      return
-    }
-    const defaultId = this.resolvePhysicalDefaultDeviceId(options)
-    if (defaultId) this.lastFollowedDefaultDeviceId = defaultId
-  }
-
-  private maybeRebindAutoOutputDevice(reason: string): void {
-    if (this.destroyed) return
-    if (this.device !== 'auto') return
-    if (!this.native || !this.nativeOutputRouteSynced) return
-    if (this.autoDeviceRebindInFlight) return
-
-    // Always follow OS default while selection is `auto`. When idle, SetOutputDevice only
-    // updates the preferred endpoint; when playing/paused the native path rebinds in place.
-    this.autoDeviceRebindInFlight = this.rebindAutoOutputDevice(reason).finally(() => {
-      this.autoDeviceRebindInFlight = null
-    })
-  }
-
-  private async rebindAutoOutputDevice(reason: string): Promise<void> {
-    if (this.destroyed || this.device !== 'auto' || !this.native) return
-
-    try {
-      const options = this.readNativeAudioDeviceOptions()
-      const now = this.scheduler.now()
-      this.lastAudioDeviceOptionsCache = {
-        selectedDevice: this.device,
-        readAt: now,
-        options
-      }
-      this.lastAudioDeviceOptionsSignature = this.createAudioDeviceOptionsSignature(options)
-
-      const defaultId = this.resolvePhysicalDefaultDeviceId(options)
-      if (!defaultId) return
-
-      // First observation only latches the current OS default; rebind only when it changes later.
-      if (!this.lastFollowedDefaultDeviceId) {
-        this.lastFollowedDefaultDeviceId = defaultId
-        return
-      }
-      if (defaultId === this.lastFollowedDefaultDeviceId) return
-
-      const previousFollowed = this.lastFollowedDefaultDeviceId
-      this.lastFollowedDefaultDeviceId = defaultId
-      const deviceSynced = await this.callNativeMaybeAsync(
-        '跟随系统默认输出设备',
-        'SetOutputDevice',
-        'auto'
-      )
-      if (!deviceSynced) {
-        this.lastFollowedDefaultDeviceId = previousFollowed
-        console.warn(
-          `跟随系统默认输出设备失败（${reason}）：`,
-          this.lastNativeError || '原生音频引擎不可用'
-        )
-        return
-      }
-      this.refreshOutputInfoFromNative(true)
-      // Re-resolve DSP only while actively playing so idle default flips stay cheap.
-      if (this.playbackInfo.state === 'playing' || this.playbackInfo.state === 'paused') {
-        await this.applyNativeDspGraphOrThrow('系统默认输出设备切换后解析 DSP 场景')
-      }
-    } catch (error) {
-      console.warn(`跟随系统默认输出设备失败（${reason}）：`, error)
-    }
-  }
-
-  private createAudioDeviceOptionsSignature(options: AudioDeviceOption[]): string {
-    return options
-      .map((device) =>
-        [
-          device.id,
-          device.label,
-          device.isDefault ? '1' : '0',
-          device.backend || '',
-          device.pathKind || '',
-          device.capabilityVersion || 0,
-          device.dopSupportState || '',
-          device.nativeDsdSupportState || '',
-          (device.sampleRates || []).join(','),
-          (device.bitDepths || []).join(','),
-          (device.dopCarrierSampleRates || []).join(','),
-          (device.nativeDsdSampleRates || []).join(',')
-        ].join(':')
-      )
-      .join('|')
-  }
-
-  private createDeviceCapabilityRefreshSignature(info: PlaybackInfo): string {
-    const diagnostics = info.outputInfo.diagnostics
-    return [
-      info.outputInfo.actualBackend,
-      info.outputInfo.actualDeviceName,
-      info.outputInfo.devicePathKind,
-      diagnostics.deviceLostCount,
-      diagnostics.driverRestartCount,
-      info.outputInfo.deviceRecovered,
-      info.outputInfo.recoveryCount
-    ].join('|')
-  }
 
   private tryNative(
     context: string,
@@ -4824,38 +1269,10 @@ export class AudioEngineManager extends EventEmitter {
     })
   }
 
-  private async tryNativePlay(
-    context: string,
-    source: string,
-    startTime: number,
-    logFailure = true
-  ): Promise<boolean> {
-    if (!this.native) {
-      this.lastNativeError = '未加载 twilight_audio_node.node'
-      return false
-    }
-    if (typeof this.native.callAsync === 'function') {
-      try {
-        await this.native.callAsync('Play', [source, startTime])
-        this.lastNativeError = ''
-        return true
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        this.lastNativeError = message
-        if (!logFailure) return false
-        const fallbackHint = rendererFallbackAllowed()
-          ? '使用临时播放通道'
-          : '已阻止 HTMLAudio 静默降级'
-        console.warn(`原生音频引擎${context}失败，${fallbackHint}：`, message)
-        return false
-      }
-    }
-    return this.tryNative(context, (native) => native.Play(source, startTime), logFailure)
-  }
 
   private updateOutputPerfect(): void {
     if (this.nativePlaybackActive) {
-      this.playbackInfo = this.normalizePlaybackInfo(this.playbackInfo)
+      this.playbackInfo = this.playback.normalizePlaybackInfo(this.playbackInfo)
       return
     }
 
@@ -4942,40 +1359,5 @@ export class AudioEngineManager extends EventEmitter {
         this.playbackInfo.outputDevice
     }
     this.syncPlaybackOutputMirrorsFromOutputInfo()
-  }
-
-  private publishProperty(name: string, data: unknown): void {
-    this.emit('property-change', { name, data })
-  }
-
-  private publishDuration(duration: number, options: { force?: boolean } = {}): void {
-    if (!options.force && Object.is(duration, this.lastPublishedDuration)) return
-    this.lastPublishedDuration = duration
-    this.publishProperty('duration', duration)
-  }
-
-  private createPlaybackInfoFanoutKey(): string {
-    return createPlaybackInfoFanoutSignature(this.playbackInfo, this.nativePlaybackActive)
-  }
-
-  private publishPlaybackInfo(options: { dedupePositionOnly?: boolean } = {}): void {
-    const fanoutKey = this.createPlaybackInfoFanoutKey()
-    if (options.dedupePositionOnly && fanoutKey === this.lastPlaybackInfoFanoutKey) return
-
-    this.lastPlaybackInfoFanoutKey = fanoutKey
-    this.emit('playback-info', {
-      ...this.playbackInfo,
-      nativePlaybackActive: this.nativePlaybackActive
-    })
-    this.publishPendingConfigAppliedEvent()
-  }
-
-  private publishPendingConfigAppliedEvent(): void {
-    const event = this.pendingConfigAppliedEvent
-    if (!event || this.playbackInfo.appliedConfigRevision < event.appliedConfigRevision) return
-
-    this.pendingConfigAppliedEvent = null
-    this.lastEmittedAppliedConfigRevision = event.appliedConfigRevision
-    this.emit('config-applied', event)
   }
 }

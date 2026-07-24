@@ -89,12 +89,28 @@ test('login page can open with an initial streaming provider', () => {
   assert.equal(navigation.showLoginPage.value, true)
   assert.equal(navigation.showStreamingPage.value, false)
   assert.equal(navigation.loginInitialProviderId.value, 'ncm')
+  assert.equal(navigation.loginPageMode.value, 'login')
 
   navigation.closeLoginPage()
 
   assert.equal(navigation.showLoginPage.value, false)
   assert.equal(navigation.showStreamingPage.value, true)
   assert.equal(navigation.loginInitialProviderId.value, null)
+  assert.equal(navigation.loginPageMode.value, 'login')
+})
+
+test('login page can open directly in profile mode for a provider', () => {
+  const navigation = useAppNavigation()
+
+  navigation.enterStreamingMode()
+  navigation.openLoginPage('ncm', { profile: true })
+
+  assert.equal(navigation.showLoginPage.value, true)
+  assert.equal(navigation.loginPageMode.value, 'profile')
+  assert.equal(navigation.loginInitialProviderId.value, 'ncm')
+
+  navigation.closeLoginPage()
+  assert.equal(navigation.loginPageMode.value, 'login')
 })
 
 test('returning from local list pages to dashboard uses page-up transition', () => {

@@ -76,6 +76,7 @@ test('config-applied crosses the manager, IPC, and preload boundary', () => {
 
 test('offline analysis is routed away from the playback audio service', () => {
   const managerSource = readFileSync(new URL('./audioEngineManager.ts', import.meta.url), 'utf8')
+  const typesSource = readFileSync(new URL('./audio/audioEngineTypes.ts', import.meta.url), 'utf8')
   const serviceClientSource = readFileSync(
     new URL('./audioEngineServiceClient.ts', import.meta.url),
     'utf8'
@@ -93,7 +94,7 @@ test('offline analysis is routed away from the playback audio service', () => {
     'utf8'
   )
 
-  assert.match(managerSource, /AnalyzeBpm\?: \(source: string, optionsJson\?: string\)/)
+  assert.match(typesSource, /AnalyzeBpm\?: \(source: string, optionsJson\?: string\)/)
   assert.match(managerSource, /async analyzeBpm\(/)
   assert.doesNotMatch(managerSource, /audioServiceBinding\.callAsync\?\.\('AnalyzeBpm'/)
   assert.match(serviceClientSource, /must use the isolated audio analysis service/)

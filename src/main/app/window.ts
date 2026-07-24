@@ -7,6 +7,7 @@ import { is } from '@electron-toolkit/utils'
 import { runtime } from '../core/runtime'
 import { getWindowBackgroundColor } from '../audio/state'
 import { installAudioDeviceHotplugWatcher } from '../audio/deviceHotplug'
+import { destroyDesktopLyrics } from '../integrations/desktopLyrics'
 import { ClosePersistenceAttemptGate } from './closePersistence.ts'
 import type { RendererClosePersistenceOutcome } from '../../shared/closePersistence.ts'
 
@@ -66,6 +67,7 @@ async function closeMainWindowAfterPlaybackSessionSave(win: BrowserWindow): Prom
 
 function closeMainWindowAfterSuccessfulPersistence(win: BrowserWindow): void {
   if (win.isDestroyed()) return
+  destroyDesktopLyrics()
   const shouldQuitAfterClose = runtime.forceQuit
   if (shouldQuitAfterClose) {
     win.once('closed', () => {

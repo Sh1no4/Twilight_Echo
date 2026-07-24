@@ -168,10 +168,12 @@ The staged release must include the matching `twilight-audio-engine.dll` and
 
 ## Signed Release Artifact Gate
 
-The application does not use an in-app binary updater. Update checking only compares the current
-version with the project's GitHub release feed and the UI sends users to the GitHub Releases page
-for a manual download. Do not add a generic `publish` URL or claim cryptographic update validation
-until a signed, hash-validated updater design is implemented.
+In-app updates on Windows download the latest GitHub Release installer (`*-setup.exe` preferred),
+optionally verify SHA-256 from the release body or a companion checksum asset, then launch the
+installer with `shell.openPath` and quit the app. This is not `electron-updater`, not silent asar
+replacement, and not a generic electron-builder `publish` URL. Prefer publishing a checksum with
+each release; without a checksum the client still downloads but marks verification as skipped.
+Unsigned installers remain subject to SmartScreen.
 
 A publishable Windows build must be created in the protected signing environment. `build:win` and
 `build:unpack` are deliberately unsigned development packaging paths. They still strip only the

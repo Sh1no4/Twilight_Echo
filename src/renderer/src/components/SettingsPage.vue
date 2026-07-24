@@ -3,6 +3,31 @@ import { storeToRefs } from 'pinia'
 import QRCode from 'qrcode'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import MiniPlayerSettingsSection from './settings-page/MiniPlayerSettingsSection.vue'
+import AboutSettingsSection from './settings-page/AboutSettingsSection.vue'
+import ShortcutsSettingsSection from './settings-page/ShortcutsSettingsSection.vue'
+import {
+  type SectionKey,
+  type BooleanSettingKey,
+  sections,
+  colorModeOptions,
+  playbackResumeOptions,
+  ncmPlaybackQualityOptions,
+  startupHomePageOptions,
+  bufferSizeOptions,
+  routingModeOptions,
+  replayGainOptions,
+  dsdOutputModeOptions,
+  sacdProgramModeOptions,
+  fftResolutionOptions,
+  accentColorOptions,
+  fontFamilyOptions,
+  uiDensityOptions,
+  appBackgroundPageOptions,
+  lyricAlignOptions,
+  streamingAudioCachePolicyOptions,
+  SETTINGS_SEARCH_INDEX,
+  RESET_DESKTOP_LYRICS
+} from './settings-page/types.ts'
 import { useAudioOutputDspStore } from '../stores/useAudioOutputDspStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
@@ -11,11 +36,9 @@ import { useMusicStore } from '../stores/useMusicStore'
 import { useExtensionRegistry, type UiContribution } from '../extensions/registry'
 import { getPluginThemeKey } from '../extensions/themeSelection'
 import {
-  DSD_OUTPUT_MODE_OPTIONS,
   HIFI_STATUS_COPY,
   LOUDNORM_TARGET_LUFS,
   LOUDNORM_TRUE_PEAK_CEILING_DB,
-  VOLUME_NORMALIZATION_OPTIONS,
   loudnormStatusCopy
 } from '../../../shared/audioProcessingOptions.ts'
 import type {
@@ -52,31 +75,6 @@ import type {
 } from '../types/settings'
 import type { LibraryWatcherStatusSnapshot } from '../../../shared/localLibraryScan.ts'
 
-type SectionKey =
-  | 'general'
-  | 'playback'
-  | 'dsp'
-  | 'cache'
-  | 'performance'
-  | 'appearance'
-  | 'desktopLyrics'
-  | 'shortcuts'
-  | 'about'
-
-type BooleanSettingKey =
-  | 'autoCheckLogin'
-  | 'launchAtLogin'
-  | 'hardwareAcceleration'
-  | 'proxyAllowDirectFallback'
-  | 'windowTransparency'
-  | 'useCoverTheme'
-  | 'globalShortcuts'
-  | 'watchLibrary'
-  | 'onlineLyricsFallback'
-  | 'smtcEnabled'
-  | 'discordRpcEnabled'
-  | 'remoteControlEnabled'
-
 const props = defineProps<{
   initialSection?: SectionKey
 }>()
@@ -88,186 +86,16 @@ const emit = defineEmits<{
   openThemeStudio: []
 }>()
 
-const sections: { key: SectionKey; label: string; icon: string }[] = [
-  { key: 'general', label: '常规', icon: 'pi pi-sliders-h' },
-  { key: 'playback', label: '播放', icon: 'pi pi-volume-up' },
-  { key: 'dsp', label: 'DSP', icon: 'pi pi-sliders-v' },
-  { key: 'cache', label: '缓存', icon: 'pi pi-database' },
-  { key: 'performance', label: '性能', icon: 'pi pi-bolt' },
-  { key: 'appearance', label: '外观', icon: 'pi pi-palette' },
-  { key: 'desktopLyrics', label: '桌面歌词', icon: 'pi pi-window-maximize' },
-  { key: 'shortcuts', label: '快捷键', icon: 'pi pi-keyboard' },
-  { key: 'about', label: '关于', icon: 'pi pi-info-circle' }
-]
-
-const colorModeOptions: { value: AppTheme; label: string; icon: string }[] = [
-  { value: 'system', label: '系统', icon: 'pi pi-desktop' },
-  { value: 'pureWhite', label: '浅色', icon: 'pi pi-sun' },
-  { value: 'dark', label: '深色', icon: 'pi pi-moon' }
-]
-
-const playbackResumeOptions: { value: PlaybackResumeMode; label: string }[] = [
-  { value: 'off', label: '关闭' },
-  { value: 'track', label: '记住曲目' },
-  { value: 'trackAndPosition', label: '曲目和位置' }
-]
-
-const ncmPlaybackQualityOptions: { value: NcmPlaybackQuality; label: string }[] = [
-  { value: 'auto', label: '自动（最高可用）' },
-  { value: 'standard', label: '标准' },
-  { value: 'exhigh', label: '极高' },
-  { value: 'lossless', label: '无损' },
-  { value: 'hires', label: 'Hi-Res' }
-]
-
-const startupHomePageOptions: { value: StartupHomePage; label: string; icon: string }[] = [
-  { value: 'local', label: '本地音乐主页', icon: 'pi pi-home' },
-  { value: 'streaming', label: '流媒体主页', icon: 'pi pi-compass' }
-]
-
-const bufferSizeOptions = [
-  { value: 0, label: 'Auto' },
-  { value: 64, label: '64' },
-  { value: 128, label: '128' },
-  { value: 256, label: '256' },
-  { value: 512, label: '512' },
-  { value: 1024, label: '1024' },
-  { value: 2048, label: '2048' }
-] as const
-
-const routingModeOptions: { value: ChannelRoutingMode; label: string }[] = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'stereo', label: 'Stereo' },
-  { value: 'stereo-to-5.1', label: 'Stereo → 5.1' },
-  { value: 'stereo-to-7.1', label: 'Stereo → 7.1' },
-  { value: 'mono-to-stereo', label: 'Mono → Stereo' },
-  { value: 'mono-to-multichannel', label: 'Mono → Multichannel' }
-]
-
-const replayGainOptions = VOLUME_NORMALIZATION_OPTIONS
-const dsdOutputModeOptions = DSD_OUTPUT_MODE_OPTIONS
-
-const sacdProgramModeOptions: { value: SacdProgramMode; label: string }[] = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'stereo', label: 'Stereo' },
-  { value: 'multichannel', label: 'Multichannel' }
-]
-
-const fftResolutionOptions = [64, 128, 256, 512, 1024, 2048, 4096, 8192] as const
-
-const accentColorOptions: { value: string; label: string; class: string }[] = [
-  { value: 'violet', label: '紫罗兰', class: 'violet' },
-  { value: 'blue', label: '蓝', class: 'blue' },
-  { value: 'emerald', label: '翠绿', class: 'emerald' },
-  { value: 'rose', label: '玫瑰', class: 'rose' },
-  { value: 'amber', label: '琥珀', class: 'amber' },
-  { value: 'slate', label: '石板', class: 'slate' }
-]
-
-const fontFamilyOptions: { value: string; label: string }[] = [
-  { value: 'system', label: '系统默认 (System)' },
-  { value: 'inter', label: 'Inter / Roboto' },
-  { value: 'lxgw', label: '霞鹜文楷 (LXGW)' },
-  { value: 'sarasa', label: 'Sarasa Gothic' },
-  { value: 'comic', label: 'Comic Sans MS' }
-]
-
-const uiDensityOptions: { value: UiDensity; label: string }[] = [
-  { value: 'compact', label: '紧凑' },
-  { value: 'standard', label: '标准' },
-  { value: 'comfortable', label: '舒展' }
-]
-
-const appBackgroundPageOptions: { value: AppBackgroundPage; label: string; desc: string }[] = [
-  { value: 'local', label: '本地主页', desc: '本地音乐首页和资料概览背景。' },
-  { value: 'settings', label: '设置与插件', desc: '设置页、插件中心等管理界面背景。' },
-  { value: 'streaming', label: '流媒体页', desc: '在线音乐浏览、搜索和详情页背景。' },
-  { value: 'player', label: '播放页', desc: '沉浸式播放页和全屏播放背景。' }
-]
-
-const lyricAlignOptions: { value: LyricAlign; label: string }[] = [
-  { value: 'center', label: '居中对齐' },
-  { value: 'left', label: '靠左对齐' }
-]
-
-const streamingAudioCachePolicyOptions: {
-  value: StreamingAudioCachePolicy
-  label: string
-}[] = [
-  { value: 'provider', label: '由 Provider 规则控制' },
-  { value: 'off', label: '不缓存流媒体音频' }
-]
-
-const GITHUB_URL = 'https://github.com/asenyarzc-cpu/Twilight_Echo'
-const RELEASES_URL = 'https://github.com/asenyarzc-cpu/Twilight_Echo/releases'
-const HOMEPAGE_URL = 'https://twilightecho.com'
-
-const SETTINGS_SEARCH_INDEX: Array<{
-  section: SectionKey
-  title: string
-  terms: string
-}> = [
-  {
-    section: 'general',
-    title: '媒体库与启动',
-    terms:
-      '常规 扫描 文件夹 监控 网易云 SMTC Discord 启动 托盘 代理 插件设置 备份 恢复 远程 遥控 PIN DLNA 投送 局域网'
-  },
-  {
-    section: 'playback',
-    title: '播放与输出',
-    terms: '播放 输出 设备 独占 音量 削波 无缝 网易云 音质 无损 Hi-Res DSD SACD buffer routing'
-  },
-  {
-    section: 'dsp',
-    title: 'DSP 处理器',
-    terms: 'DSP EQ ReplayGain Crossfeed Convolver FFT High-Res DSD SACD'
-  },
-  { section: 'cache', title: '缓存策略', terms: '缓存 目录 封面 歌词 元数据 流媒体 BPM 分析 清理' },
-  { section: 'performance', title: '性能', terms: '性能 硬件加速 GPU 重启' },
-  {
-    section: 'appearance',
-    title: '外观与主题',
-    terms: '外观 主题 插件主题 强调色 背景 字体 密度 歌词 卡片 迷你播放器 自定义 圆角 缩放 布局'
-  },
-  {
-    section: 'desktopLyrics',
-    title: '桌面歌词',
-    terms: '桌面歌词 字体 颜色 阴影 对齐 窗口 置顶 鼠标穿透 翻译 行偏移 错落 双语 原文'
-  },
-  { section: 'shortcuts', title: '快捷键', terms: '快捷键 全局 播放 暂停 上一首 下一首 注册 冲突' },
-  { section: 'about', title: '关于与更新', terms: '关于 版本 更新 GitHub Releases 开源 致谢' }
-]
-
-const RESET_DESKTOP_LYRICS: DesktopLyricsSettings = {
-  enabled: false,
-  fontSize: 32,
-  fontFamily: 'system',
-  fontWeight: 700,
-  color: '#ffffff',
-  highlightColor: '#FFD700',
-  bgColor: '#000000',
-  bgOpacity: 30,
-  align: 'center',
-  showTranslation: true,
-  layout: 'multi',
-  lineSpacing: 1.6,
-  shadow: true,
-  shadowBlur: 8,
-  shadowColor: '#000000',
-  windowWidth: 900,
-  windowHeight: 160,
-  windowX: -1,
-  windowY: -1,
-  alwaysOnTop: true,
-  clickThrough: false,
-  maxLines: 2,
-  lineOffset: 48
-}
-
 const updateCheckState = ref<'idle' | 'checking' | 'up-to-date' | 'available' | 'error'>('idle')
 const latestVersion = ref('')
 const lastUpdateCheck = ref('')
+const releaseUrl = ref('')
+const updateAssetName = ref('')
+const updateHasChecksum = ref(false)
+const updateError = ref('')
+const updateProgress = ref<import('../../../shared/appUpdate').AppUpdateProgress | null>(null)
+const updateActionState = ref<'idle' | 'downloading' | 'ready' | 'installing' | 'error'>('idle')
+let stopUpdateProgressListener: (() => void) | null = null
 const runningPluginSettingsCommand = ref('')
 const pluginSettingsResult = ref<Record<string, string>>({})
 const pluginSettingsError = ref<Record<string, string>>({})
@@ -320,8 +148,7 @@ const {
   getShortcutStatuses,
   relaunch,
   addLibraryFolder,
-  removeLibraryFolder,
-  openExternalUrl
+  removeLibraryFolder
 } = useSettingsStore()
 
 const audioOutputDspStore = useAudioOutputDspStore()
@@ -1365,18 +1192,6 @@ function setBgEffectField<K extends keyof typeof settings.value.cardAppearance.b
   void updateSettings({ cardAppearance })
 }
 
-function openGithub(): void {
-  void openExternalUrl(GITHUB_URL)
-}
-
-function openReleases(): void {
-  void openExternalUrl(RELEASES_URL)
-}
-
-function openHomepage(): void {
-  void openExternalUrl(HOMEPAGE_URL)
-}
-
 function pluginPanelStateKey(panel: UiContribution): string {
   return `${panel.pluginId}:${panel.id}`
 }
@@ -1486,23 +1301,115 @@ async function confirmClearLoudnessAnalysisCache(): Promise<void> {
   await clearLoudnessAnalysisCache()
 }
 
+function ensureUpdateProgressListener(): void {
+  if (stopUpdateProgressListener) return
+  stopUpdateProgressListener =
+    window.api.app.onUpdateProgress?.((progress) => {
+      updateProgress.value = progress
+      if (progress.phase === 'downloading' || progress.phase === 'resolving' || progress.phase === 'verifying') {
+        updateActionState.value = 'downloading'
+      } else if (progress.phase === 'ready') {
+        updateActionState.value = 'ready'
+      } else if (progress.phase === 'installing') {
+        updateActionState.value = 'installing'
+      } else if (progress.phase === 'error') {
+        updateActionState.value = 'error'
+        updateError.value = progress.error || '更新失败'
+      }
+    }) || null
+}
+
 async function checkForUpdates(): Promise<void> {
   updateCheckState.value = 'checking'
+  updateError.value = ''
+  updateActionState.value = 'idle'
+  updateProgress.value = null
   try {
     const result = await window.api.app.checkForUpdates()
     const now = new Date()
     lastUpdateCheck.value = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
-    if (result.error) {
+    latestVersion.value = result.latestVersion || ''
+    releaseUrl.value = result.releaseUrl || ''
+    updateAssetName.value = result.assetName || ''
+    updateHasChecksum.value = Boolean(result.hasChecksum)
+    if (result.error === 'network') {
       updateCheckState.value = 'error'
+      updateError.value = '网络错误，无法检查更新'
+    } else if (result.error === 'unsupported-platform') {
+      updateCheckState.value = 'available'
+      updateError.value = '发现新版本；当前平台请从发布页手动下载'
+    } else if (result.error === 'no-asset') {
+      updateCheckState.value = 'available'
+      updateError.value = '发现新版本，但 Release 中未找到 Windows 安装包'
     } else if (result.hasUpdate) {
       updateCheckState.value = 'available'
-      latestVersion.value = result.latestVersion || ''
     } else {
       updateCheckState.value = 'up-to-date'
     }
   } catch {
     updateCheckState.value = 'error'
+    updateError.value = '检查更新失败'
+    releaseUrl.value = ''
   }
+}
+
+async function downloadUpdate(): Promise<void> {
+  ensureUpdateProgressListener()
+  updateError.value = ''
+  updateActionState.value = 'downloading'
+  updateProgress.value = {
+    phase: 'resolving',
+    percent: 0,
+    receivedBytes: 0,
+    totalBytes: 0,
+    message: '正在准备下载…'
+  }
+  try {
+    const result = await window.api.app.downloadUpdate()
+    if (!result.ok) {
+      updateActionState.value = result.cancelled ? 'idle' : 'error'
+      updateError.value = result.error
+      if (result.cancelled) updateProgress.value = null
+      return
+    }
+    updateActionState.value = 'ready'
+    updateAssetName.value = result.assetName
+    updateHasChecksum.value = result.verified
+  } catch (error) {
+    updateActionState.value = 'error'
+    updateError.value = error instanceof Error ? error.message : '下载失败'
+  }
+}
+
+async function cancelUpdateDownload(): Promise<void> {
+  try {
+    await window.api.app.cancelUpdateDownload()
+  } catch {
+    // ignore
+  }
+  updateActionState.value = 'idle'
+  updateProgress.value = null
+  updateError.value = ''
+}
+
+async function installUpdate(): Promise<void> {
+  updateError.value = ''
+  updateActionState.value = 'installing'
+  try {
+    const result = await window.api.app.installUpdate()
+    if (!result.ok) {
+      updateActionState.value = 'error'
+      updateError.value = result.error
+    }
+  } catch (error) {
+    updateActionState.value = 'error'
+    updateError.value = error instanceof Error ? error.message : '启动安装程序失败'
+  }
+}
+
+function openReleasePage(): void {
+  const url = releaseUrl.value || 'https://github.com/asenyarzc-cpu/Twilight_Echo/releases'
+  void window.api?.shell?.openExternal?.(url)
 }
 
 function toggleClipGuard(): void {
@@ -1673,13 +1580,16 @@ onBeforeUnmount(() => {
       </nav>
 
       <div class="settings-preview-stack">
+        <header class="settings-page-header">
+          <h1 class="settings-page-title">设置</h1>
+        </header>
         <section class="settings-command-bar glass-card">
           <div class="settings-search-box">
             <i class="pi pi-search"></i>
             <input
               v-model="settingsSearchQuery"
               type="search"
-              placeholder="搜索设置、分区或说明"
+              placeholder="搜索设置"
               aria-label="搜索设置"
             />
           </div>
@@ -4512,161 +4422,29 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section id="shortcuts" class="glass-card preview-section">
-          <div class="section-title-row">
-            <i class="pi pi-keyboard"></i>
-            <h2>快捷键</h2>
-          </div>
-          <div class="setting-list">
-            <div class="setting-item">
-              <div class="setting-copy">
-                <strong>全局快捷键 (Global Shortcuts)</strong>
-                <span>在应用位于后台时，依然响应系统媒体播放快捷键。</span>
-              </div>
-              <span
-                class="toggle-switch"
-                :class="{ active: settings.globalShortcuts, inactive: !settings.globalShortcuts }"
-                role="switch"
-                :aria-checked="settings.globalShortcuts"
-                @click="toggleGlobalShortcuts"
-              ></span>
-            </div>
-            <hr />
-            <div v-if="shortcutStatuses.length > 0" class="shortcut-grid">
-              <div v-for="shortcut in shortcutStatuses" :key="JSON.stringify(shortcut.action)">
-                <span>{{ shortcut.label }}</span>
-                <kbd>{{ shortcut.accelerator }}</kbd>
-              </div>
-            </div>
-            <div v-else class="shortcut-grid">
-              <div><span>快捷键状态</span><kbd>读取中</kbd></div>
-            </div>
-            <div v-if="shortcutStatuses.length > 0" class="shortcut-status-list">
-              <div
-                v-for="shortcut in shortcutStatuses"
-                :key="`${shortcut.action}:status`"
-                class="shortcut-status-row"
-                :class="{
-                  registered: settings.globalShortcuts && shortcut.registered,
-                  failed: settings.globalShortcuts && !shortcut.registered
-                }"
-              >
-                <span>
-                  <i
-                    :class="
-                      !settings.globalShortcuts
-                        ? 'pi pi-minus-circle'
-                        : shortcut.registered
-                          ? 'pi pi-check-circle'
-                          : 'pi pi-exclamation-circle'
-                    "
-                  ></i>
-                  {{ shortcut.label }}
-                </span>
-                <small>
-                  {{
-                    !settings.globalShortcuts
-                      ? '未启用'
-                      : shortcut.registered
-                        ? '已注册'
-                        : shortcut.error || '注册失败'
-                  }}
-                </small>
-              </div>
-            </div>
-          </div>
-        </section>
+        <ShortcutsSettingsSection
+          :global-shortcuts="settings.globalShortcuts"
+          :shortcut-statuses="shortcutStatuses"
+          @update:global-shortcuts="toggleGlobalShortcuts"
+        />
 
-        <section id="about" class="glass-card preview-section about-section">
-          <div class="about-glow" aria-hidden="true"></div>
-          <div class="section-title-row">
-            <i class="pi pi-info-circle"></i>
-            <h2>关于 (About)</h2>
-          </div>
-
-          <div class="about-hero">
-            <div class="logo-shell">
-              <div class="logo-mark">
-                <img src="/icon.png" alt="Twilight Echo" class="logo-icon" />
-              </div>
-            </div>
-            <div class="about-copy">
-              <h3>Twilight Echo</h3>
-              <span>Version {{ appVersion || '—' }}</span>
-              <p>
-                一款专为发烧友打造的现代级桌面音乐枢纽，支持海量本地高解析度音频与插件化流媒体扩展。
-              </p>
-            </div>
-          </div>
-
-          <div class="about-cards">
-            <div class="update-card">
-              <div class="status-icon">
-                <i
-                  :class="
-                    updateCheckState === 'available'
-                      ? 'pi pi-download'
-                      : updateCheckState === 'error'
-                        ? 'pi pi-exclamation-circle'
-                        : 'pi pi-check-circle'
-                  "
-                ></i>
-              </div>
-              <div>
-                <strong v-if="updateCheckState === 'checking'">正在检查更新…</strong>
-                <strong v-else-if="updateCheckState === 'available'"
-                  >发现新版本 v{{ latestVersion }}</strong
-                >
-                <strong v-else-if="updateCheckState === 'error'">检查更新失败</strong>
-                <strong v-else>当前已是最新版本</strong>
-                <span>上次检查：{{ lastUpdateCheck || '—' }}</span>
-              </div>
-              <button
-                v-if="updateCheckState === 'available'"
-                class="brand-soft-button"
-                type="button"
-                @click="openReleases"
-              >
-                <i class="pi pi-download"></i>
-                前往下载
-              </button>
-              <button
-                v-else
-                class="soft-button"
-                type="button"
-                :disabled="updateCheckState === 'checking'"
-                @click="checkForUpdates"
-              >
-                <i class="pi pi-sync"></i>
-                检查更新
-              </button>
-            </div>
-
-            <div class="sponsor-card">
-              <i class="pi pi-heart-fill sponsor-watermark"></i>
-              <div>
-                <h3><i class="pi pi-heart"></i> 支持项目发展</h3>
-                <p>
-                  Twilight Echo
-                  是一个由热情驱动的免费开源项目。您的慷慨赞助将直接用于服务器开销、持续更新以及给开发者的深夜咖啡。
-                </p>
-              </div>
-              <span class="sponsor-pending">赞助入口暂未接入</span>
-            </div>
-          </div>
-
-          <hr />
-
-          <div class="about-links">
-            <button type="button" @click="openGithub"><i class="pi pi-github"></i> GitHub</button>
-            <button type="button" @click="openReleases">
-              <i class="pi pi-file-o"></i> 更新日志
-            </button>
-            <button type="button" @click="openHomepage">
-              <i class="pi pi-heart-fill"></i> 开源致谢
-            </button>
-          </div>
-        </section>
+        <AboutSettingsSection
+          :app-version="appVersion"
+          :update-check-state="updateCheckState"
+          :latest-version="latestVersion"
+          :last-update-check="lastUpdateCheck"
+          :release-url="releaseUrl"
+          :asset-name="updateAssetName"
+          :has-checksum="updateHasChecksum"
+          :update-error="updateError"
+          :update-progress="updateProgress"
+          :update-action-state="updateActionState"
+          @check-for-updates="checkForUpdates"
+          @download-update="downloadUpdate"
+          @cancel-update-download="cancelUpdateDownload"
+          @install-update="installUpdate"
+          @open-release-page="openReleasePage"
+        />
       </div>
     </div>
   </main>
@@ -4674,7 +4452,7 @@ onBeforeUnmount(() => {
 
 <style></style>
 
-<style scoped src="./settings-page/SettingsPage.css"></style>
+<style src="./settings-page/SettingsPage.css"></style>
 
 <style>
 html[data-theme='dark'] .settings-preview-page {

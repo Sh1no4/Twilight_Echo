@@ -2,8 +2,8 @@
   --home-text: #172033;
   --home-muted: #667085;
   --home-faint: #98a2b3;
-  --home-card: rgba(255, 255, 255, 0.72);
-  --home-card-strong: rgba(255, 255, 255, 0.9);
+  --home-card: rgba(255, 255, 255, 0.92);
+  --home-card-strong: rgba(255, 255, 255, 0.97);
   --home-border: rgba(15, 23, 42, 0.08);
   --home-border-strong: rgba(15, 23, 42, 0.13);
   --home-soft: rgba(15, 23, 42, 0.055);
@@ -51,8 +51,8 @@
   --home-text: #f5f3ec;
   --home-muted: rgba(229, 226, 214, 0.66);
   --home-faint: rgba(229, 226, 214, 0.42);
-  --home-card: rgba(28, 28, 27, 0.72);
-  --home-card-strong: rgba(31, 31, 29, 0.91);
+  --home-card: rgba(28, 28, 27, 0.92);
+  --home-card-strong: rgba(31, 31, 29, 0.97);
   --home-border: rgba(255, 255, 255, 0.085);
   --home-border-strong: rgba(255, 255, 255, 0.14);
   --home-soft: rgba(255, 255, 255, 0.06);
@@ -217,7 +217,7 @@
   color: var(--home-text);
   font-family: var(--home-display);
   font-size: clamp(1.65rem, 3.2vw, 2.75rem);
-  font-weight: 750;
+  font-weight: 650;
   letter-spacing: -0.02em;
   line-height: 1.2;
   white-space: nowrap;
@@ -280,7 +280,7 @@
 .shuffle-shortcut strong {
   color: var(--home-text);
   font-size: 0.88rem;
-  font-weight: 800;
+  font-weight: 650;
 }
 
 .shuffle-shortcut small {
@@ -294,16 +294,20 @@
   font-size: 1rem;
 }
 
-/* Shared surfaces */
+/* Solid fill by default — glass/blur only via host reduced-effects CSS in base.css */
 .surface-card {
   border: 1px solid var(--home-border);
-  background: var(--home-card);
+  background: var(--home-card-strong);
   box-shadow: var(--home-shadow);
-  backdrop-filter: blur(22px) saturate(135%);
-  -webkit-backdrop-filter: blur(22px) saturate(135%);
 }
 
-:global(body.te-no-blur .home .surface-card),
+:global(body.te-no-blur .home .surface-card) {
+  background: var(--home-card-strong);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+
 :global(body.te-no-blur .home .shuffle-shortcut) {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -407,7 +411,7 @@
   color: var(--home-text);
   font-family: var(--home-display);
   font-size: clamp(2rem, 4vw, 3.3rem);
-  font-weight: 750;
+  font-weight: 650;
   letter-spacing: -0.02em;
 }
 
@@ -436,7 +440,7 @@
   color: var(--home-muted);
   background: var(--home-soft);
   font-size: 0.76rem;
-  font-weight: 700;
+  font-weight: 650;
 }
 
 .empty-features i {
@@ -474,7 +478,7 @@
   inset: 0;
 }
 
-/* CoverImg is a child component — pierce with :deep so light/dark art filters apply. */
+/* CoverImg is a child component �?pierce with :deep so light/dark art filters apply. */
 .feature-backdrop img,
 .feature-backdrop :deep(img) {
   width: 100%;
@@ -534,7 +538,7 @@
   color: var(--home-accent);
   background: var(--home-accent-soft);
   font-size: 0.7rem;
-  font-weight: 800;
+  font-weight: 650;
   letter-spacing: 0.11em;
 }
 
@@ -592,7 +596,7 @@
   color: var(--home-text);
   font-family: var(--home-display);
   font-size: clamp(2rem, 4.1vw, 3.55rem);
-  font-weight: 750;
+  font-weight: 650;
   letter-spacing: -0.025em;
   line-height: 1.1;
   -webkit-box-orient: vertical;
@@ -701,7 +705,7 @@
   color: var(--home-faint);
   font-size: 0.65rem;
   font-variant-numeric: tabular-nums;
-  font-weight: 700;
+  font-weight: 650;
 }
 
 .transport-controls {
@@ -766,7 +770,7 @@
   padding: 0 1.15rem;
   border-radius: 999px;
   font-size: 0.82rem;
-  font-weight: 800;
+  font-weight: 650;
 }
 
 .hero-primary-action {
@@ -938,8 +942,10 @@
   color: var(--home-text);
   font-family: var(--home-display);
   font-size: 1.08rem;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-weight: 600;
+  letter-spacing: 0;
+  -webkit-font-smoothing: auto;
+  text-rendering: auto;
 }
 
 .round-link {
@@ -1019,7 +1025,7 @@
   color: var(--home-text);
   font-family: var(--home-display);
   font-size: 1.05rem;
-  font-weight: 700;
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
   line-height: 1.15;
   letter-spacing: -0.01em;
@@ -1070,7 +1076,7 @@
   overflow: hidden;
   color: var(--home-muted);
   font-size: 0.62rem;
-  font-weight: 700;
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1098,7 +1104,7 @@
   color: var(--home-muted);
   background: var(--home-soft);
   font-size: 0.62rem;
-  font-weight: 750;
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1141,7 +1147,7 @@
   margin-top: 0.7rem;
   color: var(--home-muted);
   font-size: 0.58rem;
-  font-weight: 700;
+  font-weight: 650;
 }
 
 .signal-summary span {
@@ -1213,7 +1219,7 @@
   overflow: hidden;
   color: currentColor;
   font-size: 0.49rem;
-  font-weight: 850;
+  font-weight: 650;
   letter-spacing: 0;
   line-height: 1.15;
   text-overflow: ellipsis;
@@ -1225,7 +1231,7 @@
   overflow: hidden;
   color: var(--home-text);
   font-size: 0.52rem;
-  font-weight: 720;
+  font-weight: 650;
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1315,7 +1321,7 @@
   flex: 0 0 auto;
   color: var(--home-accent);
   font-size: 0.52rem;
-  font-weight: 850;
+  font-weight: 650;
   letter-spacing: 0;
 }
 
@@ -1366,7 +1372,7 @@
 .dialog-section-head span {
   color: var(--home-accent);
   font-size: 0.58rem;
-  font-weight: 850;
+  font-weight: 650;
   letter-spacing: 0;
 }
 
@@ -1374,7 +1380,7 @@
   margin: 0.24rem 0 0;
   font-family: var(--home-display);
   font-size: 1.42rem;
-  font-weight: 900;
+  font-weight: 650;
   letter-spacing: 0;
 }
 
@@ -1404,7 +1410,7 @@
   color: var(--home-muted);
   background: var(--home-soft);
   font-size: 0.64rem;
-  font-weight: 760;
+  font-weight: 650;
 }
 
 .dialog-live-state i {
@@ -1507,7 +1513,7 @@
   gap: 0.38rem;
   color: var(--home-muted);
   font-size: 0.58rem;
-  font-weight: 760;
+  font-weight: 650;
 }
 
 .dialog-format-bar strong {
@@ -1575,7 +1581,7 @@
   grid-column: 1 / -1;
   color: currentColor;
   font-size: 0.55rem;
-  font-weight: 800;
+  font-weight: 650;
 }
 
 .is-dialog .route-endpoint-stage {
@@ -1619,7 +1625,7 @@
 .dialog-section-head h3 {
   margin: 0.18rem 0 0;
   font-size: 0.86rem;
-  font-weight: 850;
+  font-weight: 650;
   letter-spacing: 0;
 }
 
@@ -1677,7 +1683,7 @@
 
 .dialog-node-row > div strong {
   font-size: 0.7rem;
-  font-weight: 800;
+  font-weight: 650;
 }
 
 .dialog-node-row > div small {
@@ -1691,7 +1697,7 @@
   overflow: hidden;
   color: var(--home-muted);
   font-size: 0.58rem;
-  font-weight: 760;
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1719,7 +1725,7 @@
 .dialog-metric-grid dt {
   color: var(--home-faint);
   font-size: 0.5rem;
-  font-weight: 800;
+  font-weight: 650;
 }
 
 .dialog-node-row dd,
@@ -1729,7 +1735,7 @@
   color: var(--home-text);
   font-size: 0.61rem;
   font-variant-numeric: tabular-nums;
-  font-weight: 760;
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1801,7 +1807,7 @@
   color: var(--home-text);
   font-family: var(--home-display);
   font-size: clamp(1.65rem, 2.8vw, 2.25rem);
-  font-weight: 900;
+  font-weight: 650;
   letter-spacing: -0.04em;
   line-height: 1.15;
 }
@@ -1824,7 +1830,7 @@
   color: var(--home-muted);
   background: var(--home-card);
   font-size: 0.74rem;
-  font-weight: 750;
+  font-weight: 650;
   cursor: pointer;
   transition:
     gap 0.2s ease,
@@ -1923,7 +1929,7 @@
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   font-size: 0.52rem;
-  font-weight: 850;
+  font-weight: 650;
   letter-spacing: 0.08em;
 }
 
@@ -1970,7 +1976,7 @@
 .track-card-copy strong {
   color: var(--home-text);
   font-size: 0.86rem;
-  font-weight: 800;
+  font-weight: 650;
 }
 
 .track-card-copy small {
@@ -2006,7 +2012,7 @@
   gap: 0.48rem;
   color: var(--home-text);
   font-size: 0.86rem;
-  font-weight: 850;
+  font-weight: 650;
 }
 
 .panel-head > div i {
@@ -2063,7 +2069,7 @@
   font-size: 0.72rem;
   font-style: normal;
   font-variant-numeric: tabular-nums;
-  font-weight: 850;
+  font-weight: 650;
   text-align: center;
 }
 
@@ -2099,7 +2105,7 @@
 .top-title {
   color: var(--home-text);
   font-size: 0.76rem;
-  font-weight: 800;
+  font-weight: 650;
 }
 
 .top-artist {
@@ -2128,7 +2134,7 @@
   overflow: hidden;
   color: var(--home-faint);
   font-size: 0.55rem;
-  font-weight: 700;
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2155,7 +2161,7 @@
   color: var(--home-text);
   font-family: var(--home-display);
   font-size: 0.86rem;
-  font-weight: 900;
+  font-weight: 650;
 }
 
 .cal-title i {
@@ -2173,7 +2179,7 @@
   min-width: 6.2em;
   color: var(--home-muted);
   font-size: 0.66rem;
-  font-weight: 750;
+  font-weight: 650;
   text-align: center;
 }
 
@@ -2210,7 +2216,7 @@
 .cal-weekdays span {
   color: var(--home-faint);
   font-size: 0.57rem;
-  font-weight: 700;
+  font-weight: 650;
   text-align: center;
 }
 
@@ -2222,7 +2228,7 @@
   color: var(--home-muted);
   background: var(--home-soft);
   font-size: 0.58rem;
-  font-weight: 700;
+  font-weight: 650;
 }
 
 .cal-cell.is-blank {
@@ -2257,7 +2263,7 @@
   box-shadow:
     inset 0 0 0 2px var(--home-accent),
     0 0 0 2px var(--home-accent-soft);
-  font-weight: 900;
+  font-weight: 650;
 }
 
 .cal-foot {
@@ -2271,7 +2277,7 @@
 .cal-summary {
   color: var(--home-muted);
   font-size: 0.6rem;
-  font-weight: 700;
+  font-weight: 650;
 }
 
 .cal-legend {
@@ -2356,7 +2362,7 @@
   color: rgba(255, 255, 255, 0.78);
   font-family: var(--home-display);
   font-size: 0.64rem;
-  font-weight: 850;
+  font-weight: 650;
   letter-spacing: 0.08em;
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
 }
@@ -2382,7 +2388,7 @@
 .album-name {
   color: #ffffff;
   font-size: 0.9rem;
-  font-weight: 850;
+  font-weight: 650;
   text-shadow: 0 2px 12px rgba(0, 0, 0, 0.42);
 }
 

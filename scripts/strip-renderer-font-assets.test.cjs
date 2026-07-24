@@ -35,6 +35,12 @@ test('strips legacy Outfit/Nunito and non-WOFF2 Phosphor; keeps Inter/Jakarta + 
     fs.writeFileSync(path.join(misans, 'misans.css'), 'x')
     fs.writeFileSync(path.join(misans, 'LICENSE'), 'x')
     fs.writeFileSync(path.join(misans, 'junk.txt'), 'x')
+    const misansFull = path.join(misans, 'full')
+    fs.mkdirSync(misansFull, { recursive: true })
+    fs.writeFileSync(path.join(misansFull, 'misans-full.css'), 'x')
+    fs.writeFileSync(path.join(misansFull, 'MiSans-Regular.woff2'), 'x')
+    fs.writeFileSync(path.join(misansFull, 'README.md'), 'x')
+    fs.writeFileSync(path.join(misansFull, 'junk.bin'), 'x')
 
     stripRendererFontAssets(root)
 
@@ -49,7 +55,13 @@ test('strips legacy Outfit/Nunito and non-WOFF2 Phosphor; keeps Inter/Jakarta + 
       'LICENSE',
       'MiSans-Regular.21.woff2',
       'MiSans-Regular.latin.woff2',
+      'full',
       'misans.css'
+    ])
+    assert.deepEqual(fs.readdirSync(misansFull).sort(), [
+      'MiSans-Regular.woff2',
+      'README.md',
+      'misans-full.css'
     ])
   } finally {
     fs.rmSync(root, { recursive: true, force: true })

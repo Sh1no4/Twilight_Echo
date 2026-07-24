@@ -15,8 +15,8 @@
   --te-neutral-500: #6b7280;
   --te-neutral-700: #374151;
   --te-neutral-900: #111827;
-  --te-glass-bg: rgba(255, 255, 255, 0.62);
-  --te-glass-bg-strong: rgba(255, 255, 255, 0.74);
+  --te-glass-bg: rgba(255, 255, 255, 0.9);
+  --te-glass-bg-strong: rgba(255, 255, 255, 0.96);
   --te-glass-border: rgba(255, 255, 255, 0.55);
   --te-glass-shadow: 0 20px 70px rgba(86, 70, 160, 0.16);
   --te-glow-main: rgba(124, 77, 255, 0.26);
@@ -29,20 +29,21 @@
   --te-menu-width: clamp(132px, 18vw, 216px);
   --te-radius-global: 10px;
   --te-surface-opacity: 100%;
-  /* Latin: Inter (100–900) first so weight 700–800 never synthetic-bolds; CJK via MiSans. */
+  /* Latin: Inter. CJK: MiSans Full (complete faces / OS TTF) before subset MiSans. */
   --te-font-display:
-    'Inter', 'Plus Jakarta Sans', 'MiSans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI',
-    'Microsoft YaHei', system-ui, sans-serif;
+    'Inter', 'Plus Jakarta Sans', 'MiSans Full', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei',
+    'PingFang SC', 'Hiragino Sans GB', system-ui, sans-serif;
   --te-font-rounded:
-    'Inter', 'Plus Jakarta Sans', 'MiSans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI',
-    'Microsoft YaHei', system-ui, sans-serif;
+    'Inter', 'Plus Jakarta Sans', 'MiSans Full', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei',
+    'PingFang SC', 'Hiragino Sans GB', system-ui, sans-serif;
   --te-font-sans:
-    'Inter', 'Plus Jakarta Sans', 'MiSans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI',
-    'Microsoft YaHei', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --te-text-title: 700;
-  --te-text-body: 500;
+    'Inter', 'Plus Jakarta Sans', 'MiSans Full', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei',
+    'PingFang SC', 'Hiragino Sans GB', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    sans-serif;
+  --te-text-title: 500;
+  --te-text-body: 400;
   --te-text-meta: 400;
-  --te-text-strong: 600;
+  --te-text-strong: 500;
   --te-font-size-body: 14px;
   --te-chrome-text: #475569;
   --te-app-bg: #f4f4f7;
@@ -60,22 +61,26 @@
   --te-track-title-opacity: 0%;
   --te-local-bg: var(--te-app-bg);
   --te-local-bg-image: var(--te-app-bg-image);
-  --te-settings-bg: var(--te-app-bg);
-  --te-settings-bg-image: var(--te-app-bg-image);
+  --te-settings-bg: #f5f6f8;
+  --te-settings-bg-image: none;
   --te-streaming-bg: var(--te-app-bg);
   --te-streaming-bg-image: var(--te-app-bg-image);
   --te-player-bg: var(--te-app-bg);
   --te-player-bg-image: var(--te-app-bg-image);
   --te-shell-control-text: var(--te-neutral-900);
   --te-shell-control-hover: rgba(37, 99, 235, 0.08);
-  --te-settings-text: #111827;
-  --te-settings-text-muted: #6b7280;
+  --te-settings-text: #1a1a1a;
+  --te-settings-text-muted: #8a8f98;
   --te-settings-control-bg: #ffffff;
-  --te-settings-control-border: rgba(229, 231, 235, 0.78);
-  --te-settings-panel-border: #ffffff;
-  --te-settings-nav-text: #4b5563;
-  --te-settings-nav-hover: #ffffff;
+  --te-settings-control-border: rgba(15, 23, 42, 0.06);
+  --te-settings-panel-border: transparent;
+  --te-settings-nav-text: #5c6370;
+  --te-settings-nav-hover: rgba(15, 23, 42, 0.04);
   --te-settings-nav-active: #ffffff;
+  --te-settings-row-bg: #ffffff;
+  --te-settings-search-bg: #eef0f3;
+  --te-settings-shadow: 0 2px 16px rgba(15, 23, 42, 0.04);
+  --te-settings-shadow-soft: 0 1px 4px rgba(15, 23, 42, 0.04);
   --te-navigation-bg: rgba(255, 255, 255, 0.94);
   --te-navigation-border: rgba(0, 0, 0, 0.05);
   --te-navigation-shadow: 4px 0 24px rgba(15, 23, 42, 0.03);
@@ -141,14 +146,20 @@
   --te-active-bg: #e8e8e8;
   --te-shell-control-text: #0f172a;
   --te-shell-control-hover: rgba(37, 99, 235, 0.08);
-  --te-settings-text: #111827;
-  --te-settings-text-muted: #6b7280;
+  --te-settings-bg: #f5f6f8;
+  --te-settings-bg-image: none;
+  --te-settings-text: #1a1a1a;
+  --te-settings-text-muted: #8a8f98;
   --te-settings-control-bg: #ffffff;
-  --te-settings-control-border: rgba(229, 231, 235, 0.78);
-  --te-settings-panel-border: #ffffff;
-  --te-settings-nav-text: #4b5563;
-  --te-settings-nav-hover: #ffffff;
+  --te-settings-control-border: rgba(15, 23, 42, 0.06);
+  --te-settings-panel-border: transparent;
+  --te-settings-nav-text: #5c6370;
+  --te-settings-nav-hover: rgba(15, 23, 42, 0.04);
   --te-settings-nav-active: #ffffff;
+  --te-settings-row-bg: #ffffff;
+  --te-settings-search-bg: #eef0f3;
+  --te-settings-shadow: 0 2px 16px rgba(15, 23, 42, 0.04);
+  --te-settings-shadow-soft: 0 1px 4px rgba(15, 23, 42, 0.04);
   --te-navigation-bg: rgba(255, 255, 255, 0.94);
   --te-navigation-border: rgba(0, 0, 0, 0.05);
   --te-navigation-shadow: 4px 0 24px rgba(15, 23, 42, 0.03);
@@ -238,8 +249,8 @@
   --te-neutral-700: #d8d8d8;
   --te-neutral-900: #f7f7f2;
   --te-chrome-text: #d8d8d8;
-  --te-glass-bg: rgba(24, 24, 24, 0.82);
-  --te-glass-bg-strong: rgba(29, 29, 29, 0.94);
+  --te-glass-bg: rgba(24, 24, 24, 0.92);
+  --te-glass-bg-strong: rgba(29, 29, 29, 0.97);
   --te-glass-border: rgba(255, 255, 255, 0.09);
   --te-glass-shadow: 0 18px 54px rgba(0, 0, 0, 0.34);
   --te-glow-main: rgba(245, 158, 11, 0.18);
@@ -263,10 +274,14 @@
   --te-settings-text-muted: #9b9b9b;
   --te-settings-control-bg: #181818;
   --te-settings-control-border: rgba(255, 255, 255, 0.1);
-  --te-settings-panel-border: rgba(255, 255, 255, 0.09);
+  --te-settings-panel-border: transparent;
   --te-settings-nav-text: #d8d8d8;
   --te-settings-nav-hover: rgba(255, 255, 255, 0.065);
-  --te-settings-nav-active: rgba(245, 158, 11, 0.16);
+  --te-settings-nav-active: rgba(255, 255, 255, 0.1);
+  --te-settings-row-bg: rgba(255, 255, 255, 0.04);
+  --te-settings-search-bg: rgba(255, 255, 255, 0.08);
+  --te-settings-shadow: 0 2px 16px rgba(0, 0, 0, 0.28);
+  --te-settings-shadow-soft: 0 1px 4px rgba(0, 0, 0, 0.22);
   --te-navigation-bg: #17181a;
   --te-navigation-border: transparent;
   --te-navigation-shadow: none;
@@ -339,7 +354,8 @@ body {
     'liga' 1,
     'calt' 1,
     'ss01' 1;
-  text-rendering: optimizeLegibility;
+  font-synthesis: none;
+  text-rendering: auto;
   -webkit-font-smoothing: auto;
   -moz-osx-font-smoothing: auto;
   overflow: hidden;
@@ -2610,10 +2626,43 @@ html[data-te-effects-mode='reduced'] body::after {
 }
 
 html[data-te-effects-mode='reduced']
-  :is(.glass-card, .side-menu, .player-bar, .title-bar, .theme-studio-page, .settings-page) {
+  :is(
+    .glass-card,
+    .glass-card::before,
+    .surface-card,
+    .surface-card::before,
+    .side-menu,
+    .player-bar,
+    .title-bar,
+    .theme-studio-page,
+    .settings-page,
+    .settings-preview-page
+  ) {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   box-shadow: none !important;
+  filter: none !important;
+}
+
+html[data-te-effects-mode='reduced'] :is(.glass-card, .surface-card) {
+  background: var(--te-card-bg, #ffffff) !important;
+}
+
+html[data-te-effects-mode='reduced'] :is(.glass-card::before, .surface-card::before) {
+  background: var(--te-card-bg, #ffffff) !important;
+  opacity: 1 !important;
+}
+
+html[data-te-effects-mode='reduced'] .home .surface-card,
+html[data-te-effects-mode='reduced'] .home .shuffle-shortcut,
+html[data-te-effects-mode='reduced'] .home .empty-state {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+html[data-te-effects-mode='reduced'] .home .surface-card {
+  background: var(--home-card-strong, #ffffff) !important;
 }
 
 html[data-te-effects-mode='reduced'][data-te-background-treatment='cover-blur'] body,

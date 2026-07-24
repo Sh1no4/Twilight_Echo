@@ -1,5 +1,18 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+
+function readDataIpcSources(): string {
+  return [
+    '../ipc/data.ts',
+    '../ipc/appIpc.ts',
+    '../ipc/shellIpc.ts',
+    '../ipc/discordIpc.ts',
+    '../ipc/windowIpc.ts'
+  ]
+    .map((rel) => readFileSync(new URL(rel, import.meta.url), 'utf8'))
+    .join('\n')
+}
+
 import test from 'node:test'
 
 const {
@@ -40,7 +53,7 @@ test('limits JSON payloads before writing renderer-controlled data to disk', () 
 })
 
 test('data IPC applies path and storage limits before touching local files', () => {
-  const source = readFileSync(new URL('../ipc/data.ts', import.meta.url), 'utf8')
+  const source = readDataIpcSources()
   const repositorySource = readFileSync(
     new URL('../library/libraryRepository.ts', import.meta.url),
     'utf8'
@@ -137,7 +150,7 @@ test('plugin and NCM IPC validate renderer-controlled IDs, methods, paths, and p
 })
 
 test('settings, background image, OPRA, and BPM IPC apply input limits before expensive work', () => {
-  const dataSource = readFileSync(new URL('../ipc/data.ts', import.meta.url), 'utf8')
+  const dataSource = readDataIpcSources()
   const coverCacheSource = readFileSync(
     new URL('../library/coverCache.ts', import.meta.url),
     'utf8'
@@ -182,7 +195,7 @@ test('Electron documents use local CSP, denied permissions, and trusted IPC send
   )
   const lifecycleSource = readFileSync(new URL('../app/lifecycle.ts', import.meta.url), 'utf8')
   const rendererHtml = readFileSync(new URL('../../renderer/index.html', import.meta.url), 'utf8')
-  const dataSource = readFileSync(new URL('../ipc/data.ts', import.meta.url), 'utf8')
+  const dataSource = readDataIpcSources()
   const pluginsSource = readFileSync(new URL('../ipc/plugins.ts', import.meta.url), 'utf8')
   const audioIpcSource = readFileSync(new URL('../audio/engineIpc.ts', import.meta.url), 'utf8')
   const desktopLyricsSource = readFileSync(

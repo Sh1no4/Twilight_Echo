@@ -557,6 +557,13 @@ onMounted(async () => {
   await refreshAccounts()
   if (props.initialProviderId && !activeProviderId.value) {
     openAccount(props.initialProviderId)
+    return
+  }
+  if (props.forceProfile && !activeProviderId.value) {
+    const loggedIn = providerCards.value.find((card) => card.available && card.loggedIn)
+    if (loggedIn) {
+      openAccount(loggedIn.id)
+    }
   }
 })
 

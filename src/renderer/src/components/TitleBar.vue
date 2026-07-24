@@ -20,7 +20,7 @@ defineEmits<{
   toggleMenu: []
   collapseMenu: []
   back: []
-  login: []
+  login: [providerId?: string | null]
   settings: []
   plugins: []
 }>()
@@ -79,7 +79,7 @@ function close(): void {
         v-if="streaming"
         class="login-btn"
         :title="isLoggedIn ? profile?.nickname || '个人详情' : '网易云登录'"
-        @click="$emit('login')"
+        @click="$emit('login', 'ncm')"
       >
         <img
           v-if="isLoggedIn && profile?.avatarUrl && !avatarLoadFailed"
