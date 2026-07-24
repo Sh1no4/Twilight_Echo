@@ -20,6 +20,8 @@ const PROVIDER_WRITE_IDEMPOTENCY_TTL_MS = 5 * 60_000
 const MAX_PROVIDER_WRITE_IDEMPOTENCY_RECORDS = 256
 const MAX_PERSISTED_PROVIDER_WRITE_IDEMPOTENCY_RECORDS = 128
 const PROVIDER_WRITE_IDEMPOTENCY_SETTINGS_KEY = 'providerWriteIdempotency'
+const MAX_PLAYLIST_TRACKS = 5000
+const PLAYLIST_TRACK_PAGE_SIZE = 1000
 let likedTracksCache = null
 let likedSongIdListCache = null
 let likedSongIds = new Set()
@@ -924,43 +926,86 @@ async function fetchSongDetailChunk(ids, label) {
   }
 }
 
+async function fetchPlaylistTracksViaTrackAll(playlistId) {
+  const songs = []
+  const seen = new Set()
+  let offset = 0
+
+  while (songs.length < MAX_PLAYLIST_TRACKS) {
+    const remaining = MAX_PLAYLIST_TRACKS - songs.length
+    const limit = Math.min(PLAYLIST_TRACK_PAGE_SIZE, remaining)
+    let pageSongs = []
+    try {
+      const trackAllData = await requestAuthedRead(
+        `/playlist/track/all?id=${encodeURIComponent(String(playlistId))}&limit=${limit}&offset=${offset}`,
+        { attempts: 3, label: `playlist ${playlistId} track/all ${offset}` }
+      )
+      pageSongs = getSongItems(trackAllData)
+    } catch (error) {
+      if (songs.length > 0) {
+        getContext().logger.warn(
+          `网易云歌单 track/all 分页中断（已取 ${songs.length} 首）：${getErrorMessage(error)}`
+        )
+        break
+      }
+      throw error
+    }
+    if (!Array.isArray(pageSongs) || pageSongs.length === 0) break
+
+    let added = 0
+    for (const song of pageSongs) {
+      const key = Number(song?.id)
+      const dedupeKey = Number.isFinite(key) && key > 0 ? key : `idx:${offset + added}`
+      if (seen.has(dedupeKey)) continue
+      seen.add(dedupeKey)
+      songs.push(song)
+      added += 1
+      if (songs.length >= MAX_PLAYLIST_TRACKS) break
+    }
+
+    if (added === 0 || pageSongs.length < limit) break
+    offset += pageSongs.length
+  }
+
+  return songs
+}
+
+async function fetchPlaylistTracksViaDetail(playlistId) {
+  const detailData = await requestAuthedRead(
+    `/playlist/detail?id=${encodeURIComponent(String(playlistId))}`,
+    { attempts: 3, label: `playlist ${playlistId} detail` }
+  )
+  const ids = getPlaylistTrackIds(detailData)
+  if (ids.length > 0) {
+    return fetchSongDetailsByIds(ids.slice(0, MAX_PLAYLIST_TRACKS), `playlist ${playlistId}`)
+  }
+  // playlist.tracks is often truncated (~200); only use it when trackIds are absent.
+  return getSongItems(detailData).slice(0, MAX_PLAYLIST_TRACKS)
+}
+
 async function fetchPlaylistTracks(playlistId, force = false) {
   const cacheKey = String(playlistId)
   if (!force && playlistTrackCache.has(cacheKey)) return playlistTrackCache.get(cacheKey) ?? []
 
-  // 一次性获取全部歌曲（limit 设为足够大，API 内部会先取 trackIds 再按 limit 切片请求详情）
   let songs = []
   try {
-    const trackAllData = await requestAuthedRead(
-      `/playlist/track/all?id=${encodeURIComponent(String(playlistId))}&limit=100000`,
-      { attempts: 3, label: `playlist ${playlistId} track/all` }
+    songs = await fetchPlaylistTracksViaTrackAll(playlistId)
+  } catch (error) {
+    getContext().logger.warn(
+      `网易云歌单 track/all 分页失败，将回退 detail：${getErrorMessage(error)}`
     )
-    songs = getSongItems(trackAllData)
-  } catch {
     songs = []
   }
 
-  // 回退：用 playlist/detail 拿 trackIds，再分批请求详情
   if (songs.length === 0) {
     try {
-      const detailData = await requestAuthedRead(
-        `/playlist/detail?id=${encodeURIComponent(String(playlistId))}`,
-        { attempts: 3, label: `playlist ${playlistId} detail` }
-      )
-      songs = getSongItems(detailData)
-
-      if (songs.length === 0) {
-        const ids = getPlaylistTrackIds(detailData)
-        if (ids.length > 0) {
-          songs = await fetchSongDetailsByIds(ids, `playlist ${playlistId}`)
-        }
-      }
+      songs = await fetchPlaylistTracksViaDetail(playlistId)
     } catch {
       songs = []
     }
   }
 
-  const tracks = songs.map(normalizeTrack)
+  const tracks = songs.slice(0, MAX_PLAYLIST_TRACKS).map(normalizeTrack)
   playlistTrackCache.set(cacheKey, tracks)
   return tracks
 }

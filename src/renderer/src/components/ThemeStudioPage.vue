@@ -34,6 +34,7 @@ import {
 import { useExtensionRegistry, type ThemeContribution } from '../extensions/registry'
 import { getPluginThemeKey } from '../extensions/themeSelection'
 import { useThemeStore } from '../stores/useThemeStore'
+import { createThemePreviewScheduler } from '../utils/themePreviewScheduler'
 import EqualizerPage from './EqualizerPage.vue'
 import LocalDashboard from './LocalDashboard.vue'
 import PlayerBar from './PlayerBar.vue'
@@ -73,6 +74,9 @@ const historyIndex = ref(-1)
 const localError = ref('')
 const notice = ref('')
 let originalTone: ThemeTone = 'pureWhite'
+const previewScheduler = createThemePreviewScheduler((profile: ThemeProfileV2) =>
+  themeStore.preview(profile)
+)
 
 const domains: Array<{ id: ThemeStudioDomain; label: string; icon: string }> = [
   { id: 'presets', label: '预设画廊', icon: 'ph ph-grid-four' },
@@ -324,6 +328,7 @@ function pushHistory(profile: ThemeProfileV2): void {
 async function selectBuiltIn(
   presetId: BuiltInThemePresetId = TWILIGHT_DEFAULT_THEME_ID
 ): Promise<void> {
+  previewScheduler.cancel()
   selectedKey.value = `preset:${presetId}`
   draft.value = null
   history.value = []
@@ -332,6 +337,7 @@ async function selectBuiltIn(
 }
 
 async function selectProfile(profile: ThemeProfileV2): Promise<void> {
+  previewScheduler.cancel()
   selectedKey.value = `profile:${profile.id}`
   draft.value = cloneProfile(profile)
   resetHistory(draft.value)
@@ -339,6 +345,7 @@ async function selectProfile(profile: ThemeProfileV2): Promise<void> {
 }
 
 async function selectPlugin(theme: ThemeContribution): Promise<void> {
+  previewScheduler.cancel()
   selectedKey.value = `plugin:${getPluginThemeKey(theme)}`
   draft.value = null
   history.value = []
@@ -390,6 +397,7 @@ function createProfileFromPlugin(theme: ThemeContribution): ThemeProfileV2 {
 }
 
 async function duplicateSelected(): Promise<void> {
+  previewScheduler.cancel()
   const sourceProfileId = draft.value?.id
   const source = draft.value
     ? cloneProfile(draft.value)
@@ -550,7 +558,7 @@ function updateDraft(mutator: (profile: ThemeProfileV2) => void): void {
   next.updatedAt = new Date().toISOString()
   draft.value = next
   pushHistory(next)
-  void themeStore.preview(next)
+  previewScheduler.schedule(next)
 }
 
 function updateToken(definition: ThemeTokenDefinition, raw: string): void {
@@ -885,7 +893,7 @@ function restoreVersion(entry: ThemeProfileHistoryEntry): void {
   restored.updatedAt = new Date().toISOString()
   draft.value = restored
   pushHistory(restored)
-  void themeStore.preview(restored)
+  previewScheduler.schedule(restored)
 }
 
 function historyLabel(entry: ThemeProfileHistoryEntry): string {
@@ -907,20 +915,21 @@ function undo(): void {
   if (!canUndo.value) return
   historyIndex.value -= 1
   draft.value = cloneProfile(history.value[historyIndex.value])
-  void themeStore.preview(draft.value)
+  previewScheduler.schedule(draft.value)
 }
 
 function redo(): void {
   if (!canRedo.value) return
   historyIndex.value += 1
   draft.value = cloneProfile(history.value[historyIndex.value])
-  void themeStore.preview(draft.value)
+  previewScheduler.schedule(draft.value)
 }
 
 async function applySelected(): Promise<void> {
   localError.value = ''
   notice.value = ''
   try {
+    await previewScheduler.flush()
     if (draft.value) {
       const saved = await themeStore.saveProfile(draft.value)
       const persisted = saved.data.profiles.find((profile) => profile.id === draft.value?.id)
@@ -1004,13 +1013,15 @@ function supportsColorPicker(value: string): boolean {
   return /^#[0-9a-f]{6}$/i.test(value)
 }
 
-function setTone(nextTone: ThemeTone): void {
+async function setTone(nextTone: ThemeTone): Promise<void> {
+  await previewScheduler.flush()
   tone.value = nextTone
-  void themeStore.setPreviewTone(nextTone)
+  await themeStore.setPreviewTone(nextTone)
 }
 
 function closeStudio(): void {
   if (isDirty.value && !window.confirm('放弃尚未应用的主题修改？')) return
+  previewScheduler.cancel()
   document.documentElement.dataset.theme = originalTone
   void themeStore.setPreviewTone(null).then(() => themeStore.previewTheme(null))
   emit('back')
@@ -1061,6 +1072,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  previewScheduler.cancel()
   window.removeEventListener('resize', updateLivePreviewScale)
   previewResizeObserver?.disconnect()
   previewResizeObserver = null

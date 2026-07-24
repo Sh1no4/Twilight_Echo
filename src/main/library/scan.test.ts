@@ -48,6 +48,25 @@ test('local library scan normalizes common bpm metadata into Track bpm', () => {
   assert.match(source, /if \(bpm !== undefined\) track\.bpm = bpm/)
 })
 
+test('local library scan only stores albumArtist from a real ALBUMARTIST tag', () => {
+  const scanSource = readFileSync(new URL('./scan.ts', import.meta.url), 'utf8')
+  const serviceSource = readFileSync(new URL('./libraryScanService.ts', import.meta.url), 'utf8')
+
+  assert.match(scanSource, /\.\.\.\(common\.albumartist \? \{ albumArtist: common\.albumartist \} : \{\}\)/)
+  assert.doesNotMatch(
+    scanSource,
+    /albumArtist:\s*common\.albumartist\s*\|\|\s*artist/
+  )
+  assert.match(
+    serviceSource,
+    /\.\.\.\(metadata\.common\.albumartist \? \{ albumArtist: metadata\.common\.albumartist \} : \{\}\)/
+  )
+  assert.doesNotMatch(
+    serviceSource,
+    /albumArtist:\s*metadata\.common\.albumartist\s*\|\|\s*metadata\.common\.artist/
+  )
+})
+
 test('local library scan persists ReplayGain and R128 tags onto Track records', () => {
   const source = readFileSync(new URL('./scan.ts', import.meta.url), 'utf8')
   assert.match(source, /export function extractReplayGainTags\(/)

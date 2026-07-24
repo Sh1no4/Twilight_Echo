@@ -626,6 +626,87 @@ test('same-named albums remain separate by stable album artist identity', async 
   store.clearTracks()
 })
 
+test('polluted albumArtist equal to track artist still merges a multi-artist release folder', async () => {
+  const store = setupStore()
+  await store.addTracks(
+    [
+      {
+        ...generateMockTracks(1)[0],
+        id: 'release-a',
+        artist: 'Guest A',
+        // Legacy scan pollution: albumArtist copied from track artist.
+        albumArtist: 'Guest A',
+        album: '依・睐-复刻',
+        filePath: 'C:\\music\\release\\a.flac',
+        dir: 'C:\\music\\release'
+      },
+      {
+        ...generateMockTracks(1)[0],
+        id: 'release-b',
+        artist: 'Guest B',
+        albumArtist: 'Guest B',
+        album: '依・睐-复刻',
+        filePath: 'C:\\music\\release\\b.flac',
+        dir: 'C:\\music\\release'
+      },
+      {
+        ...generateMockTracks(1)[0],
+        id: 'other-folder',
+        artist: 'Guest C',
+        albumArtist: 'Guest C',
+        album: '依・睐-复刻',
+        filePath: 'C:\\music\\other\\c.flac',
+        dir: 'C:\\music\\other'
+      }
+    ],
+    { deferRebuild: false }
+  )
+  store.flushRebuild()
+
+  const sameNamed = store.albums.value.filter((album) => album.name === '依・睐-复刻')
+  assert.equal(sameNamed.length, 2)
+  const primary = sameNamed.find((album) => album.trackCount === 2)
+  const secondary = sameNamed.find((album) => album.trackCount === 1)
+  assert.ok(primary, 'same-folder multi-artist tracks should merge into one album card')
+  assert.ok(secondary, 'same title in another folder should stay separate')
+  assert.deepEqual(primary!.tracks.map((track) => track.id).sort(), ['release-a', 'release-b'])
+  assert.equal(secondary!.tracks[0]?.id, 'other-folder')
+
+  store.clearTracks()
+})
+
+test('missing albumArtist merges by release directory instead of track artist', async () => {
+  const store = setupStore()
+  await store.addTracks(
+    [
+      {
+        ...generateMockTracks(1)[0],
+        id: 'solo-a',
+        artist: 'Artist A',
+        album: 'Shared Title',
+        filePath: 'C:\\music\\album\\a.flac',
+        dir: 'C:\\music\\album'
+      },
+      {
+        ...generateMockTracks(1)[0],
+        id: 'solo-b',
+        artist: 'Artist B',
+        album: 'Shared Title',
+        filePath: 'C:\\music\\album\\b.flac',
+        dir: 'C:\\music\\album'
+      }
+    ],
+    { deferRebuild: false }
+  )
+  store.flushRebuild()
+
+  const albums = store.albums.value.filter((album) => album.name === 'Shared Title')
+  assert.equal(albums.length, 1)
+  assert.equal(albums[0]?.trackCount, 2)
+
+  store.clearTracks()
+})
+
 test('scan root folders aggregate tracks from nested directories at path boundaries', async () => {
   const store = setupStore()
   await store.addTracks(

@@ -54,7 +54,7 @@ import {
   resolveAuthorizedVst3SearchPaths
 } from '../security/localPaths.ts'
 
-const MAX_AUDIO_QUEUE_ITEMS = 1000
+const MAX_AUDIO_QUEUE_ITEMS = 5000
 const MAX_AUDIO_SOURCE_LENGTH = 8192
 const MAX_AUDIO_DEVICE_LENGTH = 512
 

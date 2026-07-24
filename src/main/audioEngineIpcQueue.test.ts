@@ -31,7 +31,7 @@ test('audioEngine loadQueue IPC accepts renderer queue items with source field',
 })
 
 test('audioEngine IPC normalizes untrusted renderer parameters', () => {
-  assert.match(source, /const MAX_AUDIO_QUEUE_ITEMS = 1000/)
+  assert.match(source, /const MAX_AUDIO_QUEUE_ITEMS = 5000/)
   assert.match(
     source,
     /normalizeIpcArray\(items, 'audio queue', MAX_AUDIO_QUEUE_ITEMS, toQueueItem\)/

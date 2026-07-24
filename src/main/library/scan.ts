@@ -318,7 +318,9 @@ export async function parseTrack(file: FileEntry): Promise<unknown[]> {
       title: title || fileName.title,
       artist: artist || fileName.artist,
       album: album || '未知专辑',
-      albumArtist: common.albumartist || artist || fileName.artist,
+      // Only persist a real ALBUMARTIST tag. Filling this from track artist used to
+      // split multi-artist / guest-feat releases into one card per track artist.
+      ...(common.albumartist ? { albumArtist: common.albumartist } : {}),
       genre: extractGenre(common.genre),
       filePath: file.fullPath,
       fileName: file.fileName,

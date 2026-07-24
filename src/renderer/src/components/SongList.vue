@@ -418,6 +418,12 @@ const unifiedSearchStatusText = computed(() => {
   return `找到 ${resultCount} 首，已合并本地库和 ${providerCount} 个在线音源`
 })
 
+const showDetailBackButton = computed(() => {
+  // Top-level views (including recent / all songs) are reached from the side
+  // menu; a back button that only clears the filter is a no-op there.
+  return !!props.filter
+})
+
 const showGrid = computed(() => {
   if (props.category === 'allSongs' || props.category === 'recent') return false
   return !props.filter
@@ -1180,7 +1186,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
           <div class="song-list-header">
             <div class="header-left">
               <button
-                v-if="category !== 'allSongs'"
+                v-if="showDetailBackButton"
                 class="btn-back"
                 title="返回"
                 @click="emit('selectView', category, null)"

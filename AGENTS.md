@@ -1,3 +1,7 @@
+# AGENTS.md
+
+This file provides guidance to Qoder (qoder.com) when working with code in this repository.
+
 # Twilight Echo — Agent Instructions
 
 Desktop music player: Electron + Vue 3 + TypeScript + C++20 native HiFi engine.
@@ -52,6 +56,7 @@ pnpm run test:dsp-graph
 pnpm run test:dsp-assets
 pnpm run test:sleep-timer
 pnpm run test:tag-duplicate-management
+pnpm run test:themes
 pnpm run test:duplicate-detection
 pnpm run test:duplicate-detection-benchmark   # contract only
 pnpm run benchmark:duplicate-detection:ci     # live 10k; do not parallel with other perf gates
@@ -82,6 +87,7 @@ Every co-located test under `scripts/`, `src/`, `packages/`, `resources/` must b
 | Playlist import/export/CAS | `test:playlist-lifecycle` |
 | CUE ranges / scan planner | `test:cue` |
 | DSP graph / processing options | `test:dsp-graph` (+ `test:dsp-assets` if assets/VST catalog) |
+| Themes / Theme Studio / theme archives | `test:themes` |
 | Cross main↔preload↔renderer types | `typecheck` |
 | Release packaging / asar / strip policy | `test:release-artifacts`, `audit:production` |
 | Pre-release Windows | `docs/windows-release-gate.md` / `test:no-real-device` |
@@ -153,7 +159,7 @@ Renderer → preload contextBridge → main IPC → audioEngineManager
 - Renderer: `src/renderer/src/`, alias `@renderer`. Shared contracts: `src/shared/` (included in both node and web tsconfigs).
 - Renderer public assets come from `resources/` (`publicDir` in electron-vite).
 - Provider track IDs are prefixed (`ncm:…`, `local:…`) and flow through queue/library/session.
-- Theme plugins: CSS variables/stylesheets only — no script execution.
+- Theme plugins: CSS variables/stylesheets only — no script execution. Structured theme runtime lives in `src/shared/theme.ts`; archive validation / library repository in `src/main/themes/`.
 - Packages in-repo: `packages/plugin-api` (`@twilight-echo/plugin-api`), `packages/create-twilight-plugin` (`init` + `pack` → `.tep`).
 - Staged native binaries: `resources/audio-engine/` (required for packaged runs).
 - Audio service crash recovery does **not** auto-resume; UI must wait for structured ready + manual resume. Output route restore order: `output-backend → output-device → output-config` (ACK each). DSP restore: `SetDspPluginChain → ApplyDspState → LoadQueue`. Details: `docs/audio-engine-api.md`.

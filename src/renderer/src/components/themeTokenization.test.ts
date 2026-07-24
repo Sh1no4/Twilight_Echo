@@ -36,6 +36,18 @@ const settingsStyle = readFileSync(
   'utf8'
 )
 const themeStore = readFileSync(new URL('../stores/useThemeStore.ts', import.meta.url), 'utf8')
+const previewScheduler = readFileSync(
+  new URL('../utils/themePreviewScheduler.ts', import.meta.url),
+  'utf8'
+)
+const themePerformance = readFileSync(
+  new URL('../utils/themePerformance.ts', import.meta.url),
+  'utf8'
+)
+const visualRegression = readFileSync(
+  new URL('../../../../scripts/theme-visual-regression.cjs', import.meta.url),
+  'utf8'
+)
 const pluginThemeRuntime = readFileSync(
   new URL('../extensions/pluginThemeRuntime.ts', import.meta.url),
   'utf8'
@@ -298,4 +310,20 @@ test('disabled or uninstalled plugin themes fall back to the built-in selection'
   assert.match(themeIpc, /export async function reconcileThemeAfterPluginChange/)
   assert.match(themeIpc, /setActiveTheme\(\{ kind: 'builtin', id: TWILIGHT_DEFAULT_THEME_ID \}/)
   assert.match(pluginIpc, /reconcileThemeAfterPluginChange\(\)/)
+})
+
+test('phase seven coalesces previews, records p95, and owns the full Electron matrix', () => {
+  const updateDraft = studio.match(/function updateDraft[\s\S]*?\n}/)?.[0] ?? ''
+  assert.match(updateDraft, /previewScheduler\.schedule\(next\)/)
+  assert.doesNotMatch(updateDraft, /themeStore\.preview|saveProfile|window\.api/)
+  assert.match(studio, /await previewScheduler\.flush\(\)[\s\S]*themeStore\.saveProfile/)
+  assert.match(studio, /onBeforeUnmount\(\(\) => \{\s*previewScheduler\.cancel\(\)/)
+  assert.match(previewScheduler, /window\.requestAnimationFrame/)
+  assert.match(themePerformance, /preview: 32/)
+  assert.match(themePerformance, /apply: 100/)
+  assert.match(themeStore, /recordThemePerformance\(operation, startedAt\)/)
+  assert.match(themeStore, /recordThemePerformance\('resource-decode', startedAt\)/)
+  assert.match(visualRegression, /matrixCases: 90/)
+  assert.match(visualRegression, /presetCases: 7/)
+  assert.match(visualRegression, /maxMountedRows > 20/)
 })

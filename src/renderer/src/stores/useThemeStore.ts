@@ -27,9 +27,16 @@ import {
 import { useExtensionRegistry, type ThemeContribution } from '../extensions/registry'
 import { resolvePluginThemeRuntimeContract } from '../extensions/pluginThemeRuntime'
 import { getPluginThemeKey } from '../extensions/themeSelection'
+import {
+  createThemePerformanceRecorder,
+  type ThemePerformanceOperation,
+  type ThemePerformanceSnapshot
+} from '../utils/themePerformance'
 
 const STYLE_ID = 'twilight-theme-runtime'
 const EPOCH_ISO = new Date(0).toISOString()
+const themePerformanceRecorder = createThemePerformanceRecorder()
+const themePerformance = ref<ThemePerformanceSnapshot>(themePerformanceRecorder.snapshot())
 
 const snapshot = ref<ThemeLibrarySnapshot | null>(null)
 const previewProfile = ref<ThemeProfileV2 | null>(null)
@@ -41,6 +48,7 @@ let bootstrapPromise: Promise<void> | null = null
 let listenersSetup = false
 let applySequence = 0
 const assetValidationCache = new Map<string, Promise<boolean>>()
+const assetDecodeCache = new Map<string, Promise<void>>()
 const systemTone = ref<ThemeTone>('pureWhite')
 const adaptiveAccentColor = ref('#1a73e8')
 const adaptiveCoverUrl = ref('')
@@ -150,12 +158,14 @@ interface ThemeRuntimeState {
   dataAttributes: Record<`data-te-${string}`, string>
   activeTheme: string
   tone: ThemeTone
+  resourceUrls: string[]
 }
 
 async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<ThemeRuntimeState> {
   const variables: Record<string, string> = {}
   let stylesheet = ''
   let assetStylesheet = ''
+  let resourceUrls: string[] = []
   const selection = previewSelection.value ?? snapshot.value?.data.activeTheme
   const selectedProfile = getSelectedProfile(selection)
   let selectedPluginTheme: ThemeContribution | null = null
@@ -180,7 +190,9 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
       '--te-streaming-bg-image': 'none',
       '--te-player-bg-image': 'none'
     })
-    assetStylesheet = applyProfileAssetBindings(selectedProfile, variables)
+    const assetBindings = applyProfileAssetBindings(selectedProfile, variables)
+    assetStylesheet = assetBindings.stylesheet
+    resourceUrls = assetBindings.imageUrls
     applyProfileModeVariables(modes, tone, resolvedTokens, variables)
   } else {
     if (selection?.kind === 'plugin') {
@@ -191,7 +203,8 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
           css: '',
           dataAttributes: themeModesToDataAttributes(resolveThemeProfileModes(null)),
           activeTheme: TWILIGHT_DEFAULT_THEME_ID,
-          tone
+          tone,
+          resourceUrls: []
         }
       }
       const contract = resolvePluginThemeRuntimeContract(contribution, tone)
@@ -224,7 +237,8 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
       .join('\n\n'),
     dataAttributes: themeModesToDataAttributes(modes),
     activeTheme: activeThemeKey(selection),
-    tone
+    tone,
+    resourceUrls
   }
 }
 
@@ -377,10 +391,11 @@ async function setThemePreviewTone(tone: ThemeTone | null): Promise<void> {
 function applyProfileAssetBindings(
   profile: ThemeProfileV2,
   variables: Record<string, string>
-): string {
+): { stylesheet: string; imageUrls: string[] } {
   const bindings = profile.assetBindings
-  if (!bindings) return ''
+  if (!bindings) return { stylesheet: '', imageUrls: [] }
   const assets = new Map((profile.assets ?? []).map((asset) => [asset.id, asset]))
+  const imageUrls = new Set<string>()
   const backgroundBindings = [
     ['appBackground', '--te-app-bg-image'],
     ['localBackground', '--te-local-bg-image'],
@@ -390,7 +405,11 @@ function applyProfileAssetBindings(
   ] as const
   for (const [binding, variable] of backgroundBindings) {
     const asset = assets.get(bindings[binding] ?? '')
-    if (asset?.type === 'image') variables[variable] = `url("${themeAssetUrl(profile.id, asset)}")`
+    if (asset?.type === 'image') {
+      const url = themeAssetUrl(profile.id, asset)
+      variables[variable] = `url("${url}")`
+      imageUrls.add(url)
+    }
   }
   const appBackground = variables['--te-app-bg-image']
   if (appBackground && appBackground !== 'none') {
@@ -414,7 +433,7 @@ function applyProfileAssetBindings(
       `@font-face { font-family: '${family}'; src: url("${themeAssetUrl(profile.id, asset)}") format('woff2'); font-display: swap; }`
     )
   }
-  return fontFaces.join('\n')
+  return { stylesheet: fontFaces.join('\n'), imageUrls: [...imageUrls] }
 }
 
 async function assertProfileAssetsAvailable(profile: ThemeProfileV2): Promise<void> {
@@ -455,8 +474,41 @@ function themeAssetUrl(profileId: string, asset: ThemeAssetReference): string {
   return `theme-asset://asset/${encodeURIComponent(profileId)}/${path}`
 }
 
-export async function applyActiveTheme(syncPluginExtensions = true): Promise<void> {
+function recordThemePerformance(operation: ThemePerformanceOperation, startedAt: number): void {
+  const next = themePerformanceRecorder.record(operation, performance.now() - startedAt)
+  themePerformance.value = next
+  const performanceGlobal = globalThis as typeof globalThis & {
+    __TWILIGHT_THEME_PERFORMANCE__?: ThemePerformanceSnapshot
+  }
+  performanceGlobal.__TWILIGHT_THEME_PERFORMANCE__ = next
+}
+
+function decodeThemeResources(urls: string[]): void {
+  const uncached = urls.filter((url) => !assetDecodeCache.has(url))
+  if (uncached.length === 0) return
+  const startedAt = performance.now()
+  const decode = Promise.allSettled(
+    uncached.map(async (url) => {
+      const image = new Image()
+      image.src = url
+      await image.decode()
+    })
+  ).then(() => {
+    recordThemePerformance('resource-decode', startedAt)
+  })
+  for (const url of uncached) assetDecodeCache.set(url, decode)
+  if (assetDecodeCache.size > 64) {
+    const oldest = assetDecodeCache.keys().next().value
+    if (oldest) assetDecodeCache.delete(oldest)
+  }
+}
+
+export async function applyActiveTheme(
+  syncPluginExtensions = true,
+  operation: Extract<ThemePerformanceOperation, 'preview' | 'apply'> = 'apply'
+): Promise<void> {
   const sequence = ++applySequence
+  const startedAt = performance.now()
   try {
     const state = await buildThemeRuntimeState(syncPluginExtensions)
     if (sequence !== applySequence) return
@@ -486,6 +538,8 @@ export async function applyActiveTheme(syncPluginExtensions = true): Promise<voi
     document.documentElement.style.colorScheme = state.tone === 'dark' ? 'dark' : 'light'
     document.documentElement.dataset.activeTheme = state.activeTheme
     error.value = ''
+    recordThemePerformance(operation, startedAt)
+    decodeThemeResources(state.resourceUrls)
   } catch (cause) {
     if (sequence !== applySequence) return
     error.value = cause instanceof Error ? cause.message : '主题应用失败'
@@ -508,6 +562,7 @@ export function useThemeStore(): {
   loaded: Ref<boolean>
   saving: Ref<boolean>
   error: Ref<string>
+  performance: Ref<ThemePerformanceSnapshot>
   load: () => Promise<void>
   preview: (profile: ThemeProfileV2 | null) => Promise<void>
   previewTheme: (selection: ThemeSelection | null) => Promise<void>
@@ -543,13 +598,13 @@ export function useThemeStore(): {
   async function preview(profile: ThemeProfileV2 | null): Promise<void> {
     previewProfile.value = profile
     previewSelection.value = profile ? { kind: 'user', id: profile.id } : null
-    await applyActiveTheme(false)
+    await applyActiveTheme(false, 'preview')
   }
 
   async function previewTheme(selection: ThemeSelection | null): Promise<void> {
     previewProfile.value = null
     previewSelection.value = selection
-    await applyActiveTheme(selection?.kind === 'plugin')
+    await applyActiveTheme(selection?.kind === 'plugin', 'preview')
   }
 
   function createProfile(
@@ -689,6 +744,7 @@ export function useThemeStore(): {
     loaded,
     saving,
     error,
+    performance: themePerformance,
     load,
     preview,
     previewTheme,

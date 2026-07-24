@@ -399,7 +399,9 @@ async function parseTrack(
       title: metadata.common.title || fallback.title,
       artist: metadata.common.artist || metadata.common.albumartist || fallback.artist,
       album: metadata.common.album || 'Unknown Album',
-      albumArtist: metadata.common.albumartist || metadata.common.artist || fallback.artist,
+      // Only persist a real ALBUMARTIST tag. Inventing it from track artist
+      // fragmented multi-artist albums in the local library album grid.
+      ...(metadata.common.albumartist ? { albumArtist: metadata.common.albumartist } : {}),
       genre: extractGenre(metadata.common.genre),
       duration: Math.round(metadata.format.duration || 0),
       cover: embeddedCover ?? baseTrack.cover,

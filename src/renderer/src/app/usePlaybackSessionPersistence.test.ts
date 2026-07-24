@@ -31,6 +31,7 @@ const track = {
 
 test('restore clears persisted session when resume mode is off', async () => {
   const calls: string[] = []
+  const writer = new PlaybackSessionWriter()
   const persistence = createPlaybackSessionPersistence({
     settings: ref({ playbackResumeMode: 'off' }),
     currentTrack: ref(null),
@@ -39,14 +40,28 @@ test('restore clears persisted session when resume mode is off', async () => {
     restorePlaybackSession: () => calls.push('restore'),
     createPlaybackSession: () => null,
     syncPluginProviders: async () => calls.push('sync'),
+    sessionWriter: writer,
     dataApi: {
-      clearPlaybackSession: async () => calls.push('clear'),
+      clearPlaybackSession: async (expectedRevision) => {
+        calls.push(`clear:${expectedRevision}`)
+        return {
+          version: 2 as const,
+          revision: expectedRevision + 1,
+          savedAt: '2026-07-24T00:00:00.000Z',
+          data: null
+        }
+      },
       loadPlaybackSession: async () => ({
-        version: 1,
-        savedAt: '',
-        mode: 'track',
-        track,
-        position: 30
+        version: 2 as const,
+        revision: 16,
+        savedAt: '2026-07-24T00:00:00.000Z',
+        data: {
+          version: 1 as const,
+          savedAt: '',
+          mode: 'track' as const,
+          track,
+          position: 30
+        }
       }),
       savePlaybackSession: async () => calls.push('save')
     }
@@ -54,7 +69,8 @@ test('restore clears persisted session when resume mode is off', async () => {
 
   await persistence.restoreSavedPlaybackSession('off')
 
-  assert.deepEqual(calls, ['clear'])
+  assert.deepEqual(calls, ['clear:16'])
+  assert.equal(writer.getRevision(), 17)
 })
 
 test('local playback resume restores without waiting for plugin providers', async () => {
@@ -549,7 +565,7 @@ test('playback session writer continues after a failed write', async () => {
   assert.equal(writer.getCommittedSequence(), cleared.sequence)
 })
 
-test('CAS conflict reloads the authoritative session revision before replaying the current snapshot', async () => {
+test('CAS conflict adopts the authoritative revision inside the serialized session writer', async () => {
   const writer = new PlaybackSessionWriter()
   const expectedRevisions: number[] = []
   const current = {
@@ -610,8 +626,100 @@ test('CAS conflict reloads the authoritative session revision before replaying t
   await persistence.savePlaybackSessionSnapshot()
 
   assert.deepEqual(expectedRevisions, [1, 2])
-  assert.equal(loads, 2)
+  assert.equal(loads, 1)
   assert.equal(writer.getRevision(), 3)
+})
+
+test('queued stale session writes recover before the exit snapshot reaches storage', async () => {
+  const writer = new PlaybackSessionWriter()
+  const expectedRevisions: number[] = []
+  let revision = 16
+  const api = {
+    clearPlaybackSession: async () => undefined,
+    savePlaybackSession: async (session: typeof currentSession, expectedRevision: number) => {
+      expectedRevisions.push(expectedRevision)
+      if (expectedRevision !== revision) {
+        throw new PersistentDataRevisionConflictError(
+          {
+            version: 2 as const,
+            revision,
+            savedAt: '2026-07-23T00:00:00.000Z',
+            data: session
+          },
+          expectedRevision
+        )
+      }
+      revision += 1
+      return {
+        version: 2 as const,
+        revision,
+        savedAt: '2026-07-23T00:00:01.000Z',
+        data: session
+      }
+    }
+  }
+  const currentSession = {
+    version: 1 as const,
+    savedAt: '',
+    mode: 'track' as const,
+    track,
+    position: 0
+  }
+
+  const autosave = writer.save(api, currentSession)
+  const exitSave = writer.save(api, { ...currentSession, position: 12 })
+  await Promise.all([autosave.completion, exitSave.completion])
+
+  assert.deepEqual(expectedRevisions, [0, 16, 17])
+  assert.equal(writer.getRevision(), 18)
+  assert.equal(writer.getCommittedSequence(), exitSave.sequence)
+})
+
+test('exhausting CAS retries still adopts the authoritative revision for a later retry close', async () => {
+  const writer = new PlaybackSessionWriter()
+  let diskRevision = 16
+  let attempts = 0
+  const session = {
+    version: 1 as const,
+    savedAt: '',
+    mode: 'track' as const,
+    track,
+    position: 0
+  }
+  const api = {
+    clearPlaybackSession: async () => undefined,
+    savePlaybackSession: async (_session: typeof session, expectedRevision: number) => {
+      attempts += 1
+      if (attempts <= 3) {
+        // Concurrent writer advances past every retry of the first close.
+        diskRevision += 1
+        throw new PersistentDataRevisionConflictError(
+          {
+            version: 2 as const,
+            revision: diskRevision,
+            savedAt: '2026-07-24T00:00:00.000Z',
+            data: session
+          },
+          expectedRevision
+        )
+      }
+      assert.equal(expectedRevision, diskRevision)
+      diskRevision += 1
+      return {
+        version: 2 as const,
+        revision: diskRevision,
+        savedAt: '2026-07-24T00:00:01.000Z',
+        data: _session
+      }
+    }
+  }
+
+  await assert.rejects(() => writer.save(api, session).completion, /expected 18, current 19/)
+  assert.equal(writer.getRevision(), 19)
+
+  await writer.save(api, { ...session, position: 8 }).completion
+  assert.equal(attempts, 4)
+  assert.equal(writer.getRevision(), 20)
 })
 
 test('failed restore leaves autosave available to replace the unusable old session', async () => {

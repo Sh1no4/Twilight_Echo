@@ -101,6 +101,7 @@ agent-tools/
 .agents/
 .gemini/
 .opencode/
+.qoder/
 .local/
 
 # Temporary files / local scratch

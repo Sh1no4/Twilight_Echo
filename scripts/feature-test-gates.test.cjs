@@ -53,12 +53,16 @@ const tagDuplicateTests = [
 ]
 
 const themeTests = [
+  'scripts/theme-visual-regression.test.cjs',
   'src/shared/theme.test.ts',
   'src/main/themes/themeArchiveValidation.test.ts',
   'src/main/themes/themeLibraryRepository.test.ts',
   'src/renderer/src/app/useAppNavigation.test.ts',
   'src/renderer/src/components/themeColorAudit.test.ts',
-  'src/renderer/src/components/themeTokenization.test.ts'
+  'src/renderer/src/components/themeTokenization.test.ts',
+  'src/renderer/src/components/song-list/themeSwitchVirtualizationStress.test.ts',
+  'src/renderer/src/utils/themePerformance.test.ts',
+  'src/renderer/src/utils/themePreviewScheduler.test.ts'
 ]
 
 const recursivelyOwnedTestFiles = ['scripts', 'src', 'packages', 'resources']

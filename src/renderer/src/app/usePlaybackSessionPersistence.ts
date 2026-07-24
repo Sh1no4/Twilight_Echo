@@ -1,10 +1,7 @@
 import { watch, type Ref } from 'vue'
 import type { PlaybackSession, Track } from '../types/music'
 import type { PlaybackResumeMode } from '../types/settings'
-import {
-  isPersistentDataRevisionConflict,
-  type VersionedDataEnvelope
-} from '../../../shared/versionedPersistence.ts'
+import type { VersionedDataEnvelope } from '../../../shared/versionedPersistence.ts'
 import { playbackSessionWriter, type PlaybackSessionWriter } from './playbackSessionWriter.ts'
 
 interface PlaybackSessionSettings {
@@ -56,12 +53,17 @@ export function createPlaybackSessionPersistence(options: PlaybackSessionPersist
     clearPlaybackSessionAutosave()
 
     try {
+      // Always pin the writer to the on-disk revision before any write. The
+      // player store can also enqueue session saves during startup; a stale
+      // expected revision (0) against a live envelope (e.g. 16) used to block
+      // window close with a revision-conflict dialog.
+      const session = await refreshAuthoritativeSession()
+
       if (mode === 'off') {
         await persistSession(null)
         return
       }
 
-      const session = await refreshAuthoritativeSession()
       if (!session?.track?.id) return
 
       if (requiresPluginProviderSync(session.track)) {
@@ -106,20 +108,10 @@ export function createPlaybackSessionPersistence(options: PlaybackSessionPersist
   }
 
   async function persistSession(session: PlaybackSession | null): Promise<void> {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const write = session
-          ? sessionWriter.save(options.dataApi, session)
-          : sessionWriter.clear(options.dataApi)
-        await write.completion
-        return
-      } catch (error) {
-        if (!isPersistentDataRevisionConflict(error) || attempt === 1) throw error
-        // A second renderer may have committed while this snapshot was queued.
-        // Reload the main-process snapshot before replaying the current UI state.
-        await refreshAuthoritativeSession()
-      }
-    }
+    const write = session
+      ? sessionWriter.save(options.dataApi, session)
+      : sessionWriter.clear(options.dataApi)
+    await write.completion
   }
 
   async function refreshAuthoritativeSession(): Promise<PlaybackSession | null> {

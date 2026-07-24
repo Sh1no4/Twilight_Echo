@@ -463,6 +463,175 @@ test('liked song detail requests split into smaller chunks after transient failu
   }
 })
 
+test('fetchPlaylistTracks pages track/all beyond the 200-track detail preview', async () => {
+  const total = 450
+  const ids = Array.from({ length: total }, (_, index) => index + 1)
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname === '/login/status') {
+      return {
+        code: 200,
+        data: {
+          code: 200,
+          profile: { userId: 42, nickname: 'listener', avatarUrl: 'avatar.jpg', signature: '' }
+        }
+      }
+    }
+    if (url.pathname === '/playlist/track/all') {
+      const limit = Number(url.searchParams.get('limit') || 1000)
+      const offset = Number(url.searchParams.get('offset') || 0)
+      assert.ok(limit <= 1000)
+      return { songs: ids.slice(offset, offset + limit).map(song) }
+    }
+    if (url.pathname === '/playlist/detail') {
+      return {
+        playlist: {
+          trackIds: ids.map((id) => ({ id })),
+          tracks: ids.slice(0, 200).map(song)
+        }
+      }
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    const tracks = await provider.fetchPlaylistTracks(55, true)
+    assert.equal(tracks.length, total)
+    assert.deepEqual(
+      tracks.map((track) => track.ncmSongId),
+      ids
+    )
+    const trackAllOffsets = requests
+      .map(parseRequest)
+      .filter((url) => url.pathname === '/playlist/track/all')
+      .map((url) => Number(url.searchParams.get('offset') || 0))
+    assert.deepEqual(trackAllOffsets, [0])
+    assert.equal(
+      requests.some((path) => parseRequest(path).pathname === '/playlist/detail'),
+      false
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('fetchPlaylistTracks pages multiple track/all windows up to 5000', async () => {
+  const total = 2500
+  const ids = Array.from({ length: total }, (_, index) => 10_000 + index)
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname === '/login/status') {
+      return {
+        code: 200,
+        data: {
+          code: 200,
+          profile: { userId: 42, nickname: 'listener', avatarUrl: 'avatar.jpg', signature: '' }
+        }
+      }
+    }
+    if (url.pathname === '/playlist/track/all') {
+      const limit = Number(url.searchParams.get('limit') || 1000)
+      const offset = Number(url.searchParams.get('offset') || 0)
+      return { songs: ids.slice(offset, offset + limit).map(song) }
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    const tracks = await provider.fetchPlaylistTracks(77, true)
+    assert.equal(tracks.length, total)
+    const trackAll = requests.map(parseRequest).filter((url) => url.pathname === '/playlist/track/all')
+    assert.equal(trackAll.length, 3)
+    assert.deepEqual(
+      trackAll.map((url) => Number(url.searchParams.get('offset') || 0)),
+      [0, 1000, 2000]
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('fetchPlaylistTracks caps at 5000 songs', async () => {
+  const total = 5200
+  const ids = Array.from({ length: total }, (_, index) => 20_000 + index)
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    if (url.pathname === '/login/status') {
+      return {
+        code: 200,
+        data: {
+          code: 200,
+          profile: { userId: 42, nickname: 'listener', avatarUrl: 'avatar.jpg', signature: '' }
+        }
+      }
+    }
+    if (url.pathname === '/playlist/track/all') {
+      const limit = Number(url.searchParams.get('limit') || 1000)
+      const offset = Number(url.searchParams.get('offset') || 0)
+      return { songs: ids.slice(offset, offset + limit).map(song) }
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    const tracks = await provider.fetchPlaylistTracks(88, true)
+    assert.equal(tracks.length, 5000)
+    assert.equal(tracks[0].ncmSongId, 20_000)
+    assert.equal(tracks[4999].ncmSongId, 24_999)
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('fetchPlaylistTracks detail fallback prefers full trackIds over truncated tracks', async () => {
+  const ids = Array.from({ length: 350 }, (_, index) => 30_000 + index)
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname === '/login/status') {
+      return {
+        code: 200,
+        data: {
+          code: 200,
+          profile: { userId: 42, nickname: 'listener', avatarUrl: 'avatar.jpg', signature: '' }
+        }
+      }
+    }
+    if (url.pathname === '/playlist/track/all') {
+      throw new Error('track/all unavailable')
+    }
+    if (url.pathname === '/playlist/detail') {
+      return {
+        playlist: {
+          trackIds: ids.map((id) => ({ id })),
+          tracks: ids.slice(0, 200).map(song)
+        }
+      }
+    }
+    if (url.pathname === '/song/detail') {
+      const batch = (url.searchParams.get('ids') ?? '').split(',').filter(Boolean).map(Number)
+      return { songs: batch.map(song) }
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    const tracks = await provider.fetchPlaylistTracks(99, true)
+    assert.equal(tracks.length, 350)
+    assert.deepEqual(
+      tracks.map((track) => track.ncmSongId),
+      ids
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
 test('liked tracks page loads only the requested window', async () => {
   const playlistIds = Array.from({ length: 250 }, (_, index) => 1000 + index)
   const likelistIds = Array.from({ length: 250 }, (_, index) => index + 1)

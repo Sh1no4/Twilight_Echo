@@ -1966,9 +1966,36 @@ export function useMusicStore(): {
 function getAlbumIdentity(track: Track): string {
   const albumId = track.albumId?.trim()
   if (albumId) return `id:${albumId}`
-  const albumArtist = (track.albumArtist || track.artist || '未知艺术家').trim().toLocaleLowerCase()
+
   const album = (track.album || '未知专辑').trim().toLocaleLowerCase()
-  return `name:${albumArtist}\u001f${album}`
+  const albumArtist = track.albumArtist?.trim()
+  const artist = track.artist?.trim()
+  // Older scans copied track artist into albumArtist whenever ALBUMARTIST was
+  // missing. Treat that pollution as "no album artist" so guest/feat tracks
+  // from the same release still land on one album card.
+  const hasDistinctAlbumArtist =
+    !!albumArtist &&
+    (!artist || albumArtist.toLocaleLowerCase() !== artist.toLocaleLowerCase())
+
+  if (hasDistinctAlbumArtist) {
+    return `name:${albumArtist.toLocaleLowerCase()}\u001f${album}`
+  }
+
+  // Prefer the release folder so multi-artist albums without ALBUMARTIST merge,
+  // while same-titled albums in different directories stay separate.
+  const dir = track.dir?.trim() || parentDirectoryOf(track.filePath)
+  if (dir) {
+    return `dir:${normalizeLibraryPath(dir)}\u001f${album}`
+  }
+
+  return `name:${(albumArtist || artist || '未知艺术家').trim().toLocaleLowerCase()}\u001f${album}`
+}
+
+function parentDirectoryOf(filePath: string): string {
+  const normalized = filePath.replace(/[\\/]+/g, '\\').replace(/\\+$/, '')
+  const separator = normalized.lastIndexOf('\\')
+  if (separator <= 0) return ''
+  return normalized.slice(0, separator)
 }
 
 function normalizeLibraryPath(path: string): string {

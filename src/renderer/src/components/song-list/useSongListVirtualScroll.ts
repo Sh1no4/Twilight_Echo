@@ -1,13 +1,6 @@
-import {
-  computed,
-  onMounted,
-  onUnmounted,
-  ref,
-  watch,
-  type ComputedRef,
-  type Ref
-} from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { Track } from '../../types/music'
+import { getSongListVirtualRange } from './songListVirtualWindow'
 
 type UseSongListVirtualScrollOptions = {
   displayTracks: ComputedRef<Track[]>
@@ -45,16 +38,15 @@ export function useSongListVirtualScroll({
   let pointerMoveRafId: number | null = null
   let lastPointerEvent: PointerEvent | null = null
 
-  const virtualScrollTop = computed(() => Math.max(0, scrollTop.value - tableOffsetTop.value))
-
-  const visibleRange = computed(() => {
-    const start = Math.floor(virtualScrollTop.value / rowHeight)
-    const count = Math.ceil(viewportHeight.value / rowHeight) + 6
-    return {
-      start: Math.max(0, start),
-      end: Math.min(displayTracks.value.length, start + count)
-    }
-  })
+  const visibleRange = computed(() =>
+    getSongListVirtualRange({
+      trackCount: displayTracks.value.length,
+      scrollTop: scrollTop.value,
+      viewportHeight: viewportHeight.value,
+      tableOffsetTop: tableOffsetTop.value,
+      rowHeight
+    })
+  )
 
   const visibleTracks = computed(() => {
     return displayTracks.value.slice(visibleRange.value.start, visibleRange.value.end)
