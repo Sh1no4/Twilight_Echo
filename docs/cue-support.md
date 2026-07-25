@@ -13,6 +13,9 @@ track identity, title/performer/album metadata, source ranges, and pregap metada
 - Only one referenced audio file and `AUDIO` tracks are accepted. Every track requires `INDEX 01`.
   Absolute paths, directory traversal, unsupported extensions, missing files, overlapping ranges,
   and ambiguous multiple CUE sheets leave the ordinary audio-file track intact.
+- **Scan behavior:** oversize / bad encoding / multi-CUE / path escape keeps the whole-file track
+  (no toast). Main process logs `[library] CUE skipped (…): <reason>`. Settings → 音乐库 also
+  summarizes these limits next to full rescan.
 - `INDEX 00` source audio is not discarded. The preceding logical range ends at the next
   `INDEX 01`, keeping album playback continuous, while the following track still starts at its
   `INDEX 01`. `sourcePregapSeconds` records that source-backed interval for presentation only.

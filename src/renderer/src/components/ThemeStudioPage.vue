@@ -1212,8 +1212,12 @@ onBeforeUnmount(() => {
         <i class="ph ph-arrow-left"></i>
       </button>
       <div>
-        <h1>主题工作室</h1>
-        <span>{{ isDirty ? '有未应用的修改' : '所有修改已同步' }}</span>
+        <h1>主题工作室 · Beta</h1>
+        <span>{{
+          isDirty
+            ? '有未应用的修改'
+            : '深度定制已可用；像素黄金矩阵与性能证据仍在收口 (P7)'
+        }}</span>
       </div>
       <label class="theme-profile-picker">
         <span>配置档</span>

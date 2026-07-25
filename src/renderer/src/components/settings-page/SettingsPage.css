@@ -2246,6 +2246,14 @@
   background: linear-gradient(90deg, #fffbeb, rgba(255, 247, 237, 0.6));
 }
 
+.restart-banner-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  margin: 0 0 16px;
+  backdrop-filter: blur(10px);
+}
+
 .restart-banner strong {
   color: #92400e;
   font-size: 13px;

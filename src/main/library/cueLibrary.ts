@@ -34,20 +34,29 @@ export function deriveCueTracks(
     const cuePath = resolve(directory, name)
     try {
       const cueInfo = statSync(cuePath)
-      if (!cueInfo.isFile() || cueInfo.size <= 0 || cueInfo.size > MAX_CUE_BYTES) continue
+      if (!cueInfo.isFile() || cueInfo.size <= 0) continue
+      if (cueInfo.size > MAX_CUE_BYTES) {
+        console.warn(
+          `[library] CUE skipped (${basename(cuePath)}): exceeds ${MAX_CUE_BYTES} bytes`
+        )
+        continue
+      }
       const bytes = readFileSync(cuePath)
       const parsed = parseCueSheet(bytes, audioDurationSeconds)
       const referenced = resolveCueAudioPath(directory, parsed.fileName, supportedExtensions)
       if (samePath(referenced, audioPath)) matching.push({ cuePath, parsed })
-    } catch {
-      // A broken unrelated CUE must not make the music file disappear. A matching, valid CUE
-      // replaces the plain file only after all path and time invariants are proven.
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      console.warn(`[library] CUE skipped (${basename(cuePath)}): ${detail}`)
     }
   }
   if (!matching.length) return null
-  // Multiple CUE files claiming the same audio file are ambiguous; retain the plain file rather
-  // than choosing one arbitrarily and making session identity unstable.
-  if (matching.length !== 1) return null
+  if (matching.length !== 1) {
+    console.warn(
+      `[library] CUE skipped for ${basename(audioPath)}: ambiguous multiple CUE sheets (${matching.length})`
+    )
+    return null
+  }
   const { cuePath, parsed } = matching[0]
   const fileName = String(baseTrack.fileName ?? basename(audioPath))
   const baseTitle = String(baseTrack.title ?? basename(audioPath, extname(audioPath)))

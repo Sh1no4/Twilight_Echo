@@ -1703,6 +1703,17 @@ onBeforeUnmount(() => {
           <div v-if="settingsError" class="settings-inline-error">{{ settingsError }}</div>
         </section>
 
+        <div v-if="restartRequired" class="restart-banner restart-banner-sticky" role="status">
+          <div>
+            <strong>需要重启以应用更改</strong>
+            <span>{{ restartReasons.join('、') }}</span>
+          </div>
+          <button class="brand-soft-button" type="button" @click="relaunch">
+            <i class="pi pi-refresh"></i>
+            立即重启
+          </button>
+        </div>
+
         <section id="general" class="glass-card preview-section">
           <div class="section-title-row">
             <i class="pi pi-sliders-h"></i>
@@ -1805,7 +1816,10 @@ onBeforeUnmount(() => {
               <div class="setting-item top-align">
                 <div class="setting-copy">
                   <strong>完整重扫</strong>
-                  <span>显式重新解析全部本地文件的 metadata 与封面；可暂停或取消。</span>
+                  <span
+                    >显式重新解析全部本地文件的 metadata 与封面；可暂停或取消。同目录 CUE：单音频 +
+                    唯一 `.cue`，≤2 MiB，UTF-8/GBK/GB18030；拆轨失败时保留整轨并写主进程日志。</span
+                  >
                 </div>
                 <div class="library-scan-panel" aria-live="polite">
                   <progress
@@ -3195,16 +3209,6 @@ onBeforeUnmount(() => {
             <i class="pi pi-bolt"></i>
             <h2>性能 (Performance)</h2>
           </div>
-          <div v-if="restartRequired" class="restart-banner">
-            <div>
-              <strong>需要重启以应用更改</strong>
-              <span>{{ restartReasons.join('、') }}</span>
-            </div>
-            <button class="brand-soft-button" type="button" @click="relaunch">
-              <i class="pi pi-refresh"></i>
-              立即重启
-            </button>
-          </div>
           <div class="setting-list">
             <div class="setting-item">
               <div class="setting-copy">
@@ -3331,8 +3335,10 @@ onBeforeUnmount(() => {
           <div class="setting-list">
             <div class="setting-item">
               <div class="setting-copy">
-                <strong>主题工作室</strong>
-                <span>管理、预览、导入和编辑完整主题。</span>
+                <strong>主题工作室 · Beta</strong>
+                <span
+                  >深度主题编辑（Beta）。P7 收口前以契约测试为准，完整像素证据包仍待入库。</span
+                >
               </div>
               <button type="button" class="primary-button" @click="emit('openThemeStudio')">
                 <i class="ph ph-swatches"></i>
