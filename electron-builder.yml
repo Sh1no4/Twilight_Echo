@@ -16,7 +16,7 @@ files:
   - '!out/renderer/audio-engine/**'
   - '!out/renderer/plugins/**'
   - '!out/renderer/plugin-index/**'
-  # Keep packaged Nunito/Nunito Sans (latin) UI fonts; strip legacy heavy CJK/Outfit.
+  # Keep Inter/Jakarta + MiSans subsets + full MiSans; strip legacy TTF/OTF/WOFF.
   - '!out/renderer/font/Alibaba-PuHuiTi-Medium.ttf'
   - '!out/renderer/font/Outfit-**'
   - '!out/renderer/font/**/*.{ttf,otf,woff}'

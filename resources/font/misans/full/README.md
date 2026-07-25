@@ -1,7 +1,7 @@
-# Optional full MiSans faces
+# Full MiSans faces (packaged)
 
-Complete MiSans `.woff2` files here override the unicode-range subsets
-(`/font/misans/full/*.woff2` via `misans-full.css`).
+Complete MiSans `.woff2` files ship with the app under
+`/font/misans/full/` (via `misans-full.css` + `MiSans Full` family).
 
 | File | Weight |
 |---|---|
@@ -10,7 +10,6 @@ Complete MiSans `.woff2` files here override the unicode-range subsets
 | `MiSans-Bold.woff2` | 600–750 |
 | `MiSans-Heavy.woff2` | 751–900 |
 
-Configured from `D:\MiSans\woff2\` (official package). Multi‑MB faces are
-gitignored; the subset tree in `../` remains the default fallback.
-
-Restart the app after replacing files.
+Large binary faces may stay gitignored locally; packaging still copies whatever
+exists under `resources/font/misans/full/` into the renderer public dir.
+Subset faces in `../` remain the network-friendly fallback when full faces are absent.

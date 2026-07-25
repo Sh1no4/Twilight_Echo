@@ -4,11 +4,11 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 
-// fonts raised for packaged MiSans SC unicode-range subsets (~8MB) + Nunito + icons
+// fonts: MiSans SC subsets (~8MB) + full MiSans faces (~20MB) + Latin UI fonts
 const BUDGETS = Object.freeze({
   jsChunk: 900 * 1024,
   cssChunk: 400 * 1024,
-  fonts: 10 * 1024 * 1024
+  fonts: 32 * 1024 * 1024
 })
 
 function parseArgs(argv) {
@@ -76,7 +76,12 @@ function assertRendererBudgets(rendererDir) {
     const ok =
       /^(Inter|PlusJakartaSans)-latin(-ext)?-wght-normal\.woff2$/i.test(rel) ||
       /^OFL-(Inter|PlusJakartaSans)\.txt$/i.test(rel) ||
-      /^misans\/(MiSans-(Regular|Medium|Bold|Heavy)\.[\w-]+\.woff2|misans\.css|LICENSE)$/i.test(rel)
+      /^misans\/(MiSans-(Regular|Medium|Bold|Heavy)\.[\w-]+\.woff2|misans\.css|LICENSE)$/i.test(
+        rel
+      ) ||
+      /^misans\/full\/(MiSans-(Regular|Medium|Bold|Heavy)\.woff2|misans-full\.css|README\.md)$/i.test(
+        rel
+      )
     assert.ok(ok, `Unexpected public font asset: ${rel}`)
   }
   return { files: files.length, fontBytes, manifest, budgets: BUDGETS }
