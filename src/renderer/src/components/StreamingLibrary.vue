@@ -154,10 +154,12 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
       <!-- Profile Card -->
       <div class="glass-card profile-card">
         <div class="profile-avatar-wrap">
-          <img v-if="profile?.avatarUrl" :src="profile.avatarUrl" class="profile-avatar" alt="" />
-          <span v-else class="profile-avatar profile-avatar-placeholder">
-            <i class="pi pi-user"></i>
-          </span>
+          <div class="profile-avatar-ring">
+            <img v-if="profile?.avatarUrl" :src="profile.avatarUrl" class="profile-avatar" alt="" />
+            <span v-else class="profile-avatar profile-avatar-placeholder">
+              <i class="pi pi-user"></i>
+            </span>
+          </div>
         </div>
         <div class="profile-info">
           <div class="profile-title-row">
@@ -437,31 +439,45 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   align-items: center;
   gap: 24px;
   cursor: default;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(194, 112, 61, 0.1);
+  box-shadow:
+    0 20px 50px rgba(194, 112, 61, 0.07),
+    0 4px 16px rgba(42, 33, 24, 0.03),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 .profile-card:hover {
   transform: none;
-  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  box-shadow:
+    0 20px 50px rgba(194, 112, 61, 0.07),
+    0 4px 16px rgba(42, 33, 24, 0.03),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .profile-avatar-wrap {
   position: relative;
   flex-shrink: 0;
 }
+.profile-avatar-ring {
+  padding: 4px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #f6d365, #fda085, #a8edea);
+  box-shadow: 0 8px 24px rgba(194, 112, 61, 0.15);
+}
 .profile-avatar {
-  width: 100px;
-  height: 100px;
+  width: 96px;
+  height: 96px;
   border-radius: 50%;
   object-fit: cover;
-  border: 4px solid #fff;
-  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.1);
+  border: 3px solid #fff;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 32px;
 }
 .profile-avatar-placeholder {
-  color: var(--te-primary-500);
-  background: #f3f0ff;
+  color: #c2703d;
+  background: #fef3e2;
 }
 
 .profile-info {
@@ -591,7 +607,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 .profile-info h1 {
   font-size: 28px;
   font-weight: 800;
-  color: var(--te-neutral-900, #1e293b);
+  color: #2a2118;
   margin: 0 0 4px 0;
   letter-spacing: -0.5px;
   white-space: nowrap;
@@ -600,7 +616,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 }
 .profile-info p {
   font-size: 14px;
-  color: var(--te-neutral-500, #64748b);
+  color: #a08a72;
   margin: 0 0 16px 0;
   white-space: nowrap;
   overflow: hidden;
@@ -663,16 +679,16 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 
 .profile-stats {
   display: flex;
-  gap: 16px;
+  gap: 12px;
 }
 .stat-badge {
-  background: rgba(15, 23, 42, 0.04);
-  padding: 6px 14px;
-  border-radius: 999px;
-  border: none;
+  background: rgba(194, 112, 61, 0.06);
+  padding: 7px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(194, 112, 61, 0.1);
   font-size: 13px;
-  font-weight: 600;
-  color: var(--te-neutral-900, #1e293b);
+  font-weight: 700;
+  color: #2a2118;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -680,11 +696,12 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   transition: all 0.2s;
 }
 .stat-badge:hover {
-  background: rgba(15, 23, 42, 0.08);
+  background: rgba(194, 112, 61, 0.1);
+  border-color: rgba(194, 112, 61, 0.2);
 }
 .stat-badge span {
-  color: var(--te-neutral-500, #64748b);
-  font-weight: 500;
+  color: #a08a72;
+  font-weight: 600;
 }
 
 /* Favorites Card */

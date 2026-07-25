@@ -42,6 +42,8 @@ test('CUE library derivation replaces one audio file with stable logical tracks'
     )
     assert.equal(first[1].cueRange.startSeconds, 60)
     assert.equal(first[0].album, 'Album')
+    assert.equal(first[0].trackNumber, 1)
+    assert.equal(first[1].trackNumber, 2)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

@@ -51,8 +51,8 @@ test('audio visualizer display mapping uses deterministic low-frequency shelf co
   )
 
   assert.match(visualizer, /const SPECTRUM_BAR_COUNT = 140/)
-  assert.match(visualizer, /const SPECTRUM_DISPLAY_GAIN = 1\.38;/)
-  assert.match(visualizer, /const SPECTRUM_DISPLAY_RANGE = 1\.16/)
+  assert.match(visualizer, /const SPECTRUM_DISPLAY_GAIN = 1\.32;/)
+  assert.match(visualizer, /const SPECTRUM_DISPLAY_RANGE = 1\.42/)
   assert.match(visualizer, /const SPECTRUM_DISPLAY_GAMMA = 0\.78/)
   assert.match(visualizer, /const SPECTRUM_DISPLAY_HEADROOM = 1/)
   assert.match(visualizer, /const SPECTRUM_CONTRAST_FLOOR = 0\.16/)
@@ -135,8 +135,8 @@ test('audio visualizer fixed curve keeps headroom while strong peaks can touch t
     'utf8'
   )
 
-  assert.match(visualizer, /const SPECTRUM_DISPLAY_RANGE = 1\.16/)
-  assert.match(visualizer, /const SPECTRUM_DISPLAY_GAIN = 1\.38;/)
+  assert.match(visualizer, /const SPECTRUM_DISPLAY_RANGE = 1\.42/)
+  assert.match(visualizer, /const SPECTRUM_DISPLAY_GAIN = 1\.32;/)
   assert.match(visualizer, /const level = Math\.min\(1, contrasted \* SPECTRUM_DISPLAY_GAIN\)/)
 })
 
@@ -146,8 +146,8 @@ test('audio visualizer uses fixed per-bin mapping so peaks can touch zero withou
     'utf8'
   )
 
-  assert.match(visualizer, /const SPECTRUM_DISPLAY_RANGE = 1\.16/)
-  assert.match(visualizer, /const SPECTRUM_DISPLAY_GAIN = 1\.38;/)
+  assert.match(visualizer, /const SPECTRUM_DISPLAY_RANGE = 1\.42/)
+  assert.match(visualizer, /const SPECTRUM_DISPLAY_GAIN = 1\.32;/)
   assert.doesNotMatch(visualizer, /function expandFrameContrast/)
   assert.doesNotMatch(visualizer, /function smoothAdaptiveDisplayGain/)
   assert.doesNotMatch(visualizer, /SPECTRUM_GAIN_TARGET_MIX/)

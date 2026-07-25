@@ -1354,6 +1354,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                         <option value="title">标题</option>
                         <option value="artist">歌手</option>
                         <option value="album">专辑</option>
+                        <option value="trackNumber">曲目号</option>
                         <option value="duration">时长</option>
                         <option value="format">格式</option>
                         <option value="sampleRate">采样率</option>
@@ -1681,7 +1682,9 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                     <span v-if="currentTrack?.id === track.id" class="playing-indicator">
                       <ThemeIcon icon-slot="library.playing" />
                     </span>
-                    <span v-else>{{ visibleRange.start + Number(index) + 1 }}</span>
+                    <span v-else>{{
+                      track.trackNumber ?? visibleRange.start + Number(index) + 1
+                    }}</span>
                   </td>
                   <td class="col-info">
                     <div class="track-title-row">

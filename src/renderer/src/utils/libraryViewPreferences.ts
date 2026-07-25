@@ -5,6 +5,7 @@ export type LibrarySortKey =
   | 'title'
   | 'artist'
   | 'album'
+  | 'trackNumber'
   | 'duration'
   | 'format'
   | 'sampleRate'
@@ -33,12 +34,13 @@ export interface LibraryViewStorage {
   setItem(key: string, value: string): void
 }
 
-const STORAGE_KEY = 'twilight-echo:library-view-preferences:v1'
+const STORAGE_KEY = 'twilight-echo:library-view-preferences:v2'
 const DSD_FORMATS = new Set(['dsf', 'dff', 'dsd', 'sacd iso'])
 const SORT_KEYS = new Set<LibrarySortKey>([
   'title',
   'artist',
   'album',
+  'trackNumber',
   'duration',
   'format',
   'sampleRate',
@@ -47,8 +49,10 @@ const SORT_KEYS = new Set<LibrarySortKey>([
 ])
 
 export function createDefaultLibraryViewState(category = 'allSongs'): LibraryViewState {
+  const sortKey: LibrarySortKey =
+    category === 'recent' ? 'lastPlayed' : category === 'albums' ? 'trackNumber' : 'title'
   return {
-    sortKey: category === 'recent' ? 'lastPlayed' : 'title',
+    sortKey,
     sortDirection: category === 'recent' ? 'desc' : 'asc',
     filters: {
       lossless: false,
@@ -162,9 +166,30 @@ function compareTracks(
       return textValue(left.artist).localeCompare(textValue(right.artist), 'zh')
     case 'album':
       return textValue(left.album).localeCompare(textValue(right.album), 'zh')
+    case 'trackNumber':
+      return compareAlbumOrder(left, right)
     case 'title':
       return textValue(left.title).localeCompare(textValue(right.title), 'zh')
   }
+}
+
+/** Disc then track; missing tags sort last; fileName natural order as last resort. */
+function compareAlbumOrder(left: Track, right: Track): number {
+  const disc = sortIndex(left.discNumber) - sortIndex(right.discNumber)
+  if (disc !== 0) return disc
+  const track = sortIndex(left.trackNumber) - sortIndex(right.trackNumber)
+  if (track !== 0) return track
+  const byFile = naturalTextCompare(textValue(left.fileName), textValue(right.fileName))
+  if (byFile !== 0) return byFile
+  return textValue(left.title).localeCompare(textValue(right.title), 'zh')
+}
+
+function sortIndex(value: number | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : Number.MAX_SAFE_INTEGER
+}
+
+function naturalTextCompare(left: string, right: string): number {
+  return left.localeCompare(right, 'zh', { numeric: true, sensitivity: 'base' })
 }
 
 function normalizeViewState(value: unknown, fallback: LibraryViewState): LibraryViewState {

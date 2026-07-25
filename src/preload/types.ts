@@ -592,6 +592,8 @@ export interface TrackData {
   bitDepth?: number
   bpm?: number
   bpmAnalysis?: BpmAnalysisResult
+  discNumber?: number
+  trackNumber?: number
   replayGainTrackGainDb?: number
   replayGainAlbumGainDb?: number
   replayGainTrackPeak?: number

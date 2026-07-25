@@ -76,6 +76,8 @@ interface TrackData {
   bitDepth?: number
   bpm?: number
   bpmAnalysis?: BpmAnalysisResult
+  discNumber?: number
+  trackNumber?: number
   /** Library-scanned ReplayGain / R128 tags (dB). Loudnorm never uses these as measurements. */
   replayGainTrackGainDb?: number
   replayGainAlbumGainDb?: number

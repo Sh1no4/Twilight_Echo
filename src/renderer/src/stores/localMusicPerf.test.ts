@@ -336,15 +336,23 @@ test('confirmed tag writes refresh only matching local track metadata in one lib
   const changed = store.applyLocalTagWrite([first.filePath], {
     title: 'Updated title',
     artist: 'Updated artist',
-    albumArtist: 'Album owner'
+    albumArtist: 'Album owner',
+    track: 7,
+    disc: 2
   })
 
   assert.equal(changed, 1)
   assert.deepEqual(
-    store.tracks.value.map((track) => [track.title, track.artist, track.albumArtist]),
+    store.tracks.value.map((track) => [
+      track.title,
+      track.artist,
+      track.albumArtist,
+      track.trackNumber,
+      track.discNumber
+    ]),
     [
-      ['Updated title', 'Updated artist', 'Album owner'],
-      [second.title, second.artist, undefined]
+      ['Updated title', 'Updated artist', 'Album owner', 7, 2],
+      [second.title, second.artist, undefined, undefined, undefined]
     ]
   )
 })

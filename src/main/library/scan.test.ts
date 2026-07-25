@@ -48,6 +48,21 @@ test('local library scan normalizes common bpm metadata into Track bpm', () => {
   assert.match(source, /if \(bpm !== undefined\) track\.bpm = bpm/)
 })
 
+test('local library scan persists trackNumber and discNumber from common tags', () => {
+  const scanSource = readFileSync(new URL('./scan.ts', import.meta.url), 'utf8')
+  const serviceSource = readFileSync(new URL('./libraryScanService.ts', import.meta.url), 'utf8')
+
+  for (const source of [scanSource, serviceSource]) {
+    assert.match(source, /function normalizeTrackIndex\(/)
+    assert.match(source, /trackNumber/)
+    assert.match(source, /discNumber/)
+  }
+  assert.match(scanSource, /normalizeTrackIndex\(common\.track\)/)
+  assert.match(scanSource, /normalizeTrackIndex\(common\.disk\)/)
+  assert.match(serviceSource, /normalizeTrackIndex\(metadata\.common\.track\)/)
+  assert.match(serviceSource, /normalizeTrackIndex\(metadata\.common\.disk\)/)
+})
+
 test('local library scan only stores albumArtist from a real ALBUMARTIST tag', () => {
   const scanSource = readFileSync(new URL('./scan.ts', import.meta.url), 'utf8')
   const serviceSource = readFileSync(new URL('./libraryScanService.ts', import.meta.url), 'utf8')

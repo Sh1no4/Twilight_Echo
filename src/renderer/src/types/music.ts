@@ -49,6 +49,10 @@ export interface Track {
   albumArtist?: string
   /** Provider or scanner album identifier when one is available. */
   albumId?: string
+  /** Disc index from tags (1-based). Used for album order. */
+  discNumber?: number
+  /** Track index on the disc from tags (1-based). Used for album order. */
+  trackNumber?: number
   filePath: string
   fileName: string
   dir?: string

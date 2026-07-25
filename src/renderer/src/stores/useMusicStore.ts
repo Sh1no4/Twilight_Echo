@@ -363,14 +363,17 @@ export function useMusicStore(): {
       .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
 
     albums.value = Array.from(albumMap.entries())
-      .map(([id, group]) => ({
-        id,
-        name: group.tracks[0]?.album || '未知专辑',
-        trackCount: group.tracks.length,
-        tracks: group.tracks,
-        cover: group.cover,
-        artist: group.artist || group.tracks[0]?.artist || '未知艺术家'
-      }))
+      .map(([id, group]) => {
+        const ordered = [...group.tracks].sort(compareAlbumTrackOrder)
+        return {
+          id,
+          name: ordered[0]?.album || '未知专辑',
+          trackCount: ordered.length,
+          tracks: ordered,
+          cover: group.cover,
+          artist: group.artist || ordered[0]?.artist || '未知艺术家'
+        }
+      })
       .sort((a, b) => a.name.localeCompare(b.name, 'zh') || (a.id ?? '').localeCompare(b.id ?? ''))
 
     genres.value = Array.from(genreMap.entries())
@@ -841,7 +844,9 @@ export function useMusicStore(): {
         ...(patch.artist !== undefined ? { artist: patch.artist } : {}),
         ...(patch.album !== undefined ? { album: patch.album } : {}),
         ...(patch.albumArtist !== undefined ? { albumArtist: patch.albumArtist } : {}),
-        ...(patch.genre !== undefined ? { genre: patch.genre } : {})
+        ...(patch.genre !== undefined ? { genre: patch.genre } : {}),
+        ...(patch.track !== undefined ? { trackNumber: patch.track } : {}),
+        ...(patch.disc !== undefined ? { discNumber: patch.disc } : {})
       }
     })
     if (changed === 0) return 0
@@ -1991,6 +1996,27 @@ function getAlbumIdentity(track: Track): string {
   }
 
   return `name:${(albumArtist || artist || '未知艺术家').trim().toLocaleLowerCase()}\u001f${album}`
+}
+
+function compareAlbumTrackOrder(left: Track, right: Track): number {
+  const disc =
+    albumOrderIndex(left.discNumber) - albumOrderIndex(right.discNumber)
+  if (disc !== 0) return disc
+  const track =
+    albumOrderIndex(left.trackNumber) - albumOrderIndex(right.trackNumber)
+  if (track !== 0) return track
+  const byFile = (left.fileName || '').localeCompare(right.fileName || '', 'zh', {
+    numeric: true,
+    sensitivity: 'base'
+  })
+  if (byFile !== 0) return byFile
+  return (left.title || '').localeCompare(right.title || '', 'zh')
+}
+
+function albumOrderIndex(value: number | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? value
+    : Number.MAX_SAFE_INTEGER
 }
 
 function parentDirectoryOf(filePath: string): string {

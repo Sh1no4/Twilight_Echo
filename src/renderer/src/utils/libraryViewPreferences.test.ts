@@ -85,6 +85,44 @@ test('sorts every required field with stable tie breaking and last-played metada
   }
 })
 
+test('album category defaults to track number and sorts disc then track', () => {
+  const defaults = createDefaultLibraryViewState('albums')
+  assert.equal(defaults.sortKey, 'trackNumber')
+  assert.equal(defaults.sortDirection, 'asc')
+
+  const state = createDefaultLibraryViewState('albums')
+  const ordered = applyLibraryView(
+    [
+      track('t9', { title: 'Zulu', trackNumber: 9, discNumber: 1, fileName: '09.flac' }),
+      track('t2', { title: 'Alpha', trackNumber: 2, discNumber: 1, fileName: '02.flac' }),
+      track('d2t1', { title: 'Middle', trackNumber: 1, discNumber: 2, fileName: 'd2-01.flac' }),
+      track('t1', { title: 'Beta', trackNumber: 1, discNumber: 1, fileName: '01.flac' }),
+      track('missing', { title: 'No Tag', fileName: '99-z.flac' })
+    ],
+    state
+  )
+  assert.deepEqual(
+    ordered.map((item) => item.id),
+    ['t1', 't2', 't9', 'd2t1', 'missing']
+  )
+})
+
+test('trackNumber sort falls back to natural fileName when tags are absent', () => {
+  const state = createDefaultLibraryViewState('albums')
+  const ordered = applyLibraryView(
+    [
+      track('b', { title: 'Zulu', fileName: '10. song.flac' }),
+      track('a', { title: 'Alpha', fileName: '2. song.flac' }),
+      track('c', { title: 'Beta', fileName: '1. song.flac' })
+    ],
+    state
+  )
+  assert.deepEqual(
+    ordered.map((item) => item.id),
+    ['c', 'a', 'b']
+  )
+})
+
 test('persists independent state for every category and detail filter', () => {
   const storage = memoryStorage()
   const preferences = new LibraryViewPreferences(storage)
@@ -98,6 +136,7 @@ test('persists independent state for every category and detail filter', () => {
   preferences.write(album, albumState)
   assert.equal(preferences.read(allSongs).sortKey, 'duration')
   assert.equal(preferences.read(album, 'albums').filters.provider, 'ncm')
+  assert.equal(preferences.read(album, 'albums').sortKey, 'trackNumber')
   assert.equal(preferences.read(libraryViewKey('artists', 'artist:other'), 'artists').sortKey, 'title')
 })
 

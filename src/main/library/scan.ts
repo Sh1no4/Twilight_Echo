@@ -73,6 +73,22 @@ function normalizeBpm(value: unknown): number | undefined {
   return Math.round(numeric * 10) / 10
 }
 
+/** music-metadata track/disk shape is `{ no, of }`; also accept bare numbers / "3/12". */
+function normalizeTrackIndex(value: unknown): number | undefined {
+  if (value == null) return undefined
+  if (typeof value === 'object' && !Array.isArray(value) && 'no' in value) {
+    return normalizeTrackIndex((value as { no?: unknown }).no)
+  }
+  if (typeof value === 'string') {
+    const match = value.trim().match(/^(\d+)/)
+    if (!match) return undefined
+    value = Number(match[1])
+  }
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric) || numeric < 1 || numeric > 9999) return undefined
+  return Math.trunc(numeric)
+}
+
 /** music-metadata exposes genre as string | string[]; keep the first non-empty value. */
 function extractGenre(value: unknown): string | null {
   if (typeof value === 'string') {
@@ -292,6 +308,8 @@ export async function parseTrack(file: FileEntry): Promise<unknown[]> {
     const title = common.title
     const album = common.album
     const bpm = normalizeBpm(common.bpm)
+    const trackNumber = normalizeTrackIndex(common.track)
+    const discNumber = normalizeTrackIndex(common.disk)
     const replayGainTags = extractReplayGainTags({
       common: {
         replaygain_track_gain: common.replaygain_track_gain,
@@ -337,6 +355,8 @@ export async function parseTrack(file: FileEntry): Promise<unknown[]> {
       ...replayGainTags
     }
     if (bpm !== undefined) track.bpm = bpm
+    if (trackNumber !== undefined) track.trackNumber = trackNumber
+    if (discNumber !== undefined) track.discNumber = discNumber
     if (audioFingerprint) track.audioFingerprint = audioFingerprint
     const cueTracks = deriveCueTracks(
       file.fullPath,

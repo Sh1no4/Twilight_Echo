@@ -576,22 +576,30 @@ onUnmounted(() => {
 
 <template>
   <div class="login-page">
-    <div class="login-header">
-      <button class="login-back-btn" title="返回" @click="handleBack">
-        <i class="pi pi-arrow-left"></i>
-      </button>
-      <h2 class="login-title">
-        {{ activeCard ? activeCard.name : '在线账号' }}
-      </h2>
+    <div class="login-deco" aria-hidden="true">
+      <div class="deco-orb deco-orb-a"></div>
+      <div class="deco-orb deco-orb-b"></div>
+      <div class="deco-orb deco-orb-c"></div>
+      <div class="deco-grain"></div>
     </div>
 
-    <div class="login-body">
+    <header class="login-header">
+      <button class="login-back-btn" title="返回" @click="handleBack">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+      </button>
+      <h2 class="login-title">
+        {{ activeCard ? activeCard.name : '连接你的音乐世界' }}
+      </h2>
+    </header>
+
+    <main class="login-body">
       <div v-if="pageState === 'loading'" class="login-status">
-        <i class="pi pi-spin pi-spinner" style="font-size: 32px; color: #999"></i>
+        <div class="status-spinner"></div>
         <p>{{ statusText }}</p>
       </div>
 
       <div v-else-if="pageState === 'account_list'" class="account-list">
+        <p class="account-list-hint">选择你的音乐平台</p>
         <button
           v-for="provider in providerCards"
           :key="provider.id"
@@ -607,51 +615,56 @@ onUnmounted(() => {
             <span class="account-title">{{ provider.name }}</span>
             <span class="account-desc">
               <template v-if="provider.loggedIn">
-                已登录：{{ provider.profile?.nickname || provider.profile?.userId || '未知用户' }}
+                已登录 · {{ provider.profile?.nickname || provider.profile?.userId || '未知用户' }}
               </template>
               <template v-else-if="provider.available">{{ provider.desc }}</template>
               <template v-else>{{ provider.error || 'Provider 未启用' }}</template>
             </span>
           </span>
           <span class="account-action">
-            {{ provider.loggedIn ? '管理' : provider.available ? '登录' : '不可用' }}
+            <template v-if="provider.loggedIn">管理</template>
+            <template v-else-if="provider.available">登录</template>
+            <template v-else>不可用</template>
           </span>
         </button>
       </div>
 
       <div v-else-if="pageState === 'error'" class="login-status">
-        <i class="pi pi-exclamation-triangle" style="font-size: 32px; color: #e74c3c"></i>
+        <div class="status-error-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        </div>
         <p class="error-text">{{ statusText }}</p>
-        <button class="login-action-btn" @click="handleRefresh">重试</button>
+        <button class="btn-primary" @click="handleRefresh">重试</button>
       </div>
 
       <div v-else-if="pageState === 'logged_in'" class="login-profile">
         <div class="profile-card">
-          <img
-            v-if="activeProfile?.avatarUrl"
-            :src="activeProfile.avatarUrl"
-            class="profile-avatar"
-            alt="头像"
-          />
-          <div v-else class="profile-avatar-placeholder">
-            <i class="pi pi-user" style="font-size: 36px"></i>
+          <div class="profile-avatar-ring">
+            <img
+              v-if="activeProfile?.avatarUrl"
+              :src="activeProfile.avatarUrl"
+              class="profile-avatar"
+              alt="头像"
+            />
+            <div v-else class="profile-avatar-placeholder">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            </div>
           </div>
           <div class="profile-info">
             <span class="profile-nickname">{{ activeProfile?.nickname || '未知用户' }}</span>
-            <span class="profile-uid">UID: {{ activeProfile?.userId }}</span>
+            <span class="profile-uid">UID {{ activeProfile?.userId }}</span>
           </div>
-          <button class="logout-btn" @click="handleLogout">
-            <i class="pi pi-sign-out"></i>
+          <button class="btn-ghost-danger" @click="handleLogout">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
             <span>退出登录</span>
           </button>
         </div>
-        <button class="login-action-btn" style="margin-top: 16px" @click="enterAfterLoggedIn">
+        <button class="btn-primary" style="margin-top: 20px" @click="enterAfterLoggedIn">
           进入流媒体
         </button>
       </div>
 
       <div v-else class="login-qr-section">
-        <!-- QR code only for non-OAuth providers -->
         <div
           v-if="qrImage && !activeUi?.showBrowserButton"
           class="qr-wrapper"
@@ -659,12 +672,11 @@ onUnmounted(() => {
         >
           <img v-if="pageState !== 'qr_expired'" :src="qrImage" alt="登录二维码" class="qr-image" />
           <div v-else class="qr-expired-overlay" @click="handleRefresh">
-            <i class="pi pi-refresh" style="font-size: 28px"></i>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
             <span>点击刷新</span>
           </div>
         </div>
 
-        <!-- OAuth providers: show browser icon instead of QR -->
         <div
           v-else-if="
             activeUi?.showBrowserButton &&
@@ -673,34 +685,17 @@ onUnmounted(() => {
           "
           class="qr-placeholder"
         >
-          <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #ccc"></i>
+          <div class="status-spinner"></div>
         </div>
 
         <div v-else-if="pageState === 'qr_loading'" class="qr-placeholder">
-          <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #ccc"></i>
+          <div class="status-spinner"></div>
         </div>
 
         <p class="qr-status" :class="{ success: pageState === 'login_success' }">
-          <i
-            v-if="pageState === 'qr_ready' && !activeUi?.showBrowserButton"
-            class="pi pi-mobile"
-            style="margin-right: 6px"
-          ></i>
-          <i
-            v-if="pageState === 'qr_ready' && activeUi?.showBrowserButton"
-            class="pi pi-external-link"
-            style="margin-right: 6px"
-          ></i>
-          <i
-            v-if="pageState === 'qr_scanned'"
-            class="pi pi-check-circle"
-            style="margin-right: 6px; color: #2ecc71"
-          ></i>
-          <i
-            v-if="pageState === 'login_success'"
-            class="pi pi-check-circle"
-            style="margin-right: 6px; color: #2ecc71"
-          ></i>
+          <span v-if="pageState === 'login_success'" class="qr-status-dot success"></span>
+          <span v-else-if="pageState === 'qr_scanned'" class="qr-status-dot scanned"></span>
+          <span v-else class="qr-status-dot waiting"></span>
           {{ statusText }}
         </p>
 
@@ -788,11 +783,11 @@ onUnmounted(() => {
             />
             <button
               type="button"
-              class="account-login-small-btn"
+              class="btn-captcha"
               :disabled="captchaBusy || isLoginCoolingDown"
               @click="handleSendCaptcha"
             >
-              {{ captchaBusy ? '发送中' : isLoginCoolingDown ? loginCooldownText : '发验证码' }}
+              {{ captchaBusy ? '发送中' : isLoginCoolingDown ? loginCooldownText : '获取验证码' }}
             </button>
           </div>
 
@@ -806,20 +801,17 @@ onUnmounted(() => {
           />
 
           <button
-            class="login-action-btn account-login-submit"
+            class="btn-primary account-login-submit"
             type="submit"
             :disabled="accountLoginBusy || isLoginCoolingDown"
           >
-            <i
-              :class="accountLoginBusy ? 'pi pi-spin pi-spinner' : 'pi pi-sign-in'"
-              style="margin-right: 6px"
-            ></i>
+            <span v-if="accountLoginBusy" class="btn-spinner"></span>
             {{
               accountLoginBusy
-                ? '登录中'
+                ? '登录中...'
                 : isLoginCoolingDown
                   ? `等待 ${loginCooldownText}`
-                  : '账号登录'
+                  : '登录'
             }}
           </button>
           <p v-if="isLoginCoolingDown" class="account-login-message">
@@ -828,9 +820,8 @@ onUnmounted(() => {
           <p v-if="accountLoginMessage" class="account-login-message">{{ accountLoginMessage }}</p>
         </form>
 
-        <button v-if="pageState === 'qr_expired'" class="login-action-btn" @click="handleRefresh">
-          <i class="pi pi-refresh" style="margin-right: 6px"></i>
-          重新登录
+        <button v-if="pageState === 'qr_expired'" class="btn-primary" @click="handleRefresh">
+          重新获取二维码
         </button>
 
         <button
@@ -840,10 +831,9 @@ onUnmounted(() => {
             pageState !== 'login_success' &&
             pageState !== 'qr_expired'
           "
-          class="login-action-btn"
+          class="btn-secondary"
           @click="openAuthUrl"
         >
-          <i class="pi pi-external-link" style="margin-right: 6px"></i>
           在浏览器中打开
         </button>
 
@@ -851,7 +841,7 @@ onUnmounted(() => {
           v-for="action in activeUi?.loginExtraActions ?? []"
           :key="action.method"
           v-show="pageState !== 'login_success'"
-          class="login-action-btn"
+          class="btn-secondary"
           @click="handleExtraAction(action.method)"
         >
           <i :class="action.icon" style="margin-right: 6px"></i>
@@ -860,13 +850,13 @@ onUnmounted(() => {
 
         <button
           v-if="pageState === 'login_success'"
-          class="login-action-btn"
+          class="btn-primary"
           @click="$emit('loginSuccess')"
         >
           进入流媒体
         </button>
       </div>
-    </div>
+    </main>
   </div>
 </template>
 
@@ -877,18 +867,70 @@ onUnmounted(() => {
   z-index: 100;
   display: flex;
   flex-direction: column;
-  background:
-    radial-gradient(circle at 18% 20%, rgba(124, 77, 255, 0.14), transparent 34%),
-    radial-gradient(circle at 82% 78%, rgba(34, 211, 238, 0.12), transparent 36%), transparent;
+  background: #faf8f4;
+  overflow: hidden;
+}
+
+.login-deco {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.deco-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.55;
+  animation: orbFloat 18s ease-in-out infinite alternate;
+}
+
+.deco-orb-a {
+  width: 420px;
+  height: 420px;
+  top: -120px;
+  right: -80px;
+  background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
+}
+
+.deco-orb-b {
+  width: 340px;
+  height: 340px;
+  bottom: -100px;
+  left: -60px;
+  background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+  animation-delay: -6s;
+}
+
+.deco-orb-c {
+  width: 200px;
+  height: 200px;
+  top: 40%;
+  left: 60%;
+  background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
+  animation-delay: -12s;
+}
+
+@keyframes orbFloat {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(20px, -18px) scale(1.06); }
+  100% { transform: translate(-12px, 14px) scale(0.96); }
+}
+
+.deco-grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.028;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
 }
 
 .login-header {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: calc(32px + 14px) 24px 14px;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
-  background: var(--te-card-bg);
+  gap: 14px;
+  padding: calc(32px + 16px) 28px 16px;
   flex-shrink: 0;
 }
 
@@ -896,82 +938,145 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border: none;
-  border-radius: 10px;
-  background: rgba(124, 77, 255, 0.09);
-  color: var(--te-primary-500);
+  border-radius: 12px;
+  background: rgba(42, 33, 24, 0.06);
+  color: #5a4a3a;
   cursor: pointer;
-  font-size: 16px;
-  transition: background 0.15s;
+  transition: all 0.2s ease;
 }
 
 .login-back-btn:hover {
-  background: rgba(124, 77, 255, 0.16);
+  background: rgba(42, 33, 24, 0.1);
+  transform: translateX(-2px);
 }
 
 .login-title {
-  font-size: 17px;
-  font-weight: 700;
-  color: var(--te-neutral-900);
+  font-size: 18px;
+  font-weight: 800;
+  color: #2a2118;
   margin: 0;
+  letter-spacing: -0.02em;
 }
 
 .login-body {
+  position: relative;
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 34px;
-  background:
-    radial-gradient(circle at 18% 20%, rgba(124, 77, 255, 0.08), transparent 34%),
-    radial-gradient(circle at 82% 78%, rgba(34, 211, 238, 0.08), transparent 36%), #ffffff;
+  padding: 32px;
+}
+
+.status-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid rgba(194, 112, 61, 0.15);
+  border-top-color: #c2703d;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.btn-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  margin-right: 6px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.login-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  color: #7a6a5a;
+  font-size: 14px;
+}
+
+.login-status p {
+  margin: 0;
+}
+
+.status-error-icon {
+  color: #d4573b;
+}
+
+.error-text {
+  color: #d4573b !important;
+  max-width: 320px;
+  text-align: center;
+  line-height: 1.6;
 }
 
 .account-list {
   display: grid;
-  gap: 12px;
-  width: min(520px, 100%);
+  gap: 14px;
+  width: min(480px, 100%);
+}
+
+.account-list-hint {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #a08a72;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .account-card {
   display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) auto;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 14px;
-  min-height: 82px;
-  padding: 14px;
-  border: 1px solid #eef1f6;
-  border-radius: 8px;
-  background: var(--te-card-bg);
-  color: #242946;
+  gap: 16px;
+  min-height: 84px;
+  padding: 16px 18px;
+  border: 1px solid rgba(194, 112, 61, 0.1);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #2a2118;
   text-align: left;
   cursor: pointer;
-  box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
+  box-shadow:
+    0 4px 24px rgba(194, 112, 61, 0.06),
+    0 1px 3px rgba(42, 33, 24, 0.04);
+  backdrop-filter: blur(12px);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .account-card:hover {
-  box-shadow: 0 18px 38px rgba(34, 42, 68, 0.1);
-  transform: translateY(-1px);
+  box-shadow:
+    0 12px 40px rgba(194, 112, 61, 0.12),
+    0 2px 8px rgba(42, 33, 24, 0.06);
+  transform: translateY(-3px);
+  border-color: rgba(194, 112, 61, 0.2);
 }
 
 .account-card.unavailable {
-  opacity: 0.66;
+  opacity: 0.55;
 }
 
 .account-icon {
   display: grid;
   place-items: center;
-  width: 48px;
-  height: 48px;
-  border-radius: 8px;
-  color: var(--te-primary-500);
-  background: #f3f0ff;
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  color: #c2703d;
+  background: linear-gradient(135deg, #fef3e2 0%, #fde8d0 100%);
 }
 
 .account-icon i {
-  font-size: 20px;
+  font-size: 22px;
 }
 
 .account-copy {
@@ -984,13 +1089,14 @@ onUnmounted(() => {
 .account-title {
   font-size: 15px;
   font-weight: 800;
-  color: #242946;
+  color: #2a2118;
+  letter-spacing: -0.01em;
 }
 
 .account-desc {
   font-size: 12px;
-  font-weight: 700;
-  color: rgba(82, 90, 122, 0.62);
+  font-weight: 600;
+  color: #a08a72;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1000,54 +1106,87 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 62px;
+  min-width: 58px;
   height: 32px;
-  padding: 0 12px;
-  border-radius: 8px;
-  background: var(--te-subtle-bg);
-  color: var(--te-primary-500);
+  padding: 0 14px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #c2703d 0%, #d4573b 100%);
+  color: #fff;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
-.login-status {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  color: #666;
-  font-size: 14px;
-}
-
-.login-status p {
-  margin: 0;
-}
-
-.error-text {
-  color: #e74c3c !important;
-}
-
-.login-action-btn {
-  display: flex;
+.btn-primary {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   margin-top: 8px;
-  padding: 8px 20px;
-  border: 1px solid rgba(255, 255, 255, 0.62);
-  border-radius: 12px;
-  background: var(--te-subtle-bg);
-  color: var(--te-neutral-900);
+  padding: 12px 28px;
+  border: none;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #c2703d 0%, #d4573b 100%);
+  color: #fff;
   font-size: 14px;
+  font-weight: 700;
   cursor: pointer;
-  transition:
-    background 0.15s,
-    border-color 0.15s;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 16px rgba(194, 112, 61, 0.25);
 }
 
-.login-action-btn:hover {
-  background: rgba(124, 77, 255, 0.1);
-  border-color: rgba(124, 77, 255, 0.22);
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px rgba(194, 112, 61, 0.35);
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: wait;
+  transform: none;
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 10px 22px;
+  border: 1.5px solid rgba(194, 112, 61, 0.25);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.7);
+  color: #c2703d;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-secondary:hover {
+  background: rgba(194, 112, 61, 0.06);
+  border-color: rgba(194, 112, 61, 0.4);
+}
+
+.btn-ghost-danger {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 8px 18px;
+  border: 1.5px solid rgba(212, 87, 59, 0.2);
+  border-radius: 12px;
+  background: transparent;
+  color: #d4573b;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-ghost-danger:hover {
+  background: rgba(212, 87, 59, 0.06);
+  border-color: rgba(212, 87, 59, 0.35);
 }
 
 .login-profile {
@@ -1060,35 +1199,41 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 32px 40px;
-  border: 1px solid rgba(255, 255, 255, 0.62);
-  border-radius: 18px;
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.54), rgba(248, 245, 255, 0.32)),
-    rgba(255, 255, 255, 0.32);
-  box-shadow: 0 24px 70px rgba(86, 70, 160, 0.14);
-  backdrop-filter: blur(20px) saturate(150%);
-  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  gap: 16px;
+  padding: 40px 48px;
+  border: 1px solid rgba(194, 112, 61, 0.1);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow:
+    0 20px 60px rgba(194, 112, 61, 0.1),
+    0 4px 16px rgba(42, 33, 24, 0.04);
+  backdrop-filter: blur(20px) saturate(140%);
+}
+
+.profile-avatar-ring {
+  padding: 4px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #f6d365, #fda085, #a8edea);
 }
 
 .profile-avatar {
-  width: 72px;
-  height: 72px;
+  width: 80px;
+  height: 80px;
   border-radius: 50%;
   object-fit: cover;
-  border: 2px solid #e0e0e0;
+  border: 3px solid #fff;
 }
 
 .profile-avatar-placeholder {
-  width: 72px;
-  height: 72px;
+  width: 80px;
+  height: 80px;
   border-radius: 50%;
-  background: #e0e0e0;
+  background: #fef3e2;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #999;
+  color: #c2703d;
+  border: 3px solid #fff;
 }
 
 .profile-info {
@@ -1099,55 +1244,40 @@ onUnmounted(() => {
 }
 
 .profile-nickname {
-  font-size: 18px;
-  font-weight: 600;
-  color: #1a1a1a;
+  font-size: 20px;
+  font-weight: 800;
+  color: #2a2118;
+  letter-spacing: -0.02em;
 }
 
 .profile-uid {
   font-size: 12px;
-  color: #999;
-}
-
-.logout-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  padding: 6px 16px;
-  border: 1px solid #e0e0e0;
-  border-radius: 6px;
-  background: var(--te-card-bg);
-  color: #e74c3c;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.logout-btn:hover {
-  background: var(--te-danger-soft-bg);
+  font-weight: 600;
+  color: #a08a72;
 }
 
 .login-qr-section {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
-  width: min(420px, 100%);
+  gap: 18px;
+  width: min(400px, 100%);
 }
 
 .qr-wrapper {
   position: relative;
-  width: 200px;
-  height: 200px;
-  border: 1px solid rgba(255, 255, 255, 0.68);
-  border-radius: 18px;
+  width: 210px;
+  height: 210px;
+  border: 1px solid rgba(194, 112, 61, 0.12);
+  border-radius: 24px;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--te-subtle-bg);
-  box-shadow: 0 24px 70px rgba(86, 70, 160, 0.16);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow:
+    0 16px 48px rgba(194, 112, 61, 0.1),
+    0 4px 12px rgba(42, 33, 24, 0.04);
 }
 
 .qr-wrapper.expired {
@@ -1167,42 +1297,73 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  background: var(--te-glass-bg-strong);
-  color: #999;
-  font-size: 14px;
-  backdrop-filter: blur(2px);
+  gap: 10px;
+  background: rgba(250, 248, 244, 0.88);
+  color: #a08a72;
+  font-size: 13px;
+  font-weight: 600;
+  backdrop-filter: blur(4px);
+  transition: color 0.2s;
 }
 
 .qr-expired-overlay:hover {
-  color: #333;
+  color: #c2703d;
 }
 
 .qr-placeholder {
-  width: 200px;
-  height: 200px;
+  width: 210px;
+  height: 210px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid #eee;
-  border-radius: 8px;
+  border: 1px solid rgba(194, 112, 61, 0.1);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.7);
 }
 
 .qr-status {
   font-size: 14px;
-  color: #666;
+  font-weight: 600;
+  color: #5a4a3a;
   margin: 0;
   display: flex;
   align-items: center;
+  gap: 8px;
 }
 
 .qr-status.success {
-  color: #2ecc71;
+  color: #2d8a6a;
+}
+
+.qr-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.qr-status-dot.waiting {
+  background: #f6d365;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.qr-status-dot.scanned {
+  background: #2d8a6a;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.qr-status-dot.success {
+  background: #2d8a6a;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
 }
 
 .qr-login-hint {
-  margin: -6px 0 0;
-  color: rgba(90, 90, 104, 0.72);
+  margin: -8px 0 0;
+  color: #a08a72;
   font-size: 12px;
   line-height: 1.5;
 }
@@ -1210,60 +1371,70 @@ onUnmounted(() => {
 .account-login-form {
   width: min(360px, 100%);
   display: grid;
-  gap: 10px;
-  padding-top: 4px;
+  gap: 12px;
+  padding-top: 8px;
 }
 
 .account-login-tabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
-  min-height: 34px;
+  min-height: 38px;
+  padding: 4px;
+  border-radius: 14px;
+  background: rgba(42, 33, 24, 0.04);
 }
 
 .account-login-tab {
   min-width: 0;
   height: 34px;
-  border: 1px solid rgba(124, 77, 255, 0.18);
-  border-radius: 8px;
-  background: var(--te-subtle-bg);
-  color: rgba(36, 41, 70, 0.72);
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: #7a6a5a;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 700;
   cursor: pointer;
+  transition: all 0.2s ease;
 }
 
 .account-login-tab.active {
-  background: rgba(124, 77, 255, 0.12);
-  color: var(--te-primary-500);
-  border-color: rgba(124, 77, 255, 0.34);
+  background: #fff;
+  color: #c2703d;
+  box-shadow: 0 2px 8px rgba(42, 33, 24, 0.08);
 }
 
 .account-login-row {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 8px;
+  grid-template-columns: 68px minmax(0, 1fr);
+  gap: 10px;
 }
 
 .account-login-row.captcha {
-  grid-template-columns: minmax(0, 1fr) 104px;
+  grid-template-columns: minmax(0, 1fr) 110px;
 }
 
 .account-login-input {
   min-width: 0;
-  height: 38px;
-  border: 1px solid rgba(148, 163, 184, 0.34);
-  border-radius: 8px;
-  padding: 0 11px;
-  background: var(--te-subtle-bg);
-  color: #242946;
-  font-size: 13px;
+  height: 44px;
+  border: 1.5px solid rgba(42, 33, 24, 0.1);
+  border-radius: 14px;
+  padding: 0 14px;
+  background: rgba(255, 255, 255, 0.8);
+  color: #2a2118;
+  font-size: 14px;
   outline: none;
+  transition: all 0.2s ease;
+}
+
+.account-login-input::placeholder {
+  color: #bfae9a;
 }
 
 .account-login-input:focus {
-  border-color: rgba(124, 77, 255, 0.48);
-  box-shadow: 0 0 0 3px rgba(124, 77, 255, 0.1);
+  border-color: rgba(194, 112, 61, 0.5);
+  box-shadow: 0 0 0 4px rgba(194, 112, 61, 0.08);
+  background: #fff;
 }
 
 .account-login-input.country {
@@ -1274,34 +1445,39 @@ onUnmounted(() => {
   width: 100%;
 }
 
-.account-login-small-btn {
-  height: 38px;
-  border: 1px solid rgba(124, 77, 255, 0.22);
-  border-radius: 8px;
-  background: rgba(124, 77, 255, 0.1);
-  color: var(--te-primary-500);
+.btn-captcha {
+  height: 44px;
+  border: 1.5px solid rgba(194, 112, 61, 0.25);
+  border-radius: 14px;
+  background: rgba(194, 112, 61, 0.06);
+  color: #c2703d;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 700;
   cursor: pointer;
+  transition: all 0.2s ease;
 }
 
-.account-login-small-btn:disabled,
+.btn-captcha:hover:not(:disabled) {
+  background: rgba(194, 112, 61, 0.12);
+}
+
+.btn-captcha:disabled,
 .account-login-submit:disabled {
-  opacity: 0.68;
+  opacity: 0.6;
   cursor: wait;
 }
 
 .account-login-submit {
   width: 100%;
-  margin-top: 0;
+  margin-top: 4px;
 }
 
 .account-login-message {
-  margin: -2px 0 0;
+  margin: -4px 0 0;
   min-height: 18px;
-  color: rgba(82, 90, 122, 0.72);
+  color: #a08a72;
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.6;
   text-align: center;
 }
 </style>

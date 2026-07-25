@@ -68,6 +68,7 @@ export function deriveCueTracks(
       filePath: resolve(audioPath),
       fileName,
       duration,
+      trackNumber: cueTrack.number,
       cueRange: cueTrack.range,
       cueSheetPath: cuePath,
       cueEncoding: parsed.encoding
