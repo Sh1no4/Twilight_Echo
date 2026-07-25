@@ -24,6 +24,7 @@ const indexEntries = ref<TwilightPluginIndexEntry[]>([])
 const indexStatus = ref<TwilightPluginIndexStatus | null>(null)
 const loading = ref(false)
 const errorMsg = ref('')
+const warningMsg = ref('')
 const busyIds = ref(new Set<string>())
 const trustEvaluationTimeMs = ref(Date.now())
 let trustRefreshController: PluginTrustRefreshController | null = null
@@ -190,9 +191,14 @@ function formatPluginInstallError(error: unknown): string {
 }
 
 async function installFromLocal() {
+  errorMsg.value = ''
+  warningMsg.value = ''
   try {
     const result = await window.api.plugins.chooseAndInstall()
-    if (result) await loadAll()
+    if (result) {
+      await loadAll()
+      if (result.warning) warningMsg.value = result.warning
+    }
   } catch (e) {
     errorMsg.value = formatPluginInstallError(e)
   }
@@ -201,9 +207,12 @@ async function installFromLocal() {
 async function installFromIndex(entry: TwilightPluginIndexEntry) {
   if (busyIds.value.has(entry.id)) return
   busyIds.value.add(entry.id)
+  errorMsg.value = ''
+  warningMsg.value = ''
   try {
-    await window.api.plugins.installFromIndex(entry.id)
+    const result = await window.api.plugins.installFromIndex(entry.id)
     await loadAll()
+    if (result?.warning) warningMsg.value = result.warning
   } catch (e) {
     errorMsg.value = formatPluginInstallError(e)
   } finally {
@@ -328,10 +337,14 @@ onUnmounted(() => {
           </div>
         </header>
 
-        <!-- Error banner -->
+        <!-- Error / warning banners -->
         <div v-if="errorMsg" style="margin: 0 32px 16px; padding: 12px 16px; background: var(--te-danger-soft-bg); border: 1px solid var(--te-danger-soft-fg); border-radius: 12px; color: var(--te-danger-soft-fg); font-size: 13px; display: flex; align-items: center; gap: 8px;">
           <i class="pi pi-exclamation-triangle"></i>
           {{ errorMsg }}
+        </div>
+        <div v-if="warningMsg" style="margin: 0 32px 16px; padding: 12px 16px; background: var(--te-warning-soft-bg, #fff7ed); border: 1px solid var(--te-warning-soft-fg, #c2410c); border-radius: 12px; color: var(--te-warning-soft-fg, #c2410c); font-size: 13px; display: flex; align-items: center; gap: 8px;">
+          <i class="pi pi-info-circle"></i>
+          {{ warningMsg }}
         </div>
 
         <!-- Scroll Area: Installed -->

@@ -1,10 +1,10 @@
 import { app, globalShortcut, Menu, nativeImage, Tray } from 'electron'
-import { join } from 'path'
 import { existsSync } from 'fs'
 import { runtime } from '../core/runtime'
 import { PLAYER_SHORTCUTS } from '../core/types'
 import type { PlayerShortcutAction, PlayerShortcutStatus } from '../core/types'
 import { buildPlayerShortcutStatuses } from '../core/shortcutStatus'
+import { getAppIconPath } from '../app/window'
 import { applyDiscordRpcSetting } from './discord'
 import { applyLibraryWatchers } from '../library/watcher'
 import { hideMiniPlayerWindow, restoreMainWindowFromMiniPlayer } from './miniPlayer'
@@ -68,7 +68,7 @@ export function resetPlayerShortcutStatuses(): void {
 export function createTray(): void {
   if (runtime.tray) return
 
-  const iconPath = join(app.getAppPath(), 'resources', 'icon.png')
+  const iconPath = getAppIconPath()
   const icon = existsSync(iconPath)
     ? nativeImage.createFromPath(iconPath)
     : nativeImage.createEmpty()
@@ -88,6 +88,19 @@ export function createTray(): void {
           runtime.mainWindow?.hide()
           hideMiniPlayerWindow()
         }
+      },
+      { type: 'separator' },
+      {
+        label: '播放/暂停',
+        click: () => sendPlayerShortcut('playPause')
+      },
+      {
+        label: '上一首',
+        click: () => sendPlayerShortcut('previous')
+      },
+      {
+        label: '下一首',
+        click: () => sendPlayerShortcut('next')
       },
       { type: 'separator' },
       {

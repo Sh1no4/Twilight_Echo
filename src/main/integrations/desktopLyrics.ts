@@ -94,6 +94,18 @@ function createDesktopLyricsWindow(): void {
     }, 500)
   })
 
+  runtime.desktopLyricsWindow.webContents.on(
+    'did-fail-load',
+    (_event, errorCode, errorDescription) => {
+      console.error('[desktop-lyrics] load failed', errorCode, errorDescription)
+      runtime.mainWindow?.webContents.send('desktopLyrics:loadFailed', {
+        code: errorCode,
+        description: errorDescription
+      })
+      hideDesktopLyrics()
+    }
+  )
+
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     runtime.desktopLyricsWindow.loadFile(join(__dirname, '../../resources/desktop-lyrics.html'))
   } else {

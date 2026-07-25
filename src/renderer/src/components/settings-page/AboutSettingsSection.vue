@@ -76,6 +76,11 @@ function progressLabel(): string {
         <p>
           一款专为发烧友打造的现代级桌面音乐枢纽，支持海量本地高解析度音频与插件化流媒体扩展。
         </p>
+        <p class="about-honesty">
+          默认软件音量 70% 保护听感；Shared 模式会经系统混音。Source Exact + Output Perfect + Unity
+          100% + 独占/直通 才是 bit-perfect。当前发布以 Windows 验证为主；macOS / Linux
+          原生输出路径尚未作为发布门禁验证。
+        </p>
       </div>
     </div>
 
@@ -144,7 +149,7 @@ function progressLabel(): string {
           <template v-else-if="updateActionState === 'ready'">
             <button class="brand-soft-button" type="button" @click="emit('installUpdate')">
               <i class="pi pi-download"></i>
-              安装并退出
+              {{ hasChecksum ? '安装并退出' : '仍要安装并退出' }}
             </button>
             <button class="soft-button" type="button" @click="emit('openReleasePage')">
               打开发布页
@@ -178,7 +183,7 @@ function progressLabel(): string {
         </div>
       </div>
 
-      <div class="sponsor-card">
+      <div class="sponsor-card sponsor-card-muted" aria-hidden="true" hidden>
         <i class="pi pi-heart-fill sponsor-watermark"></i>
         <div>
           <h3><i class="pi pi-heart"></i> 支持项目发展</h3>

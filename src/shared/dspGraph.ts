@@ -264,10 +264,17 @@ export interface Vst3CatalogEntry {
   quarantinedAt?: string
 }
 
+export interface Vst3HelpersAvailability {
+  platformSupported: boolean
+  scannerPresent: boolean
+  hostPresent: boolean
+}
+
 export interface Vst3CatalogState {
   enabled: boolean
   searchPaths: string[]
   entries: Vst3CatalogEntry[]
+  helpers?: Vst3HelpersAvailability
 }
 
 export interface DspSceneState {

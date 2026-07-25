@@ -7,14 +7,14 @@ This file provides guidance to Qoder (qoder.com) when working with code in this 
 Desktop music player: Electron + Vue 3 + TypeScript + C++20 native HiFi engine.
 Deeper architecture: `docs/DEVELOPER_README.md`. Plugin contracts (authoritative): `docs/twilight-echo-plugin-spec.md`, `docs/twilight-echo-plugin-plan.md`. Windows release gate: `docs/windows-release-gate.md`. Sibling Claude notes: `CLAUDE.md` (points here for boundaries).
 
-Supported audio formats: `.mp3 .flac .wav .wave .aac .ogg .wma .m4a .mp4 .aiff .aif .opus .webm .alac .ape .wv .dsf .dff .mqa` (actual playback depends on platform/decoder; Windows most complete).
+Supported audio formats: `.mp3 .flac .wav .wave .aac .ogg .wma .m4a .mp4 .aiff .aif .opus .webm .alac .ape .wv .dsf .dff .mqa` (actual playback depends on platform/decoder; Windows most complete). `.mqa` is scanned as a FLAC-compatible container — no MQA unfold/authentication.
 
 ## Non-negotiable boundaries
 
 - **pnpm only**: `packageManager` pins `pnpm@11.7.0`. Use `pnpm-lock.yaml`; never `npm install` / `package-lock.json`. Workspace `allowBuilds` permits only `electron`, `esbuild`, `electron-winstaller` native rebuilds.
 - Install: `corepack enable` then `pnpm install --frozen-lockfile` (applies NCM `patchedDependencies` from `pnpm-workspace.yaml`). Workspace uses `nodeLinker: hoisted`.
 - After install (or when touching deps): `pnpm run verify:install-policy` and `pnpm run verify:ncm-patch`.
-  - `discord-rpc`'s optional `register-scheme` is intentionally excluded (`ignoredOptionalDependencies` + `blockExoticSubdeps`) so `electron-builder install-app-deps` does not rebuild an exotic native dep. App uses Electron `setAsDefaultProtocolClient`.
+  - `discord-rpc`'s optional `register-scheme` is intentionally excluded (`ignoredOptionalDependencies` + `blockExoticSubdeps`) so `electron-builder install-app-deps` does not rebuild an exotic native dep. Discord presence uses IPC only; the app does **not** currently register an OS default protocol client.
 - **Do not write third-party plugin source into this repo.** Host/runtime, plugin API, scaffolder, static index client, and built-in NCM only.
   - External plugins: https://github.com/asenyarzc-cpu/Twilight-Echo-plugins/ (local: `D:\Twilight-Echo-plugins`)
   - Layout: `plugins/<name>/` → pack to `packages/` → index in `plugins.json`

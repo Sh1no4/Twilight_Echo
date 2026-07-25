@@ -169,6 +169,10 @@ if (!props.preview) {
   window.api.desktopLyrics.onToggle((enabled: boolean) => {
     desktopLyricsOn.value = enabled
   })
+  window.api.desktopLyrics.onLoadFailed?.((payload) => {
+    desktopLyricsOn.value = false
+    console.error('[desktop-lyrics] load failed', payload.code, payload.description)
+  })
 }
 
 const emit = defineEmits<{
@@ -665,27 +669,45 @@ const nativeDsdRuntimeText = computed(() => {
 })
 
 const audioStatusChips = computed(() => {
-  const chips: { label: string; tone?: 'success' | 'warning' | 'muted' }[] = []
+  const chips: { label: string; tone?: 'success' | 'warning' | 'muted'; title?: string }[] = []
   const sourceExact = canonicalSourceExact()
   const outputPerfect = canonicalOutputPerfect()
-  chips.push({ label: 'Source Exact', tone: sourceExact ? 'success' : 'muted' })
+  const reasonText = resolvePerfectReasonText()
+  chips.push({
+    label: 'Source Exact',
+    tone: sourceExact ? 'success' : 'muted',
+    title: sourceExact
+      ? '源格式未改写（Source Exact）'
+      : reasonText || '源路径非 Exact（有损/格式变更等）'
+  })
   chips.push({
     label: 'Output Perfect',
-    tone: outputPerfect ? 'success' : outputInfo.value?.supportsOutputPerfect ? 'warning' : 'muted'
+    tone: outputPerfect ? 'success' : outputInfo.value?.supportsOutputPerfect ? 'warning' : 'muted',
+    title: outputPerfect
+      ? '输出链已验证直通（Output Perfect）'
+      : reasonText || '当前输出链尚未验证为 bit-perfect 直通'
   })
-  if (outputInfo.value?.resampled) chips.push({ label: 'Resampled', tone: 'warning' })
-  if (playbackInfo.value?.dspActive) chips.push({ label: 'DSP', tone: 'warning' })
-  if (exclusiveMode.value) chips.push({ label: 'Exclusive', tone: 'success' })
+  if (outputInfo.value?.resampled)
+    chips.push({ label: 'Resampled', tone: 'warning', title: '采样率或格式发生重采样' })
+  if (playbackInfo.value?.dspActive)
+    chips.push({ label: 'DSP', tone: 'warning', title: 'DSP 处理链正在改变样本' })
+  if (exclusiveMode.value)
+    chips.push({ label: 'Exclusive', tone: 'success', title: '独占模式（设置态，非实时证明）' })
   if (outputInfo.value?.accessMode) {
     chips.push({
       label: accessModeLabels[outputInfo.value.accessMode] ?? outputInfo.value.accessMode,
-      tone: outputInfo.value.accessMode === 'shared' ? 'muted' : 'success'
+      tone: outputInfo.value.accessMode === 'shared' ? 'muted' : 'success',
+      title:
+        outputInfo.value.accessMode === 'shared'
+          ? 'Shared 模式会经系统混音，通常不是 bit-perfect'
+          : '当前访问模式'
     })
   }
   if (nativeDsdRuntimeText.value) {
     chips.push({
       label: nativeDsdRuntimeText.value,
-      tone: nativeDsdRuntimeTone(outputInfo.value?.nativeDsdRuntimeState || 'unsupported')
+      tone: nativeDsdRuntimeTone(outputInfo.value?.nativeDsdRuntimeState || 'unsupported'),
+      title: '运行时 Native DSD 状态（列表筛选≠当前输出模式）'
     })
   }
   return chips

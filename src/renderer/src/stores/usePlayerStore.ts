@@ -459,10 +459,13 @@ function getPlaybackAudio(): HTMLAudioElement {
   audio.addEventListener('error', () => {
     resetNativeStreamBufferingState()
     const code = audio.error?.code ?? 0
-    const message = `Audio playback failed (code ${code})`
+    const mediaErrorMessage = audio.error?.message?.trim() || ''
+    const message = mediaErrorMessage
+      ? `临时播放通道失败：${mediaErrorMessage}`
+      : `临时播放通道失败（错误码 ${code}）`
     console.error('[audio-engine] Renderer audio error:', {
       code,
-      message: audio.error?.message ?? '',
+      message: mediaErrorMessage,
       src: audio.src ? audio.src.slice(0, 120) : ''
     })
     // Renderer (non-native) playback failed — attempt cross-source fallback
@@ -597,9 +600,10 @@ function beginSleepShutdown(state: SleepTimerState): void {
 function getSleepTimerFadeController(): ReturnType<typeof createSleepTimerFadeController> {
   if (!sleepTimerFadeController) {
     sleepTimerFadeController = createSleepTimerFadeController({
-      getVolume: () => volume.value,
+      getVolume: () => (muted.value ? 0 : volume.value),
       setVolume: (nextVolume) => {
         volume.value = nextVolume
+        if (nextVolume > 0.001) muted.value = false
       },
       stop: stopForSleepTimer
     })
@@ -1848,7 +1852,7 @@ function setAudioServiceReadyNotice(event?: {
   outputRouteSynced?: boolean
   restoreErrors?: string[]
 }): void {
-  const outputRouteSynced = event?.outputRouteSynced !== false
+  const outputRouteSynced = event?.outputRouteSynced === true
   const restoreErrors = Array.isArray(event?.restoreErrors)
     ? event.restoreErrors.filter((item) => item.trim())
     : []
@@ -2532,7 +2536,10 @@ function setupAudioEngineListeners(): void {
         audioEngineError.value = event.outputRouteSynced
           ? null
           : event.restoreErrors?.join('；') || '音频输出设备/后端未完全恢复'
-        setAudioServiceReadyNotice(event)
+        setAudioServiceReadyNotice({
+          outputRouteSynced: event.outputRouteSynced === true,
+          restoreErrors: event.restoreErrors
+        })
         void refreshAudioOutputState()
       })
     )
@@ -2542,9 +2549,14 @@ function setupAudioEngineListeners(): void {
     api.onReady(async () => {
       const recoveredFromServiceCrash = audioEngineRecoveryNotice.value?.kind === 'service-crash'
       audioEngineReady.value = true
-      audioEngineError.value = null
       if (recoveredFromServiceCrash) {
-        setAudioServiceReadyNotice()
+        setAudioServiceReadyNotice({
+          outputRouteSynced: false,
+          restoreErrors: ['等待结构化输出路由恢复确认']
+        })
+        audioEngineError.value = '音频输出设备/后端未完全恢复'
+      } else {
+        audioEngineError.value = null
       }
       api.setVolume(volume.value).catch(() => {})
       api.setPlaybackRate(playbackRate.value).catch(() => {})
@@ -2931,12 +2943,43 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
     if (nativePlaybackActive) {
       audioEngineError.value = ''
       stopRendererAudio(true)
-    } else {
+    } else if (useNativePlayback) {
       nativeQueueDelegated = false
       clearNativePlaybackInfoIntentForLoad(loadToken)
+      const htmlAudioFallbackAllowed =
+        typeof window.api?.audioEngine?.isHtmlAudioFallbackAllowed === 'function'
+          ? await window.api.audioEngine.isHtmlAudioFallbackAllowed()
+          : false
+      if (!isActiveLoad(loadToken, track)) {
+        releaseLoadIfOwned()
+        return
+      }
+      if (!htmlAudioFallbackAllowed) {
+        audioEngineError.value = nativeFallbackReason
+          ? `原生音频引擎不可用：${nativeFallbackReason}`
+          : '原生音频引擎不可用'
+        isPlaying.value = false
+        releaseLoadIfOwned()
+        return
+      }
       audioEngineError.value = nativeFallbackReason
         ? `原生音频引擎不可用，已启用临时播放通道：${nativeFallbackReason}`
         : ''
+      const rendererStarted = await playWithRendererAudio(
+        track,
+        playTarget,
+        normalizedStartTime,
+        loadToken
+      )
+      if (!rendererStarted || !isActiveLoad(loadToken, track)) {
+        releaseLoadIfOwned()
+        return
+      }
+      scheduleRendererPlaybackWatchdog(track, loadToken)
+    } else {
+      nativeQueueDelegated = false
+      clearNativePlaybackInfoIntentForLoad(loadToken)
+      audioEngineError.value = ''
       const rendererStarted = await playWithRendererAudio(
         track,
         playTarget,

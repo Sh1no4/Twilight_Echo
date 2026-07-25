@@ -44,7 +44,8 @@ Twilight Echo 是一款基于 Electron + Vue 3 + TypeScript 的桌面音乐播�
 .opus .webm .alac .ape .wv .dsf .dff .mqa
 ```
 
-实际播放能力取决于平台与解码器；Windows 平台验证最完整，其他格式随平台测试逐步补齐。
+实际播放能力取决于平台与解码器；Windows 平台验证最完整，其他格式随平台测试逐步补齐。  
+`.mqa` 按 FLAC 兼容容器扫描与解码，**不宣称** MQA 认证 unfold。
 
 ## 平台支持
 

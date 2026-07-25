@@ -23,6 +23,7 @@ import CoverImg from './CoverImg.vue'
 
 const emit = defineEmits<{
   (event: 'select-view', category: string, filter: string | null): void
+  (event: 'open-library-settings'): void
 }>()
 
 const DEFAULT_COVER = '/icon.png'
@@ -882,7 +883,13 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
         </div>
         <div class="empty-copy">
           <h2>这里还很安静</h2>
-          <p>前往「设置 → 音乐库」添加本地文件夹，封面、专辑和听歌足迹都会自动在这里汇聚。</p>
+          <p>添加本地音乐文件夹后，封面、专辑和听歌足迹都会自动在这里汇聚。</p>
+          <div class="empty-actions">
+            <button type="button" class="empty-primary-button" @click="emit('open-library-settings')">
+              <i class="ph ph-folder-simple-plus"></i>
+              添加音乐库文件夹
+            </button>
+          </div>
           <div class="empty-features">
             <span><i class="ph ph-folder-simple-plus"></i> 批量扫描</span>
             <span><i class="ph ph-disc"></i> 无损格式</span>

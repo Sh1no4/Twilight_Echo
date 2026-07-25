@@ -38,6 +38,8 @@ import { useAppNavigation } from './app/useAppNavigation'
 import { createPlaybackSessionPersistence } from './app/usePlaybackSessionPersistence'
 import { useSideMenuClearance } from './app/useSideMenuClearance'
 import { useMiniPlayerSync } from './app/useMiniPlayerSync'
+import { useAppNoticeStore } from './stores/useAppNoticeStore'
+import AppNoticeHost from './components/AppNoticeHost.vue'
 
 type TitleSurface = 'default' | 'settings' | 'streaming'
 type StreamingInitialTab = 'home' | 'library' | 'recent'
@@ -88,8 +90,10 @@ const {
   closeEqualizerPage,
   openDspRackPage,
   closeDspRackPage,
-  closeMissingPluginPage
+  closeMissingPluginPage,
+  openSettingsPage
 } = navigation
+const { pushNotice } = useAppNoticeStore()
 const toggleMenu = navigation.createToggleMenuHandler()
 const toggleSettingsPage = navigation.createToggleSettingsHandler()
 const togglePluginPage = navigation.createTogglePluginHandler()
@@ -261,7 +265,13 @@ const playbackSessionPersistence = createPlaybackSessionPersistence({
   restorePlaybackSession,
   createPlaybackSession,
   syncPluginProviders,
-  dataApi: window.api.data
+  dataApi: window.api.data,
+  onAutosaveError: (error) => {
+    pushNotice({
+      kind: 'warning',
+      message: `自动保存播放会话失败：${error instanceof Error ? error.message : String(error)}`
+    })
+  }
 })
 const {
   sideMenuBottomOffset,
@@ -284,8 +294,22 @@ function syncDocumentVisibility(): void {
   document.body.classList.toggle('te-background-animations-paused', document.hidden)
 }
 
+const startupDataErrorScopes = new Set<string>()
+
 function reportStartupDataError(scope: string, error: unknown): void {
   console.error(`[persistence] Failed to load ${scope}:`, error)
+  startupDataErrorScopes.add(scope)
+  const detail = error instanceof Error ? error.message : String(error)
+  const scopes = Array.from(startupDataErrorScopes).join('、')
+  pushNotice({
+    kind: 'error',
+    sticky: true,
+    message: `启动时无法加载 ${scopes}${detail ? `：${detail}` : ''}。部分功能可能不可用。`,
+    action: {
+      label: '打开设置',
+      run: () => openSettingsPage('general')
+    }
+  })
 }
 
 async function flushPlaylistsForExit(): Promise<void> {
@@ -376,15 +400,32 @@ onMounted(async () => {
     })
   void startStartupLibraryScan().catch((error) => {
     console.error('[library] Startup reconciliation failed:', error)
+    pushNotice({
+      kind: 'warning',
+      message: `启动音乐库核对失败：${error instanceof Error ? error.message : String(error)}`,
+      action: {
+        label: '打开音乐库设置',
+        run: () => openSettingsPage('general')
+      }
+    })
   })
 
   // Ensure extensions are loaded before wiring listeners that depend on them.
   await extensionsPromise
   await playlistsPromise
 
-  // Notify user when covers are missing (independent of library:changed to avoid reload loop)
   removeCoversMissingListener = window.api.library.onCoversMissing((info) => {
-    console.warn(`??? ${info.dirtyCount} ?????,???????????`)
+    const dirtyCount = Math.max(0, Number(info?.dirtyCount) || 0)
+    if (dirtyCount <= 0) return
+    console.warn(`[library] ${dirtyCount} tracks are missing cover art`)
+    pushNotice({
+      kind: 'warning',
+      message: `检测到 ${dirtyCount} 首缺少封面，可在设置中完整重扫以补全封面。`,
+      action: {
+        label: '打开音乐库设置',
+        run: () => openSettingsPage('general')
+      }
+    })
   })
   // Lifecycle events are best-effort; the close IPC callback above provides
   // the awaitable completion barrier for application shutdown.
@@ -532,6 +573,7 @@ const titleSurface = computed<TitleSurface>(() => {
         v-if="localViewVisible && activeCategory === 'dashboard'"
         key="local-dashboard"
         @select-view="onSelectView"
+        @open-library-settings="openSettingsPage('general')"
       />
       <SongList
         v-else-if="localViewVisible"
@@ -613,6 +655,7 @@ const titleSurface = computed<TitleSurface>(() => {
     @open-dsp="openDspSettings"
     @open-equalizer="openEqualizerPage"
   />
+  <AppNoticeHost />
 </template>
 
 <style>

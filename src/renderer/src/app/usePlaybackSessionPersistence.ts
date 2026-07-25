@@ -33,6 +33,7 @@ export interface PlaybackSessionPersistenceOptions {
   autosaveDelayMs?: number
   positionAutosaveMs?: number
   sessionWriter?: PlaybackSessionWriter
+  onAutosaveError?: (error: unknown) => void
 }
 
 const DEFAULT_PLAYBACK_SESSION_AUTOSAVE_DEBOUNCE_MS = 1200
@@ -140,6 +141,7 @@ export function createPlaybackSessionPersistence(options: PlaybackSessionPersist
       lastPlaybackSessionPositionSaveAt = Date.now()
       void savePlaybackSessionSnapshot().catch((err) => {
         console.warn('自动保存播放会话失败：', err)
+        options.onAutosaveError?.(err)
       })
     }, delay)
   }
@@ -154,6 +156,7 @@ export function createPlaybackSessionPersistence(options: PlaybackSessionPersist
       lastPlaybackSessionPositionSaveAt = Date.now()
       void savePlaybackSessionSnapshot().catch((err) => {
         console.warn('自动保存播放会话失败:', err)
+        options.onAutosaveError?.(err)
       })
     }
 
@@ -170,6 +173,7 @@ export function createPlaybackSessionPersistence(options: PlaybackSessionPersist
           clearPlaybackSessionAutosave()
           void savePlaybackSessionSnapshot().catch((err) => {
             console.warn('自动保存播放会话失败：', err)
+            options.onAutosaveError?.(err)
           })
         },
         { flush: 'post' }

@@ -717,6 +717,8 @@ test('player store does not pretend DSP bypass is strict bit-perfect mode', () =
   assert.doesNotMatch(source, /strictBitPerfectMode/)
   assert.doesNotMatch(source, /function strictBitPerfectModeEnabled\(\)/)
   assert.doesNotMatch(loadAndPlay, /严格 Bit-Perfect 模式拒绝 renderer fallback/)
+  assert.match(loadAndPlay, /isHtmlAudioFallbackAllowed/)
+  assert.match(loadAndPlay, /原生音频引擎不可用：/)
   assert.match(loadAndPlay, /原生音频引擎不可用，已启用临时播放通道/)
   assert.match(loadAndPlay, /playWithRendererAudio\(/)
   assert.match(setVolume, /volume\.value = vol/)

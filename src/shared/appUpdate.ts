@@ -48,4 +48,4 @@ export type AppUpdateDownloadResult =
 
 export type AppUpdateInstallResult =
   | { ok: true }
-  | { ok: false; error: string }
+  | { ok: false; error: string; installerPath?: string | null }

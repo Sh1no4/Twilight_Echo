@@ -137,6 +137,9 @@ const desktopLyricsInitSettingsCallbacks = new Set<(settings: DesktopLyricsSetti
 const desktopLyricsTrackCallbacks = new Set<(data: DesktopLyricsTrackPayload) => void>()
 const desktopLyricsTimeCallbacks = new Set<(time: number) => void>()
 const desktopLyricsSettingsUpdateCallbacks = new Set<(settings: DesktopLyricsSettings) => void>()
+const desktopLyricsLoadFailedCallbacks = new Set<
+  (payload: { code: number; description: string }) => void
+>()
 const miniPlayerStateCallbacks = new Set<(state: MiniPlayerStateSnapshot) => void>()
 const miniPlayerSettingsCallbacks = new Set<(settings: MiniPlayerSettings) => void>()
 const miniPlayerCommandCallbacks = new Set<(command: MiniPlayerCommand) => void>()
@@ -282,6 +285,15 @@ ipcRenderer.on('desktopLyrics:updateSettings', (_event, settings: DesktopLyricsS
     cb(settings)
   }
 })
+
+ipcRenderer.on(
+  'desktopLyrics:loadFailed',
+  (_event, payload: { code: number; description: string }) => {
+    for (const cb of desktopLyricsLoadFailedCallbacks) {
+      cb(payload)
+    }
+  }
+)
 
 ipcRenderer.on('desktopLyrics:position', (_event, pos: { x: number; y: number }) => {
   // Forward to a temporary global that the HTML page can read
@@ -435,6 +447,11 @@ const api = {
     openExternal: (url: string): Promise<void> => ipcRenderer.invoke('shell:openExternal', url)
   },
   discord: {
+    getStatus: (): Promise<{
+      enabled: boolean
+      connected: boolean
+      lastError: string | null
+    }> => ipcRenderer.invoke('discord:getStatus'),
     updateActivity: (data: {
       title: string
       artist: string
@@ -504,6 +521,8 @@ const api = {
       ipcRenderer.invoke('audioEngine:loadQueue', items, startIndex),
     play: (filePath: string, startTime?: number): Promise<AudioEnginePlayResult> =>
       ipcRenderer.invoke('audioEngine:play', filePath, startTime),
+    isHtmlAudioFallbackAllowed: (): Promise<boolean> =>
+      ipcRenderer.invoke('audioEngine:isHtmlAudioFallbackAllowed'),
     togglePause: (): Promise<void> => ipcRenderer.invoke('audioEngine:togglePause'),
     seek: (time: number): Promise<void> => ipcRenderer.invoke('audioEngine:seek', time),
     setVolume: (volume: number): Promise<void> =>
@@ -1103,6 +1122,12 @@ const api = {
     onSettingsUpdate: (cb: (settings: DesktopLyricsSettings) => void): (() => void) => {
       desktopLyricsSettingsUpdateCallbacks.add(cb)
       return () => desktopLyricsSettingsUpdateCallbacks.delete(cb)
+    },
+    onLoadFailed: (
+      cb: (payload: { code: number; description: string }) => void
+    ): (() => void) => {
+      desktopLyricsLoadFailedCallbacks.add(cb)
+      return () => desktopLyricsLoadFailedCallbacks.delete(cb)
     },
     getPosition: (): void => {
       ipcRenderer.send('desktopLyrics:getPosition')

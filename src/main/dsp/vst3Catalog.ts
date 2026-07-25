@@ -6,9 +6,11 @@ import type {
   DspChannelLayout,
   Vst3CatalogEntry,
   Vst3CatalogState,
+  Vst3HelpersAvailability,
   Vst3ParameterDescriptor,
   Vst3ScanDescriptor
 } from '../../shared/dspGraph.ts'
+import { getNativeAddonCandidates } from '../audio/nativeBinding.ts'
 
 const CATALOG_FILE = 'vst3-catalog.json'
 const MAX_SCAN_MODULES = 1024
@@ -64,6 +66,10 @@ export class Vst3CatalogService {
   async getState(): Promise<Vst3CatalogState> {
     await this.initialize()
     return cloneState(this.state)
+  }
+
+  getHelpersAvailability(): Vst3HelpersAvailability {
+    return resolveVst3HelpersAvailability()
   }
 
   async setEnabled(enabled: boolean): Promise<Vst3CatalogState> {
@@ -359,6 +365,26 @@ function normalizeParameters(parameters: Vst3ParameterDescriptor[] | undefined):
     }))
 }
 
+function resolveVst3HelpersAvailability(): Vst3HelpersAvailability {
+  const platformSupported = process.platform === 'win32'
+  if (!platformSupported) {
+    return { platformSupported: false, scannerPresent: false, hostPresent: false }
+  }
+  const roots = new Set<string>()
+  for (const candidate of getNativeAddonCandidates()) {
+    const root = candidate.replace(/[\\/][^\\/]+$/, '')
+    if (root) roots.add(root)
+  }
+  let scannerPresent = false
+  let hostPresent = false
+  for (const root of roots) {
+    if (existsSync(join(root, 'twilight-vst3-scanner.exe'))) scannerPresent = true
+    if (existsSync(join(root, 'twilight-vst3-host.exe'))) hostPresent = true
+    if (scannerPresent && hostPresent) break
+  }
+  return { platformSupported: true, scannerPresent, hostPresent }
+}
+
 function cloneState(state: Vst3CatalogState): Vst3CatalogState {
   return {
     enabled: state.enabled,
@@ -367,7 +393,8 @@ function cloneState(state: Vst3CatalogState): Vst3CatalogState {
       ...entry,
       supportedLayouts: [...entry.supportedLayouts],
       parameters: entry.parameters.map((parameter) => ({ ...parameter }))
-    }))
+    })),
+    helpers: resolveVst3HelpersAvailability()
   }
 }
 

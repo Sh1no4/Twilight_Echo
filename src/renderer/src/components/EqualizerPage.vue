@@ -17,7 +17,7 @@ const emit = defineEmits<{
   back: []
 }>()
 
-type EqualizerTab = EqMode | 'square'
+type EqualizerTab = EqMode
 type OpraProfile = Awaited<ReturnType<typeof window.api.opra.search>>[number]
 type OpraCatalogStatus = Awaited<ReturnType<typeof window.api.opra.getStatus>>
 
@@ -128,8 +128,7 @@ const tabs: { key: EqualizerTab; label: string; icon: string; desc: string }[] =
     label: '参数均衡器',
     icon: 'pi pi-sliders-h',
     desc: '频率、滤波器、增益与 Q 值'
-  },
-  { key: 'square', label: '配置广场', icon: 'pi pi-compass', desc: '预设分享入口' }
+  }
 ]
 
 const audioOutputDspStore = useAudioOutputDspStore()
@@ -706,7 +705,7 @@ watch(opraQuery, () => {
 
       <main class="eq-content">
         <!-- Toolbar for Presets across Graphic and Parametric -->
-        <div v-if="activeTab !== 'square'" class="eq-toolbar-modern">
+        <div class="eq-toolbar-modern">
           <div class="preset-menu-anchor">
             <button type="button" class="eq-command preset-menu-button" @click="togglePresetMenu">选择预设 <i class="pi pi-chevron-down"></i></button>
             <div v-if="presetMenuOpen" class="preset-menu">
@@ -892,14 +891,6 @@ watch(opraQuery, () => {
           </section>
         </div>
 
-        <div v-else class="tab-pane active">
-          <header class="eq-header">
-            <div class="eq-title"><h1>配置广场</h1><p>浏览、下载并分享优秀的 EQ 预设方案。</p></div>
-          </header>
-          <section class="square-card">
-            <i class="pi pi-compass"></i><h2>配置广场功能建设中</h2><p>这里将用于展示、导入和分享均衡器配置。当前界面仅作为布局演示，敬请期待后续接入的在线预设源和 OPRA 云端数据库。</p>
-          </section>
-        </div>
       </main>
     </div>
   </div>

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import ImportDialog from './ImportDialog.vue'
 import ThemeIcon from './ThemeIcon.vue'
 import type { UiContribution } from '../extensions/registry'
 import type { ThemeIconSlot } from '../../../shared/theme.ts'
+import { useMusicStore } from '../stores/useMusicStore'
 
 const props = defineProps<{
   open: boolean
@@ -36,7 +37,19 @@ const menuItems: MenuItem[] = [
   { key: 'recent', label: '最近播放', icon: 'navigation.recent' }
 ]
 
-const scanning = ref(false)
+const { libraryScanStatus, libraryScanProgress } = useMusicStore()
+const scanning = computed(
+  () => libraryScanStatus.value.state === 'running' || libraryScanStatus.value.state === 'paused'
+)
+const scanningLabel = computed(() => {
+  const status = libraryScanStatus.value
+  if (status.state === 'paused') return '扫描已暂停'
+  const current = Math.max(0, status.current || 0)
+  const total = Math.max(0, status.total || 0)
+  const phase = libraryScanProgress.value?.phase === 'parsing' ? '解析' : '扫描'
+  if (total > 0) return `${phase}中 ${current}/${total}`
+  return '正在扫描…'
+})
 const showImportDialog = ref(false)
 
 function selectItem(key: string): void {
@@ -137,7 +150,7 @@ function handleImportClick(): void {
           <ThemeIcon class="item-icon" icon-slot="navigation.import" />
           <span class="item-label">导入歌曲</span>
         </button>
-        <span v-if="scanning" class="scanning-text">正在扫描...</span>
+        <span v-if="scanning" class="scanning-text" aria-live="polite">{{ scanningLabel }}</span>
       </div>
     </nav>
     <ImportDialog :show="showImportDialog" @close="showImportDialog = false" />

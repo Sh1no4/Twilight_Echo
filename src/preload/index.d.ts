@@ -1255,6 +1255,7 @@ interface AudioEngineConfigAppliedEvent {
 interface AudioEngineAPI {
   loadQueue: (items: AudioEngineQueueItem[], startIndex?: number) => Promise<void>
   play: (filePath: string, startTime?: number) => Promise<AudioEnginePlayResult>
+  isHtmlAudioFallbackAllowed: () => Promise<boolean>
   togglePause: () => Promise<void>
   seek: (time: number) => Promise<void>
   setVolume: (volume: number) => Promise<void>
@@ -1378,6 +1379,11 @@ interface WindowAPI {
     openExternal: (url: string) => Promise<void>
   }
   discord: {
+    getStatus: () => Promise<{
+      enabled: boolean
+      connected: boolean
+      lastError: string | null
+    }>
     updateActivity: (data: {
       title: string
       artist: string
@@ -1708,6 +1714,7 @@ interface WindowAPI {
     ) => () => void
     onTimeUpdate: (cb: (time: number) => void) => () => void
     onSettingsUpdate: (cb: (settings: DesktopLyricsSettings) => void) => () => void
+    onLoadFailed: (cb: (payload: { code: number; description: string }) => void) => () => void
     getPosition: () => void
     move: (x: number, y: number) => void
     requestClose: () => void

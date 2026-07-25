@@ -153,6 +153,8 @@ test('song list supports batch favorite plus explicit local remove and recycle-b
   assert.match(source, /handleBatchFavorite/)
   assert.match(source, /runLocalLibraryRemoval/)
   assert.match(source, /window\.confirm/)
+  assert.match(source, /mode === 'library'/)
+  assert.match(source, /文件仍保留在磁盘/)
   assert.match(source, /从音乐库移除/)
   assert.match(source, /移到回收站/)
   assert.match(source, /handleContextFavorite/)

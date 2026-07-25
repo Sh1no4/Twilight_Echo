@@ -423,6 +423,32 @@
   line-height: 1.85;
 }
 
+.empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.35rem;
+}
+
+.empty-primary-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 0;
+  border-radius: 999px;
+  padding: 0.72rem 1.1rem;
+  background: color-mix(in srgb, var(--home-accent) 88%, #111827);
+  color: #fff;
+  font-size: 0.92rem;
+  font-weight: 650;
+  cursor: pointer;
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--home-accent) 28%, transparent);
+}
+
+.empty-primary-button:hover {
+  filter: brightness(1.05);
+}
+
 .empty-features {
   display: flex;
   flex-wrap: wrap;

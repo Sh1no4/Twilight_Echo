@@ -40,9 +40,10 @@ Run the audit only after a clean frozen install. A stale hoisted `node_modules` 
 evidence that the lockfile, overrides, or NCM patch were applied.
 
 The install-policy check also confirms that `discord-rpc`'s non-Electron
-`register-scheme` fallback is absent. The app uses Electron's
-`app.setAsDefaultProtocolClient`; excluding that optional native fallback prevents
-`electron-builder install-app-deps` from attempting an unsupported rebuild.
+`register-scheme` fallback is absent. Discord presence uses IPC only; the app does
+not currently register an OS default protocol client. Excluding that optional
+native fallback prevents `electron-builder install-app-deps` from attempting an
+unsupported rebuild.
 
 All shipped fonts are preconverted `.woff2` assets. Dependency installation does not compile or
 convert fonts; any future font regeneration tooling needs its own conversion smoke test before it
@@ -170,9 +171,11 @@ The staged release must include the matching `twilight-audio-engine.dll` and
 
 In-app updates on Windows download the latest GitHub Release installer (`*-setup.exe` preferred),
 optionally verify SHA-256 from the release body or a companion checksum asset, then launch the
-installer with `shell.openPath` and quit the app. This is not `electron-updater`, not silent asar
-replacement, and not a generic electron-builder `publish` URL. Prefer publishing a checksum with
-each release; without a checksum the client still downloads but marks verification as skipped.
+installer with `shell.openPath` and quit the app after an explicit confirm (exit, SmartScreen/UAC,
+official signed package). This is not `electron-updater`, not silent asar replacement, and not a
+generic electron-builder `publish` URL. **Every Windows Release must publish SHA-256** (release body
+line or `*.sha256` asset). Without a checksum the client still downloads but marks verification as
+skipped and degrades the install CTA; if a checksum was known, install re-hashes before openPath.
 Unsigned installers remain subject to SmartScreen.
 
 A publishable Windows build must be created in the protected signing environment. `build:win` and

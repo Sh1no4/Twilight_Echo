@@ -57,3 +57,32 @@ test('zero-second fades are idempotent until the timer is reset', () => {
   assert.equal(fade.begin(terminal), true)
   assert.equal(stopCalls, 2)
 })
+
+test('muted or zero volume ends fade immediately without interval', () => {
+  let stopCalls = 0
+  let intervalCalls = 0
+  const fade = createSleepTimerFadeController({
+    getVolume: () => 0,
+    setVolume: () => {},
+    stop: () => {
+      stopCalls++
+    },
+    setInterval: () => {
+      intervalCalls++
+      return {} as ReturnType<typeof setInterval>
+    },
+    clearInterval: () => {}
+  })
+  assert.equal(
+    fade.begin({
+      mode: 'minutes',
+      endsAt: 1,
+      fadeSeconds: 10,
+      active: false,
+      triggered: true
+    }),
+    true
+  )
+  assert.equal(stopCalls, 1)
+  assert.equal(intervalCalls, 0)
+})

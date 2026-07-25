@@ -443,6 +443,9 @@ function normalizeLoginError(error: unknown): string {
   }
   if (/503|高频|风控/i.test(message)) return '登录接口触发高频或风控限制，请等待几分钟后再试'
   if (/460/.test(message)) return '当前网络环境被网易云限制，请切换网络或稍后重试'
+  if (/fetch failed|Failed to fetch|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|network|offline/i.test(message)) {
+    return '网络不可用或无法连接网易云服务，请检查网络后重试'
+  }
   return message || '登录失败，请检查账号信息后重试'
 }
 

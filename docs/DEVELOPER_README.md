@@ -145,10 +145,10 @@ pnpm install --frozen-lockfile
 `patchedDependencies` 在安装时应用。
 
 `discord-rpc` 的 `register-scheme` 仅是 Electron 不可用时的 optional fallback，且上游把它
-指向 exotic Git dependency。主应用始终在 Electron 内使用
-`app.setAsDefaultProtocolClient`，因此 workspace 通过 `ignoredOptionalDependencies` 只排除
-这个 fallback，并保持 `blockExoticSubdeps: true`。`pnpm run verify:install-policy` 会确认
-该包未安装且 `discord-rpc` 在普通 Node.js 环境安全降级。
+指向 exotic Git dependency。主应用通过 Discord IPC 上报播放状态，**当前不注册** OS 默认
+协议客户端（无 `setAsDefaultProtocolClient`）。因此 workspace 通过
+`ignoredOptionalDependencies` 只排除这个 fallback，并保持 `blockExoticSubdeps: true`。
+`pnpm run verify:install-policy` 会确认该包未安装且 `discord-rpc` 在普通 Node.js 环境安全降级。
 
 仓库内字体均为已转换并提交的 `.woff2` 资源，构建和打包不执行字体转换。不要为了安装时
 生成字体重新引入 native converter；若未来需要重建字体资产，必须提供独立、可验证的

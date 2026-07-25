@@ -410,6 +410,12 @@
   font-synthesis: none;
 }
 
+.setting-copy .setting-substatus {
+  display: block;
+  margin-top: 0.2rem;
+  color: color-mix(in srgb, var(--te-settings-text-muted, #8a8f98) 88%, var(--te-accent, #7c4dff));
+}
+
 .setting-copy small {
   font-size: 12px;
   line-height: 1.45;
@@ -876,6 +882,13 @@
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.device-capability-note {
+  margin: 0.55rem 0 0;
+  color: var(--te-settings-text-muted, #8a8f98);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .device-capability-row {
@@ -1873,6 +1886,13 @@
   font-weight: 550;
   letter-spacing: 0;
   text-transform: none;
+}
+
+.about-copy .about-honesty {
+  margin-top: 0.55rem;
+  color: color-mix(in srgb, var(--te-text-muted, #64748b) 92%, transparent);
+  font-size: 0.82rem;
+  line-height: 1.55;
 }
 
 .about-copy p {

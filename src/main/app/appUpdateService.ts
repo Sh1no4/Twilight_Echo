@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { createWriteStream } from 'node:fs'
+import { createReadStream, createWriteStream } from 'node:fs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
@@ -345,6 +345,19 @@ export async function downloadAppUpdate(): Promise<AppUpdateDownloadResult> {
   }
 }
 
+async function hashInstallerFile(filePath: string): Promise<string> {
+  const hash = createHash('sha256')
+  await new Promise<void>((resolve, reject) => {
+    const stream = createReadStream(filePath)
+    stream.on('data', (chunk) => {
+      hash.update(chunk)
+    })
+    stream.on('error', reject)
+    stream.on('end', () => resolve())
+  })
+  return hash.digest('hex')
+}
+
 export async function installDownloadedAppUpdate(): Promise<AppUpdateInstallResult> {
   if (process.platform !== 'win32') {
     return { ok: false, error: '当前仅支持 Windows 应用内更新' }
@@ -352,6 +365,36 @@ export async function installDownloadedAppUpdate(): Promise<AppUpdateInstallResu
   const installerPath = readyInstallerPath
   if (!installerPath) {
     return { ok: false, error: '请先下载更新包' }
+  }
+
+  if (lastResolved?.checksumSha256) {
+    try {
+      const digest = await hashInstallerFile(installerPath)
+      if (digest !== lastResolved.checksumSha256.toLowerCase()) {
+        await rm(installerPath, { force: true })
+        readyInstallerPath = null
+        const error = '安装包校验失败（安装前 SHA-256 不匹配），已删除下载文件'
+        emitProgress({
+          phase: 'error',
+          percent: 0,
+          receivedBytes: 0,
+          totalBytes: 0,
+          error
+        })
+        return { ok: false, error, installerPath: null }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '安装前校验失败'
+      emitProgress({
+        phase: 'error',
+        percent: 100,
+        receivedBytes: 0,
+        totalBytes: 0,
+        installerPath,
+        error: message
+      })
+      return { ok: false, error: message, installerPath }
+    }
   }
 
   emitProgress({
@@ -373,7 +416,7 @@ export async function installDownloadedAppUpdate(): Promise<AppUpdateInstallResu
       installerPath,
       error: openError
     })
-    return { ok: false, error: openError }
+    return { ok: false, error: openError, installerPath }
   }
 
   setTimeout(() => {

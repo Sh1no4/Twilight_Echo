@@ -31,6 +31,7 @@ import {
 import { useAudioOutputDspStore } from '../stores/useAudioOutputDspStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
+import { useAppNoticeStore } from '../stores/useAppNoticeStore'
 import { useThemeStore } from '../stores/useThemeStore'
 import { useMusicStore } from '../stores/useMusicStore'
 import { useExtensionRegistry, type UiContribution } from '../extensions/registry'
@@ -111,6 +112,12 @@ const remoteStatusError = ref('')
 const remoteBusy = ref(false)
 const remoteQrDataUrl = ref('')
 const remoteQrUrl = ref('')
+const discordStatus = ref<{
+  enabled: boolean
+  connected: boolean
+  lastError: string | null
+} | null>(null)
+let discordStatusTimer: number | null = null
 
 const activeSection = ref<SectionKey>(props.initialSection ?? 'general')
 const pageRef = ref<HTMLElement | null>(null)
@@ -132,6 +139,7 @@ const {
   formattedLoudnessAnalysisCacheSize,
   restartRequired,
   restartReasons,
+  lastSettingsError,
   loadSettings,
   updateSettings,
   chooseCacheFolder,
@@ -580,7 +588,33 @@ function toggleSetting(key: BooleanSettingKey): void {
   if (key === 'remoteControlEnabled') {
     void refreshRemoteStatus()
   }
+  if (key === 'discordRpcEnabled') {
+    window.setTimeout(() => {
+      void refreshDiscordStatus()
+    }, 400)
+  }
 }
+
+async function refreshDiscordStatus(): Promise<void> {
+  try {
+    if (!window.api?.discord?.getStatus) {
+      discordStatus.value = null
+      return
+    }
+    discordStatus.value = await window.api.discord.getStatus()
+  } catch {
+    discordStatus.value = null
+  }
+}
+
+const discordStatusText = computed(() => {
+  if (!settings.value.discordRpcEnabled) return '已关闭'
+  if (!discordStatus.value) return '状态未知'
+  if (discordStatus.value.connected) return '已连接'
+  return discordStatus.value.lastError
+    ? `未连接：${discordStatus.value.lastError}`
+    : '未连接（等待 Discord）'
+})
 
 async function refreshRemoteStatus(): Promise<void> {
   remoteStatusError.value = ''
@@ -631,6 +665,19 @@ watch(
       remoteQrDataUrl.value = ''
       remoteQrUrl.value = ''
     }
+  }
+)
+
+const { pushNotice } = useAppNoticeStore()
+watch(
+  lastSettingsError,
+  (error) => {
+    if (!error) return
+    settingsError.value = error
+    pushNotice({
+      kind: 'error',
+      message: `设置保存失败：${error}`
+    })
   }
 )
 
@@ -1394,12 +1441,39 @@ async function cancelUpdateDownload(): Promise<void> {
 
 async function installUpdate(): Promise<void> {
   updateError.value = ''
+  const warnings: string[] = [
+    '安装程序启动后本应用会退出。',
+    'Windows 可能弹出 SmartScreen 或 UAC 提示，请选择官方签名包继续。'
+  ]
+  if (!updateHasChecksum.value) {
+    warnings.push('此安装包未提供 SHA-256 校验和，无法验证完整性。')
+  }
+  if (
+    !window.confirm(
+      `${warnings.join('\n')}\n\n仅建议安装官方 GitHub Release 发布的签名安装包。\n确定继续安装并退出吗？`
+    )
+  ) {
+    return
+  }
   updateActionState.value = 'installing'
   try {
     const result = await window.api.app.installUpdate()
     if (!result.ok) {
       updateActionState.value = 'error'
       updateError.value = result.error
+      const installerPath =
+        'installerPath' in result && typeof result.installerPath === 'string'
+          ? result.installerPath
+          : updateProgress.value?.installerPath
+      if (installerPath) {
+        const openFolder = window.confirm(
+          `${result.error}\n\n是否打开安装包所在文件夹以便手动安装？`
+        )
+        if (openFolder) {
+          await window.api.shell.showItemInFolder(installerPath)
+        }
+      }
+      return
     }
   } catch (error) {
     updateActionState.value = 'error'
@@ -1527,11 +1601,15 @@ onMounted(async () => {
   ])
   await refreshShortcutStatuses()
   await refreshRemoteStatus()
+  await refreshDiscordStatus()
   await syncExtensions()
   await refreshLibraryWatcherStatus()
   libraryWatcherStatusTimer = window.setInterval(() => {
     void refreshLibraryWatcherStatus()
   }, 5_000)
+  discordStatusTimer = window.setInterval(() => {
+    if (settings.value.discordRpcEnabled) void refreshDiscordStatus()
+  }, 8_000)
   await nextTick()
   pageRef.value?.addEventListener('scroll', updateActiveSection, { passive: true })
   if (props.initialSection && props.initialSection !== 'general') {
@@ -1544,6 +1622,10 @@ onBeforeUnmount(() => {
   if (libraryWatcherStatusTimer !== null) {
     window.clearInterval(libraryWatcherStatusTimer)
     libraryWatcherStatusTimer = null
+  }
+  if (discordStatusTimer !== null) {
+    window.clearInterval(discordStatusTimer)
+    discordStatusTimer = null
   }
 })
 </script>
@@ -1774,6 +1856,7 @@ onBeforeUnmount(() => {
                       v-if="libraryMetadataEnrichmentIsActive"
                       type="button"
                       class="soft-button"
+                      title="丢弃队列中的富化；已发出的 Provider 请求可能仍会完成但不会写回"
                       @click="cancelActiveLibraryMetadataEnrichment"
                     >
                       取消富化
@@ -1819,6 +1902,7 @@ onBeforeUnmount(() => {
                 <div class="setting-copy">
                   <strong>Discord Rich Presence <i class="pi pi-discord discord-icon"></i></strong>
                   <span>在 Discord 状态中向好友展示您正在播放的音乐。</span>
+                  <span class="setting-substatus" aria-live="polite">{{ discordStatusText }}</span>
                 </div>
                 <span
                   class="toggle-switch"
@@ -2201,6 +2285,9 @@ onBeforeUnmount(() => {
                 <b v-if="audioDevice === device.id">当前</b>
               </button>
             </div>
+            <p class="device-capability-note">
+              列表为设备能力声明；是否 Native DSD / DoP 以播放时 HiFi 状态为准（筛选≠当前输出模式）。
+            </p>
           </div>
 
           <div class="section-block">
@@ -2307,7 +2394,9 @@ onBeforeUnmount(() => {
               <div class="setting-item">
                 <div class="setting-copy">
                   <strong>启动时恢复播放</strong>
-                  <span>记住上次播放的曲目和播放位置。</span>
+                  <span
+                    >默认关闭。开启后下次启动会恢复队列与曲目（可选进度）；不会自动开始播放，需手动点播放。</span
+                  >
                 </div>
                 <select
                   class="preview-select"
@@ -4369,7 +4458,9 @@ onBeforeUnmount(() => {
             <div class="setting-item">
               <div class="setting-copy">
                 <strong>鼠标穿透 (Click Through)</strong>
-                <span>开启后，鼠标点击事件会穿透歌词窗口，不影响下方操作。</span>
+                <span
+                  >开启后鼠标点击会穿透歌词窗口。穿透时窗口内难以操作，请在本页关闭穿透，或关闭桌面歌词。</span
+                >
               </div>
               <span
                 class="toggle-switch"

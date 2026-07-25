@@ -8,8 +8,8 @@ overrides:
   qs: 6.15.2
   uuid: 11.1.1
 
-# discord-rpc uses Electron's app.setAsDefaultProtocolClient in this application. Its optional
-# register-scheme fallback is an exotic native dependency for non-Electron runtimes, so omit it.
+# discord-rpc presence uses IPC only (no OS protocol client). Its optional register-scheme
+# fallback is an exotic native dependency for non-Electron runtimes, so omit it.
 blockExoticSubdeps: true
 ignoredOptionalDependencies:
   - register-scheme

@@ -112,7 +112,12 @@
 <script>
 (function () {
   var api = window.api && window.api.desktopLyrics;
-  if (!api) { console.error('desktopLyrics API not available'); return; }
+  if (!api) {
+    console.error('desktopLyrics API not available');
+    var contentMissing = document.getElementById('lyrics-content');
+    if (contentMissing) contentMissing.textContent = '桌面歌词加载失败：API 不可用';
+    return;
+  }
 
   // ── State ──
   var parsedLines = [];

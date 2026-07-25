@@ -54,6 +54,7 @@ export const runtime = {
   discordClient: null as DiscordRPC.Client | null,
   discordConnected: false,
   discordConnectAttempted: false,
+  discordLastError: null as string | null,
   discordReconnectTimer: null as NodeJS.Timeout | null,
   lastDiscordActivity: null as DiscordActivityData | null,
   coversMissingNotified: false,

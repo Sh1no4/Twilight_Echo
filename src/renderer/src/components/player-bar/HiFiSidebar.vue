@@ -39,6 +39,7 @@ export type StatusTone = 'success' | 'warning' | 'muted'
 export interface HiFiStatusChip {
   label: string
   tone?: StatusTone
+  title?: string
 }
 
 const props = defineProps<{
@@ -586,6 +587,7 @@ const deckAccentVars = computed(() => {
                   :key="chip.label"
                   class="deck-chip"
                   :data-tone="chip.tone || 'muted'"
+                  :title="chip.title || chip.label"
                 >
                   {{ chip.label }}
                 </span>

@@ -32,6 +32,41 @@
   background: var(--mini-background-fallback);
 }
 
+.mini-bootstrap-error {
+  position: absolute;
+  inset: 12px;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 0.9rem 1rem;
+  border-radius: 12px;
+  background: color-mix(in srgb, #0f172a 82%, transparent);
+  color: #f8fafc;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  -webkit-app-region: no-drag;
+}
+
+.mini-bootstrap-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.mini-bootstrap-actions button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  background: color-mix(in srgb, #7c4dff 88%, #fff);
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
 .mini-player-surface {
   position: relative;
   z-index: 1;

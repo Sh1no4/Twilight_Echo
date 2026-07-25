@@ -172,6 +172,27 @@ const selectedVst3Entry = computed(() => {
     ? (vst3Catalog.value?.entries.find((entry) => entry.id === catalogId) ?? null)
     : null
 })
+const vst3Helpers = computed(() => vst3Catalog.value?.helpers ?? null)
+const vst3HelpersReady = computed(() => {
+  if (typeof navigator !== 'undefined' && !/win/i.test(navigator.platform)) return false
+  if (!vst3Helpers.value) return true
+  return (
+    vst3Helpers.value.platformSupported &&
+    vst3Helpers.value.scannerPresent &&
+    vst3Helpers.value.hostPresent
+  )
+})
+const vst3HelpersNotice = computed(() => {
+  if (typeof navigator !== 'undefined' && !/win/i.test(navigator.platform)) {
+    return 'VST3 仅在 Windows x64 构建中提供。'
+  }
+  if (!vst3Helpers.value) return ''
+  if (!vst3Helpers.value.platformSupported) return 'VST3 仅在 Windows x64 构建中提供。'
+  if (!vst3Helpers.value.scannerPresent || !vst3Helpers.value.hostPresent) {
+    return '本构建未包含 VST3 扫描/宿主组件。开发环境请执行 pnpm run stage:vst3-msvc，或安装完整 Windows 签名包。'
+  }
+  return ''
+})
 const visibleVst3Parameters = computed(() =>
   (selectedVst3Entry.value?.parameters ?? []).filter((parameter) => (parameter.flags & 16) === 0)
 )
@@ -1086,6 +1107,11 @@ onBeforeUnmount(() => {
           <div v-if="state?.requiresPcmFallback && !state.dsdPcmFallbackApplied" class="dsd-notice">
             <i class="pi pi-info-circle"></i
             ><span>当前 DSD Direct/DoP 保持直通。应用 DSP 需要明确确认 PCM 回退。</span>
+          </div>
+
+          <div v-if="vst3HelpersNotice" class="dsd-notice" role="status">
+            <i class="pi pi-exclamation-triangle"></i>
+            <span>{{ vst3HelpersNotice }}</span>
           </div>
 
           <div class="graph-heading">
@@ -2365,7 +2391,12 @@ onBeforeUnmount(() => {
               >
                 <i class="pi pi-upload"></i>Import state
               </button>
-              <button type="button" class="icon-text-button" :disabled="busy" @click="scanVst3">
+              <button
+                type="button"
+                class="icon-text-button"
+                :disabled="busy || !vst3HelpersReady"
+                @click="scanVst3"
+              >
                 <i class="pi pi-search"></i>Scan VST3
               </button>
               <div

@@ -229,6 +229,7 @@ const restartReasons = ref<string[]>([])
 const loaded = ref(false)
 const loading = ref(false)
 const saving = ref(false)
+const lastSettingsError = ref<string | null>(null)
 const clearingCache = ref(false)
 const cacheSize = ref<number | null>(null)
 const clearingBpmAnalysisCache = ref(false)
@@ -417,6 +418,7 @@ export function useSettingsStore(): {
   loaded: Ref<boolean>
   loading: Ref<boolean>
   saving: Ref<boolean>
+  lastSettingsError: Ref<string | null>
   clearingCache: Ref<boolean>
   cacheSize: Ref<number | null>
   formattedCacheSize: ComputedRef<string>
@@ -507,6 +509,7 @@ export function useSettingsStore(): {
       if (sequence === settingsUpdateSequence) {
         applySnapshot(snapshot)
       }
+      lastSettingsError.value = null
       return settings.value
     })
     settingsUpdateQueue = runUpdate.then(
@@ -515,6 +518,17 @@ export function useSettingsStore(): {
     )
     try {
       return await runUpdate
+    } catch (error) {
+      lastSettingsError.value = error instanceof Error ? error.message : String(error)
+      try {
+        const snapshot = await window.api.settings.get()
+        if (sequence === settingsUpdateSequence) {
+          applySnapshot(snapshot)
+        }
+      } catch {
+        // Keep optimistic state if reload also fails; caller still sees the error.
+      }
+      throw error
     } finally {
       pendingSettingsUpdates = Math.max(0, pendingSettingsUpdates - 1)
       saving.value = pendingSettingsUpdates > 0
@@ -632,6 +646,7 @@ export function useSettingsStore(): {
     loaded,
     loading,
     saving,
+    lastSettingsError,
     clearingCache,
     cacheSize,
     formattedCacheSize,

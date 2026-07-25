@@ -7,7 +7,8 @@ main process, so the timer state remains observable while the renderer is restar
 The default duration and fade-out time are configured in Settings > Playback. Duration is
 limited to 1-720 minutes and fade-out to 0-120 seconds. A fade temporarily lowers the
 application volume, stops playback, then restores the selected volume for the next manual
-playback. Cancelling a timer leaves playback unchanged and reports the cancellation in the
+playback. If the player is already muted (or volume is 0), fade ends immediately without an
+audible ramp. Cancelling a timer leaves playback unchanged and reports the cancellation in the
 PlayerBar.
 
 The PlayerBar mute button saves the last audible application volume. Clicking it again, or

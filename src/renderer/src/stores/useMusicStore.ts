@@ -598,6 +598,16 @@ export function useMusicStore(): {
       if (!excludedPaths.has(normalizePortableLibraryPath(track.filePath))) nextTracks.push(track)
     }
 
+    if (removedPaths.size > 0 || excludedPaths.size > 0) {
+      const removedIds = tracks.value
+        .filter((track) => {
+          const key = normalizePortableLibraryPath(track.filePath)
+          return removedPaths.has(key) || excludedPaths.has(key)
+        })
+        .map((track) => track.id)
+      notifyLocalTracksUnavailable(removedIds, [...removedPaths, ...excludedPaths])
+    }
+
     const changed =
       nextTracks.length !== tracks.value.length ||
       nextTracks.some((track, index) => track !== tracks.value[index])
@@ -737,6 +747,7 @@ export function useMusicStore(): {
     trackByPath.delete(track.filePath)
     trackById.delete(id)
     setTracks(tracks.value.filter((t) => t.id !== id))
+    notifyLocalTracksUnavailable([id], track.filePath ? [track.filePath] : [])
     scheduleRebuild()
   }
 

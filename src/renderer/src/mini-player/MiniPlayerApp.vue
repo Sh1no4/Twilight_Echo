@@ -19,6 +19,7 @@ import { useMiniPlayerCustomizationDraft } from './useMiniPlayerCustomizationDra
 
 const state = ref<MiniPlayerStateSnapshot>({ ...EMPTY_MINI_PLAYER_STATE })
 const ready = ref(false)
+const bootstrapError = ref('')
 const coverFailed = ref(false)
 const customizerOpen = ref(false)
 const viewportWidth = ref(Math.max(1, window.innerWidth))
@@ -260,18 +261,24 @@ onMounted(async () => {
   window.addEventListener('resize', updateViewportSize)
   updateViewportSize()
 
+  await loadBootstrap()
+})
+
+async function loadBootstrap(): Promise<void> {
+  bootstrapError.value = ''
   try {
     const bootstrap = await window.api.miniPlayer.getBootstrap()
     state.value = bootstrap.state
     customization.acceptConfirmed(bootstrap.settings)
   } catch (error) {
     console.error('[mini-player] Failed to load initial state:', error)
+    bootstrapError.value = error instanceof Error ? error.message : String(error)
   } finally {
     requestAnimationFrame(() => {
       ready.value = true
     })
   }
-})
+}
 
 watch(
   () => state.value.track?.cover,
@@ -308,6 +315,14 @@ onBeforeUnmount(() => {
     <section class="mini-player-surface">
       <div class="mini-background-source" :style="backgroundSourceStyle" aria-hidden="true"></div>
       <div class="mini-background-overlay" aria-hidden="true"></div>
+
+      <div v-if="bootstrapError" class="mini-bootstrap-error" role="alert">
+        <p>迷你播放器加载失败：{{ bootstrapError }}</p>
+        <div class="mini-bootstrap-actions">
+          <button type="button" @click="loadBootstrap">重试</button>
+          <button type="button" @click="returnToMainWindow">回主窗口</button>
+        </div>
+      </div>
 
       <span class="mini-drag-hint" aria-hidden="true"></span>
 

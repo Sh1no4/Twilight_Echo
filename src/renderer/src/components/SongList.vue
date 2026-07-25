@@ -766,6 +766,14 @@ async function runLocalLibraryRemoval(mode: 'library' | 'trash'): Promise<void> 
   const selected = selectLocalLibraryActionTracks(getSelectedTracks())
   if (selected.length === 0) return
   if (
+    mode === 'library' &&
+    !window.confirm(
+      `确定从音乐库移除选中的 ${selected.length} 首？\n文件仍保留在磁盘，不会删除；可在「已从音乐库移除」中恢复。`
+    )
+  ) {
+    return
+  }
+  if (
     mode === 'trash' &&
     !window.confirm(
       `确定将选中的 ${selected.length} 个本地文件移到系统回收站吗？失败的文件会继续保留在音乐库中。`

@@ -28,6 +28,7 @@ import {
   importDspProfileArchive
 } from '../dsp/dspProfileArchive.ts'
 import { Vst3CatalogService } from '../dsp/vst3Catalog.ts'
+import { rendererFallbackAllowed } from './nativeBinding.ts'
 import {
   persistAudioOutputState,
   persistAudioOutputConfig,
@@ -361,6 +362,11 @@ export async function setupAudioEngineIpc(): Promise<void> {
       ),
       normalizeFiniteNumber(startTime, 'start time', 0, 0, Number.MAX_SAFE_INTEGER)
     )
+  })
+
+  ipcMain.handle('audioEngine:isHtmlAudioFallbackAllowed', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
+    return rendererFallbackAllowed()
   })
 
   ipcMain.handle('audioEngine:togglePause', async (event) => {
@@ -878,12 +884,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     )
   })
 
-  runtime.audioEngineManager
-    .start()
-    .then(() => {
-      console.log('原生音频引擎已启动')
-    })
-    .catch((err: Error) => {
-      console.error('原生音频引擎启动失败：', err.message)
-    })
+  runtime.audioEngineManager.start().catch((err: Error) => {
+    console.error('原生音频引擎启动失败：', err.message)
+  })
 }
