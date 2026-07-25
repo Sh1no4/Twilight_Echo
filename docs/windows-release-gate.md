@@ -253,3 +253,8 @@ Product honesty surfaces (`Loudnorm`, `Gapless Album`, `Unity Volume`) are alway
 `pnpm run smoke:audio-evidence` and default to `not-run` until a maintainer records evidence.
 They do **not** gate `coverage.complete` (still 5/5 hardware surfaces). See
 `docs/audio-smoke-evidence.md`.
+
+Release candidates that only run `test:no-real-device` (or equivalent software gates) must keep
+real-device smoke and product honesty surfaces as **`not-run`**. Controlled-pump CTest is not
+hardware smoke and must not be substituted for WASAPI Exclusive / ASIO / DoP / Native DSD /
+SACD ISO evidence.

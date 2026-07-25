@@ -510,12 +510,12 @@ function playQueueEntry(queueEntryId: string): void {
 
 function savePlaybackQueue(): void {
   const playlistId = saveAsPlaylist(queuePlaylistName.value)
-  queueDrawerNotice.value = playlistId ? 'Queue saved' : 'Enter a playlist name'
+  queueDrawerNotice.value = playlistId ? '队列已保存' : '请输入歌单名称'
 }
 
 function clearPlaybackQueueFromDrawer(): void {
   clearPlaybackQueue()
-  queueDrawerNotice.value = 'Queue cleared'
+  queueDrawerNotice.value = '队列已清空'
 }
 
 function dismissAllFloatingPanels(): void {
@@ -1021,21 +1021,21 @@ onMounted(() => {
               <span class="playlist-heading-subtitle">当前队列</span>
             </div>
           </div>
-          <span class="playlist-count">{{ queue.length }} tracks</span>
+          <span class="playlist-count">{{ queue.length }} 首</span>
         </div>
-        <div class="playlist-actions" aria-label="Queue actions">
+        <div class="playlist-actions" aria-label="队列操作">
           <label class="playlist-save-label">
-            <span class="sr-only">Playlist name</span>
+            <span class="sr-only">歌单名称</span>
             <input
               v-model="queuePlaylistName"
               type="text"
               maxlength="120"
-              placeholder="Playlist name"
+              placeholder="歌单名称"
             />
           </label>
           <button class="playlist-action-btn" type="button" @click="savePlaybackQueue">
             <i class="pi pi-save" aria-hidden="true"></i>
-            <span>Save queue</span>
+            <span>保存队列</span>
           </button>
           <button
             class="playlist-action-btn playlist-clear-btn"
@@ -1044,7 +1044,7 @@ onMounted(() => {
             @click="clearPlaybackQueueFromDrawer"
           >
             <i class="pi pi-trash" aria-hidden="true"></i>
-            <span>Clear</span>
+            <span>清空</span>
           </button>
           <span class="playlist-action-notice" role="status">{{ queueDrawerNotice }}</span>
         </div>
@@ -1066,7 +1066,7 @@ onMounted(() => {
                 tabindex="0"
                 draggable="true"
                 :aria-current="item.index === queueIndex ? 'true' : undefined"
-                :aria-label="`${item.title} by ${item.artist}`"
+                :aria-label="`${item.title} - ${item.artist}`"
                 @click="playQueueEntry(item.queueEntryId)"
                 @keydown.enter.prevent="playQueueEntry(item.queueEntryId)"
                 @keydown.space.prevent="playQueueEntry(item.queueEntryId)"
@@ -1079,8 +1079,8 @@ onMounted(() => {
                   class="playlist-drag-handle"
                   type="button"
                   tabindex="-1"
-                  aria-label="Drag to reorder"
-                  title="Drag to reorder"
+                  aria-label="拖动排序"
+                  title="拖动排序"
                   @click.stop
                 >
                   <i class="pi pi-bars" aria-hidden="true"></i>
@@ -1106,24 +1106,24 @@ onMounted(() => {
                 <div class="playlist-row-actions" @click.stop>
                   <button
                     type="button"
-                    title="Play next"
-                    :aria-label="`Play ${item.title} next`"
+                    title="下一首播放"
+                    :aria-label="`将 ${item.title} 设为下一首`"
                     @click="playQueueEntryNext(item.queueEntryId)"
                   >
                     <i class="pi pi-step-forward" aria-hidden="true"></i>
                   </button>
                   <button
                     type="button"
-                    title="Add to queue tail"
-                    :aria-label="`Add ${item.title} to queue tail`"
+                    title="添加到队尾"
+                    :aria-label="`将 ${item.title} 添加到队尾`"
                     @click="addQueueEntryToTail(item.queueEntryId)"
                   >
                     <i class="pi pi-plus" aria-hidden="true"></i>
                   </button>
                   <button
                     type="button"
-                    title="Remove from queue"
-                    :aria-label="`Remove ${item.title} from queue`"
+                    title="从队列移除"
+                    :aria-label="`从队列移除 ${item.title}`"
                     @click="removeQueueEntry(item.queueEntryId)"
                   >
                     <i class="pi pi-times" aria-hidden="true"></i>
@@ -1190,6 +1190,8 @@ onMounted(() => {
           <div
             v-if="audioEngineRecoveryNotice"
             class="player-playback-diagnostic recovery"
+            role="status"
+            aria-live="polite"
             :title="audioEngineRecoveryNotice.message"
           >
             <span>{{ audioEngineRecoveryNotice.message }}</span>
@@ -1301,6 +1303,7 @@ onMounted(() => {
         <button
           class="ctrl-btn mode-btn-right player-misc-icon"
           :title="modeTitle"
+          :aria-label="modeTitle"
           @click="cyclePlayMode"
         >
           <img v-if="playMode === 'sequential'" :src="sequentialIcon" alt="顺序" />
@@ -1321,6 +1324,7 @@ onMounted(() => {
                   max="1"
                   step="0.01"
                   class="volume-drawer-slider"
+                  aria-label="音量"
                   :style="{ '--range-value': `${volume * 100}%` }"
                   @input="onVolumeInput"
                 />
@@ -1343,6 +1347,7 @@ onMounted(() => {
             class="icon-btn"
             :class="{ active: volumeOpen }"
             title="音量"
+            aria-label="音量"
             @click="toggleVolume"
           >
             <i :class="muted || volume <= 0.001 ? 'pi pi-volume-off' : 'pi pi-volume-up'"></i>
@@ -1353,6 +1358,7 @@ onMounted(() => {
           class="icon-btn track-menu-button"
           :class="{ active: playlistOpen }"
           title="播放列表"
+          aria-label="播放列表"
           @click="togglePlaylist"
         >
           <i class="pi pi-list"></i>

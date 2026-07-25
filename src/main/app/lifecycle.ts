@@ -130,6 +130,7 @@ export function startApp(): void {
       }
     ])
 
+    // Focus-only: no OS protocol client / argv deep links (see AGENTS.md).
     app.on('second-instance', () => {
       if (runtime.miniPlayerWindow && !runtime.miniPlayerWindow.isDestroyed()) {
         restoreMainWindowFromMiniPlayer()

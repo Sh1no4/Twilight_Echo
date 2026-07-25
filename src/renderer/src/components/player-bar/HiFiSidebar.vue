@@ -1401,7 +1401,9 @@ const deckAccentVars = computed(() => {
                   添加
                 </button>
               </div>
-              <p v-if="bookmarkList.length === 0" class="deck-note">暂无书签</p>
+              <p v-if="bookmarkList.length === 0" class="deck-note">
+                {{ isLiveStream ? '直播流不支持书签' : '暂无书签，点击右侧「添加」标记当前位置' }}
+              </p>
               <ul v-else class="deck-bookmark-list">
                 <li v-for="bm in bookmarkList" :key="bm.id" class="deck-bookmark-item">
                   <button type="button" class="deck-bookmark-jump" @click="emit('jumpBookmark', bm)">

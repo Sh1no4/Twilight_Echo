@@ -356,7 +356,16 @@ onUnmounted(() => {
           <!-- Empty state -->
           <div v-if="filteredInstalled.length === 0" style="text-align: center; padding: 60px 20px; color: var(--te-neutral-400, #9ca3af); font-size: 14px;">
             <i class="pi pi-inbox" style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3;"></i>
-            {{ searchText ? '没有匹配的插件' : '暂无已安装插件' }}
+            <p>{{ searchText ? '没有匹配的插件' : '暂无已安装插件' }}</p>
+            <button
+              v-if="!searchText"
+              type="button"
+              class="btn btn-outline"
+              style="margin-top: 16px;"
+              @click="switchTab('discover')"
+            >
+              去发现插件
+            </button>
           </div>
 
           <div class="plugin-grid" v-else>

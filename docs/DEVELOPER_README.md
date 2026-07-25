@@ -150,6 +150,9 @@ pnpm install --frozen-lockfile
 `ignoredOptionalDependencies` 只排除这个 fallback，并保持 `blockExoticSubdeps: true`。
 `pnpm run verify:install-policy` 会确认该包未安装且 `discord-rpc` 在普通 Node.js 环境安全降级。
 
+第二实例（`second-instance`）仅恢复/聚焦主窗口或迷你播放器，**不**解析 `commandLine` /
+自定义 URL 深链。在产品明确实现协议客户端之前，argv 交接为 N/A。
+
 仓库内字体均为已转换并提交的 `.woff2` 资源，构建和打包不执行字体转换。不要为了安装时
 生成字体重新引入 native converter；若未来需要重建字体资产，必须提供独立、可验证的
 转换脚本和跨平台 fallback。
