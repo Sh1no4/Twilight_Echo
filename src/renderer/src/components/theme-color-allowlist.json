@@ -1,7 +1,7 @@
 {
   "src/renderer/src/App.vue": 5,
   "src/renderer/src/components/AudioVisualizerPanel.vue": 2,
-  "src/renderer/src/components/DspRackPage.vue": 84,
+  "src/renderer/src/components/DspRackPage.vue": 62,
   "src/renderer/src/components/EqualizerPage.vue": 50,
   "src/renderer/src/components/ImportDialog.vue": 31,
   "src/renderer/src/components/LocalDashboard.css": 119,
