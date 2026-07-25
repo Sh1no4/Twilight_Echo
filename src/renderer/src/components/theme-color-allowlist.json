@@ -6,7 +6,7 @@
   "src/renderer/src/components/ImportDialog.vue": 31,
   "src/renderer/src/components/LocalDashboard.css": 119,
   "src/renderer/src/components/LocalLibraryTagManager.vue": 24,
-  "src/renderer/src/components/LoginPage.vue": 51,
+  "src/renderer/src/components/LoginPage.vue": 45,
   "src/renderer/src/components/player-bar/HiFiSidebar.vue": 50,
   "src/renderer/src/components/player-bar/LyricsManagerPanel.vue": 21,
   "src/renderer/src/components/player-bar/PlayerBar.css": 322,
