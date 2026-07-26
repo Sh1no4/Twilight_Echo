@@ -119,6 +119,11 @@ const greeting = computed(() => {
   return '晚上好'
 })
 
+const dateKicker = computed(() => {
+  const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+  return `${now.value.getMonth() + 1}月${now.value.getDate()}日 · ${weekdays[now.value.getDay()]}`
+})
+
 const hasLibrary = computed(() => tracks.value.length > 0)
 
 const totalDurationText = computed(() => {
@@ -860,293 +865,284 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
     </div>
 
     <main class="home-inner">
+      <!-- ── Masthead ─────────────────────────────────────────────────── -->
       <header class="masthead">
         <div class="masthead-copy">
-          <h1 class="greeting">{{ greeting }}，<span>让熟悉的旋律陪你一会儿。</span></h1>
+          <p class="masthead-kicker">{{ dateKicker }} · 本地音乐库</p>
+          <h1 class="masthead-title">{{ greeting }}</h1>
+          <p class="masthead-sub">让熟悉的旋律，陪你度过此刻。</p>
         </div>
-        <button v-if="hasLibrary" class="shuffle-shortcut" @click="shuffleAll">
-          <span class="shuffle-icon"><i class="ph ph-shuffle"></i></span>
-          <span>
+        <button v-if="hasLibrary" type="button" class="masthead-shuffle" @click="shuffleAll">
+          <span class="masthead-shuffle-icon" aria-hidden="true"
+            ><i class="ph ph-shuffle"></i
+          ></span>
+          <span class="masthead-shuffle-copy">
             <strong>随机漫游</strong>
-            <small>从音乐库里随便挑一首</small>
+            <small>从 {{ tracks.length }} 首收藏里抽一首</small>
           </span>
-          <i class="ph ph-arrow-up-right"></i>
+          <i class="ph ph-arrow-up-right masthead-shuffle-arrow" aria-hidden="true"></i>
         </button>
       </header>
 
-      <section v-if="!hasLibrary" class="empty-state">
-        <div class="empty-visual" aria-hidden="true">
-          <span class="empty-record"><i class="ph ph-music-note"></i></span>
-          <span class="empty-sleeve"></span>
-          <i class="ph ph-sparkle empty-sparkle sparkle-a"></i>
-          <i class="ph ph-sparkle empty-sparkle sparkle-b"></i>
-        </div>
-        <div class="empty-copy">
-          <h2>这里还很安静</h2>
-          <p>添加本地音乐文件夹后，封面、专辑和听歌足迹都会自动在这里汇聚。</p>
-          <div class="empty-actions">
-            <button type="button" class="empty-primary-button" @click="emit('open-library-settings')">
-              <i class="ph ph-folder-simple-plus"></i>
-              添加音乐库文件夹
-            </button>
-          </div>
-          <div class="empty-features">
-            <span><i class="ph ph-folder-simple-plus"></i> 批量扫描</span>
-            <span><i class="ph ph-disc"></i> 无损格式</span>
-            <span><i class="ph ph-chart-line-up"></i> 聆听统计</span>
-          </div>
+      <!-- ── Empty library ────────────────────────────────────────────── -->
+      <section v-if="!hasLibrary" class="empty-stage">
+        <div class="empty-orb empty-orb-a" aria-hidden="true"></div>
+        <div class="empty-orb empty-orb-b" aria-hidden="true"></div>
+        <span class="empty-badge" aria-hidden="true"><i class="ph ph-music-note"></i></span>
+        <p class="empty-kicker">Twilight Echo · 唱片房间</p>
+        <h2 class="empty-title">这里还很安静</h2>
+        <p class="empty-desc">
+          添加本地音乐文件夹后，封面、专辑与听歌足迹会自动在这里生长成你的唱片房间。
+        </p>
+        <button type="button" class="empty-cta" @click="emit('open-library-settings')">
+          <i class="ph ph-folder-simple-plus"></i>
+          添加音乐库文件夹
+        </button>
+        <div class="empty-chips" aria-hidden="true">
+          <span><i class="ph ph-folder-simple-plus"></i> 批量扫描</span>
+          <span><i class="ph ph-disc"></i> 无损格式</span>
+          <span><i class="ph ph-chart-line-up"></i> 聆听统计</span>
         </div>
       </section>
 
       <template v-else>
-        <section class="hero-grid" aria-label="音乐库概览">
-          <article class="feature-card">
-            <div :key="`bg:${heroCoverKey}`" class="feature-backdrop" aria-hidden="true">
-              <CoverImg
-                v-if="heroTrack?.cover || heroTrack?.coverSource"
-                :cover="heroTrack?.cover"
-                :cover-source="heroTrack?.coverSource"
-                :identity="heroTrack?.id"
-                :fallback="DEFAULT_COVER"
-                alt=""
-              />
-              <img v-else :src="DEFAULT_COVER" alt="" />
-            </div>
-            <div class="feature-glow" aria-hidden="true"></div>
+        <!-- ── Hero: now playing / last played ────────────────────────── -->
+        <section class="feature-card" aria-label="正在收听">
+          <div :key="`bg:${heroCoverKey}`" class="feature-backdrop" aria-hidden="true">
+            <CoverImg
+              v-if="heroTrack?.cover || heroTrack?.coverSource"
+              :cover="heroTrack?.cover"
+              :cover-source="heroTrack?.coverSource"
+              :identity="heroTrack?.id"
+              :fallback="DEFAULT_COVER"
+              alt=""
+            />
+            <img v-else :src="DEFAULT_COVER" alt="" />
+          </div>
 
-            <div class="feature-layout">
-              <div class="feature-copy">
-                <span class="hero-eyebrow">
-                  <span v-if="heroIsCurrent && isPlaying" class="eq" aria-hidden="true">
-                    <i></i><i></i><i></i>
-                  </span>
-                  <i v-else class="ph ph-clock-counter-clockwise"></i>
-                  {{ heroLabel }}
+          <div class="hero-inner">
+            <div class="hero-copy">
+              <span class="hero-eyebrow">
+                <span v-if="heroIsCurrent && isPlaying" class="eq" aria-hidden="true">
+                  <i></i><i></i><i></i>
                 </span>
+                <i v-else class="ph ph-clock-counter-clockwise" aria-hidden="true"></i>
+                {{ heroLabel }}
+              </span>
 
-                <div class="hero-heading">
-                  <h2>{{ nowPlayingTitle }}</h2>
-                  <p>{{ heroTrack?.artist || '未知艺术家' }}</p>
-                </div>
+              <h2 class="hero-title">{{ nowPlayingTitle }}</h2>
+              <p class="hero-artist">{{ heroTrack?.artist || '未知艺术家' }}</p>
+              <p class="hero-meta">
+                <i class="ph ph-disc" aria-hidden="true"></i>
+                {{ heroMeta || '本地音乐' }}
+              </p>
 
-                <div class="hero-meta-row">
-                  <span><i class="ph ph-disc"></i> {{ heroMeta || '本地音乐' }}</span>
-                </div>
-
-                <div v-if="heroIsCurrent" class="hero-progress">
-                  <button
-                    class="hero-progress-track"
-                    title="点击跳转播放进度"
-                    aria-label="播放进度"
-                    @click="handleHeroSeek"
-                  >
-                    <span :style="{ width: progressWidth }"></span>
-                  </button>
-                  <div class="hero-time">
-                    <span>{{ formatTime(currentTime) }}</span>
-                    <span>{{ formatTime(duration) }}</span>
-                  </div>
-                </div>
-
-                <div v-if="heroIsCurrent" class="transport-controls">
-                  <button class="transport-button" title="上一首" aria-label="上一首" @click="prev">
-                    <i class="ph ph-skip-back"></i>
-                  </button>
-                  <button
-                    class="transport-button transport-play"
-                    :title="isPlaying ? '暂停' : '播放'"
-                    :aria-label="isPlaying ? '暂停' : '播放'"
-                    @click="togglePlay"
-                  >
-                    <i :class="isPlaying ? 'ph ph-pause' : 'ph ph-play'"></i>
-                  </button>
-                  <button class="transport-button" title="下一首" aria-label="下一首" @click="next">
-                    <i class="ph ph-skip-forward"></i>
-                  </button>
-                  <button class="hero-secondary-action" @click="shuffleAll">
-                    <i class="ph ph-shuffle"></i>
-                    随机畅听
-                  </button>
-                </div>
-
-                <div v-else class="transport-controls">
-                  <button class="hero-primary-action" @click="handleHeroPlay">
-                    <i class="ph ph-play"></i>
-                    播放这首
-                  </button>
-                  <button class="hero-secondary-action" @click="shuffleAll">
-                    <i class="ph ph-shuffle"></i>
-                    随机畅听
-                  </button>
+              <div v-if="heroIsCurrent" class="hero-progress">
+                <button
+                  class="hero-progress-track"
+                  title="点击跳转播放进度"
+                  aria-label="播放进度"
+                  @click="handleHeroSeek"
+                >
+                  <span :style="{ width: progressWidth }"></span>
+                </button>
+                <div class="hero-time">
+                  <span>{{ formatTime(currentTime) }}</span>
+                  <span>{{ formatTime(duration) }}</span>
                 </div>
               </div>
 
-              <div :key="`art:${heroCoverKey}`" class="hero-art" aria-hidden="true">
-                <div class="hero-vinyl" :class="{ spinning: heroIsCurrent && isPlaying }">
-                  <CoverImg
-                    v-if="heroTrack?.cover || heroTrack?.coverSource"
-                    :cover="heroTrack?.cover"
-                    :cover-source="heroTrack?.coverSource"
-                    :identity="heroTrack?.id"
-                    :fallback="DEFAULT_COVER"
-                    alt=""
-                  />
-                  <img v-else :src="DEFAULT_COVER" alt="" />
-                  <span></span>
-                </div>
-                <div class="hero-sleeve">
-                  <CoverImg
-                    v-if="heroTrack?.cover || heroTrack?.coverSource"
-                    :cover="heroTrack?.cover"
-                    :cover-source="heroTrack?.coverSource"
-                    :identity="heroTrack?.id"
-                    :fallback="DEFAULT_COVER"
-                    alt=""
-                  />
-                  <img v-else :src="DEFAULT_COVER" alt="" />
-                  <span class="sleeve-shine"></span>
-                </div>
+              <div v-if="heroIsCurrent" class="hero-actions">
+                <button
+                  type="button"
+                  class="transport-button"
+                  title="上一首"
+                  aria-label="上一首"
+                  @click="prev"
+                >
+                  <i class="ph ph-skip-back"></i>
+                </button>
+                <button
+                  type="button"
+                  class="transport-button transport-play"
+                  :title="isPlaying ? '暂停' : '播放'"
+                  :aria-label="isPlaying ? '暂停' : '播放'"
+                  @click="togglePlay"
+                >
+                  <i :class="isPlaying ? 'ph ph-pause' : 'ph ph-play'"></i>
+                </button>
+                <button
+                  type="button"
+                  class="transport-button"
+                  title="下一首"
+                  aria-label="下一首"
+                  @click="next"
+                >
+                  <i class="ph ph-skip-forward"></i>
+                </button>
+                <button type="button" class="hero-ghost-action" @click="shuffleAll">
+                  <i class="ph ph-shuffle"></i>
+                  随机畅听
+                </button>
+              </div>
+
+              <div v-else class="hero-actions">
+                <button type="button" class="hero-primary-action" @click="handleHeroPlay">
+                  <i class="ph ph-play"></i>
+                  播放这首
+                </button>
+                <button type="button" class="hero-ghost-action" @click="shuffleAll">
+                  <i class="ph ph-shuffle"></i>
+                  随机畅听
+                </button>
               </div>
             </div>
-          </article>
 
-          <div class="summary-stack">
-            <aside class="overview-card surface-card">
-              <div class="compact-card-head">
-                <div>
-                  <h2>收藏概览</h2>
-                </div>
-                <button
-                  class="round-link"
-                  title="查看全部歌曲"
-                  aria-label="查看全部歌曲"
-                  @click="emit('select-view', 'allSongs', null)"
-                >
-                  <i class="ph ph-arrow-up-right"></i>
-                </button>
-              </div>
-
-              <div class="overview-grid">
-                <button class="overview-stat" @click="emit('select-view', 'allSongs', null)">
-                  <span class="stat-icon"><i class="ph ph-music-notes-simple"></i></span>
-                  <strong>{{ tracks.length }}</strong>
-                  <small>首歌曲</small>
-                </button>
-                <button class="overview-stat" @click="emit('select-view', 'albums', null)">
-                  <span class="stat-icon"><i class="ph ph-disc"></i></span>
-                  <strong>{{ albums.length }}</strong>
-                  <small>张专辑</small>
-                </button>
-                <button class="overview-stat" @click="emit('select-view', 'artists', null)">
-                  <span class="stat-icon"><i class="ph ph-microphone-stage"></i></span>
-                  <strong>{{ artists.length }}</strong>
-                  <small>位艺术家</small>
-                </button>
-                <div class="overview-stat is-static">
-                  <span class="stat-icon"><i class="ph ph-clock"></i></span>
-                  <strong>{{ totalDurationText }}</strong>
-                  <small>收藏时长</small>
-                </div>
-              </div>
-            </aside>
-
-            <aside
-              class="signal-card surface-card"
-              role="button"
-              tabindex="0"
-              aria-label="打开实时 DSP 输出线路"
-              @click="openDspRouteDialog"
-              @keydown.enter.prevent="openDspRouteDialog"
-              @keydown.space.prevent="openDspRouteDialog"
-            >
-              <div class="signal-head">
-                <div>
-                  <h2>播放链路</h2>
-                  <small>{{ activeDspSceneName }}</small>
-                </div>
-                <div class="signal-head-state">
-                  <span class="dsp-state" :class="{ on: dspEngineOn, live: dspProcessingActive }">
-                    <span class="dsp-state-dot" aria-hidden="true"></span>
-                    {{ dspStatusText }}
-                  </span>
-                  <i class="ph ph-caret-right" aria-hidden="true"></i>
-                </div>
-              </div>
-
-              <div class="signal-summary">
-                <span><i class="ph ph-stack"></i>{{ enabledDspCount }} 个启用阶段</span>
-                <span><i class="ph ph-timer"></i>{{ dspGraphLatencyMs.toFixed(2) }} ms</span>
-              </div>
-
-              <div class="dsp-route-strip is-compact">
-                <div class="route-stage route-endpoint-stage" title="播放源">
-                  <span class="route-stage-icon"><i class="ph ph-music-notes"></i></span>
-                  <div class="route-stage-copy">
-                    <small>SOURCE</small>
-                    <strong>{{ dspSourceDetail }}</strong>
-                  </div>
-                </div>
-
-                <template v-for="stage in dspRouteStages" :key="stage.id">
-                  <span
-                    class="route-connector"
-                    :class="{ active: stage.active || dspProcessingActive }"
-                    aria-hidden="true"
-                  ></span>
-                  <div
-                    class="route-stage"
-                    :class="[`is-${stage.state}`, { 'is-active': stage.active }]"
-                    :title="`${stage.label} · ${stage.stateLabel} · ${stage.detail}`"
-                  >
-                    <span class="route-stage-icon"><i :class="stage.icon"></i></span>
-                    <div class="route-stage-copy">
-                      <small>{{ stage.shortLabel }}</small>
-                      <strong>{{ stage.detail }}</strong>
-                    </div>
-                  </div>
-                </template>
-
-                <span
-                  class="route-connector"
-                  :class="{ active: playbackInfo?.state === 'playing' }"
-                  aria-hidden="true"
-                ></span>
-                <div class="route-stage route-endpoint-stage is-output" title="实际输出">
-                  <span class="route-stage-icon"><i class="ph ph-speaker-hifi"></i></span>
-                  <div class="route-stage-copy">
-                    <small>OUTPUT</small>
-                    <strong>{{ dspOutputDetail }}</strong>
-                  </div>
-                </div>
-              </div>
-
-              <div class="signal-foot">
-                <span>{{ dspOutputDeviceDetail }}</span>
-                <strong>{{ activeDspCount }}/{{ dspRouteStages.length }} LIVE</strong>
-              </div>
-            </aside>
+            <div :key="`art:${heroCoverKey}`" class="hero-art" aria-hidden="true">
+              <span class="hero-art-echo"></span>
+              <span class="hero-art-frame" :class="{ 'is-live': heroIsCurrent && isPlaying }">
+                <CoverImg
+                  v-if="heroTrack?.cover || heroTrack?.coverSource"
+                  :cover="heroTrack?.cover"
+                  :cover-source="heroTrack?.coverSource"
+                  :identity="heroTrack?.id"
+                  :fallback="DEFAULT_COVER"
+                  alt=""
+                />
+                <img v-else :src="DEFAULT_COVER" alt="" />
+                <span v-if="heroTrack?.format" class="hero-format">{{
+                  heroTrack.format.toUpperCase()
+                }}</span>
+              </span>
+            </div>
           </div>
         </section>
 
-        <section class="content-section recent-section">
-          <div class="section-head modern-section-head">
-            <div class="section-heading-copy">
-              <h3>最近添加</h3>
-              <p>刚刚加入收藏的声音，值得先听一遍。</p>
+        <!-- ── Library figures ─────────────────────────────────────────── -->
+        <section class="figures" aria-label="音乐库一览">
+          <button type="button" class="figure" @click="emit('select-view', 'allSongs', null)">
+            <strong>{{ tracks.length }}</strong>
+            <span>首歌曲</span>
+            <i class="ph ph-arrow-up-right" aria-hidden="true"></i>
+          </button>
+          <span class="figure-sep" aria-hidden="true"></span>
+          <button type="button" class="figure" @click="emit('select-view', 'albums', null)">
+            <strong>{{ albums.length }}</strong>
+            <span>张专辑</span>
+            <i class="ph ph-arrow-up-right" aria-hidden="true"></i>
+          </button>
+          <span class="figure-sep" aria-hidden="true"></span>
+          <button type="button" class="figure" @click="emit('select-view', 'artists', null)">
+            <strong>{{ artists.length }}</strong>
+            <span>位艺术家</span>
+            <i class="ph ph-arrow-up-right" aria-hidden="true"></i>
+          </button>
+          <span class="figure-sep" aria-hidden="true"></span>
+          <div class="figure is-static">
+            <strong>{{ totalDurationText }}</strong>
+            <span>收藏总时长</span>
+          </div>
+        </section>
+
+        <!-- ── Live signal path ────────────────────────────────────────── -->
+        <section
+          class="signal-card"
+          role="button"
+          tabindex="0"
+          aria-label="打开实时 DSP 输出线路"
+          @click="openDspRouteDialog"
+          @keydown.enter.prevent="openDspRouteDialog"
+          @keydown.space.prevent="openDspRouteDialog"
+        >
+          <div class="signal-head">
+            <div class="signal-title">
+              <span class="signal-kicker">SIGNAL PATH</span>
+              <h2>播放链路</h2>
+              <small>{{ activeDspSceneName }}</small>
             </div>
-            <button class="link-all" @click="emit('select-view', 'allSongs', null)">
-              全部歌曲 <i class="ph ph-arrow-right"></i>
-            </button>
+            <div class="signal-head-state">
+              <span class="signal-summary">
+                <span><i class="ph ph-stack"></i>{{ enabledDspCount }} 个启用阶段</span>
+                <span><i class="ph ph-timer"></i>{{ dspGraphLatencyMs.toFixed(2) }} ms</span>
+              </span>
+              <span class="dsp-state" :class="{ on: dspEngineOn, live: dspProcessingActive }">
+                <span class="dsp-state-dot" aria-hidden="true"></span>
+                {{ dspStatusText }}
+              </span>
+              <i class="ph ph-caret-right signal-caret" aria-hidden="true"></i>
+            </div>
           </div>
 
-          <div class="recent-grid">
+          <div class="dsp-route-strip is-compact">
+            <div class="route-stage route-endpoint-stage" title="播放源">
+              <span class="route-stage-icon"><i class="ph ph-music-notes"></i></span>
+              <div class="route-stage-copy">
+                <small>SOURCE</small>
+                <strong>{{ dspSourceDetail }}</strong>
+              </div>
+            </div>
+
+            <template v-for="stage in dspRouteStages" :key="stage.id">
+              <span
+                class="route-connector"
+                :class="{ active: stage.active || dspProcessingActive }"
+                aria-hidden="true"
+              ></span>
+              <div
+                class="route-stage"
+                :class="[`is-${stage.state}`, { 'is-active': stage.active }]"
+                :title="`${stage.label} · ${stage.stateLabel} · ${stage.detail}`"
+              >
+                <span class="route-stage-icon"><i :class="stage.icon"></i></span>
+                <div class="route-stage-copy">
+                  <small>{{ stage.shortLabel }}</small>
+                  <strong>{{ stage.detail }}</strong>
+                </div>
+              </div>
+            </template>
+
+            <span
+              class="route-connector"
+              :class="{ active: playbackInfo?.state === 'playing' }"
+              aria-hidden="true"
+            ></span>
+            <div class="route-stage route-endpoint-stage is-output" title="实际输出">
+              <span class="route-stage-icon"><i class="ph ph-speaker-hifi"></i></span>
+              <div class="route-stage-copy">
+                <small>OUTPUT</small>
+                <strong>{{ dspOutputDetail }}</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="signal-foot">
+            <span>{{ dspOutputDeviceDetail }}</span>
+            <strong>{{ activeDspCount }}/{{ dspRouteStages.length }} LIVE</strong>
+          </div>
+        </section>
+
+        <!-- ── Recently added ──────────────────────────────────────────── -->
+        <section class="content-block">
+          <header class="block-head">
+            <div class="block-copy">
+              <h3>最近添加</h3>
+              <p>刚收进音乐库的声音，先听为敬。</p>
+            </div>
+            <button type="button" class="block-more" @click="emit('select-view', 'allSongs', null)">
+              全部歌曲
+              <i class="ph ph-arrow-right"></i>
+            </button>
+          </header>
+
+          <div class="fresh-grid">
             <button
               v-for="track in recentlyAdded"
               :key="track.id"
-              class="track-card"
+              type="button"
+              class="fresh-tile"
               @click="playDashboardTrack(track)"
             >
-              <span class="track-cover">
+              <span class="fresh-cover">
                 <CoverImg
                   :cover="track.cover"
                   :cover-source="track.coverSource"
@@ -1154,95 +1150,94 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
                   :fallback="DEFAULT_COVER"
                   :alt="track.title"
                 />
-                <span v-if="track.format" class="format-badge">{{
+                <span v-if="track.format" class="fresh-format">{{
                   track.format.toUpperCase()
                 }}</span>
-                <span class="track-play"><i class="ph ph-play"></i></span>
+                <span class="fresh-play" aria-hidden="true"><i class="ph ph-play"></i></span>
               </span>
-              <span class="track-card-copy">
-                <strong>{{ track.title }}</strong>
-                <small>{{ track.artist || '未知艺术家' }}</small>
-              </span>
+              <span class="fresh-name">{{ track.title }}</span>
+              <span class="fresh-artist">{{ track.artist || '未知艺术家' }}</span>
             </button>
           </div>
         </section>
 
-        <section class="content-section footprint-section">
-          <div class="section-head modern-section-head">
-            <div class="section-heading-copy">
+        <!-- ── Listening footprint ─────────────────────────────────────── -->
+        <section class="content-block">
+          <header class="block-head">
+            <div class="block-copy">
               <h3>聆听足迹</h3>
               <p>每一次重播，都在慢慢画出你的音乐偏好。</p>
             </div>
-            <button class="link-all" @click="emit('select-view', 'recent', null)">
-              最近播放 <i class="ph ph-arrow-right"></i>
+            <button type="button" class="block-more" @click="emit('select-view', 'recent', null)">
+              最近播放
+              <i class="ph ph-arrow-right"></i>
             </button>
-          </div>
+          </header>
 
-          <div class="insight-grid">
-            <article class="top-panel surface-card">
-              <div class="panel-head">
-                <div>
-                  <i class="ph ph-chart-bar"></i>
-                  <span>常听曲目</span>
-                </div>
+          <div class="footprint-grid">
+            <article class="chart-panel">
+              <header class="panel-head">
+                <span class="panel-kicker">TOP TRACKS</span>
                 <small>按累计聆听时长排序</small>
-              </div>
-              <div class="top-grid">
+              </header>
+              <div class="chart-list">
                 <button
                   v-for="(entry, index) in topTracks"
                   :key="entry.id"
-                  class="top-row"
+                  type="button"
+                  class="chart-row"
                   @click="playDashboardTrack(entry.track)"
                 >
-                  <span class="top-rank" :class="{ podium: index < 3 }">{{
+                  <span class="chart-rank" :class="{ 'is-podium': index < 3 }">{{
                     String(index + 1).padStart(2, '0')
                   }}</span>
-                  <CoverImg
-                    :cover="entry.track?.cover || entry.cover"
-                    :cover-source="entry.track?.coverSource || entry.coverSource"
-                    :identity="entry.track?.id || entry.id"
-                    :fallback="DEFAULT_COVER"
-                    :alt="entry.title"
-                    class="top-cover"
-                  />
-                  <span class="top-text">
-                    <span class="top-title">{{ entry.track?.title || entry.title }}</span>
-                    <span class="top-artist">{{
+                  <span class="chart-cover">
+                    <CoverImg
+                      :cover="entry.track?.cover || entry.cover"
+                      :cover-source="entry.track?.coverSource || entry.coverSource"
+                      :identity="entry.track?.id || entry.id"
+                      :fallback="DEFAULT_COVER"
+                      :alt="entry.title"
+                    />
+                  </span>
+                  <span class="chart-meta">
+                    <span class="chart-title">{{ entry.track?.title || entry.title }}</span>
+                    <span class="chart-sub">{{
                       entry.track?.artist || entry.artist || '未知艺术家'
                     }}</span>
-                    <span class="top-bar" aria-hidden="true">
-                      <span
-                        class="top-bar-fill"
-                        :style="{ width: statPercent(entry) + '%' }"
-                      ></span>
+                    <span class="chart-bar" aria-hidden="true">
+                      <span :style="{ width: statPercent(entry) + '%' }"></span>
                     </span>
                   </span>
-                  <span class="top-plays">{{ formatPlays(entry) }}</span>
+                  <span class="chart-plays">{{ formatPlays(entry) }}</span>
                 </button>
               </div>
             </article>
 
-            <aside class="cal-card surface-card">
-              <div class="cal-head">
-                <span class="cal-title">
-                  <i class="ph ph-calendar-heart"></i>
-                  听歌日历
-                </span>
+            <aside class="cal-panel">
+              <header class="panel-head">
+                <span class="panel-kicker">CALENDAR</span>
                 <div class="cal-nav">
-                  <button class="cal-nav-btn" title="上个月" @click="shiftCalMonth(-1)">
+                  <button
+                    type="button"
+                    class="cal-nav-btn"
+                    title="上个月"
+                    @click.stop="shiftCalMonth(-1)"
+                  >
                     <i class="ph ph-caret-left"></i>
                   </button>
                   <span class="cal-month">{{ calMonthLabel }}</span>
                   <button
+                    type="button"
                     class="cal-nav-btn"
                     title="下个月"
                     :disabled="calAtCurrentMonth"
-                    @click="shiftCalMonth(1)"
+                    @click.stop="shiftCalMonth(1)"
                   >
                     <i class="ph ph-caret-right"></i>
                   </button>
                 </div>
-              </div>
+              </header>
               <div class="cal-weekdays" aria-hidden="true">
                 <span v-for="weekday in CAL_WEEKDAYS" :key="weekday">{{ weekday }}</span>
               </div>
@@ -1272,34 +1267,35 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
           </div>
         </section>
 
-        <section v-if="albumShelf.length > 0" class="content-section album-section">
-          <div class="section-head modern-section-head">
-            <div class="section-heading-copy">
+        <!-- ── Album gallery ───────────────────────────────────────────── -->
+        <section v-if="albumShelf.length > 0" class="content-block">
+          <header class="block-head">
+            <div class="block-copy">
               <h3>专辑精选</h3>
               <p>从头到尾听完一张专辑，是留给音乐最温柔的时间。</p>
             </div>
-            <button class="link-all" @click="emit('select-view', 'albums', null)">
-              全部专辑 <i class="ph ph-arrow-right"></i>
+            <button type="button" class="block-more" @click="emit('select-view', 'albums', null)">
+              全部专辑
+              <i class="ph ph-arrow-right"></i>
             </button>
-          </div>
+          </header>
 
-          <div class="album-grid">
+          <div class="gallery-grid">
             <button
               v-for="album in albumShelf"
               :key="album.id"
-              class="album-tile"
+              type="button"
+              class="gallery-tile"
               @click="playAlbum(album)"
             >
-              <CoverImg :cover="album.cover" :fallback="DEFAULT_COVER" :alt="album.name" />
-              <span class="album-veil" aria-hidden="true"></span>
-              <span class="album-number">{{ String(album.trackCount).padStart(2, '0') }}</span>
-              <span class="album-text">
-                <span class="album-name">{{ album.name }}</span>
-                <span class="album-count"
-                  >{{ album.trackCount }} 首 · {{ album.artist || '未知艺术家' }}</span
-                >
+              <span class="gallery-cover">
+                <CoverImg :cover="album.cover" :fallback="DEFAULT_COVER" :alt="album.name" />
+                <span class="gallery-scrim" aria-hidden="true"></span>
+                <span class="gallery-count">{{ album.trackCount }} 首</span>
+                <span class="gallery-play" aria-hidden="true"><i class="ph ph-play"></i></span>
               </span>
-              <span class="album-play"><i class="ph ph-play"></i></span>
+              <span class="gallery-name">{{ album.name }}</span>
+              <span class="gallery-artist">{{ album.artist || '未知艺术家' }}</span>
             </button>
           </div>
         </section>

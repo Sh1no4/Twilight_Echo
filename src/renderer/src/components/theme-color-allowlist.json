@@ -4,7 +4,7 @@
   "src/renderer/src/components/DspRackPage.vue": 62,
   "src/renderer/src/components/EqualizerPage.vue": 50,
   "src/renderer/src/components/ImportDialog.vue": 31,
-  "src/renderer/src/components/LocalDashboard.css": 119,
+  "src/renderer/src/components/LocalDashboard.css": 11,
   "src/renderer/src/components/LocalLibraryTagManager.vue": 24,
   "src/renderer/src/components/LoginPage.vue": 45,
   "src/renderer/src/components/player-bar/HiFiSidebar.vue": 50,
