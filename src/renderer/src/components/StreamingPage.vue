@@ -1722,7 +1722,11 @@ const socialCollectionEmptyHint = computed(() => {
   return `${name} 目前没有公开创建的歌单`
 })
 
-function onSocialPersonClick(person: { id: string | number; name: string; picUrl?: string | null }): void {
+function onSocialPersonClick(person: {
+  id: string | number
+  name: string
+  picUrl?: string | null
+}): void {
   const user = detailUsers.value.find((item) => String(item.id) === String(person.id))
   if (user) void onUserClick(user)
 }
@@ -1925,7 +1929,9 @@ function convertAddToCreatePlaylist(): void {
   openCreateNcmPlaylistDialog(tracks)
 }
 
-async function confirmAddTracksToNcmPlaylist(playlist: MediaProviderPlaylistSummary): Promise<void> {
+async function confirmAddTracksToNcmPlaylist(
+  playlist: MediaProviderPlaylistSummary
+): Promise<void> {
   if (addToNcmPlaylistBusy.value) return
   const trackIds = addToNcmPlaylistTracks.value
     .map((track) => track.ncmSongId)
@@ -2222,6 +2228,7 @@ onMounted(async () => {
             v-for="item in sidebarItems"
             :key="item.key"
             class="streaming-menu-item"
+            data-te-interactive
             :class="{ active: isSidebarItemActive(item) }"
             @click="selectSidebarItem(item)"
           >
@@ -2231,7 +2238,11 @@ onMounted(async () => {
         </nav>
         <div class="streaming-sidebar-bottom">
           <div class="streaming-menu-separator"></div>
-          <div class="streaming-menu-item streaming-local-btn" @click="emit('backToLocal')">
+          <div
+            class="streaming-menu-item streaming-local-btn"
+            data-te-interactive
+            @click="emit('backToLocal')"
+          >
             <i class="streaming-menu-icon pi pi-desktop"></i>
             <span class="streaming-menu-label">本地模式</span>
           </div>
@@ -2258,7 +2269,11 @@ onMounted(async () => {
             <i class="pi pi-arrow-left"></i>
           </button>
           <div class="streaming-header-copy">
-            <div v-if="currentDetail || isSearching" class="streaming-header-kicker" aria-hidden="true">
+            <div
+              v-if="currentDetail || isSearching"
+              class="streaming-header-kicker"
+              aria-hidden="true"
+            >
               <span class="streaming-header-kicker-mark"></span>
               <span class="streaming-header-kicker-text">
                 {{ currentDetail ? '详情' : '搜索' }}
@@ -2327,6 +2342,7 @@ onMounted(async () => {
         <div class="search-type-group">
           <div
             class="search-tab-pill"
+            data-te-interactive
             :class="{
               active: searchType === 'songs',
               disabled: !availableSearchTypes.includes('songs')
@@ -2337,6 +2353,7 @@ onMounted(async () => {
           </div>
           <div
             class="search-tab-pill"
+            data-te-interactive
             :class="{
               active: searchType === 'playlists',
               disabled: !availableSearchTypes.includes('playlists')
@@ -2347,6 +2364,7 @@ onMounted(async () => {
           </div>
           <div
             class="search-tab-pill"
+            data-te-interactive
             :class="{
               active: searchType === 'artists',
               disabled: !availableSearchTypes.includes('artists')
@@ -2443,9 +2461,12 @@ onMounted(async () => {
             :recs-error="recsError"
             :rec-sections="recSections"
             :recommend-playlists="recommendPlaylists"
+            :current-track-id="currentTrack?.id ?? null"
             @load-recommendations="loadRecommendations"
             @open-rec-section="openRecSection"
             @open-playlist="openPlaylist"
+            @play-track="(track, queue) => playTrack(track, queue)"
+            @request-login="emit('login', activeProvider)"
           />
 
           <div
@@ -2478,11 +2499,7 @@ onMounted(async () => {
                   : '登录后即可加载我收藏的歌曲和在线歌单'
               }}
             </p>
-            <button
-              type="button"
-              class="stream-action-btn"
-              @click="emit('login', activeProvider)"
-            >
+            <button type="button" class="stream-action-btn" @click="emit('login', activeProvider)">
               <i class="pi pi-user"></i>
               <span>账号登录</span>
             </button>
@@ -2651,11 +2668,11 @@ onMounted(async () => {
         :style="{ top: `${streamingContextMenuY}px`, left: `${streamingContextMenuX}px` }"
         @click.stop
       >
-        <div class="menu-item" @click="handleContextPlayTrack">
+        <div class="menu-item" data-te-interactive @click="handleContextPlayTrack">
           <i class="pi pi-play"></i>
           <span>播放</span>
         </div>
-        <div class="menu-item" @click="handleContextFavorite">
+        <div class="menu-item" data-te-interactive @click="handleContextFavorite">
           <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
           <span>
             {{ selectionAllFavorited ? '取消收藏' : '加入收藏' }}{{ selectionActionLabel }}
@@ -2664,6 +2681,7 @@ onMounted(async () => {
         <div
           v-if="contextMenuCanLike"
           class="menu-item"
+          data-te-interactive
           @click="handleContextLikeTrack"
         >
           <i :class="contextMenuSingleLiked ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
@@ -2679,25 +2697,27 @@ onMounted(async () => {
           <span>添加到歌单{{ selectionActionLabel }}</span>
           <i class="pi pi-chevron-right submenu-icon"></i>
           <div v-if="showStreamingPlaylistSubmenu" class="submenu">
-            <div class="menu-item create-playlist-menu-item" @click="handleContextCreatePlaylist">
+            <div
+              class="menu-item create-playlist-menu-item"
+              data-te-interactive
+              @click="handleContextCreatePlaylist"
+            >
               <i class="pi pi-plus"></i>
               <span>创建新歌单</span>
             </div>
-            <div
-              v-if="ownedUserPlaylists.length === 0"
-              class="menu-item disabled"
-            >
+            <div v-if="ownedUserPlaylists.length === 0" class="menu-item disabled">
               暂无自建歌单
             </div>
             <div
               v-for="playlist in ownedUserPlaylists"
               :key="playlist.id"
               class="menu-item"
+              data-te-interactive
               @click="handleContextAddToOwnedPlaylist(playlist)"
             >
               {{ playlist.name }}
             </div>
-            <div class="menu-item" @click="handleContextAddToPlaylist">
+            <div class="menu-item" data-te-interactive @click="handleContextAddToPlaylist">
               <i class="pi pi-list"></i>
               <span>选择歌单…</span>
             </div>
@@ -2706,6 +2726,7 @@ onMounted(async () => {
         <div
           v-if="canMutateCurrentNcmPlaylist"
           class="menu-item danger"
+          data-te-interactive
           @click="handleContextRemoveFromPlaylist"
         >
           <i class="pi pi-minus-circle"></i>
@@ -2736,7 +2757,11 @@ onMounted(async () => {
               {{ createNcmPlaylistError }}
             </p>
             <div class="ncm-playlist-dialog-actions">
-              <button type="button" :disabled="createNcmPlaylistBusy" @click="closeCreateNcmPlaylistDialog">
+              <button
+                type="button"
+                :disabled="createNcmPlaylistBusy"
+                @click="closeCreateNcmPlaylistDialog"
+              >
                 取消
               </button>
               <button
@@ -2798,7 +2823,11 @@ onMounted(async () => {
               {{ addToNcmPlaylistError }}
             </p>
             <div class="ncm-playlist-dialog-actions">
-              <button type="button" :disabled="addToNcmPlaylistBusy" @click="closeAddToNcmPlaylistDialog">
+              <button
+                type="button"
+                :disabled="addToNcmPlaylistBusy"
+                @click="closeAddToNcmPlaylistDialog"
+              >
                 取消
               </button>
             </div>
