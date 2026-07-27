@@ -73,6 +73,54 @@ test('keeps shared music library visible when a unified provider is enabled with
   assert.equal(hasStreamingSidebarEntries(items), true)
 })
 
+test('shows the NetEase discover entry right after home when NetEase is available', () => {
+  const items = buildStreamingSidebarItems({
+    ncmAvailable: true,
+    providers: []
+  })
+
+  assert.deepEqual(items, [
+    {
+      key: 'home',
+      provider: 'ncm',
+      label: '主页',
+      icon: 'pi pi-sparkles',
+      tab: 'home'
+    },
+    {
+      key: 'discover',
+      provider: 'ncm',
+      label: '发现歌单',
+      icon: 'pi pi-th-large',
+      tab: 'discover'
+    },
+    {
+      key: 'library',
+      provider: 'ncm',
+      label: '音乐库',
+      icon: 'pi pi-heart',
+      tab: 'library'
+    },
+    {
+      key: 'recent',
+      provider: 'ncm',
+      label: '最近播放',
+      icon: 'pi pi-history',
+      tab: 'recent'
+    }
+  ])
+  assert.equal(getFirstVisibleStreamingTab(items), 'home')
+  assert.equal(
+    isSidebarItemActiveForProvider({
+      itemProvider: 'ncm',
+      itemKey: 'discover',
+      activeProvider: 'ncm',
+      activeTab: 'discover'
+    }),
+    true
+  )
+})
+
 test('hides shared home and library when no enabled provider can back them', () => {
   const items = buildStreamingSidebarItems({
     ncmAvailable: false,

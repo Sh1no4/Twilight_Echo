@@ -8,6 +8,7 @@ import type {
   ChannelRoutingMode,
   DesktopLyricsSettings,
   LyricAlign,
+  MotionPreference,
   NcmPlaybackQuality,
   PlaybackResumeMode,
   SacdProgramMode,
@@ -59,6 +60,13 @@ export const colorModeOptions: { value: AppTheme; label: string; icon: string }[
   { value: 'dark', label: '深色', icon: 'pi pi-moon' }
 ]
 
+export const motionPreferenceOptions: { value: MotionPreference; label: string }[] = [
+  { value: 'system', label: '跟随系统' },
+  { value: 'full', label: '完整动效' },
+  { value: 'reduced', label: '减少动效' },
+  { value: 'off', label: '关闭动效' }
+]
+
 export const playbackResumeOptions: { value: PlaybackResumeMode; label: string }[] = [
   { value: 'off', label: '关闭' },
   { value: 'track', label: '记住曲目' },
@@ -96,6 +104,14 @@ export const routingModeOptions: { value: ChannelRoutingMode; label: string }[] 
   { value: 'mono-to-stereo', label: 'Mono → Stereo' },
   { value: 'mono-to-multichannel', label: 'Mono → Multichannel' }
 ]
+
+export const pcmToDsdModeOptions: { value: import('../../types/settings').PcmToDsdMode; label: string }[] =
+  [
+    { value: 'off', label: '关闭' },
+    { value: 'dsd64', label: 'DSD64' },
+    { value: 'dsd128', label: 'DSD128' },
+    { value: 'dsd256', label: 'DSD256' }
+  ]
 
 export const replayGainOptions = VOLUME_NORMALIZATION_OPTIONS
 export const dsdOutputModeOptions = DSD_OUTPUT_MODE_OPTIONS
@@ -176,14 +192,16 @@ export const SETTINGS_SEARCH_INDEX: Array<{
   {
     section: 'dsp',
     title: 'DSP 处理器',
-    terms: 'DSP EQ ReplayGain Crossfeed Convolver FFT High-Res DSD SACD'
+    terms:
+      'DSP EQ ReplayGain Crossfeed Convolver FFT High-Res DSD SACD VST3 插件 宿主 搜索目录 扫描'
   },
   { section: 'cache', title: '缓存策略', terms: '缓存 目录 封面 歌词 元数据 流媒体 BPM 分析 清理' },
   { section: 'performance', title: '性能', terms: '性能 硬件加速 GPU 重启' },
   {
     section: 'appearance',
     title: '外观与主题',
-    terms: '外观 主题 插件主题 强调色 背景 字体 密度 歌词 卡片 迷你播放器 自定义 圆角 缩放 布局'
+    terms:
+      '外观 主题 插件主题 强调色 背景 字体 密度 动效 减少动画 歌词 卡片 迷你播放器 自定义 圆角 缩放 布局'
   },
   {
     section: 'desktopLyrics',
@@ -219,5 +237,4 @@ export const RESET_DESKTOP_LYRICS: DesktopLyricsSettings = {
   maxLines: 2,
   lineOffset: 48
 }
-
 

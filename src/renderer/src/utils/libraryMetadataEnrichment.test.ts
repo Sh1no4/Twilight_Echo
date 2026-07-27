@@ -157,6 +157,7 @@ test('enrichLocalTracksFromProviders skips local tracks that already have enrich
   const enrichedTrack = {
     ...localTrack,
     album: 'Local Album',
+    genre: 'Jazz',
     cover: 'cover://embedded',
     lyrics: '[00:00.00]local',
     translatedLyrics: '[00:00.00]local translated'

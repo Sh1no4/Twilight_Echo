@@ -25,6 +25,10 @@ const DspRackPage = defineAsyncComponent(() => import('./components/DspRackPage.
 const PluginExtensionPage = defineAsyncComponent(
   () => import('./components/PluginExtensionPage.vue')
 )
+const OnboardingWizard = defineAsyncComponent(
+  () => import('./components/onboarding/OnboardingWizard.vue')
+)
+import type { OnboardingFinishResult } from './components/onboarding/OnboardingWizard.vue'
 import { useMusicStore } from './stores/useMusicStore'
 import { useNcmStore } from './stores/useNcmStore'
 import { setupListeningStatsTracking } from './stores/useListeningStatsStore'
@@ -38,6 +42,7 @@ import { useAppNavigation } from './app/useAppNavigation'
 import { createPlaybackSessionPersistence } from './app/usePlaybackSessionPersistence'
 import { useSideMenuClearance } from './app/useSideMenuClearance'
 import { useMiniPlayerSync } from './app/useMiniPlayerSync'
+import { useMotionPreference } from './app/useMotionPreference'
 import { useAppNoticeStore } from './stores/useAppNoticeStore'
 import AppNoticeHost from './components/AppNoticeHost.vue'
 
@@ -86,6 +91,7 @@ const {
   openPlaybackSettings,
   openDspSettings,
   hidePluginPage,
+  openPluginPage,
   openEqualizerPage,
   closeEqualizerPage,
   openDspRackPage,
@@ -100,6 +106,7 @@ const togglePluginPage = navigation.createTogglePluginHandler()
 
 const coverOrigin = ref({ x: 48, y: window.innerHeight - 36, w: 48, h: 48 })
 const streamingInitialTab = ref<StreamingInitialTab | null>(null)
+const showOnboarding = ref(false)
 const titleMenuOpen = computed(() =>
   showPluginPage.value ? false : showStreamingPage.value ? streamingMenuOpen.value : menuOpen.value
 )
@@ -139,6 +146,37 @@ function handleStreamingLogin(providerId?: string | null): void {
 
 function handleTitleLogin(providerId?: string | null): void {
   openLoginPage(providerId ?? 'ncm')
+}
+
+function handleReopenOnboarding(): void {
+  closeSettingsPage()
+  showOnboarding.value = true
+}
+
+async function handleOnboardingFinish(result: OnboardingFinishResult): Promise<void> {
+  try {
+    await updateSettings(result.patch)
+  } catch (error) {
+    pushNotice({
+      kind: 'warning',
+      message: `保存引导设置失败：${error instanceof Error ? error.message : String(error)}`
+    })
+  }
+  showOnboarding.value = false
+  if (result.action === 'streaming' || result.action === 'streaming-login') {
+    enterStreamingMode()
+  } else {
+    // No-op on first run; returns home when the wizard was reopened from
+    // settings while the streaming page was active.
+    returnToLocalMode()
+  }
+  if (result.action === 'streaming-login') {
+    openLoginPage('ncm')
+  } else if (result.openPluginMarket) {
+    // Login takes precedence — the market stays one click away from the
+    // title bar, while a missed login blocks the whole streaming flow.
+    openPluginPage()
+  }
 }
 
 function handleLoginSuccess(): void {
@@ -212,7 +250,8 @@ useMiniPlayerSync({
   setVolume,
   cyclePlayMode
 })
-const { loadSettings, settings } = useSettingsStore()
+const { loadSettings, settings, updateSettings } = useSettingsStore()
+useMotionPreference(computed(() => settings.value.motionPreference))
 const { uiContributions, syncExtensions } = useExtensionRegistry()
 const STREAMING_ACCOUNT_PAGE_KEYS = new Set(['com.twilightecho.provider.ytmusic:ytmusic-account'])
 const sidebarPages = computed(() =>
@@ -227,6 +266,7 @@ const localSidebarItems = computed(() =>
 )
 const hasPlayerBar = computed(
   () =>
+    !showOnboarding.value &&
     !showLoginPage.value &&
     !showSettingsPage.value &&
     !showThemeStudioPage.value &&
@@ -288,12 +328,6 @@ let removeLibraryScanProgressListener: (() => void) | null = null
 let removeLibraryScanStatusListener: (() => void) | null = null
 let quitFlushHandler: (() => void) | null = null
 let pageHideFlushHandler: (() => void) | null = null
-let removeVisibilityListener: (() => void) | null = null
-
-function syncDocumentVisibility(): void {
-  document.body.classList.toggle('te-background-animations-paused', document.hidden)
-}
-
 const startupDataErrorScopes = new Set<string>()
 
 function reportStartupDataError(scope: string, error: unknown): void {
@@ -335,17 +369,19 @@ function flushPendingPersistenceForExit(): void {
 }
 
 onMounted(async () => {
-  syncDocumentVisibility()
-  document.addEventListener('visibilitychange', syncDocumentVisibility)
-  removeVisibilityListener = () =>
-    document.removeEventListener('visibilitychange', syncDocumentVisibility)
   setupPluginThemeRuntime()
   setupListeningStatsTracking({ currentTrack, isPlaying, currentTime, duration })
   const loadedSettings = await loadSettings()
 
-  // Enter streaming mode immediately if configured — must not block on
-  // library/login/extensions which can take 30s+ (provider timeouts).
-  if (loadedSettings.startupHomePage === 'streaming') {
+  // First-run welcome wizard. The empty-library guard keeps existing users
+  // who upgraded from a build without the flag from ever seeing it.
+  const needsOnboarding =
+    !loadedSettings.onboardingCompleted && loadedSettings.libraryFolders.length === 0
+  if (needsOnboarding) {
+    showOnboarding.value = true
+  } else if (loadedSettings.startupHomePage === 'streaming') {
+    // Enter streaming mode immediately if configured — must not block on
+    // library/login/extensions which can take 30s+ (provider timeouts).
     enterStreamingMode()
   }
 
@@ -513,9 +549,6 @@ onBeforeUnmount(() => {
   pageHideFlushHandler = null
   stopSideMenuMonitor()
   disposeSideMenuClearance()
-  removeVisibilityListener?.()
-  removeVisibilityListener = null
-  document.body.classList.remove('te-background-animations-paused')
   document.body.classList.remove('te-settings-surface')
   document.body.classList.remove('te-streaming-surface')
 })
@@ -624,6 +657,7 @@ const titleSurface = computed<TitleSurface>(() => {
         @open-equalizer="openEqualizerPage"
         @open-dsp-rack="openDspRackPage"
         @open-theme-studio="openThemeStudioPage"
+        @reopen-onboarding="handleReopenOnboarding"
       />
     </Transition>
     <Transition name="settings-page">
@@ -655,6 +689,9 @@ const titleSurface = computed<TitleSurface>(() => {
     @open-dsp="openDspSettings"
     @open-equalizer="openEqualizerPage"
   />
+  <Transition name="onboarding-page">
+    <OnboardingWizard v-if="showOnboarding" @finish="handleOnboardingFinish" />
+  </Transition>
   <AppNoticeHost />
 </template>
 
@@ -671,54 +708,9 @@ body {
   min-height: 100vh;
   padding-left: 0;
   transform: translateZ(0);
-  transition: padding-left 0.32s var(--te-ease-soft);
   overflow: hidden;
   position: relative;
   z-index: 1;
-}
-
-.main-content::before,
-.main-content::after {
-  content: '';
-  position: fixed;
-  pointer-events: none;
-  z-index: -1;
-  border-radius: 999px;
-  filter: blur(2px);
-}
-
-body.te-background-animations-paused .main-content::before,
-body.te-background-animations-paused .main-content::after {
-  animation-play-state: paused;
-}
-
-.main-content::before {
-  width: 42vw;
-  height: 42vw;
-  min-width: 360px;
-  min-height: 360px;
-  right: -12vw;
-  top: 5vh;
-  background:
-    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.94), transparent 28%),
-    radial-gradient(circle at 46% 48%, rgba(124, 77, 255, 0.04), transparent 62%),
-    radial-gradient(circle at 66% 62%, rgba(255, 126, 182, 0.032), transparent 70%);
-  opacity: 0.4;
-  animation: light-orbit 12s var(--te-ease-soft) infinite alternate;
-}
-
-.main-content::after {
-  width: 34vw;
-  height: 26vw;
-  min-width: 300px;
-  min-height: 220px;
-  left: 10vw;
-  bottom: 6vh;
-  background:
-    radial-gradient(circle at 40% 45%, rgba(34, 211, 238, 0.05), transparent 62%),
-    radial-gradient(circle at 72% 48%, rgba(168, 133, 247, 0.055), transparent 68%);
-  opacity: 0.5;
-  animation: light-float 16s var(--te-ease-soft) infinite alternate;
 }
 
 .main-content > * {
@@ -773,24 +765,6 @@ body.te-no-blur .login-page-leave-to {
   min-height: 0;
 }
 
-@keyframes light-orbit {
-  from {
-    transform: translate3d(0, 0, 0) rotate(0deg);
-  }
-  to {
-    transform: translate3d(-26px, 18px, 0) rotate(8deg);
-  }
-}
-
-@keyframes light-float {
-  from {
-    transform: translate3d(-16px, 10px, 0) scale(1);
-  }
-  to {
-    transform: translate3d(20px, -10px, 0) scale(1.05);
-  }
-}
-
 /* Local home ↔ list page transitions (must beat scoped component roots). */
 .main-content > .page-down-enter-active,
 .main-content > .page-down-leave-active,
@@ -801,22 +775,23 @@ body.te-no-blur .login-page-leave-to {
 .page-up-enter-active,
 .page-up-leave-active {
   transition:
-    transform 0.42s var(--te-ease-soft),
-    opacity 0.26s ease,
-    filter 0.32s ease !important;
-  will-change: transform, opacity, filter;
+    transform var(--te-motion-page) var(--te-ease-soft),
+    opacity var(--te-motion-hover) ease !important;
+  will-change: transform, opacity;
 }
 .main-content > .page-down-enter-active,
 .main-content > .page-up-enter-active,
 .page-down-enter-active,
 .page-up-enter-active {
   z-index: 1;
+  transition-timing-function: var(--te-ease-out-quint), ease !important;
 }
 .main-content > .page-down-leave-active,
 .main-content > .page-up-leave-active,
 .page-down-leave-active,
 .page-up-leave-active {
   z-index: 0;
+  transition-timing-function: var(--te-ease-enter), ease !important;
 }
 
 /* page-down: selected page is lower in the sidebar, new view rises from below */
@@ -824,13 +799,11 @@ body.te-no-blur .login-page-leave-to {
 .page-down-leave-to {
   transform: translateY(-34px) scale(0.992);
   opacity: 0;
-  filter: blur(8px);
 }
 .main-content > .page-down-enter-from,
 .page-down-enter-from {
-  transform: translateY(46px) scale(0.992);
+  transform: translateY(46px) scale(0.982);
   opacity: 0;
-  filter: blur(8px);
 }
 
 /* page-up: selected page is higher in the sidebar, new view drops from above */
@@ -838,87 +811,100 @@ body.te-no-blur .login-page-leave-to {
 .page-up-leave-to {
   transform: translateY(34px) scale(0.992);
   opacity: 0;
-  filter: blur(8px);
 }
 .main-content > .page-up-enter-from,
 .page-up-enter-from {
-  transform: translateY(-46px) scale(0.992);
+  transform: translateY(-46px) scale(0.982);
   opacity: 0;
-  filter: blur(8px);
 }
 
 /* PlayingMusic open/close — expands from / shrinks to cover position */
 .playing-page-enter-active {
   transition:
-    transform 0.56s cubic-bezier(0.16, 1, 0.3, 1),
-    opacity 0.34s ease,
-    filter 0.56s cubic-bezier(0.16, 1, 0.3, 1),
-    border-radius 0.56s cubic-bezier(0.16, 1, 0.3, 1);
+    transform var(--te-motion-page) var(--te-ease-out-expo),
+    opacity var(--te-motion-panel) ease,
+    border-radius var(--te-motion-page) var(--te-ease-out-expo);
 }
 .playing-page-leave-active {
   transition:
-    transform 0.42s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.26s ease,
-    filter 0.42s cubic-bezier(0.4, 0, 0.2, 1),
-    border-radius 0.42s cubic-bezier(0.4, 0, 0.2, 1);
+    transform var(--te-motion-panel) var(--te-ease-enter),
+    opacity var(--te-motion-hover) ease,
+    border-radius var(--te-motion-panel) var(--te-ease-enter);
 }
 
 .playing-page-enter-from {
   transform: scale(0.12) !important;
   border-radius: 28px;
   opacity: 0;
-  filter: blur(10px);
 }
 
 .playing-page-leave-to {
   transform: scale(0.12) !important;
   border-radius: 28px;
   opacity: 0;
-  filter: blur(10px);
 }
 
 /* Settings and plugin pages: shared overlay transition */
 .settings-page-enter-active {
   z-index: 70;
   transition:
-    opacity 0.34s ease,
-    transform 0.42s cubic-bezier(0.16, 1, 0.3, 1),
-    filter 0.42s cubic-bezier(0.16, 1, 0.3, 1);
-  will-change: opacity, transform, filter;
+    opacity var(--te-motion-panel) ease,
+    transform var(--te-motion-page) var(--te-ease-out-expo);
+  will-change: opacity, transform;
 }
 
 .settings-page-leave-active {
   z-index: 69;
   pointer-events: none;
   transition:
-    opacity 0.22s ease,
-    transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-    filter 0.28s cubic-bezier(0.4, 0, 0.2, 1);
-  will-change: opacity, transform, filter;
+    opacity var(--te-motion-hover) ease,
+    transform var(--te-motion-panel) var(--te-ease-enter);
+  will-change: opacity, transform;
 }
 
 .settings-page-enter-from {
   opacity: 0;
   transform: translate3d(28px, 0, 0) scale(0.988);
-  filter: blur(10px);
 }
 
 .settings-page-leave-to {
   opacity: 0;
   transform: translate3d(18px, 0, 0) scale(0.992);
-  filter: blur(8px);
+}
+
+/* Onboarding wizard: fade in on first paint, dissolve away over the app */
+.onboarding-page-enter-active {
+  transition: opacity var(--te-motion-panel) ease;
+}
+.onboarding-page-leave-active {
+  pointer-events: none;
+  transition:
+    opacity var(--te-motion-settle) ease,
+    transform var(--te-motion-settle) var(--te-ease-out-expo),
+    filter var(--te-motion-settle) var(--te-ease-out-expo);
+}
+.onboarding-page-enter-from {
+  opacity: 0;
+}
+.onboarding-page-leave-to {
+  opacity: 0;
+  transform: scale(1.02);
+  filter: blur(10px);
+}
+body.te-no-blur .onboarding-page-leave-to {
+  filter: none !important;
 }
 
 /* Login page transition */
 .login-page-enter-active {
   transition:
-    opacity 0.25s ease,
-    transform 0.25s ease;
+    opacity var(--te-motion-panel) ease,
+    transform var(--te-motion-page) var(--te-ease-out-quint);
 }
 .login-page-leave-active {
   transition:
-    opacity 0.2s ease,
-    transform 0.2s ease;
+    opacity var(--te-motion-hover) ease,
+    transform var(--te-motion-hover) var(--te-ease-enter);
 }
 .login-page-enter-from {
   opacity: 0;

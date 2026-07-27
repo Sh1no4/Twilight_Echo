@@ -13,6 +13,7 @@ export default defineConfig(
       '**/build/**',
       '**/output/**',
       '**/coverage/**',
+      '**/.qoder/**',
       '**/audio-engine/build/**',
       '**/audio-engine/out/**',
       '**/packages/create-twilight-plugin/**/*.cjs'

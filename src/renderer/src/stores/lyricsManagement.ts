@@ -65,6 +65,9 @@ function defaultOverride(): LyricTrackOverride {
   return {
     offsetMs: 0,
     source: 'auto',
+    originalSelection: 'automatic',
+    translationSelection: 'automatic',
+    romanizationSelection: 'automatic',
     original: null,
     translation: null,
     romanization: null,
@@ -95,7 +98,17 @@ async function updateVisibility(
 async function updateTrack(
   trackId: string,
   patch: Partial<
-    Pick<LyricTrackOverride, 'offsetMs' | 'source' | 'original' | 'translation' | 'romanization'>
+    Pick<
+      LyricTrackOverride,
+      | 'offsetMs'
+      | 'source'
+      | 'originalSelection'
+      | 'translationSelection'
+      | 'romanizationSelection'
+      | 'original'
+      | 'translation'
+      | 'romanization'
+    >
   >
 ): Promise<void> {
   if (!trackId) return

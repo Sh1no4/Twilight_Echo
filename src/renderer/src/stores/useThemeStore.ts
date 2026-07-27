@@ -157,8 +157,27 @@ interface ThemeRuntimeState {
   css: string
   dataAttributes: Record<`data-te-${string}`, string>
   activeTheme: string
+  presetLayout: string
   tone: ThemeTone
   resourceUrls: string[]
+}
+
+/**
+ * Built-in presets ship a layout identity, not just a palette. Derived user profiles keep the
+ * layout of the preset they were forked from so customizing colors never collapses the geometry.
+ */
+function resolvePresetLayout(
+  selection: ThemeSelection | undefined,
+  profile: ThemeProfileV2 | null
+): string {
+  if (profile?.source?.kind === 'builtin-preset') return presetLayoutKey(profile.source.presetId)
+  if (selection?.kind === 'builtin') return presetLayoutKey(selection.id)
+  if (profile && isBuiltInThemePresetId(profile.id)) return presetLayoutKey(profile.id)
+  return presetLayoutKey(TWILIGHT_DEFAULT_THEME_ID)
+}
+
+function presetLayoutKey(presetId: string): string {
+  return presetId.startsWith('builtin:') ? presetId.slice('builtin:'.length) : presetId
 }
 
 async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<ThemeRuntimeState> {
@@ -203,6 +222,7 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
           css: '',
           dataAttributes: themeModesToDataAttributes(resolveThemeProfileModes(null)),
           activeTheme: TWILIGHT_DEFAULT_THEME_ID,
+          presetLayout: presetLayoutKey(TWILIGHT_DEFAULT_THEME_ID),
           tone,
           resourceUrls: []
         }
@@ -237,6 +257,7 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
       .join('\n\n'),
     dataAttributes: themeModesToDataAttributes(modes),
     activeTheme: activeThemeKey(selection),
+    presetLayout: resolvePresetLayout(selection, selectedProfile),
     tone,
     resourceUrls
   }
@@ -538,6 +559,7 @@ export async function applyActiveTheme(
     document.documentElement.dataset.theme = state.tone
     document.documentElement.style.colorScheme = state.tone === 'dark' ? 'dark' : 'light'
     document.documentElement.dataset.activeTheme = state.activeTheme
+    document.documentElement.dataset.tePresetLayout = state.presetLayout
     error.value = ''
     recordThemePerformance(operation, startedAt)
     decodeThemeResources(state.resourceUrls)

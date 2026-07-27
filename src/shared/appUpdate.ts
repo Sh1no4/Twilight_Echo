@@ -1,4 +1,4 @@
-export type AppUpdateCheckError = 'network' | 'no-asset' | 'unsupported-platform'
+export type AppUpdateCheckError = 'network' | 'no-asset' | 'no-checksum' | 'unsupported-platform'
 
 export type AppUpdateCheckResult = {
   hasUpdate: boolean

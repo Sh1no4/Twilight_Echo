@@ -1,0 +1,619 @@
+/* Layout identity for builtin:aurora-reference. All rules scoped to html[data-te-preset-layout='aurora-reference']. */
+
+/* ══════════════════════════════════════════════════════════════════════
+   Aurora Reference — “Floating Sky Stage”
+   Everything floats: the nav becomes a detached glass island, content
+   becomes a centered stage, shelves glide horizontally, lyrics own the
+   playing page, and the player bar is a hovering capsule dock.
+   Zero color literals — tokens + color-mix only.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── 1) App shell — floating navigation island ───────────────────────── */
+
+html[data-te-preset-layout='aurora-reference'] body .side-menu.side-menu {
+  top: clamp(44px, 6vh, 62px);
+  left: clamp(10px, 1.4vw, 22px);
+  bottom: clamp(14px, 3vh, 30px);
+  border: 1px solid var(--te-glass-border);
+  border-right: 1px solid var(--te-glass-border);
+  border-radius: clamp(22px, 3vh, 30px);
+  background: color-mix(in srgb, var(--te-navigation-bg) var(--te-navigation-opacity), transparent);
+  background-image: none;
+  box-shadow:
+    var(--te-glass-shadow),
+    0 0 54px var(--te-glow-soft);
+  backdrop-filter: blur(26px) saturate(165%);
+  -webkit-backdrop-filter: blur(26px) saturate(165%);
+  transform: translate3d(calc(-100% - 40px), 0, 0);
+}
+
+html[data-te-preset-layout='aurora-reference'] body .side-menu.side-menu.open {
+  transform: translate3d(0, 0, 0);
+}
+
+/* Air gap between island and stage */
+html[data-te-preset-layout='aurora-reference'] body .main-content.menu-open {
+  padding-left: calc(var(--te-menu-width) + clamp(26px, 3vw, 48px));
+}
+
+/* Nav entries become vertical capsules */
+html[data-te-preset-layout='aurora-reference'] .side-menu .menu-items {
+  padding: 18px 12px 16px;
+}
+
+html[data-te-preset-layout='aurora-reference'] .side-menu .menu-nav {
+  gap: 7px;
+}
+
+html[data-te-preset-layout='aurora-reference'] .side-menu .menu-item {
+  width: 100%;
+  margin-left: 0;
+  height: 42px;
+  padding: 0 14px 0 16px;
+  border-radius: 999px;
+}
+
+html[data-te-preset-layout='aurora-reference'] .side-menu .menu-item:hover {
+  transform: translateX(2px);
+}
+
+html[data-te-preset-layout='aurora-reference'] .side-menu .menu-item.active {
+  background: color-mix(in srgb, var(--te-navigation-active) 88%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--te-navigation-indicator) 32%, transparent),
+    0 6px 22px color-mix(in srgb, var(--te-navigation-indicator) 22%, transparent);
+}
+
+/* Edge bar indicator does not belong on a floating capsule — swap for glow */
+html[data-te-preset-layout='aurora-reference'] .side-menu .menu-item.active::before {
+  left: auto;
+  right: 12px;
+  top: 50%;
+  bottom: auto;
+  width: 6px;
+  height: 6px;
+  transform: translateY(-50%);
+  border-radius: 50%;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--te-navigation-indicator) 80%, transparent);
+}
+
+html[data-te-preset-layout='aurora-reference'] .side-menu .menu-separator {
+  margin: 12px 14px;
+  background: linear-gradient(to right, transparent, var(--te-navigation-border), transparent);
+}
+
+/* ── 2) Local dashboard — light-shelf listening room ─────────────────── */
+
+html[data-te-preset-layout='aurora-reference'] .home .home-inner {
+  width: min(100%, 1180px);
+  gap: clamp(2.6rem, 4.4vw, 3.8rem);
+}
+
+/* Header becomes a centered welcome hero */
+html[data-te-preset-layout='aurora-reference'] .home .hd {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.3rem;
+  text-align: center;
+}
+
+html[data-te-preset-layout='aurora-reference'] .home .hd-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+html[data-te-preset-layout='aurora-reference'] .home .hd-chip {
+  align-self: center;
+  justify-content: center;
+}
+
+html[data-te-preset-layout='aurora-reference'] .home .hd-greeting {
+  white-space: normal;
+  text-wrap: balance;
+}
+
+html[data-te-preset-layout='aurora-reference'] .home .hd-shuffle {
+  min-width: 0;
+  border-radius: 999px;
+  padding: 0.6rem 1.1rem 0.6rem 0.7rem;
+  box-shadow:
+    var(--te-glass-shadow),
+    0 0 34px var(--te-glow-main);
+}
+
+/* Featured now-playing card floats over the stage with an aurora halo */
+html[data-te-preset-layout='aurora-reference'] .home .now-card {
+  min-height: clamp(340px, 42vh, 440px);
+  border-radius: clamp(26px, 3.4vw, 38px);
+  border-color: var(--te-glass-border);
+  box-shadow:
+    var(--te-glass-shadow),
+    0 0 80px var(--te-glow-main);
+}
+
+html[data-te-preset-layout='aurora-reference'] .home .stat-tile,
+html[data-te-preset-layout='aurora-reference'] .home .signal-card,
+html[data-te-preset-layout='aurora-reference'] .home .chart-card,
+html[data-te-preset-layout='aurora-reference'] .home .cal-card {
+  border-radius: clamp(22px, 2.6vw, 30px);
+  border-color: var(--te-glass-border);
+  box-shadow: var(--te-glass-shadow);
+}
+
+/* Section titles hover above the shelves with a soft light underline */
+html[data-te-preset-layout='aurora-reference'] .home .sec .sec-head {
+  margin-bottom: 0.35rem;
+}
+
+html[data-te-preset-layout='aurora-reference'] .home .sec-icon {
+  opacity: 0.55;
+}
+
+html[data-te-preset-layout='aurora-reference'] .home .sec-copy h3::after {
+  content: '';
+  display: block;
+  width: 3.4em;
+  height: 3px;
+  margin-top: 0.5rem;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--te-primary-400), transparent);
+  box-shadow: 0 0 18px var(--te-glow-main);
+}
+
+/* “Shelf of light” — recently added glides horizontally */
+html[data-te-preset-layout='aurora-reference'] .home .recent-grid {
+  display: flex;
+  gap: clamp(0.95rem, 1.7vw, 1.5rem);
+  overflow-x: auto;
+  padding: 0.35rem 0.25rem 1.15rem;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+}
+
+html[data-te-preset-layout='aurora-reference'] .home .recent-grid::-webkit-scrollbar {
+  height: 0;
+}
+
+html[data-te-preset-layout='aurora-reference'] .home .recent-grid .track-card {
+  flex: 0 0 clamp(148px, 15vw, 198px);
+  scroll-snap-align: start;
+}
+
+html[data-te-preset-layout='aurora-reference'] .home .recent-grid .track-cover {
+  border-radius: clamp(20px, 2.4vw, 28px);
+  border-color: var(--te-glass-border);
+  box-shadow:
+    0 16px 40px color-mix(in srgb, var(--te-neutral-900) 14%, transparent),
+    0 0 26px var(--te-glow-cyan);
+}
+
+/* Album picks — the same floating shelf language */
+html[data-te-preset-layout='aurora-reference'] .home .album-grid {
+  display: flex;
+  gap: clamp(1rem, 1.8vw, 1.6rem);
+  overflow-x: auto;
+  padding: 0.35rem 0.25rem 1.15rem;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+}
+
+html[data-te-preset-layout='aurora-reference'] .home .album-grid::-webkit-scrollbar {
+  height: 0;
+}
+
+html[data-te-preset-layout='aurora-reference'] .home .album-grid .album-tile {
+  flex: 0 0 clamp(168px, 17vw, 232px);
+  scroll-snap-align: start;
+}
+
+html[data-te-preset-layout='aurora-reference'] .home .album-grid .album-art {
+  border-radius: clamp(20px, 2.4vw, 28px);
+  box-shadow:
+    0 16px 40px color-mix(in srgb, var(--te-neutral-900) 14%, transparent),
+    0 0 26px var(--te-glow-soft);
+}
+
+/* ── 3) Streaming home — daily-mix light stage ───────────────────────── */
+
+html[data-te-preset-layout='aurora-reference'] .home-view .home-flow {
+  gap: clamp(2.2rem, 4vw, 3.4rem);
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+html[data-te-preset-layout='aurora-reference'] .home-view .hero {
+  min-height: clamp(270px, 36vh, 380px);
+  border-radius: clamp(26px, 3.4vw, 38px);
+  border-color: var(--te-glass-border);
+  box-shadow:
+    var(--te-glass-shadow),
+    0 0 80px var(--te-glow-main);
+}
+
+html[data-te-preset-layout='aurora-reference'] .home-view .duo-card {
+  border-radius: clamp(22px, 2.6vw, 30px);
+  border-color: var(--te-glass-border);
+  box-shadow: var(--te-glass-shadow);
+}
+
+/* Chart block becomes a floating frosted plate */
+html[data-te-preset-layout='aurora-reference'] .home-view .chart {
+  padding: clamp(1rem, 2vw, 1.6rem);
+  border: 1px solid var(--te-glass-border);
+  border-radius: clamp(24px, 3vw, 32px);
+  background: color-mix(in srgb, var(--te-glass-bg) 72%, transparent);
+  box-shadow: var(--te-glass-shadow);
+  backdrop-filter: blur(var(--te-card-blur, 20px)) saturate(150%);
+  -webkit-backdrop-filter: blur(var(--te-card-blur, 20px)) saturate(150%);
+}
+
+html[data-te-preset-layout='aurora-reference'] .home-view .section-head-copy h3::after {
+  content: '';
+  display: block;
+  width: 3.4em;
+  height: 3px;
+  margin-top: 0.45rem;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--te-primary-400), transparent);
+  box-shadow: 0 0 18px var(--te-glow-main);
+}
+
+/* Playlist shelf glides horizontally like a display rail */
+html[data-te-preset-layout='aurora-reference'] .home-view .shelf-grid {
+  display: flex;
+  gap: clamp(1rem, 1.8vw, 1.6rem);
+  overflow-x: auto;
+  padding: 0.35rem 0.25rem 1.15rem;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+}
+
+html[data-te-preset-layout='aurora-reference'] .home-view .shelf-grid::-webkit-scrollbar {
+  height: 0;
+}
+
+html[data-te-preset-layout='aurora-reference'] .home-view .shelf-grid .shelf-tile {
+  flex: 0 0 clamp(150px, 15vw, 202px);
+  scroll-snap-align: start;
+}
+
+html[data-te-preset-layout='aurora-reference'] .home-view .shelf-cover {
+  border-radius: clamp(18px, 2.2vw, 26px);
+  box-shadow:
+    0 16px 40px color-mix(in srgb, var(--te-neutral-900) 14%, transparent),
+    0 0 26px var(--te-glow-cyan);
+}
+
+/* Streaming sidebar becomes the same floating island as local nav */
+html[data-te-preset-layout='aurora-reference']
+  body
+  .streaming-page
+  .streaming-sidebar.streaming-sidebar {
+  top: clamp(44px, 6vh, 62px);
+  left: clamp(10px, 1.4vw, 22px);
+  bottom: clamp(14px, 3vh, 30px);
+  border: 1px solid var(--te-glass-border);
+  border-right: 1px solid var(--te-glass-border);
+  border-radius: clamp(22px, 3vh, 30px);
+  background: color-mix(in srgb, var(--te-card-bg) 86%, transparent);
+  background-image: none;
+  box-shadow:
+    var(--te-glass-shadow),
+    0 0 54px var(--te-glow-soft);
+  backdrop-filter: blur(26px) saturate(165%);
+  -webkit-backdrop-filter: blur(26px) saturate(165%);
+  transform: translate3d(calc(-100% - 40px), 0, 0);
+}
+
+html[data-te-preset-layout='aurora-reference']
+  body
+  .streaming-page
+  .streaming-sidebar.streaming-sidebar.open {
+  transform: translate3d(0, 0, 0);
+}
+
+html[data-te-preset-layout='aurora-reference'] .streaming-page .streaming-sidebar-inner {
+  padding-top: 22px;
+}
+
+html[data-te-preset-layout='aurora-reference'] .streaming-page .streaming-menu-item {
+  border-radius: 999px;
+}
+
+/* ── 4) Playing page — lyrics own the sky, cover shrinks to a halo card ─ */
+
+html[data-te-preset-layout='aurora-reference'][data-te-player-layout='lyrics-focus']
+  .playing-music
+  .layout {
+  grid-template-columns: clamp(116px, 15vw, 196px) minmax(0, 1fr);
+  gap: clamp(20px, 4.5vw, 76px);
+}
+
+html[data-te-preset-layout='aurora-reference'][data-te-player-layout='lyrics-focus']
+  .playing-music
+  .cover-column {
+  position: relative;
+  margin-top: clamp(16px, 6vh, 60px);
+}
+
+/* Aurora halo breathing behind the small floating cover */
+html[data-te-preset-layout='aurora-reference'][data-te-player-layout='lyrics-focus']
+  .playing-music
+  .cover-column::before {
+  content: '';
+  position: absolute;
+  inset: -22% -26%;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--accent-color, var(--te-primary-400)) 34%, transparent),
+    transparent 72%
+  );
+  filter: blur(26px);
+  animation: te-aurora-halo 7s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+@keyframes te-aurora-halo {
+  from {
+    opacity: 0.55;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+
+html[data-te-preset-layout='aurora-reference'][data-te-player-layout='lyrics-focus']
+  .playing-music
+  .cover-frame {
+  border-radius: clamp(18px, 2.2vw, 26px);
+  box-shadow:
+    0 18px 54px color-mix(in srgb, var(--accent-color, var(--te-primary-500)) 34%, transparent),
+    0 0 40px var(--te-glow-main);
+}
+
+html[data-te-preset-layout='aurora-reference'][data-te-player-layout='lyrics-focus']
+  .playing-music
+  .track-title {
+  font-size: clamp(16px, 1.5vw, 22px);
+}
+
+/* Lyrics column becomes the central stage */
+html[data-te-preset-layout='aurora-reference'][data-te-player-layout='lyrics-focus']
+  .playing-music
+  .lyrics-list {
+  max-width: min(1080px, 94%);
+  gap: 12px;
+}
+
+html[data-te-preset-layout='aurora-reference'] .playing-music .lyric-row {
+  border-radius: 26px;
+  padding: 13px 26px;
+}
+
+/* Active line rides a glowing capsule */
+html[data-te-preset-layout='aurora-reference'] .playing-music .lyric-row.active {
+  background: color-mix(in srgb, var(--accent-color, var(--te-primary-400)) 15%, transparent);
+  border-color: color-mix(in srgb, var(--accent-color, var(--te-primary-400)) 32%, transparent);
+  box-shadow:
+    0 0 42px color-mix(in srgb, var(--accent-color, var(--te-primary-400)) 28%, transparent),
+    inset 0 0 22px color-mix(in srgb, var(--accent-color, var(--te-primary-400)) 10%, transparent);
+}
+
+/* ── 5) Player bar — hovering capsule dock ───────────────────────────── */
+
+html[data-te-preset-layout='aurora-reference'] body .player-bar-shell.player-bar-shell {
+  bottom: clamp(16px, 3vh, 30px);
+  left: clamp(16px, 4vw, 44px);
+  right: clamp(16px, 4vw, 44px);
+}
+
+html[data-te-preset-layout='aurora-reference'] body .player-bar-shell.player-bar-shell.menu-open {
+  left: calc(var(--te-menu-width) + clamp(28px, 3vw, 52px));
+  right: clamp(16px, 4vw, 44px);
+}
+
+html[data-te-preset-layout='aurora-reference'] body .player-bar-shell .player-bar.player-bar {
+  position: relative;
+  height: 82px;
+  max-width: min(960px, 100%);
+  margin: 0 auto;
+  padding: 8px 26px 0;
+  grid-template-columns: minmax(0, 250px) minmax(230px, 1fr) minmax(0, 280px);
+  border-radius: 999px;
+  border: 1px solid var(--te-glass-border);
+  background:
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--te-glass-bg) 55%, transparent),
+      color-mix(in srgb, var(--te-glass-bg) 30%, transparent)
+    ),
+    color-mix(in srgb, var(--te-glass-bg) 62%, transparent);
+  box-shadow:
+    var(--te-glass-shadow),
+    0 0 56px var(--te-glow-soft);
+  backdrop-filter: blur(30px) saturate(165%);
+  -webkit-backdrop-filter: blur(30px) saturate(165%);
+}
+
+html[data-te-preset-layout='aurora-reference']
+  body
+  .player-bar-shell.menu-open
+  .player-bar.player-bar {
+  width: auto;
+  max-width: min(960px, 100%);
+  margin: 0 auto;
+}
+
+/* Progress line tucks into the capsule's top rim */
+html[data-te-preset-layout='aurora-reference'] .player-bar .progress-area {
+  position: absolute;
+  top: 3px;
+  left: clamp(56px, 10%, 110px);
+  right: clamp(56px, 10%, 110px);
+  width: auto;
+  height: 16px;
+  gap: 8px;
+  z-index: 3;
+}
+
+html[data-te-preset-layout='aurora-reference'] .player-bar .progress-slider-wrap {
+  height: 16px;
+}
+
+html[data-te-preset-layout='aurora-reference'] .player-bar .progress-track {
+  height: 4px;
+}
+
+html[data-te-preset-layout='aurora-reference'] .player-bar .progress-area .time-label {
+  min-width: 30px;
+  font-size: 10px;
+  opacity: 0;
+  transition: opacity var(--te-motion-hover) ease;
+}
+
+html[data-te-preset-layout='aurora-reference'] .player-bar:hover .progress-area .time-label,
+html[data-te-preset-layout='aurora-reference'] .player-bar .progress-area:focus-within .time-label {
+  opacity: 1;
+}
+
+/* Static so .progress-area absolutes against the capsule, not the column */
+html[data-te-preset-layout='aurora-reference'] .player-bar .player-center {
+  position: static;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding-top: 4px;
+  transform: none;
+}
+
+/* Cover chip floats with an accent glow */
+html[data-te-preset-layout='aurora-reference'] .player-bar .player-cover-slot {
+  width: 52px;
+  height: 52px;
+  border-radius: 18px;
+  box-shadow: 0 6px 20px
+    color-mix(in srgb, var(--accent-color, var(--te-primary-500)) 32%, transparent);
+}
+
+/* Floating companion panels share the island language */
+html[data-te-preset-layout='aurora-reference'] .player-bar-shell .playlist-panel.playlist-panel {
+  border-radius: 30px;
+  margin-bottom: 16px;
+  border-color: var(--te-glass-border);
+  box-shadow:
+    var(--te-glass-shadow),
+    0 0 44px var(--te-glow-soft);
+}
+
+html[data-te-preset-layout='aurora-reference'] .player-bar-shell .volume-drawer {
+  border-radius: 22px;
+}
+
+html[data-te-preset-layout='aurora-reference'] body .hifi-overlay.hifi-overlay {
+  top: clamp(44px, 6vh, 62px);
+  right: clamp(10px, 1.4vw, 22px);
+  bottom: clamp(14px, 3vh, 30px);
+  border-radius: clamp(22px, 3vh, 30px);
+  border: 1px solid var(--te-glass-border);
+  box-shadow:
+    var(--te-glass-shadow),
+    0 0 54px var(--te-glow-soft);
+}
+
+/* ── 6) Secondary surfaces — shared floating dialog language ─────────── */
+
+html[data-te-preset-layout='aurora-reference'] .home .dsp-route-dialog {
+  border-radius: clamp(24px, 3vw, 32px);
+  border: 1px solid var(--te-glass-border);
+  box-shadow:
+    var(--te-glass-shadow),
+    0 0 70px var(--te-glow-main);
+}
+
+html[data-te-preset-layout='aurora-reference'] .home .empty-card {
+  border-radius: clamp(26px, 3.4vw, 38px);
+  border-color: var(--te-glass-border);
+  box-shadow:
+    var(--te-glass-shadow),
+    0 0 70px var(--te-glow-soft);
+}
+
+/* ── 7) Reduced effects — kill sustained motion and heavy glow ───────── */
+
+html[data-te-preset-layout='aurora-reference'][data-te-effects-mode='reduced']
+  .playing-music
+  .cover-column::before {
+  animation: none;
+  filter: none;
+  opacity: 0.4;
+}
+
+html[data-te-preset-layout='aurora-reference'][data-te-effects-mode='reduced'] body .side-menu,
+html[data-te-preset-layout='aurora-reference'][data-te-effects-mode='reduced']
+  body
+  .streaming-page
+  .streaming-sidebar,
+html[data-te-preset-layout='aurora-reference'][data-te-effects-mode='reduced']
+  body
+  .player-bar-shell
+  .player-bar {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: var(--te-glass-shadow);
+}
+
+/* ── 8) Small windows — tighten the floating chrome ──────────────────── */
+
+@media (max-width: 900px) {
+  html[data-te-preset-layout='aurora-reference'] body .player-bar-shell.player-bar-shell {
+    left: 10px;
+    right: 10px;
+  }
+
+  html[data-te-preset-layout='aurora-reference'] body .player-bar-shell .player-bar.player-bar {
+    height: 72px;
+    padding: 6px 16px 0;
+    grid-template-columns: minmax(0, 180px) minmax(180px, 1fr) minmax(0, 200px);
+    border-radius: 36px;
+  }
+
+  html[data-te-preset-layout='aurora-reference'] .player-bar .progress-area {
+    left: 36px;
+    right: 36px;
+  }
+
+  html[data-te-preset-layout='aurora-reference'] body .side-menu,
+  html[data-te-preset-layout='aurora-reference']
+    body
+    .streaming-page
+    .streaming-sidebar.streaming-sidebar {
+    top: 40px;
+    left: 8px;
+    bottom: 10px;
+    border-radius: 20px;
+  }
+
+  html[data-te-preset-layout='aurora-reference'] body .main-content.menu-open {
+    padding-left: calc(var(--te-menu-width) + 18px);
+  }
+
+  html[data-te-preset-layout='aurora-reference'] body .player-bar-shell.player-bar-shell.menu-open {
+    left: calc(var(--te-menu-width) + 18px);
+  }
+
+  html[data-te-preset-layout='aurora-reference'] .home .recent-grid .track-card {
+    flex-basis: clamp(128px, 30vw, 170px);
+  }
+
+  html[data-te-preset-layout='aurora-reference'] .home-view .shelf-grid .shelf-tile {
+    flex-basis: clamp(128px, 30vw, 170px);
+  }
+}

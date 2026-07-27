@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import QRCode from 'qrcode'
 import { createVisibilityPollingController } from '../utils/visibilityPolling.ts'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import AnimatedInput from './AnimatedInput.vue'
 import { useNcmStore } from '../stores/useNcmStore'
 import { useProviderStore, type ProviderInfo } from '../stores/useProviderStore'
 import type { MediaProviderProfile } from '../providers/mediaProvider'
@@ -21,6 +22,7 @@ const ncmStore = useNcmStore()
 
 const POLL_INTERVAL = 5000
 const QR_KEY_COOLDOWN = 5000
+const SUCCESS_LINGER_MS = 1200
 
 type PageState =
   | 'loading'
@@ -32,6 +34,8 @@ type PageState =
   | 'qr_expired'
   | 'login_success'
   | 'error'
+
+type LoginMethod = 'qr' | 'captcha' | 'password'
 
 interface AccountState {
   available: boolean
@@ -60,7 +64,8 @@ const qrKey = ref('')
 const lastKeyGenTime = ref(0)
 const authUrl = ref('') // OAuth device flow URL (for showBrowserButton providers)
 const accountStates = ref<Record<string, AccountState>>({})
-const accountLoginMode = ref<'phoneCaptcha' | 'phonePassword' | 'emailPassword'>('phoneCaptcha')
+const loginMethod = ref<LoginMethod>('qr')
+const passwordKind = ref<'phone' | 'email'>('phone')
 const accountPhone = ref('')
 const accountCountryCode = ref('86')
 const accountCaptcha = ref('')
@@ -71,9 +76,12 @@ const captchaBusy = ref(false)
 const accountLoginMessage = ref('')
 const loginBlockedUntil = ref(0)
 const loginBlockedReason = ref('')
+const confirmLogout = ref(false)
+const uidCopied = ref(false)
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let cooldownTimer: ReturnType<typeof setInterval> | null = null
+let uidCopiedTimer: ReturnType<typeof setTimeout> | null = null
 
 /** 所有声明了 login 能力的 provider（无论是否声明 ui 元数据，都显示在登录页） */
 const loginProviders = computed<ProviderInfo[]>(() =>
@@ -128,9 +136,27 @@ const activeProfile = computed(() =>
 )
 
 const activeUi = computed(() => activeProvider.value?.ui)
-const showNcmAccountLogin = computed(
-  () => activeProviderId.value === 'ncm' && pageState.value !== 'login_success'
-)
+const supportsAccountLogin = computed(() => activeProviderId.value === 'ncm')
+const isOAuthProvider = computed(() => Boolean(activeUi.value?.showBrowserButton))
+
+/** 顶层视图：由页面状态机折叠而来，驱动舞台切换动画 */
+const view = computed<'loading' | 'connect' | 'login' | 'profile' | 'success' | 'error'>(() => {
+  switch (pageState.value) {
+    case 'loading':
+      return 'loading'
+    case 'account_list':
+      return 'connect'
+    case 'logged_in':
+      return 'profile'
+    case 'login_success':
+      return 'success'
+    case 'error':
+      return 'error'
+    default:
+      return 'login'
+  }
+})
+
 const loginCooldownRemaining = ref(0)
 const isLoginCoolingDown = computed(() => loginCooldownRemaining.value > 0)
 const loginCooldownText = computed(() => {
@@ -140,26 +166,24 @@ const loginCooldownText = computed(() => {
   return minutes > 0 ? `${minutes}分${String(seconds).padStart(2, '0')}秒` : `${seconds}秒`
 })
 
-const statusText = computed(() => {
-  const providerName = activeCard.value?.name ?? '在线账号'
+const qrStatusText = computed(() => {
   switch (pageState.value) {
-    case 'loading':
-      return '正在初始化...'
     case 'qr_loading':
-      return '正在生成二维码...'
+      return '正在生成二维码…'
     case 'qr_ready':
-      return activeUi.value?.loginInstructions ?? '请扫码登录'
+      return activeUi.value?.loginInstructions ?? '打开手机 App 扫码登录'
     case 'qr_scanned':
-      return '已扫码，请在手机上确认登录'
+      return '已扫码，请在手机上确认'
     case 'qr_expired':
-      return '二维码已过期，请点击刷新'
-    case 'login_success':
-      return `${providerName} 登录成功`
-    case 'error':
-      return errorMsg.value
+      return '二维码已过期'
     default:
       return ''
   }
+})
+
+const profileInitial = computed(() => {
+  const name = activeProfile.value?.nickname?.trim()
+  return name ? Array.from(name)[0] : '?'
 })
 
 async function refreshAccounts(): Promise<void> {
@@ -204,16 +228,23 @@ async function refreshAccount(providerId: string): Promise<void> {
   }
 }
 
-async function syncSuccessfulLogin(providerId: string): Promise<void> {
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** celebrate=true 时先停留在成功动画上，再进入流媒体 */
+async function syncSuccessfulLogin(providerId: string, celebrate = false): Promise<void> {
   await refreshAccounts()
   if (providerId === 'ncm') {
     await ncmStore.checkLogin()
   }
+  if (celebrate) await delay(SUCCESS_LINGER_MS)
   emit('loginSuccess')
 }
 
 function openAccount(providerId: string): void {
   activeProviderId.value = providerId
+  confirmLogout.value = false
   const state = accountStates.value[providerId]
   if (!state?.available) {
     pageState.value = 'error'
@@ -226,11 +257,27 @@ function openAccount(providerId: string): void {
     pageState.value = 'logged_in'
     return
   }
+  loginMethod.value = 'qr'
   void startQrLogin()
 }
 
 function clearAccountLoginFeedback(): void {
   accountLoginMessage.value = ''
+}
+
+function setLoginMethod(method: LoginMethod): void {
+  if (loginMethod.value === method) return
+  loginMethod.value = method
+  clearAccountLoginFeedback()
+  if (method === 'qr') {
+    if (qrKey.value && (pageState.value === 'qr_ready' || pageState.value === 'qr_scanned')) {
+      if (activeProviderId.value) startPolling(activeProviderId.value, qrKey.value)
+      return
+    }
+    handleRefresh()
+    return
+  }
+  stopPolling()
 }
 
 function refreshCooldownRemaining(): void {
@@ -343,7 +390,7 @@ function startPolling(providerId: string, key: string): void {
     if (isQrStatus(result.code, 'success')) {
       stopPolling()
       pageState.value = 'login_success'
-      await syncSuccessfulLogin(providerId)
+      await syncSuccessfulLogin(providerId, true)
     }
   }, POLL_INTERVAL)
 }
@@ -356,7 +403,7 @@ const qrVisibilityPolling = createVisibilityPollingController({
   isHidden: () => document.hidden,
   stop: stopPolling,
   resume: () => {
-    if (qrKey.value && activeProviderId.value && pollTimer === null)
+    if (qrKey.value && activeProviderId.value && pollTimer === null && loginMethod.value === 'qr')
       startPolling(activeProviderId.value, qrKey.value)
   }
 })
@@ -427,7 +474,7 @@ async function handleExtraAction(method: string): Promise<void> {
     const providerId = activeProviderId.value
     await providerStore.callProvider(providerId, method)
     pageState.value = 'login_success'
-    await syncSuccessfulLogin(providerId)
+    await syncSuccessfulLogin(providerId, true)
   } catch (error) {
     pageState.value = 'error'
     errorMsg.value = error instanceof Error ? error.message : String(error)
@@ -443,7 +490,9 @@ function normalizeLoginError(error: unknown): string {
   }
   if (/503|高频|风控/i.test(message)) return '登录接口触发高频或风控限制，请等待几分钟后再试'
   if (/460/.test(message)) return '当前网络环境被网易云限制，请切换网络或稍后重试'
-  if (/fetch failed|Failed to fetch|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|network|offline/i.test(message)) {
+  if (
+    /fetch failed|Failed to fetch|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|network|offline/i.test(message)
+  ) {
     return '网络不可用或无法连接网易云服务，请检查网络后重试'
   }
   return message || '登录失败，请检查账号信息后重试'
@@ -492,13 +541,13 @@ async function handleAccountLogin(): Promise<void> {
   accountLoginBusy.value = true
   try {
     const providerId = activeProviderId.value
-    if (accountLoginMode.value === 'phoneCaptcha') {
+    if (loginMethod.value === 'captcha') {
       await providerStore.callProvider(providerId, 'loginByPhoneCaptcha', [
         accountPhone.value.trim(),
         accountCaptcha.value.trim(),
         accountCountryCode.value.trim() || '86'
       ])
-    } else if (accountLoginMode.value === 'phonePassword') {
+    } else if (passwordKind.value === 'phone') {
       await providerStore.callProvider(providerId, 'loginByPhonePassword', [
         accountPhone.value.trim(),
         accountPassword.value,
@@ -511,7 +560,7 @@ async function handleAccountLogin(): Promise<void> {
       ])
     }
     pageState.value = 'login_success'
-    await syncSuccessfulLogin(providerId)
+    await syncSuccessfulLogin(providerId, true)
   } catch (error) {
     accountLoginMessage.value = normalizeLoginError(error)
     applyLoginCooldownFromMessage(accountLoginMessage.value)
@@ -520,11 +569,31 @@ async function handleAccountLogin(): Promise<void> {
   }
 }
 
+function requestLogout(): void {
+  confirmLogout.value = true
+}
+
 async function handleLogout(): Promise<void> {
   if (!activeProviderId.value) return
+  confirmLogout.value = false
   await providerStore.logout(activeProviderId.value)
   await refreshAccounts()
   openAccount(activeProviderId.value)
+}
+
+async function copyUid(): Promise<void> {
+  const uid = activeProfile.value?.userId
+  if (uid == null) return
+  try {
+    await navigator.clipboard.writeText(String(uid))
+    uidCopied.value = true
+    if (uidCopiedTimer) clearTimeout(uidCopiedTimer)
+    uidCopiedTimer = setTimeout(() => {
+      uidCopied.value = false
+    }, 1600)
+  } catch {
+    // clipboard unavailable — ignore silently
+  }
 }
 
 function backToAccounts(): void {
@@ -535,6 +604,7 @@ function backToAccounts(): void {
   qrKey.value = ''
   authUrl.value = ''
   errorMsg.value = ''
+  confirmLogout.value = false
   clearAccountLoginFeedback()
 }
 
@@ -555,6 +625,10 @@ async function enterAfterLoggedIn(): Promise<void> {
   emit('loginSuccess')
 }
 
+watch(view, (next) => {
+  if (next !== 'profile') confirmLogout.value = false
+})
+
 onMounted(async () => {
   document.addEventListener('visibilitychange', onDocumentVisibilityChange)
   await refreshAccounts()
@@ -574,588 +648,1298 @@ onUnmounted(() => {
   document.removeEventListener('visibilitychange', onDocumentVisibilityChange)
   stopPolling()
   if (cooldownTimer) clearInterval(cooldownTimer)
+  if (uidCopiedTimer) clearTimeout(uidCopiedTimer)
 })
 </script>
 
 <template>
   <div class="login-page">
-    <div class="login-deco" aria-hidden="true">
-      <div class="deco-orb deco-orb-a"></div>
-      <div class="deco-orb deco-orb-b"></div>
-      <div class="deco-orb deco-orb-c"></div>
-      <div class="deco-grain"></div>
+    <div class="lp-sky" aria-hidden="true">
+      <div class="sky-blob sky-blob-a"></div>
+      <div class="sky-blob sky-blob-b"></div>
+      <div class="sky-halo"></div>
     </div>
 
-    <header class="login-header">
-      <button class="login-back-btn" title="返回" @click="handleBack">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
-      </button>
-      <h2 class="login-title">
-        {{ activeCard ? activeCard.name : '连接你的音乐世界' }}
-      </h2>
-    </header>
+    <button class="lp-close" title="返回" @click="handleBack">
+      <svg
+        width="17"
+        height="17"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M19 12H5" />
+        <path d="M12 19l-7-7 7-7" />
+      </svg>
+      <span>返回</span>
+    </button>
 
-    <main class="login-body">
-      <div v-if="pageState === 'loading'" class="login-status">
-        <div class="status-spinner"></div>
-        <p>{{ statusText }}</p>
-      </div>
+    <div class="lp-shell">
+      <main class="lp-stage">
+        <Transition name="stage" mode="out-in">
+          <!-- 初始化 -->
+          <section v-if="view === 'loading'" key="loading" class="stage-center">
+            <div class="lp-spinner"></div>
+            <p class="stage-muted">正在连接在线音源…</p>
+          </section>
 
-      <div v-else-if="pageState === 'account_list'" class="account-list">
-        <p class="account-list-hint">选择你的音乐平台</p>
-        <button
-          v-for="provider in providerCards"
-          :key="provider.id"
-          type="button"
-          class="account-card"
-          :class="{ unavailable: !provider.available }"
-          @click="openAccount(provider.id)"
-        >
-          <span class="account-icon">
-            <i :class="provider.icon"></i>
-          </span>
-          <span class="account-copy">
-            <span class="account-title">{{ provider.name }}</span>
-            <span class="account-desc">
-              <template v-if="provider.loggedIn">
-                已登录 · {{ provider.profile?.nickname || provider.profile?.userId || '未知用户' }}
-              </template>
-              <template v-else-if="provider.available">{{ provider.desc }}</template>
-              <template v-else>{{ provider.error || 'Provider 未启用' }}</template>
-            </span>
-          </span>
-          <span class="account-action">
-            <template v-if="provider.loggedIn">管理</template>
-            <template v-else-if="provider.available">登录</template>
-            <template v-else>不可用</template>
-          </span>
-        </button>
-      </div>
-
-      <div v-else-if="pageState === 'error'" class="login-status">
-        <div class="status-error-icon">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-        </div>
-        <p class="error-text">{{ statusText }}</p>
-        <button class="btn-primary" @click="handleRefresh">重试</button>
-      </div>
-
-      <div v-else-if="pageState === 'logged_in'" class="login-profile">
-        <div class="profile-card">
-          <div class="profile-avatar-ring">
-            <img
-              v-if="activeProfile?.avatarUrl"
-              :src="activeProfile.avatarUrl"
-              class="profile-avatar"
-              alt="头像"
-            />
-            <div v-else class="profile-avatar-placeholder">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <!-- 平台选择 -->
+          <section v-else-if="view === 'connect'" key="connect" class="stage-view">
+            <header class="stage-head">
+              <h2 class="stage-title">选择你的音乐平台</h2>
+              <p class="stage-sub">登录一个平台，把它的曲库接进 Twilight Echo</p>
+            </header>
+            <div class="provider-list">
+              <button
+                v-for="(provider, index) in providerCards"
+                :key="provider.id"
+                type="button"
+                class="provider-row"
+                :class="{ unavailable: !provider.available }"
+                :style="{ '--d': index }"
+                @click="openAccount(provider.id)"
+              >
+                <span
+                  class="provider-glyph"
+                  :style="provider.color ? { color: provider.color } : undefined"
+                >
+                  <i :class="provider.icon"></i>
+                </span>
+                <span class="provider-copy">
+                  <span class="provider-name">
+                    {{ provider.name }}
+                    <em v-if="provider.loggedIn" class="provider-pill on">已连接</em>
+                    <em v-else-if="!provider.available" class="provider-pill off">不可用</em>
+                  </span>
+                  <span class="provider-desc">
+                    <template v-if="provider.loggedIn">
+                      {{ provider.profile?.nickname || provider.profile?.userId || '未知用户' }} ·
+                      点击管理账号
+                    </template>
+                    <template v-else-if="provider.available">{{ provider.desc }}</template>
+                    <template v-else>{{ provider.error || 'Provider 未启用' }}</template>
+                  </span>
+                </span>
+                <img
+                  v-if="provider.loggedIn && provider.profile?.avatarUrl"
+                  :src="provider.profile.avatarUrl"
+                  class="provider-avatar"
+                  alt=""
+                />
+                <span class="provider-arrow">
+                  <svg
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M9 18l6-6-6-6" />
+                  </svg>
+                </span>
+              </button>
             </div>
-          </div>
-          <div class="profile-info">
-            <span class="profile-nickname">{{ activeProfile?.nickname || '未知用户' }}</span>
-            <span class="profile-uid">UID {{ activeProfile?.userId }}</span>
-          </div>
-          <button class="btn-ghost-danger" @click="handleLogout">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-            <span>退出登录</span>
-          </button>
-        </div>
-        <button class="btn-primary" style="margin-top: 20px" @click="enterAfterLoggedIn">
-          进入流媒体
-        </button>
-      </div>
+          </section>
 
-      <div v-else class="login-qr-section">
-        <div
-          v-if="qrImage && !activeUi?.showBrowserButton"
-          class="qr-wrapper"
-          :class="{ expired: pageState === 'qr_expired' }"
-        >
-          <img v-if="pageState !== 'qr_expired'" :src="qrImage" alt="登录二维码" class="qr-image" />
-          <div v-else class="qr-expired-overlay" @click="handleRefresh">
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-            <span>点击刷新</span>
-          </div>
-        </div>
+          <!-- 登录 -->
+          <section v-else-if="view === 'login'" key="login" class="stage-view">
+            <header class="stage-head">
+              <button type="button" class="chip-back" @click="backToAccounts">
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.4"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M15 18l-6-6 6-6" />
+                </svg>
+                全部平台
+              </button>
+              <h2 class="stage-title">
+                <span
+                  v-if="activeCard"
+                  class="title-glyph"
+                  :style="activeCard.color ? { color: activeCard.color } : undefined"
+                >
+                  <i :class="activeCard.icon"></i>
+                </span>
+                登录 {{ activeCard?.name ?? '在线账号' }}
+              </h2>
+            </header>
 
-        <div
-          v-else-if="
-            activeUi?.showBrowserButton &&
-            pageState !== 'login_success' &&
-            pageState !== 'qr_expired'
-          "
-          class="qr-placeholder"
-        >
-          <div class="status-spinner"></div>
-        </div>
-
-        <div v-else-if="pageState === 'qr_loading'" class="qr-placeholder">
-          <div class="status-spinner"></div>
-        </div>
-
-        <p class="qr-status" :class="{ success: pageState === 'login_success' }">
-          <span v-if="pageState === 'login_success'" class="qr-status-dot success"></span>
-          <span v-else-if="pageState === 'qr_scanned'" class="qr-status-dot scanned"></span>
-          <span v-else class="qr-status-dot waiting"></span>
-          {{ statusText }}
-        </p>
-
-        <p
-          v-if="activeUi?.loginExtraActions?.length && pageState !== 'login_success'"
-          class="qr-login-hint"
-        >
-          如果登录失败，请尝试其他方式
-        </p>
-
-        <form
-          v-if="showNcmAccountLogin"
-          class="account-login-form"
-          @submit.prevent="handleAccountLogin"
-        >
-          <div class="account-login-tabs" role="tablist" aria-label="网易云账号登录方式">
-            <button
-              type="button"
-              class="account-login-tab"
-              :class="{ active: accountLoginMode === 'phoneCaptcha' }"
-              @click="
-                accountLoginMode = 'phoneCaptcha';
-                clearAccountLoginFeedback()
-              "
+            <div
+              v-if="supportsAccountLogin"
+              class="method-tabs"
+              role="tablist"
+              aria-label="登录方式"
             >
-              验证码
-            </button>
-            <button
-              type="button"
-              class="account-login-tab"
-              :class="{ active: accountLoginMode === 'phonePassword' }"
-              @click="
-                accountLoginMode = 'phonePassword';
-                clearAccountLoginFeedback()
-              "
-            >
-              手机密码
-            </button>
-            <button
-              type="button"
-              class="account-login-tab"
-              :class="{ active: accountLoginMode === 'emailPassword' }"
-              @click="
-                accountLoginMode = 'emailPassword';
-                clearAccountLoginFeedback()
-              "
-            >
-              邮箱密码
-            </button>
-          </div>
+              <button
+                type="button"
+                role="tab"
+                class="method-tab"
+                :aria-selected="loginMethod === 'qr'"
+                :class="{ active: loginMethod === 'qr' }"
+                @click="setLoginMethod('qr')"
+              >
+                扫码登录
+              </button>
+              <button
+                type="button"
+                role="tab"
+                class="method-tab"
+                :aria-selected="loginMethod === 'captcha'"
+                :class="{ active: loginMethod === 'captcha' }"
+                @click="setLoginMethod('captcha')"
+              >
+                短信登录
+              </button>
+              <button
+                type="button"
+                role="tab"
+                class="method-tab"
+                :aria-selected="loginMethod === 'password'"
+                :class="{ active: loginMethod === 'password' }"
+                @click="setLoginMethod('password')"
+              >
+                密码登录
+              </button>
+            </div>
 
-          <div v-if="accountLoginMode !== 'emailPassword'" class="account-login-row">
-            <input
-              v-model="accountCountryCode"
-              class="account-login-input country"
-              autocomplete="tel-country-code"
-              inputmode="numeric"
-              placeholder="86"
-            />
-            <input
-              v-model="accountPhone"
-              class="account-login-input"
-              autocomplete="tel"
-              inputmode="tel"
-              placeholder="手机号"
-            />
-          </div>
+            <!-- 扫码 / OAuth -->
+            <div v-if="loginMethod === 'qr'" class="qr-stage">
+              <template v-if="isOAuthProvider">
+                <div class="oauth-panel">
+                  <div class="lp-spinner"></div>
+                  <p class="stage-muted">已在浏览器中打开授权页面，完成授权后将自动登录</p>
+                  <button v-if="authUrl" type="button" class="btn-secondary" @click="openAuthUrl">
+                    重新打开浏览器
+                  </button>
+                </div>
+              </template>
+              <template v-else>
+                <div class="qr-frame" :class="{ expired: pageState === 'qr_expired' }">
+                  <span class="qr-corner tl"></span>
+                  <span class="qr-corner tr"></span>
+                  <span class="qr-corner bl"></span>
+                  <span class="qr-corner br"></span>
+                  <img
+                    v-if="qrImage && pageState !== 'qr_expired'"
+                    :src="qrImage"
+                    alt="登录二维码"
+                    class="qr-image"
+                  />
+                  <div v-else-if="pageState === 'qr_loading'" class="qr-loading">
+                    <div class="lp-spinner"></div>
+                  </div>
+                  <div
+                    v-if="pageState === 'qr_expired'"
+                    class="qr-expired-overlay"
+                    data-te-interactive
+                    role="button"
+                    tabindex="0"
+                    aria-label="刷新二维码"
+                    @click="handleRefresh"
+                    @keydown.enter.prevent="handleRefresh"
+                    @keydown.space.prevent="handleRefresh"
+                  >
+                    <svg
+                      width="24"
+                      height="24"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <polyline points="23 4 23 10 17 10" />
+                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                    </svg>
+                    <span>点击刷新二维码</span>
+                  </div>
+                  <div v-if="pageState === 'qr_ready'" class="qr-scanline"></div>
+                </div>
+                <p class="qr-status" :class="{ scanned: pageState === 'qr_scanned' }">
+                  <span
+                    class="qr-dot"
+                    :class="pageState === 'qr_scanned' ? 'scanned' : 'waiting'"
+                  ></span>
+                  {{ qrStatusText }}
+                </p>
+              </template>
 
-          <input
-            v-if="accountLoginMode === 'emailPassword'"
-            v-model="accountEmail"
-            class="account-login-input full"
-            autocomplete="email"
-            type="email"
-            placeholder="网易邮箱"
-          />
+              <div v-if="activeUi?.loginExtraActions?.length" class="extra-actions">
+                <button
+                  v-for="action in activeUi.loginExtraActions"
+                  :key="action.method"
+                  type="button"
+                  class="btn-secondary"
+                  @click="handleExtraAction(action.method)"
+                >
+                  <i :class="action.icon"></i>
+                  {{ action.label }}
+                </button>
+              </div>
+            </div>
 
-          <div v-if="accountLoginMode === 'phoneCaptcha'" class="account-login-row captcha">
-            <input
-              v-model="accountCaptcha"
-              class="account-login-input"
-              autocomplete="one-time-code"
-              inputmode="numeric"
-              placeholder="短信验证码"
-            />
-            <button
-              type="button"
-              class="btn-captcha"
-              :disabled="captchaBusy || isLoginCoolingDown"
-              @click="handleSendCaptcha"
-            >
-              {{ captchaBusy ? '发送中' : isLoginCoolingDown ? loginCooldownText : '获取验证码' }}
-            </button>
-          </div>
+            <!-- 短信 / 密码表单 -->
+            <form v-else class="account-form" @submit.prevent="handleAccountLogin">
+              <div
+                v-if="loginMethod === 'password'"
+                class="kind-switch"
+                role="radiogroup"
+                aria-label="账号类型"
+              >
+                <button
+                  type="button"
+                  class="kind-chip"
+                  :class="{ active: passwordKind === 'phone' }"
+                  @click="((passwordKind = 'phone'), clearAccountLoginFeedback())"
+                >
+                  手机号
+                </button>
+                <button
+                  type="button"
+                  class="kind-chip"
+                  :class="{ active: passwordKind === 'email' }"
+                  @click="((passwordKind = 'email'), clearAccountLoginFeedback())"
+                >
+                  邮箱
+                </button>
+              </div>
 
-          <input
-            v-if="accountLoginMode !== 'phoneCaptcha'"
-            v-model="accountPassword"
-            class="account-login-input full"
-            autocomplete="current-password"
-            type="password"
-            placeholder="密码"
-          />
+              <template v-if="loginMethod === 'captcha' || passwordKind === 'phone'">
+                <label class="field-label" for="lp-phone">手机号</label>
+                <div class="field-row phone">
+                  <AnimatedInput
+                    id="lp-country"
+                    v-model="accountCountryCode"
+                    class="field-input country"
+                    autocomplete="tel-country-code"
+                    inputmode="numeric"
+                    placeholder="86"
+                    aria-label="国家区号"
+                  />
+                  <AnimatedInput
+                    id="lp-phone"
+                    v-model="accountPhone"
+                    class="field-input"
+                    autocomplete="tel"
+                    inputmode="tel"
+                    placeholder="输入手机号"
+                  />
+                </div>
+              </template>
 
-          <button
-            class="btn-primary account-login-submit"
-            type="submit"
-            :disabled="accountLoginBusy || isLoginCoolingDown"
-          >
-            <span v-if="accountLoginBusy" class="btn-spinner"></span>
-            {{
-              accountLoginBusy
-                ? '登录中...'
-                : isLoginCoolingDown
-                  ? `等待 ${loginCooldownText}`
-                  : '登录'
-            }}
-          </button>
-          <p v-if="isLoginCoolingDown" class="account-login-message">
-            {{ loginBlockedReason || '登录请求正在冷却' }}，请 {{ loginCooldownText }} 后再试
-          </p>
-          <p v-if="accountLoginMessage" class="account-login-message">{{ accountLoginMessage }}</p>
-        </form>
+              <template v-if="loginMethod === 'password' && passwordKind === 'email'">
+                <label class="field-label" for="lp-email">网易邮箱</label>
+                <AnimatedInput
+                  id="lp-email"
+                  v-model="accountEmail"
+                  class="field-input"
+                  autocomplete="email"
+                  type="email"
+                  placeholder="name@163.com"
+                />
+              </template>
 
-        <button v-if="pageState === 'qr_expired'" class="btn-primary" @click="handleRefresh">
-          重新获取二维码
-        </button>
+              <template v-if="loginMethod === 'captcha'">
+                <label class="field-label" for="lp-captcha">短信验证码</label>
+                <div class="field-row captcha">
+                  <AnimatedInput
+                    id="lp-captcha"
+                    v-model="accountCaptcha"
+                    class="field-input"
+                    autocomplete="one-time-code"
+                    inputmode="numeric"
+                    placeholder="6 位验证码"
+                  />
+                  <button
+                    type="button"
+                    class="btn-captcha"
+                    :disabled="captchaBusy || isLoginCoolingDown"
+                    @click="handleSendCaptcha"
+                  >
+                    {{
+                      captchaBusy
+                        ? '发送中…'
+                        : isLoginCoolingDown
+                          ? loginCooldownText
+                          : '获取验证码'
+                    }}
+                  </button>
+                </div>
+              </template>
 
-        <button
-          v-if="
-            activeUi?.showBrowserButton &&
-            authUrl &&
-            pageState !== 'login_success' &&
-            pageState !== 'qr_expired'
-          "
-          class="btn-secondary"
-          @click="openAuthUrl"
-        >
-          在浏览器中打开
-        </button>
+              <template v-if="loginMethod === 'password'">
+                <label class="field-label" for="lp-password">密码</label>
+                <input
+                  id="lp-password"
+                  v-model="accountPassword"
+                  class="field-input"
+                  autocomplete="current-password"
+                  type="password"
+                  placeholder="输入密码"
+                />
+              </template>
 
-        <button
-          v-for="action in activeUi?.loginExtraActions ?? []"
-          :key="action.method"
-          v-show="pageState !== 'login_success'"
-          class="btn-secondary"
-          @click="handleExtraAction(action.method)"
-        >
-          <i :class="action.icon" style="margin-right: 6px"></i>
-          {{ action.label }}
-        </button>
+              <button
+                class="btn-primary form-submit"
+                type="submit"
+                :disabled="accountLoginBusy || isLoginCoolingDown"
+              >
+                <span v-if="accountLoginBusy" class="btn-spinner"></span>
+                {{
+                  accountLoginBusy
+                    ? '登录中…'
+                    : isLoginCoolingDown
+                      ? `等待 ${loginCooldownText}`
+                      : '登 录'
+                }}
+              </button>
+              <p v-if="isLoginCoolingDown" class="form-message">
+                {{ loginBlockedReason || '登录请求正在冷却' }}，请 {{ loginCooldownText }} 后再试
+              </p>
+              <p v-else-if="accountLoginMessage" class="form-message">{{ accountLoginMessage }}</p>
+            </form>
+          </section>
 
-        <button
-          v-if="pageState === 'login_success'"
-          class="btn-primary"
-          @click="$emit('loginSuccess')"
-        >
-          进入流媒体
-        </button>
-      </div>
-    </main>
+          <!-- 资料页 -->
+          <section v-else-if="view === 'profile'" key="profile" class="stage-view profile-view">
+            <header class="stage-head">
+              <button type="button" class="chip-back" @click="backToAccounts">
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.4"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M15 18l-6-6 6-6" />
+                </svg>
+                全部平台
+              </button>
+            </header>
+
+            <div class="id-card">
+              <div class="id-banner">
+                <i v-if="activeCard" :class="activeCard.icon" class="id-watermark"></i>
+              </div>
+              <div class="id-avatar-slot">
+                <img
+                  v-if="activeProfile?.avatarUrl"
+                  :src="activeProfile.avatarUrl"
+                  class="id-avatar"
+                  alt="头像"
+                />
+                <span v-else class="id-avatar id-avatar-fallback">{{ profileInitial }}</span>
+              </div>
+              <div class="id-identity">
+                <h2 class="id-name">{{ activeProfile?.nickname || '未知用户' }}</h2>
+                <span v-if="activeCard" class="id-provider">
+                  <i :class="activeCard.icon"></i>
+                  {{ activeCard.name }}
+                </span>
+              </div>
+              <p class="id-signature">
+                {{ activeProfile?.signature?.trim() || '这位听众很安静，还没有留下签名' }}
+              </p>
+              <div class="id-stats">
+                <span v-if="activeProfile?.follows != null" class="id-stat">
+                  <strong>{{ activeProfile.follows }}</strong>
+                  <span>关注</span>
+                </span>
+                <span v-if="activeProfile?.followeds != null" class="id-stat">
+                  <strong>{{ activeProfile.followeds }}</strong>
+                  <span>粉丝</span>
+                </span>
+                <button
+                  type="button"
+                  class="id-stat uid"
+                  :title="uidCopied ? '已复制' : '点击复制 UID'"
+                  @click="copyUid"
+                >
+                  <strong>{{ activeProfile?.userId ?? '—' }}</strong>
+                  <span>{{ uidCopied ? '已复制 ✓' : 'UID · 复制' }}</span>
+                </button>
+              </div>
+              <div class="id-actions">
+                <button type="button" class="btn-primary" @click="enterAfterLoggedIn">
+                  <svg
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <polygon points="5 3 19 12 5 21 5 3" />
+                  </svg>
+                  进入流媒体
+                </button>
+                <button
+                  v-if="!confirmLogout"
+                  type="button"
+                  class="btn-ghost-danger"
+                  @click="requestLogout"
+                >
+                  退出登录
+                </button>
+                <button v-else type="button" class="btn-ghost-danger confirm" @click="handleLogout">
+                  确认退出？
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <!-- 登录成功 -->
+          <section v-else-if="view === 'success'" key="success" class="stage-center">
+            <div class="success-burst">
+              <svg viewBox="0 0 52 52" class="success-check">
+                <circle class="success-circle" cx="26" cy="26" r="24" fill="none" />
+                <path class="success-tick" fill="none" d="M15 27l7 7 15-16" />
+              </svg>
+            </div>
+            <h2 class="stage-title center">登录成功</h2>
+            <p class="stage-muted">正在为你打开流媒体…</p>
+          </section>
+
+          <!-- 错误 -->
+          <section v-else key="error" class="stage-center">
+            <div class="error-badge">
+              <svg
+                width="26"
+                height="26"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+            </div>
+            <p class="error-text">{{ errorMsg || '出了点问题，请稍后重试' }}</p>
+            <div class="error-actions">
+              <button type="button" class="btn-primary" @click="handleRefresh">重试</button>
+              <button type="button" class="btn-secondary" @click="backToAccounts">
+                返回平台列表
+              </button>
+            </div>
+          </section>
+        </Transition>
+      </main>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .login-page {
+  /* 本页局部调色板：与流媒体首页同源 —— 卡片 / 墨色中性 token 派生，自动适配深浅色 */
+  --lp-surface: var(--te-card-bg);
+  --lp-text: var(--te-neutral-900);
+  --lp-muted: var(--te-neutral-500);
+  --lp-line: var(--te-card-border);
+  --lp-inset: var(--te-subtle-bg);
+  --lp-tint: color-mix(in srgb, var(--te-primary-500) 10%, transparent);
+  --lp-tint-strong: color-mix(in srgb, var(--te-primary-500) 18%, transparent);
+  --lp-shadow: 0 18px 44px color-mix(in srgb, var(--te-neutral-900) 8%, transparent);
+  --lp-shadow-lift: 0 24px 56px color-mix(in srgb, var(--te-neutral-900) 13%, transparent);
+  --lp-shadow-soft: 0 1px 4px color-mix(in srgb, var(--te-neutral-900) 8%, transparent);
+
   position: fixed;
   inset: 0;
   z-index: 100;
-  display: flex;
-  flex-direction: column;
-  background-color: var(--te-settings-bg, #f5f6f8);
-  color: var(--te-settings-text, #1a1a1a);
+  display: grid;
+  place-items: center;
+  background-color: var(--te-streaming-bg);
+  background-image: var(--te-streaming-bg-image);
+  background-position: center;
+  background-size: cover;
+  color: var(--lp-text);
   font-family: var(--te-font-sans);
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
 }
 
-.login-deco {
+/* ─── 背景天幕 ─────────────────────────────── */
+
+.lp-sky {
   position: absolute;
   inset: 0;
   pointer-events: none;
   overflow: hidden;
 }
 
-.deco-orb {
+.sky-blob {
   position: absolute;
   border-radius: 50%;
-  filter: blur(90px);
-  opacity: 0.35;
-  animation: orbFloat 18s ease-in-out infinite alternate;
+  filter: blur(110px);
+  animation: skyDrift 22s ease-in-out infinite alternate;
 }
 
-.deco-orb-a {
+.sky-blob-a {
+  width: 520px;
+  height: 520px;
+  top: -180px;
+  right: -120px;
+  background: color-mix(in srgb, var(--te-primary-500) 18%, transparent);
+}
+
+.sky-blob-b {
   width: 420px;
   height: 420px;
-  top: -140px;
-  right: -100px;
-  background: rgba(var(--te-primary-rgb), 0.28);
+  bottom: -160px;
+  left: -120px;
+  background: color-mix(in srgb, var(--te-primary-300) 20%, transparent);
+  animation-delay: -9s;
 }
 
-.deco-orb-b {
-  width: 340px;
-  height: 340px;
-  bottom: -120px;
-  left: -80px;
-  background: color-mix(in srgb, var(--te-primary-300, #93c5fd) 55%, transparent);
-  animation-delay: -6s;
+.sky-halo {
+  position: absolute;
+  inset: -30%;
+  background: radial-gradient(
+    ellipse at 50% 38%,
+    color-mix(in srgb, var(--te-primary-500) 7%, transparent),
+    transparent 55%
+  );
 }
 
-.deco-orb-c {
-  width: 200px;
-  height: 200px;
-  top: 42%;
-  left: 58%;
-  background: rgba(var(--te-primary-rgb), 0.12);
-  animation-delay: -12s;
-}
-
-@keyframes orbFloat {
-  0% {
+@keyframes skyDrift {
+  from {
     transform: translate(0, 0) scale(1);
   }
-  50% {
-    transform: translate(16px, -14px) scale(1.05);
-  }
-  100% {
-    transform: translate(-10px, 12px) scale(0.97);
+  to {
+    transform: translate(-28px, 22px) scale(1.08);
   }
 }
 
-.deco-grain {
+/* ─── 返回按钮 ─────────────────────────────── */
+
+.lp-close {
   position: absolute;
-  inset: 0;
-  opacity: 0.02;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-}
-
-.login-header {
-  position: relative;
-  display: flex;
+  top: 44px;
+  left: 24px;
+  z-index: 3;
+  display: inline-flex;
   align-items: center;
-  gap: 14px;
-  padding: calc(32px + 16px) 28px 16px;
-  flex-shrink: 0;
-}
-
-.login-back-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
+  gap: 7px;
   height: 36px;
-  border: none;
+  padding: 0 16px 0 12px;
+  border: 1px solid var(--lp-line);
   border-radius: 999px;
-  background: var(--te-settings-search-bg, #eef0f3);
-  color: var(--te-settings-text-muted, #8a8f98);
+  background: color-mix(in srgb, var(--lp-surface) 78%, transparent);
+  backdrop-filter: blur(10px);
+  color: var(--lp-muted);
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
   transition:
-    background 0.16s ease,
-    color 0.16s ease,
-    transform 0.16s ease;
+    color var(--te-motion-hover),
+    transform var(--te-motion-return) var(--te-ease-out-quint),
+    box-shadow var(--te-motion-return) var(--te-ease-out-quint);
 }
 
-.login-back-btn:hover {
-  background: rgba(15, 23, 42, 0.08);
+.lp-close:hover {
+  transition-duration: var(--te-motion-settle);
   color: var(--te-primary-500);
   transform: translateX(-2px);
+  box-shadow: var(--lp-shadow-soft);
 }
 
-.login-title {
-  font-size: 22px;
-  font-weight: 600;
-  color: var(--te-settings-text, #1a1a1a);
-  margin: 0;
-  letter-spacing: -0.02em;
-}
+/* ─── 主壳体 ──────────────────────────────── */
 
-.login-body {
+.lp-shell {
   position: relative;
-  flex: 1;
+  z-index: 1;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 32px;
+  flex-direction: column;
+  width: min(496px, calc(100vw - 48px));
+  max-height: calc(100vh - 110px);
+  border-radius: 22px;
+  overflow: hidden;
+  background: var(--lp-surface);
+  border: 1px solid var(--lp-line);
+  box-shadow: var(--lp-shadow);
+  animation: shellIn 0.55s var(--te-ease-spring) both;
 }
 
-.status-spinner {
-  width: 36px;
-  height: 36px;
-  border: 3px solid rgba(var(--te-primary-rgb), 0.14);
-  border-top-color: var(--te-primary-500);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+/* 卡片顶部的一层主题色光晕，替代原品牌面板的视觉锚点 */
+.lp-shell::before {
+  content: '';
+  position: absolute;
+  top: -120px;
+  left: 50%;
+  width: 560px;
+  height: 260px;
+  transform: translateX(-50%);
+  background: radial-gradient(
+    ellipse at center,
+    color-mix(in srgb, var(--te-primary-500) 12%, transparent),
+    transparent 68%
+  );
+  pointer-events: none;
 }
 
-.btn-spinner {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 2px solid rgba(255, 255, 255, 0.35);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-  margin-right: 6px;
-}
-
-@keyframes spin {
+@keyframes shellIn {
+  from {
+    opacity: 0;
+    transform: translateY(22px) scale(0.975);
+  }
   to {
-    transform: rotate(360deg);
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 
-.login-status {
+/* ─── 舞台区 ──────────────────────────────── */
+
+.lp-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.stage-view {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 38px 40px;
+}
+
+.stage-center {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
-  color: var(--te-settings-text-muted, #8a8f98);
-  font-size: 14px;
-}
-
-.login-status p {
-  margin: 0;
-}
-
-.status-error-icon {
-  color: var(--te-danger-soft-fg, #b91c1c);
-}
-
-.error-text {
-  color: var(--te-danger-soft-fg, #b91c1c) !important;
-  max-width: 320px;
+  justify-content: center;
+  gap: 14px;
+  padding: 38px 40px;
+  min-height: 340px;
   text-align: center;
-  line-height: 1.6;
 }
 
-.account-list {
+.stage-enter-active,
+.stage-leave-active {
+  transition:
+    opacity var(--te-motion-panel) var(--te-ease-soft),
+    transform var(--te-motion-panel) var(--te-ease-soft);
+}
+
+.stage-enter-from {
+  opacity: 0;
+  transform: translateY(14px);
+}
+
+.stage-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+.stage-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.stage-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 0;
+  font-family: var(--te-font-display);
+  font-size: 23px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--lp-text);
+}
+
+.title-glyph {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  background: var(--lp-tint);
+  color: var(--te-primary-500);
+  font-size: 17px;
+}
+
+.stage-sub {
+  margin: 0;
+  font-size: 13px;
+  color: var(--lp-muted);
+}
+
+.stage-muted {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--lp-muted);
+}
+
+.chip-back {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 12px 0 8px;
+  border: none;
+  border-radius: 999px;
+  background: var(--lp-inset);
+  color: var(--lp-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    color var(--te-motion-hover) var(--te-ease-soft),
+    background var(--te-motion-hover) var(--te-ease-soft);
+}
+
+.chip-back:hover {
+  color: var(--te-primary-500);
+  background: var(--lp-tint);
+}
+
+/* ─── 平台列表 ─────────────────────────────── */
+
+.provider-list {
   display: grid;
   gap: 12px;
-  width: min(480px, 100%);
 }
 
-.account-list-hint {
-  margin: 0 0 4px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--te-settings-text-muted, #8a8f98);
-  letter-spacing: 0;
-  text-transform: none;
-}
-
-.account-card {
+.provider-row {
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) auto;
+  grid-template-columns: 48px minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 16px;
-  min-height: 80px;
-  padding: 16px 18px;
-  border: 1px solid var(--te-settings-panel-border, transparent);
-  border-radius: 20px;
-  background: var(--te-settings-control-bg, #ffffff);
-  color: var(--te-settings-text, #1a1a1a);
+  gap: 15px;
+  padding: 15px 18px;
+  border: 1px solid var(--lp-line);
+  border-radius: 18px;
+  background: var(--lp-surface);
+  color: var(--lp-text);
   text-align: left;
   cursor: pointer;
-  box-shadow: var(--te-settings-shadow, 0 2px 16px rgba(15, 23, 42, 0.04));
+  animation: rowIn 0.5s var(--te-ease-spring) both;
+  animation-delay: calc(var(--d) * 70ms);
   transition:
-    transform 0.2s ease,
-    box-shadow 0.2s ease,
-    background 0.16s ease;
+    transform var(--te-motion-return) var(--te-ease-out-quint),
+    border-color var(--te-motion-hover),
+    box-shadow var(--te-motion-return) var(--te-ease-out-quint);
 }
 
-.account-card:hover {
-  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.08);
+@keyframes rowIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.provider-row:hover {
+  transition-duration: var(--te-motion-settle);
   transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--te-primary-500) 34%, transparent);
+  box-shadow: var(--lp-shadow-lift);
 }
 
-.account-card.unavailable {
+.provider-row:hover .provider-arrow {
+  transition-duration: var(--te-motion-settle);
+  transform: translateX(3px);
+  color: var(--te-primary-500);
+}
+
+.provider-row.unavailable {
   opacity: 0.55;
 }
 
-.account-icon {
+.provider-glyph {
   display: grid;
   place-items: center;
-  width: 52px;
-  height: 52px;
-  border-radius: 16px;
+  width: 48px;
+  height: 48px;
+  border-radius: 15px;
+  background: var(--lp-tint);
   color: var(--te-primary-500);
-  background: rgba(var(--te-primary-rgb), 0.1);
+  font-size: 21px;
 }
 
-.account-icon i {
-  font-size: 22px;
-}
-
-.account-copy {
+.provider-copy {
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.account-title {
+.provider-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 15px;
   font-weight: 600;
-  color: var(--te-settings-text, #1a1a1a);
   letter-spacing: -0.01em;
 }
 
-.account-desc {
+.provider-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 19px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  font-style: normal;
+}
+
+.provider-pill.on {
+  background: var(--te-success-soft-bg);
+  color: var(--te-success-soft-fg);
+}
+
+.provider-pill.off {
+  background: var(--lp-inset);
+  color: var(--lp-muted);
+}
+
+.provider-desc {
   font-size: 12px;
-  font-weight: 400;
-  color: var(--te-settings-text-muted, #8a8f98);
+  color: var(--lp-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.account-action {
-  display: inline-flex;
+.provider-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--lp-surface);
+  box-shadow: var(--lp-shadow-soft);
+}
+
+.provider-arrow {
+  display: grid;
+  place-items: center;
+  color: var(--lp-muted);
+  transition:
+    transform var(--te-motion-return) var(--te-ease-out-quint),
+    color var(--te-motion-hover);
+}
+
+/* ─── 登录方式 tabs ────────────────────────── */
+
+.method-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--lp-inset);
+  width: min(360px, 100%);
+  margin: 0 auto;
+}
+
+.method-tab {
+  height: 36px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--lp-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--te-motion-hover) var(--te-ease-soft),
+    color var(--te-motion-hover) var(--te-ease-soft),
+    box-shadow var(--te-motion-hover) var(--te-ease-soft);
+}
+
+.method-tab.active {
+  background: var(--lp-surface);
+  color: var(--te-primary-500);
+  box-shadow: var(--lp-shadow-soft);
+}
+
+/* ─── 扫码区 ──────────────────────────────── */
+
+.qr-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding-top: 6px;
+}
+
+.qr-frame {
+  position: relative;
+  width: 214px;
+  height: 214px;
+  display: grid;
+  place-items: center;
+  border-radius: 22px;
+  background: white;
+  box-shadow:
+    var(--lp-shadow),
+    0 0 0 1px var(--lp-line);
+  overflow: hidden;
+}
+
+.qr-corner {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border: 2.5px solid var(--te-primary-500);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.qr-corner.tl {
+  top: 10px;
+  left: 10px;
+  border-right: none;
+  border-bottom: none;
+  border-top-left-radius: 10px;
+}
+
+.qr-corner.tr {
+  top: 10px;
+  right: 10px;
+  border-left: none;
+  border-bottom: none;
+  border-top-right-radius: 10px;
+}
+
+.qr-corner.bl {
+  bottom: 10px;
+  left: 10px;
+  border-right: none;
+  border-top: none;
+  border-bottom-left-radius: 10px;
+}
+
+.qr-corner.br {
+  bottom: 10px;
+  right: 10px;
+  border-left: none;
+  border-top: none;
+  border-bottom-right-radius: 10px;
+}
+
+.qr-image {
+  width: 178px;
+  height: 178px;
+  object-fit: contain;
+}
+
+.qr-loading {
+  display: grid;
+  place-items: center;
+}
+
+.qr-scanline {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  height: 44px;
+  top: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    color-mix(in srgb, var(--te-primary-500) 22%, transparent)
+  );
+  border-bottom: 2px solid color-mix(in srgb, var(--te-primary-500) 70%, transparent);
+  animation: scanSweep 2.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes scanSweep {
+  0%,
+  100% {
+    transform: translateY(-8px);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  50% {
+    transform: translateY(176px);
+  }
+}
+
+.qr-expired-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-width: 58px;
-  height: 32px;
-  padding: 0 14px;
+  gap: 10px;
+  background: color-mix(in srgb, var(--lp-surface) 86%, transparent);
+  backdrop-filter: blur(6px);
+  color: var(--lp-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color var(--te-motion-hover) var(--te-ease-soft);
+}
+
+.qr-expired-overlay:hover {
+  color: var(--te-primary-500);
+}
+
+.qr-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--lp-text);
+}
+
+.qr-status.scanned {
+  color: var(--te-success-soft-fg);
+}
+
+.qr-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.qr-dot.waiting {
+  background: var(--te-primary-500);
+  animation: dotPulse 1.6s ease-in-out infinite;
+}
+
+.qr-dot.scanned {
+  background: var(--te-success-soft-fg);
+  animation: dotPulse 1s ease-in-out infinite;
+}
+
+@keyframes dotPulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.72);
+  }
+}
+
+.oauth-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 36px 20px;
+  max-width: 320px;
+  text-align: center;
+}
+
+.extra-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+/* ─── 表单 ────────────────────────────────── */
+
+.account-form {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  width: min(340px, 100%);
+  margin: 0 auto;
+}
+
+.kind-switch {
+  display: inline-flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.kind-chip {
+  height: 30px;
+  padding: 0 16px;
+  border: 1px solid var(--lp-line);
   border-radius: 999px;
-  background: rgba(var(--te-primary-rgb), 0.12);
+  background: transparent;
+  color: var(--lp-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    color var(--te-motion-hover) var(--te-ease-soft),
+    border-color var(--te-motion-hover) var(--te-ease-soft),
+    background var(--te-motion-hover) var(--te-ease-soft);
+}
+
+.kind-chip.active {
+  color: var(--te-primary-500);
+  border-color: color-mix(in srgb, var(--te-primary-500) 46%, transparent);
+  background: var(--lp-tint);
+}
+
+.field-label {
+  margin-top: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--lp-muted);
+}
+
+.field-row {
+  display: grid;
+  gap: 10px;
+}
+
+.field-row.phone {
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+
+.field-row.captcha {
+  grid-template-columns: minmax(0, 1fr) 112px;
+}
+
+.field-input {
+  min-width: 0;
+  height: 46px;
+  padding: 0 15px;
+  border: 1px solid var(--lp-line);
+  border-radius: 13px;
+  background: var(--lp-inset);
+  color: var(--lp-text);
+  font-size: 14px;
+  outline: none;
+  transition:
+    border-color var(--te-motion-hover) var(--te-ease-soft),
+    background var(--te-motion-hover) var(--te-ease-soft),
+    box-shadow var(--te-motion-hover) var(--te-ease-soft);
+}
+
+.field-input::placeholder {
+  color: var(--lp-muted);
+}
+
+.field-input {
+  --ai-placeholder: var(--lp-muted);
+}
+
+.field-input:focus,
+.field-input:focus-within {
+  border-color: var(--te-primary-500);
+  background: var(--lp-surface);
+  box-shadow: 0 0 0 3px var(--lp-tint);
+}
+
+.field-input.country {
+  text-align: center;
+  --ai-justify: center;
+}
+
+.btn-captcha {
+  height: 46px;
+  border: none;
+  border-radius: 13px;
+  background: var(--lp-tint);
   color: var(--te-primary-500);
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0;
+  cursor: pointer;
+  transition: background var(--te-motion-hover) var(--te-ease-soft);
 }
+
+.btn-captcha:hover:not(:disabled) {
+  background: var(--lp-tint-strong);
+}
+
+.btn-captcha:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.form-submit {
+  margin-top: 14px;
+  width: 100%;
+}
+
+.form-message {
+  margin: 2px 0 0;
+  min-height: 18px;
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: center;
+  color: var(--lp-muted);
+}
+
+/* ─── 按钮 ────────────────────────────────── */
 
 .btn-primary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  margin-top: 8px;
-  padding: 12px 28px;
+  gap: 8px;
+  height: 46px;
+  padding: 0 30px;
   border: none;
   border-radius: 999px;
-  background: var(--te-primary-500);
-  color: #fff;
+  background: linear-gradient(135deg, var(--te-primary-500), var(--te-primary-400));
+  color: white;
   font-size: 14px;
   font-weight: 600;
+  letter-spacing: 0.02em;
   cursor: pointer;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--te-primary-500) 34%, transparent);
   transition:
-    background 0.16s ease,
-    box-shadow 0.16s ease,
-    transform 0.16s ease;
-  box-shadow: 0 4px 14px rgba(var(--te-primary-rgb), 0.22);
+    transform var(--te-motion-return) var(--te-ease-out-quint),
+    box-shadow var(--te-motion-return) var(--te-ease-out-quint);
 }
 
-.btn-primary:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 8px 22px rgba(var(--te-primary-rgb), 0.28);
+.btn-primary:hover:not(:disabled) {
+  transition-duration: var(--te-motion-settle);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--te-primary-500) 44%, transparent);
+}
+
+.btn-primary:active:not(:disabled) {
+  transition-duration: var(--te-motion-press);
+  transform: scale(var(--te-motion-press-scale));
 }
 
 .btn-primary:disabled {
@@ -1168,346 +1952,369 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  margin-top: 8px;
-  padding: 10px 22px;
+  gap: 7px;
+  height: 40px;
+  padding: 0 22px;
   border: none;
   border-radius: 999px;
-  background: var(--te-settings-search-bg, #eef0f3);
-  color: var(--te-settings-text, #1a1a1a);
+  background: var(--lp-inset);
+  color: var(--lp-text);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition:
-    background 0.16s ease,
-    color 0.16s ease;
+    background var(--te-motion-hover) var(--te-ease-soft),
+    color var(--te-motion-hover) var(--te-ease-soft);
 }
 
 .btn-secondary:hover {
-  background: rgba(15, 23, 42, 0.08);
+  background: var(--lp-tint);
   color: var(--te-primary-500);
 }
 
 .btn-ghost-danger {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 7px;
-  margin-top: 12px;
-  padding: 8px 18px;
+  height: 46px;
+  padding: 0 24px;
   border: none;
   border-radius: 999px;
-  background: var(--te-danger-soft-bg, #fef2f2);
-  color: var(--te-danger-soft-fg, #b91c1c);
+  background: var(--te-danger-soft-bg);
+  color: var(--te-danger-soft-fg);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.16s ease;
+  transition:
+    background var(--te-motion-hover) var(--te-ease-soft),
+    box-shadow var(--te-motion-hover) var(--te-ease-soft);
 }
 
 .btn-ghost-danger:hover {
-  background: color-mix(in srgb, var(--te-danger-soft-bg, #fef2f2) 70%, #fecaca);
+  background: color-mix(in srgb, var(--te-danger-soft-fg) 16%, var(--te-danger-soft-bg));
 }
 
-.login-profile {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+.btn-ghost-danger.confirm {
+  background: var(--te-danger-soft-fg);
+  color: white;
+  animation: confirmNudge 0.3s var(--te-ease-spring);
 }
 
-.profile-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-  padding: 36px 44px;
-  border: 1px solid var(--te-settings-panel-border, transparent);
-  border-radius: 24px;
-  background: var(--te-settings-control-bg, #ffffff);
-  box-shadow: var(--te-settings-shadow, 0 2px 16px rgba(15, 23, 42, 0.04));
-}
-
-.profile-avatar-ring {
-  padding: 3px;
-  border-radius: 50%;
-  background: rgba(var(--te-primary-rgb), 0.18);
-}
-
-.profile-avatar {
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
-  object-fit: cover;
-  border: 3px solid #fff;
-}
-
-.profile-avatar-placeholder {
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
-  background: rgba(var(--te-primary-rgb), 0.08);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--te-primary-500);
-  border: 3px solid #fff;
-}
-
-.profile-info {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-}
-
-.profile-nickname {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--te-settings-text, #1a1a1a);
-  letter-spacing: -0.02em;
-}
-
-.profile-uid {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--te-settings-text-muted, #8a8f98);
-}
-
-.login-qr-section {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-  width: min(400px, 100%);
-}
-
-.qr-wrapper {
-  position: relative;
-  width: 210px;
-  height: 210px;
-  border: 1px solid var(--te-settings-panel-border, transparent);
-  border-radius: 20px;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--te-settings-control-bg, #ffffff);
-  box-shadow: var(--te-settings-shadow, 0 2px 16px rgba(15, 23, 42, 0.04));
-}
-
-.qr-wrapper.expired {
-  cursor: pointer;
-}
-
-.qr-image {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
-.qr-expired-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  background: color-mix(in srgb, var(--te-settings-bg, #f5f6f8) 88%, transparent);
-  color: var(--te-settings-text-muted, #8a8f98);
-  font-size: 13px;
-  font-weight: 600;
-  backdrop-filter: blur(4px);
-  transition: color 0.16s ease;
-}
-
-.qr-expired-overlay:hover {
-  color: var(--te-primary-500);
-}
-
-.qr-placeholder {
-  width: 210px;
-  height: 210px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--te-settings-panel-border, transparent);
-  border-radius: 20px;
-  background: var(--te-settings-control-bg, #ffffff);
-  box-shadow: var(--te-settings-shadow-soft, 0 1px 4px rgba(15, 23, 42, 0.04));
-}
-
-.qr-status {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--te-settings-text, #1a1a1a);
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.qr-status.success {
-  color: var(--te-success-soft-fg, #16a34a);
-}
-
-.qr-status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.qr-status-dot.waiting {
-  background: var(--te-primary-500);
-  animation: pulse 1.6s ease-in-out infinite;
-}
-
-.qr-status-dot.scanned {
-  background: var(--te-success-soft-fg, #16a34a);
-  animation: pulse 1s ease-in-out infinite;
-}
-
-.qr-status-dot.success {
-  background: var(--te-success-soft-fg, #16a34a);
-}
-
-@keyframes pulse {
-  0%,
+@keyframes confirmNudge {
+  0% {
+    transform: scale(0.94);
+  }
   100% {
-    opacity: 1;
     transform: scale(1);
   }
-  50% {
-    opacity: 0.5;
-    transform: scale(0.8);
+}
+
+.btn-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, white 40%, transparent);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+.lp-spinner {
+  width: 34px;
+  height: 34px;
+  border: 3px solid var(--lp-tint-strong);
+  border-top-color: var(--te-primary-500);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
-.qr-login-hint {
-  margin: -8px 0 0;
-  color: var(--te-settings-text-muted, #8a8f98);
+/* ─── 资料卡 ──────────────────────────────── */
+
+.profile-view {
+  gap: 14px;
+}
+
+.id-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border: 1px solid var(--lp-line);
+  border-radius: 22px;
+  background: var(--lp-surface);
+  box-shadow: var(--lp-shadow);
+  overflow: hidden;
+  animation: rowIn 0.5s var(--te-ease-spring) both;
+}
+
+.id-banner {
+  position: relative;
+  width: 100%;
+  height: 112px;
+  background:
+    radial-gradient(
+      circle at 80% 20%,
+      color-mix(in srgb, var(--te-primary-300) 34%, transparent),
+      transparent 55%
+    ),
+    linear-gradient(
+      140deg,
+      color-mix(in srgb, var(--te-primary-500) 26%, var(--lp-surface)),
+      color-mix(in srgb, var(--te-primary-500) 8%, var(--lp-surface))
+    );
+}
+
+.id-watermark {
+  position: absolute;
+  right: 26px;
+  bottom: -14px;
+  font-size: 96px;
+  color: color-mix(in srgb, var(--te-primary-500) 18%, transparent);
+  pointer-events: none;
+}
+
+.id-avatar-slot {
+  margin-top: -46px;
+  padding: 5px;
+  border-radius: 50%;
+  background: var(--lp-surface);
+  z-index: 1;
+}
+
+.id-avatar {
+  display: grid;
+  place-items: center;
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  object-fit: cover;
+  box-shadow: var(--lp-shadow-soft);
+}
+
+.id-avatar-fallback {
+  background: linear-gradient(135deg, var(--te-primary-500), var(--te-primary-300));
+  color: white;
+  font-size: 38px;
+  font-weight: 700;
+  font-family: var(--te-font-display);
+}
+
+.id-identity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 0 32px;
+}
+
+.id-name {
+  margin: 0;
+  font-family: var(--te-font-display);
+  font-size: 25px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--lp-text);
+  text-align: center;
+}
+
+.id-provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--lp-tint);
+  color: var(--te-primary-500);
   font-size: 12px;
-  line-height: 1.5;
+  font-weight: 600;
 }
 
-.account-login-form {
-  width: min(360px, 100%);
-  display: grid;
-  gap: 12px;
-  padding: 16px;
-  border-radius: 20px;
-  background: var(--te-settings-control-bg, #ffffff);
-  box-shadow: var(--te-settings-shadow, 0 2px 16px rgba(15, 23, 42, 0.04));
+.id-signature {
+  margin: 12px 0 0;
+  padding: 0 36px;
+  max-width: 400px;
+  font-size: 13px;
+  line-height: 1.7;
+  text-align: center;
+  color: var(--lp-muted);
 }
 
-.account-login-tabs {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
-  min-height: 38px;
-  padding: 4px;
-  border-radius: 999px;
-  background: var(--te-settings-search-bg, #eef0f3);
+.id-stats {
+  display: flex;
+  align-items: stretch;
+  gap: 30px;
+  margin-top: 20px;
+  padding: 14px 30px;
+  border-radius: 16px;
+  background: var(--lp-inset);
 }
 
-.account-login-tab {
-  min-width: 0;
-  height: 34px;
+.id-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
   border: none;
-  border-radius: 999px;
+  padding: 0;
   background: transparent;
-  color: var(--te-settings-text-muted, #8a8f98);
-  font-size: 12px;
-  font-weight: 600;
+  color: inherit;
+}
+
+.id-stat strong {
+  font-size: 17px;
+  font-weight: 700;
+  font-family: var(--te-font-display);
+  color: var(--lp-text);
+  letter-spacing: 0.01em;
+}
+
+.id-stat span {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--lp-muted);
+}
+
+.id-stat.uid {
   cursor: pointer;
-  transition:
-    background 0.16s ease,
-    color 0.16s ease,
-    box-shadow 0.16s ease;
 }
 
-.account-login-tab.active {
-  background: var(--te-settings-control-bg, #ffffff);
+.id-stat.uid:hover span,
+.id-stat.uid:hover strong {
   color: var(--te-primary-500);
-  box-shadow: var(--te-settings-shadow-soft, 0 1px 4px rgba(15, 23, 42, 0.04));
 }
 
-.account-login-row {
+.id-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 24px 0 28px;
+  padding: 0 24px;
+}
+
+/* ─── 成功 / 错误 ─────────────────────────── */
+
+.success-burst {
+  position: relative;
   display: grid;
-  grid-template-columns: 68px minmax(0, 1fr);
-  gap: 10px;
+  place-items: center;
+  width: 92px;
+  height: 92px;
 }
 
-.account-login-row.captcha {
-  grid-template-columns: minmax(0, 1fr) 110px;
+.success-burst::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--lp-tint);
+  animation: burstRing 0.9s var(--te-ease-soft) both;
 }
 
-.account-login-input {
-  min-width: 0;
-  height: 44px;
-  border: 1px solid var(--te-settings-control-border, rgba(15, 23, 42, 0.06));
-  border-radius: 12px;
-  padding: 0 14px;
-  background: var(--te-settings-control-bg, #ffffff);
-  color: var(--te-settings-text, #1a1a1a);
-  font-size: 14px;
-  outline: none;
-  transition:
-    border-color 0.16s ease,
-    box-shadow 0.16s ease;
+@keyframes burstRing {
+  from {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  60% {
+    opacity: 1;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
-.account-login-input::placeholder {
-  color: var(--te-settings-text-muted, #8a8f98);
+.success-check {
+  position: relative;
+  width: 62px;
+  height: 62px;
 }
 
-.account-login-input:focus {
-  border-color: var(--te-primary-500);
-  box-shadow: 0 0 0 3px rgba(var(--te-primary-rgb), 0.14);
-  background: #fff;
+.success-circle {
+  stroke: var(--te-success-soft-fg);
+  stroke-width: 2.4;
+  stroke-dasharray: 152;
+  stroke-dashoffset: 152;
+  stroke-linecap: round;
+  animation: drawStroke 0.7s var(--te-ease-soft) 0.1s forwards;
 }
 
-.account-login-input.country {
-  text-align: center;
+.success-tick {
+  stroke: var(--te-success-soft-fg);
+  stroke-width: 3.4;
+  stroke-dasharray: 36;
+  stroke-dashoffset: 36;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  animation: drawStroke 0.4s var(--te-ease-soft) 0.55s forwards;
 }
 
-.account-login-input.full {
-  width: 100%;
+@keyframes drawStroke {
+  to {
+    stroke-dashoffset: 0;
+  }
 }
 
-.btn-captcha {
-  height: 44px;
-  border: none;
-  border-radius: 999px;
-  background: rgba(var(--te-primary-rgb), 0.1);
-  color: var(--te-primary-500);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.16s ease;
+.error-badge {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  background: var(--te-danger-soft-bg);
+  color: var(--te-danger-soft-fg);
 }
 
-.btn-captcha:hover:not(:disabled) {
-  background: rgba(var(--te-primary-rgb), 0.16);
+.error-text {
+  margin: 0;
+  max-width: 340px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--te-danger-soft-fg);
 }
 
-.btn-captcha:disabled,
-.account-login-submit:disabled {
-  opacity: 0.6;
-  cursor: wait;
+.error-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
 }
 
-.account-login-submit {
-  width: 100%;
-  margin-top: 4px;
+/* ─── 响应式与动效偏好 ─────────────────────── */
+
+@media (max-height: 600px) {
+  .lp-shell {
+    max-height: calc(100vh - 72px);
+  }
+
+  .lp-close {
+    top: 40px;
+  }
 }
 
-.account-login-message {
-  margin: -4px 0 0;
-  min-height: 18px;
-  color: var(--te-settings-text-muted, #8a8f98);
-  font-size: 12px;
-  line-height: 1.6;
-  text-align: center;
+@media (prefers-reduced-motion: reduce) {
+  .sky-blob,
+  .qr-scanline,
+  .qr-dot.waiting,
+  .qr-dot.scanned {
+    animation: none;
+  }
+
+  .lp-shell,
+  .provider-row,
+  .id-card {
+    animation-duration: 0.01s;
+    animation-delay: 0s;
+  }
 }
 </style>

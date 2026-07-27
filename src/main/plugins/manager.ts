@@ -206,9 +206,16 @@ function getProviderCallTimeoutMs(method: TwilightMediaProviderMethod): number {
     return PLUGIN_PROVIDER_SLOW_TIMEOUT_MS
   }
   if (
-    ['getPlaybackUrl', 'getLyrics', 'searchSongs', 'searchPlaylists', 'searchArtists'].includes(
-      method
-    )
+    [
+      'getPlaybackUrl',
+      'getLyrics',
+      'searchSongs',
+      'searchPlaylists',
+      'searchArtists',
+      'fetchPlaylistCategories',
+      'fetchDiscoveryPlaylists',
+      'fetchHighQualityPlaylists'
+    ].includes(method)
   ) {
     return PLUGIN_PROVIDER_MEDIUM_TIMEOUT_MS
   }

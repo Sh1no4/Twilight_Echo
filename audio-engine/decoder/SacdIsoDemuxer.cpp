@@ -2,6 +2,7 @@
 
 #include "SacdIsoDemuxerUtils.h"
 #include "SacdIsoProbe.h"
+#include "ScarletbookToc.h"
 
 #include <algorithm>
 #include <array>
@@ -322,6 +323,46 @@ void addMarkerTracks(const std::vector<IsoEntry>& entries, std::vector<SacdIsoTr
   }
 }
 
+void addScarletbookAreaTracks(
+    const sacd::ScarletbookArea& area,
+    const sacd::ScarletbookAlbum& album,
+    const char* areaName,
+    std::vector<SacdIsoTrackInfo>* tracks) {
+  if (!area.valid || !tracks) return;
+  const std::string albumTitle = !album.albumTitle.empty() ? album.albumTitle : album.discTitle;
+  const std::string albumArtist = !album.albumArtist.empty() ? album.albumArtist : album.discArtist;
+  for (const auto& sbTrack : area.tracks) {
+    SacdIsoTrackInfo track;
+    track.area = areaName;
+    track.trackNumber = sbTrack.trackNumber;
+    track.title = !sbTrack.title.empty() ? sbTrack.title : "Track " + std::to_string(sbTrack.trackNumber);
+    track.artist = !sbTrack.performer.empty() ? sbTrack.performer : albumArtist;
+    track.albumTitle = albumTitle;
+    track.startSector = sbTrack.startLsn;
+    track.sectorCount = sbTrack.lengthLsn;
+    track.dataOffset = static_cast<uint64_t>(sbTrack.startLsn) * kIsoSectorSize;
+    track.dataSize = static_cast<uint64_t>(sbTrack.lengthLsn) * kIsoSectorSize;
+    track.channelCount = area.channelCount;
+    track.sampleRate = area.sampleRate;
+    track.isDst = area.dst;
+    track.scarletbook = true;
+    track.durationSeconds =
+        sbTrack.durationSeconds > 0.0
+            ? sbTrack.durationSeconds
+            : (track.sampleRate > 0 && track.channelCount > 0
+                   ? static_cast<double>(track.dataSize * 8) /
+                         static_cast<double>(static_cast<uint64_t>(track.sampleRate) *
+                                             static_cast<uint64_t>(track.channelCount))
+                   : 0.0);
+    track.playable = !track.isDst && track.dataOffset > 0 && track.dataSize > 0;
+    if (track.isDst) {
+      track.reasonCode = kSacdDstDsdProviderUnavailableReasonCode;
+      track.reason = kSacdDstDsdProviderUnavailableReason;
+    }
+    tracks->push_back(track);
+  }
+}
+
 bool areaMatches(const SacdIsoTrackInfo& track, const std::string& area) {
   return area.empty() || area == "auto" || track.area == area;
 }
@@ -386,6 +427,127 @@ struct SacdIsoDemuxer::Impl {
   uint64_t dstCompressedOffset = 0;        // byte cursor into the track's compressed DST stream
   uint64_t dstFrameIndex = 0;              // frame cursor for indexed variable-size DST streams
   bool dstActive = false;                  // a DST track is being decoded through the provider
+
+  // Scarletbook multiplexed-sector state (real SACD discs). The track extent
+  // is a run of 2048-byte audio sectors whose packet tables interleave audio,
+  // supplementary and padding packets; audio payload is extracted per sector.
+  bool sbActive = false;                    // selected track uses Scarletbook audio sectors
+  uint64_t sbSectorIndex = 0;               // sector cursor within the track extent
+  std::vector<uint8_t> sbSectorBuffer;      // raw sector scratch
+  std::vector<sacd::ScarletbookPacket> sbPackets;
+  size_t sbPacketIndex = 0;                 // next unconsumed packet in sbPackets
+  std::vector<uint8_t> sbAudioBuffer;       // extracted plain-DSD payload bytes
+  size_t sbAudioOffset = 0;                 // read cursor inside sbAudioBuffer
+  std::vector<uint8_t> sbFrameBuffer;       // DST access unit being assembled
+  bool sbFrameOpen = false;                 // saw the frame_start packet of the current frame
+
+  void resetScarletbookCursor() {
+    sbSectorIndex = 0;
+    sbPackets.clear();
+    sbPacketIndex = 0;
+    sbAudioBuffer.clear();
+    sbAudioOffset = 0;
+    sbFrameBuffer.clear();
+    sbFrameOpen = false;
+  }
+
+  // Loads the next audio sector of the track extent and parses its packet
+  // table. Malformed sectors are skipped; returns false at the extent end or
+  // on an I/O failure.
+  bool sbLoadNextSector(const SacdIsoTrackInfo& track) {
+    while (sbSectorIndex < track.sectorCount) {
+      const uint64_t sector = sbSectorIndex++;
+      sacd::resizeByteScratchForOverwrite(sbSectorBuffer, kIsoSectorSize);
+      file.clear();
+      if (!file.seekg(
+              static_cast<std::streamoff>(track.dataOffset + sector * kIsoSectorSize), std::ios::beg) ||
+          !file.read(reinterpret_cast<char*>(sbSectorBuffer.data()),
+                     static_cast<std::streamsize>(kIsoSectorSize)) ||
+          static_cast<size_t>(file.gcount()) != kIsoSectorSize) {
+        return false;
+      }
+      if (!sacd::parseScarletbookAudioSector(sbSectorBuffer.data(), kIsoSectorSize, &sbPackets)) {
+        continue;  // skip a malformed sector rather than aborting the track
+      }
+      sbPacketIndex = 0;
+      if (!sbPackets.empty()) return true;
+    }
+    return false;
+  }
+
+  // Plain-DSD Scarletbook track: refills sbAudioBuffer with the concatenated
+  // audio-packet payloads of the following sectors. After a seek, payload is
+  // only accepted from the next frame_start packet onward so the channel
+  // interleave stays aligned.
+  bool sbFillAudio(const SacdIsoTrackInfo& track) {
+    sbAudioBuffer.clear();
+    sbAudioOffset = 0;
+    while (sbAudioBuffer.empty()) {
+      if (sbPacketIndex >= sbPackets.size() && !sbLoadNextSector(track)) return false;
+      while (sbPacketIndex < sbPackets.size()) {
+        const sacd::ScarletbookPacket& packet = sbPackets[sbPacketIndex++];
+        if (packet.dataType != sacd::kScarletbookPacketTypeAudio || packet.length == 0) continue;
+        if (!sbFrameOpen && !packet.frameStart) continue;
+        sbFrameOpen = true;
+        sbAudioBuffer.insert(
+            sbAudioBuffer.end(),
+            sbSectorBuffer.data() + packet.offset,
+            sbSectorBuffer.data() + packet.offset + packet.length);
+      }
+    }
+    return true;
+  }
+
+  // DST Scarletbook track: assembles the next complete DST access unit from
+  // the audio packets (frames start at frame_start packets and may span
+  // sectors). Returns false when the extent is exhausted.
+  bool sbNextDstFrame(const SacdIsoTrackInfo& track, std::vector<uint8_t>* frame) {
+    while (true) {
+      if (sbPacketIndex >= sbPackets.size()) {
+        if (!sbLoadNextSector(track)) {
+          if (sbFrameOpen && !sbFrameBuffer.empty()) {
+            frame->swap(sbFrameBuffer);
+            sbFrameBuffer.clear();
+            sbFrameOpen = false;
+            return true;
+          }
+          return false;
+        }
+      }
+      while (sbPacketIndex < sbPackets.size()) {
+        const sacd::ScarletbookPacket& packet = sbPackets[sbPacketIndex];
+        if (packet.dataType != sacd::kScarletbookPacketTypeAudio || packet.length == 0) {
+          ++sbPacketIndex;
+          continue;
+        }
+        if (packet.frameStart && sbFrameOpen && !sbFrameBuffer.empty()) {
+          // The accumulated frame is complete; leave this packet for the next
+          // call so it starts the following frame.
+          frame->swap(sbFrameBuffer);
+          sbFrameBuffer.clear();
+          sbFrameOpen = false;
+          return true;
+        }
+        if (!sbFrameOpen && !packet.frameStart) {
+          ++sbPacketIndex;  // mid-frame data after a seek; wait for a frame start
+          continue;
+        }
+        sbFrameOpen = true;
+        if (sbFrameBuffer.size() + packet.length > sacd::kScarletbookMaxDstFrameBytes) {
+          // Malformed oversized frame: drop it and resynchronize.
+          sbFrameBuffer.clear();
+          sbFrameOpen = false;
+          ++sbPacketIndex;
+          continue;
+        }
+        sbFrameBuffer.insert(
+            sbFrameBuffer.end(),
+            sbSectorBuffer.data() + packet.offset,
+            sbSectorBuffer.data() + packet.offset + packet.length);
+        ++sbPacketIndex;
+      }
+    }
+  }
 };
 
 SacdIsoDemuxer::SacdIsoDemuxer() : impl_(std::make_unique<Impl>()) {}
@@ -418,13 +580,24 @@ bool SacdIsoDemuxer::open(const std::string& path, std::string* error) {
     return false;
   }
 
-  const std::vector<IsoEntry> entries = readIsoEntries(impl_->file);
-  for (const auto& entry : entries) {
-    if (entry.directory || entry.path.rfind("SACD/", 0) != 0 || entry.path.find("AREA.TOC") == std::string::npos) continue;
-    const auto bytes = readEntryBytes(impl_->file, entry);
-    parseTwilightAreaToc(bytes, areaFromPath(entry.path), entries, &impl_->tracks);
+  // Real Scarletbook discs first: Master TOC at LSN 510 + area TOCs. Falls
+  // back to the legacy TWTE* fixture format / filename heuristics when the
+  // Scarletbook signatures are absent or malformed.
+  sacd::ScarletbookDisc scarletbook;
+  if (sacd::parseScarletbookDisc(impl_->file, fileSize(impl_->file), &scarletbook)) {
+    addScarletbookAreaTracks(scarletbook.stereo, scarletbook.album, "stereo", &impl_->tracks);
+    addScarletbookAreaTracks(scarletbook.multichannel, scarletbook.album, "multichannel", &impl_->tracks);
   }
-  if (impl_->tracks.empty()) addMarkerTracks(entries, &impl_->tracks);
+
+  if (impl_->tracks.empty()) {
+    const std::vector<IsoEntry> entries = readIsoEntries(impl_->file);
+    for (const auto& entry : entries) {
+      if (entry.directory || entry.path.rfind("SACD/", 0) != 0 || entry.path.find("AREA.TOC") == std::string::npos) continue;
+      const auto bytes = readEntryBytes(impl_->file, entry);
+      parseTwilightAreaToc(bytes, areaFromPath(entry.path), entries, &impl_->tracks);
+    }
+    if (impl_->tracks.empty()) addMarkerTracks(entries, &impl_->tracks);
+  }
 
   std::sort(impl_->tracks.begin(), impl_->tracks.end(), [](const SacdIsoTrackInfo& left, const SacdIsoTrackInfo& right) {
     if (left.area != right.area) return left.area < right.area;
@@ -479,6 +652,8 @@ void SacdIsoDemuxer::close() {
   impl_->dstCompressedOffset = 0;
   impl_->dstFrameIndex = 0;
   impl_->dstActive = false;
+  impl_->sbActive = false;
+  impl_->resetScarletbookCursor();
 }
 
 const std::vector<SacdIsoTrackInfo>& SacdIsoDemuxer::tracks() const {
@@ -530,6 +705,8 @@ bool SacdIsoDemuxer::selectTrack(const std::string& area, int trackNumber, std::
   impl_->dstDecodedSkipBytes = 0;
   impl_->dstCompressedOffset = 0;
   impl_->dstActive = false;
+  impl_->sbActive = false;
+  impl_->resetScarletbookCursor();
   if (impl_->dstProvider != nullptr) impl_->dstProvider->reset();
 
   impl_->currentTrackIndex = selected;
@@ -550,6 +727,8 @@ bool SacdIsoDemuxer::selectTrack(const std::string& area, int trackNumber, std::
   impl_->streamInfo.decodedFormat = impl_->streamInfo.sourceFormat;
   impl_->file.seekg(static_cast<std::streamoff>(track.dataOffset), std::ios::beg);
 
+  impl_->sbActive = track.scarletbook;
+
   // For DST-compressed tracks, initialize the DSD-preserving decoder so
   // readBytes can decode frame-by-frame. Uncompressed DSD tracks read raw
   // bytes directly as before.
@@ -563,11 +742,15 @@ bool SacdIsoDemuxer::selectTrack(const std::string& area, int trackNumber, std::
       if (error) *error = dstError.empty() ? kSacdDstDsdProviderFailedReasonCode : dstError;
       return false;
     }
-    const size_t frameBytesPerChannel = impl_->dstProvider->frameBytesPerChannel(track.sampleRate);
-    const size_t decodedFrameBytes = frameBytesPerChannel * static_cast<size_t>(track.channelCount);
-    const size_t compressedFrameWindow = decodedFrameBytes > 0 ? 1 + decodedFrameBytes : 0;
-    const uint64_t decodedFrameCount = dstFrameCount(track, compressedFrameWindow);
-    impl_->streamInfo.durationSeconds = dstDurationSecondsForDecodedFrames(track, decodedFrameBytes, decodedFrameCount);
+    if (!impl_->sbActive) {
+      const size_t frameBytesPerChannel = impl_->dstProvider->frameBytesPerChannel(track.sampleRate);
+      const size_t decodedFrameBytes = frameBytesPerChannel * static_cast<size_t>(track.channelCount);
+      const size_t compressedFrameWindow = decodedFrameBytes > 0 ? 1 + decodedFrameBytes : 0;
+      const uint64_t decodedFrameCount = dstFrameCount(track, compressedFrameWindow);
+      impl_->streamInfo.durationSeconds = dstDurationSecondsForDecodedFrames(track, decodedFrameBytes, decodedFrameCount);
+    }
+    // Scarletbook DST tracks keep the TOC time-code duration; frames are
+    // assembled from the multiplexed audio packets in readScarletbookBytes.
     impl_->dstActive = true;
   }
   return true;
@@ -576,6 +759,13 @@ bool SacdIsoDemuxer::selectTrack(const std::string& area, int trackNumber, std::
 size_t SacdIsoDemuxer::readBytes(uint8_t* output, size_t maxBytes) {
   if (!output || maxBytes == 0 || impl_->currentTrackIndex < 0 || impl_->eof || !impl_->file.is_open()) return 0;
   const auto& track = impl_->tracks[static_cast<size_t>(impl_->currentTrackIndex)];
+
+  // Real Scarletbook tracks read multiplexed audio sectors: audio packets are
+  // demultiplexed and (for DST areas) assembled into access units for the
+  // DSD-preserving provider.
+  if (impl_->sbActive) {
+    return readScarletbookBytes(track, output, maxBytes);
+  }
 
   // DST-compressed tracks: decode frame-by-frame through the DSD-preserving
   // provider. Each DST frame is an independent access unit that decodes to
@@ -691,6 +881,77 @@ size_t SacdIsoDemuxer::readDstBytes(const SacdIsoTrackInfo& track, uint8_t* outp
   return delivered;
 }
 
+size_t SacdIsoDemuxer::readScarletbookBytes(const SacdIsoTrackInfo& track, uint8_t* output, size_t maxBytes) {
+  size_t delivered = 0;
+
+  if (!track.isDst) {
+    // Plain-DSD area: deliver demultiplexed audio-packet payload directly.
+    while (delivered < maxBytes) {
+      if (impl_->sbAudioOffset < impl_->sbAudioBuffer.size()) {
+        const size_t available = impl_->sbAudioBuffer.size() - impl_->sbAudioOffset;
+        const size_t copyBytes = std::min(available, maxBytes - delivered);
+        std::memcpy(output + delivered, impl_->sbAudioBuffer.data() + impl_->sbAudioOffset, copyBytes);
+        impl_->sbAudioOffset += copyBytes;
+        delivered += copyBytes;
+        impl_->readOffset += copyBytes;
+        continue;
+      }
+      if (!impl_->sbFillAudio(track)) {
+        impl_->eof = true;
+        break;
+      }
+    }
+    return delivered;
+  }
+
+  // DST area: assemble access units from the multiplexed packets and decode
+  // them through the DSD-preserving provider.
+  if (impl_->dstProvider == nullptr) {
+    impl_->eof = true;
+    return 0;
+  }
+  const size_t frameBytesPerChannel = impl_->dstProvider->frameBytesPerChannel(track.sampleRate);
+  const size_t decodedFrameBytes = frameBytesPerChannel * static_cast<size_t>(track.channelCount);
+  if (decodedFrameBytes == 0) {
+    impl_->eof = true;
+    return 0;
+  }
+  while (delivered < maxBytes) {
+    if (impl_->decodedOffset < impl_->decodedSize) {
+      const size_t available = impl_->decodedSize - impl_->decodedOffset;
+      const size_t copyBytes = std::min(available, maxBytes - delivered);
+      std::memcpy(output + delivered, impl_->decodedDsdBuffer.data() + impl_->decodedOffset, copyBytes);
+      impl_->decodedOffset += copyBytes;
+      delivered += copyBytes;
+      impl_->readOffset += copyBytes;
+      continue;
+    }
+    std::vector<uint8_t> frame;
+    if (!impl_->sbNextDstFrame(track, &frame) || frame.empty()) {
+      impl_->eof = true;
+      break;
+    }
+    sacd::resizeByteScratchForOverwrite(impl_->decodedDsdBuffer, decodedFrameBytes);
+    std::string dstError;
+    const size_t decoded = impl_->dstProvider->decodeFrame(
+        frame.data(), frame.size(), impl_->decodedDsdBuffer.data(), decodedFrameBytes, &dstError);
+    if (decoded == 0) {
+      // Decode failure: stop honestly rather than emit garbage DSD.
+      impl_->decodedDsdBuffer.clear();
+      impl_->decodedSize = 0;
+      impl_->decodedOffset = 0;
+      impl_->dstDecodedSkipBytes = 0;
+      impl_->eof = true;
+      break;
+    }
+    impl_->decodedSize = std::min(decoded, decodedFrameBytes);
+    const size_t skipBytes = std::min(impl_->dstDecodedSkipBytes, impl_->decodedSize);
+    impl_->decodedOffset = skipBytes;
+    impl_->dstDecodedSkipBytes -= skipBytes;
+  }
+  return delivered;
+}
+
 size_t SacdIsoDemuxer::readFrames(PcmBlock& output, std::string* error) {
   if (audioFormatBytesPerFrame(output.format) == 0) {
     if (error) *error = "Invalid SACD ISO output format";
@@ -706,6 +967,34 @@ bool SacdIsoDemuxer::seek(double seconds, std::string* error) {
     return false;
   }
   const auto& track = impl_->tracks[static_cast<size_t>(impl_->currentTrackIndex)];
+
+  if (impl_->sbActive) {
+    // Scarletbook seek: jump to the proportional sector inside the track
+    // extent and resynchronize on the next frame_start packet. This is
+    // frame-accurate to within one audio frame (1/75 s).
+    uint64_t targetSector = 0;
+    if (track.durationSeconds > 0.0 && track.sectorCount > 0) {
+      const double ratio = std::clamp(std::max(0.0, seconds) / track.durationSeconds, 0.0, 1.0);
+      targetSector = static_cast<uint64_t>(static_cast<double>(track.sectorCount) * ratio);
+      targetSector = std::min(targetSector, track.sectorCount);
+    }
+    impl_->resetScarletbookCursor();
+    impl_->sbSectorIndex = targetSector;
+    impl_->decodedDsdBuffer.clear();
+    impl_->decodedSize = 0;
+    impl_->decodedOffset = 0;
+    impl_->dstDecodedSkipBytes = 0;
+    if (track.sampleRate > 0 && track.channelCount > 0) {
+      const long double decodedBytesPerSecond =
+          (static_cast<long double>(track.sampleRate) * static_cast<long double>(track.channelCount)) / 8.0L;
+      impl_->readOffset = static_cast<uint64_t>(std::llround(std::max(0.0, seconds) * static_cast<double>(decodedBytesPerSecond)));
+    } else {
+      impl_->readOffset = 0;
+    }
+    impl_->eof = targetSector >= track.sectorCount;
+    if (impl_->dstProvider) impl_->dstProvider->reset();
+    return true;
+  }
 
   if (impl_->dstActive) {
     const size_t frameBytesPerChannel = impl_->dstProvider ? impl_->dstProvider->frameBytesPerChannel(track.sampleRate) : 0;

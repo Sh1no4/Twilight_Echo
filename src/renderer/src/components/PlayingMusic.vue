@@ -18,17 +18,18 @@ import { useVisualizationStore } from '../stores/useVisualizationStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useLyricsManagement } from '../stores/lyricsManagement'
 import CoverImg from './CoverImg.vue'
-import { buildLyricLines, findActiveLyricIndex, findActiveWordIndex } from '../utils/lyrics'
+import { buildLyricLines, findActiveLyricIndex } from '../utils/lyrics'
 import type { LyricLine } from '../utils/lyrics'
-import { getTrackSource, shouldReserveLyricsColumn } from '../utils/nowPlayingLayout'
 import { projectLyricDisplay, projectManagedLyrics } from '../../../shared/lyricsManagement.ts'
 import AudioVisualizerPanel from './AudioVisualizerPanel.vue'
+import PlayingLyricWords from './PlayingLyricWords.vue'
+import PlayingMusicTimeChip from './PlayingMusicTimeChip.vue'
 
 const playbackStore = usePlayerStore()
 const visualizationStore = useVisualizationStore()
-const { currentTrack, dominantColor, currentTime, duration } = playbackStore
+const { currentTrack, dominantColor, currentTime, lyricsLoadState } = playbackStore
 const { visualizerActive } = storeToRefs(visualizationStore)
-const { seek, formatTime } = playbackStore
+const { seek } = playbackStore
 const { settings } = useSettingsStore()
 const lyricsManagement = useLyricsManagement()
 const emit = defineEmits<{ customizeAppearance: [] }>()
@@ -237,34 +238,26 @@ const currentLyricOffsetSeconds = computed(() =>
 
 const hasLyrics = computed(() => lyricLines.value.length > 0)
 const lyricsStillLoading = computed(
-  () => managedLyrics.value.original == null && managedLyrics.value.translation == null
+  () =>
+    !hasLyrics.value &&
+    lyricsLoadState.value.trackId === currentTrack.value?.id &&
+    lyricsLoadState.value.status === 'loading'
 )
 const lyricsPendingLabel = computed(() => (lyricsStillLoading.value ? '加载歌词…' : '暂无歌词'))
-const reserveLyricsColumn = computed(() =>
-  shouldReserveLyricsColumn({
-    source: getTrackSource(currentTrack.value),
-    hasLyrics: hasLyrics.value,
-    lyrics: managedLyrics.value.original,
-    translatedLyrics: managedLyrics.value.translation
-  })
-)
+const reserveLyricsColumn = computed(() => hasLyrics.value || lyricsStillLoading.value)
+const activeLyricIndex = ref(-1)
 
-const activeLyricIndex = computed(() =>
-  findActiveLyricIndex(lyricLines.value, currentTime.value + currentLyricOffsetSeconds.value)
-)
-
-const trackDurationLabel = computed(() => formatTime(duration.value))
-
-function activeWordIndexForLine(line: LyricLine, lineIndex: number): number {
-  if (lineIndex !== activeLyricIndex.value || !line.words?.length) return -1
-  return findActiveWordIndex(line.words, currentTime.value + currentLyricOffsetSeconds.value)
+function syncActiveLyricIndex(): void {
+  const nextIndex = findActiveLyricIndex(
+    lyricLines.value,
+    currentTime.value + currentLyricOffsetSeconds.value
+  )
+  if (nextIndex !== activeLyricIndex.value) activeLyricIndex.value = nextIndex
 }
 
-function wordClass(line: LyricLine, lineIndex: number, wordIndex: number): string {
-  if (lineIndex !== activeLyricIndex.value) return 'lyric-word'
-  const active = activeWordIndexForLine(line, lineIndex)
-  return active === wordIndex ? 'lyric-word lyric-word--active' : 'lyric-word'
-}
+watch([lyricLines, currentTime, currentLyricOffsetSeconds], syncActiveLyricIndex, {
+  immediate: true
+})
 
 function setLyricLineRef(index: number, el: Element | ComponentPublicInstance | null): void {
   lyricLineEls.value[index] = el instanceof HTMLElement ? el : null
@@ -532,7 +525,7 @@ onBeforeUnmount(() => {
           :class="{ 'lyrics-column--pending': !hasLyrics }"
         >
           <div class="lyrics-head">
-            <div class="time-chip">{{ formatTime(currentTime) }} / {{ trackDurationLabel }}</div>
+            <PlayingMusicTimeChip />
           </div>
 
           <div
@@ -559,14 +552,12 @@ onBeforeUnmount(() => {
                 @pointerdown.stop
                 @click="jumpToLyric(line.time)"
               >
-                <span v-if="line.words?.length" class="lyric-text lyric-text--words">
-                  <span
-                    v-for="(word, wi) in line.words"
-                    :key="`${i}-${wi}-${word.time}`"
-                    :class="wordClass(line, i, wi)"
-                    >{{ word.text }}</span
-                  >
-                </span>
+                <PlayingLyricWords
+                  v-if="line.words?.length"
+                  :words="line.words ?? []"
+                  :active="i === activeLyricIndex"
+                  :offset-seconds="currentLyricOffsetSeconds"
+                />
                 <span v-else-if="line.text" class="lyric-text">{{ line.text }}</span>
                 <span v-if="line.translation" class="lyric-translation">{{
                   line.translation
@@ -853,6 +844,17 @@ onBeforeUnmount(() => {
   box-shadow: 0 26px 70px rgba(0, 0, 0, 0.38);
 }
 
+:global(html[data-te-motion='full'] .cover-frame) {
+  animation: te-playing-artwork-arrive var(--te-motion-page) var(--te-ease-spring) both;
+}
+
+@keyframes te-playing-artwork-arrive {
+  from {
+    opacity: 0;
+    scale: 0.9;
+  }
+}
+
 :global(html[data-theme='dark'] .playing-music .cover-frame) {
   background: var(--te-playback-cover-surface, rgba(15, 23, 42, 0.45));
   box-shadow: var(
@@ -903,6 +905,17 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+:global(html[data-te-motion='full'] .cover-meta) {
+  animation: te-playing-meta-arrive var(--te-motion-panel) var(--te-ease-spring) 36ms both;
+}
+
+@keyframes te-playing-meta-arrive {
+  from {
+    opacity: 0;
+    translate: 0 12px;
+  }
+}
+
 .track-title {
   margin: 0;
   font-family: var(--te-font-display);
@@ -944,6 +957,17 @@ onBeforeUnmount(() => {
   flex-direction: column;
   padding-left: 6px;
   align-self: stretch;
+}
+
+:global(html[data-te-motion='full'] .lyrics-column) {
+  animation: te-playing-lyrics-arrive var(--te-motion-page) var(--te-ease-spring) 64ms both;
+}
+
+@keyframes te-playing-lyrics-arrive {
+  from {
+    opacity: 0;
+    translate: 18px 0;
+  }
 }
 
 .lyrics-column--pending {
@@ -1037,12 +1061,12 @@ onBeforeUnmount(() => {
   cursor: pointer;
   color: var(--te-playback-lyric-text, rgba(255, 255, 255, 0.42));
   transition:
-    color 0.22s ease,
-    opacity 0.22s ease,
-    transform 0.22s ease,
-    background 0.22s ease,
-    border-color 0.22s ease,
-    box-shadow 0.22s ease;
+    color var(--te-motion-hover) ease,
+    opacity var(--te-motion-hover) ease,
+    transform var(--te-motion-hover) var(--te-ease-soft),
+    background var(--te-motion-hover) ease,
+    border-color var(--te-motion-hover) ease,
+    box-shadow var(--te-motion-hover) ease;
 }
 
 .lyric-row:hover {
@@ -1096,21 +1120,32 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
+:global(html[data-te-motion='full'] .lyric-row.active .lyric-text) {
+  animation: te-lyric-focus var(--te-motion-panel) var(--te-ease-spring) both;
+}
+
+@keyframes te-lyric-focus {
+  from {
+    opacity: 0.62;
+    translate: 0 6px;
+  }
+}
+
 .lyric-text--words {
   display: inline;
 }
 
-.lyric-word {
+:deep(.lyric-word) {
   transition:
     color 0.12s ease,
     opacity 0.12s ease;
 }
 
-.lyric-row.active .lyric-word {
+.lyric-row.active :deep(.lyric-word) {
   opacity: 0.55;
 }
 
-.lyric-word--active {
+:deep(.lyric-word--active) {
   opacity: 1 !important;
   color: color-mix(in srgb, var(--accent-color, #ffd700) 85%, #fff);
   font-weight: 700;
@@ -1244,7 +1279,12 @@ onBeforeUnmount(() => {
   cursor: pointer;
   color: var(--te-playback-control-text, rgba(255, 255, 255, 0.7));
   font-size: 16px;
-  transition: all 0.2s;
+  transition:
+    background var(--te-motion-hover) ease,
+    border-color var(--te-motion-hover) ease,
+    color var(--te-motion-hover) ease,
+    transform var(--te-motion-hover) var(--te-ease-spring),
+    box-shadow var(--te-motion-hover) ease;
   z-index: 1200;
 }
 

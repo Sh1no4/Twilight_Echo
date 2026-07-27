@@ -57,11 +57,11 @@ macOS 与 Linux 用户暂时可能遇到部分输出能力受限，后续会随�
 
 ## 安装与运行
 
-### 发布版本
+### 发布渠道
 
-- Windows：提供 NSIS 安装包。
-- macOS：提供 .dmg。
-- Linux：提供 AppImage / snap / .deb（从 electron-builder 配置）。
+- Windows：正式发布 NSIS 安装包。
+- macOS：仅在完成平台工具链和真实设备验证后发布 .dmg。
+- Linux：仅在完成平台工具链和真实设备验证后发布 AppImage / snap / .deb。
 
 ### 从源码运行（开发者）
 

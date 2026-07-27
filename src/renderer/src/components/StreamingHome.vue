@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Track } from '../types/music'
 import type { NcmPlaylistSummary } from '../stores/useNcmStore'
+import { useSettingsStore } from '../stores/useSettingsStore'
+import { resolveMotionMode } from '../../../shared/motion.ts'
 import CoverImg from './CoverImg.vue'
 
 interface RecSection {
@@ -81,10 +83,20 @@ const ambientCover = computed(() => collageCovers.value[0] ?? null)
 
 let rotateTimer: ReturnType<typeof setInterval> | null = null
 
+const { settings } = useSettingsStore()
+
+// The JS-driven rotation must honor the in-app motion setting, not just the OS
+// preference — in 'off' mode CSS transitions are stripped, so a rotation would
+// degrade to an abrupt full-collage swap every 7s.
+function collageMotionAllowed(): boolean {
+  const prefersReduced =
+    typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches
+  return resolveMotionMode(settings.value.motionPreference, prefersReduced) === 'full'
+}
+
 function startCollageRotation(): void {
   stopCollageRotation()
-  if (typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches)
-    return
+  if (!collageMotionAllowed()) return
   if (collagePageCount.value <= 1) return
   rotateTimer = setInterval(() => {
     collagePage.value = (collagePage.value + 1) % collagePageCount.value
@@ -105,6 +117,11 @@ watch(collagePageCount, (count) => {
   if (collagePage.value >= count) collagePage.value = 0
   startCollageRotation()
 })
+
+watch(
+  () => settings.value.motionPreference,
+  () => startCollageRotation()
+)
 
 // ─── Daily quick chart ──────────────────────────────────────────────────────
 
@@ -446,7 +463,7 @@ function playDailyAll(): void {
 
 /* Staggered entrance */
 .home-flow > section {
-  animation: home-rise 0.5s var(--te-ease-soft) both;
+  animation: home-rise 0.62s var(--te-ease-out-quint) both;
 }
 
 .home-flow > section:nth-child(2) {
@@ -464,11 +481,11 @@ function playDailyAll(): void {
 @keyframes home-rise {
   from {
     opacity: 0;
-    transform: translateY(14px);
+    transform: translateY(26px) scale(0.985);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -623,8 +640,8 @@ function playDailyAll(): void {
   cursor: pointer;
   box-shadow: 0 14px 30px color-mix(in srgb, var(--home-ink) 26%, transparent);
   transition:
-    transform var(--te-motion-hover) var(--te-ease-soft),
-    box-shadow var(--te-motion-hover),
+    transform var(--te-motion-return) var(--te-ease-out-quint),
+    box-shadow var(--te-motion-return) var(--te-ease-out-quint),
     background var(--te-motion-hover);
 }
 
@@ -633,12 +650,14 @@ function playDailyAll(): void {
 }
 
 .hero-play:hover {
+  transition-duration: var(--te-motion-settle);
   transform: translateY(-2px);
   background: color-mix(in srgb, var(--home-ink) 86%, var(--te-primary-500));
   box-shadow: 0 18px 38px color-mix(in srgb, var(--home-ink) 32%, transparent);
 }
 
 .hero-play:active {
+  transition-duration: var(--te-motion-press);
   transform: scale(var(--te-motion-press-scale));
 }
 
@@ -658,12 +677,12 @@ function playDailyAll(): void {
   transition:
     border-color var(--te-motion-hover),
     background var(--te-motion-hover),
-    transform var(--te-motion-hover) var(--te-ease-soft);
+    transform var(--te-motion-return) var(--te-ease-out-quint);
 }
 
 .hero-open i {
   font-size: 12px;
-  transition: transform var(--te-motion-hover) var(--te-ease-soft);
+  transition: transform var(--te-motion-return) var(--te-ease-out-quint);
 }
 
 .hero-open:hover {
@@ -672,6 +691,7 @@ function playDailyAll(): void {
 }
 
 .hero-open:hover i {
+  transition-duration: var(--te-motion-settle);
   transform: translateX(3px);
 }
 
@@ -700,7 +720,7 @@ function playDailyAll(): void {
   box-shadow:
     0 22px 48px color-mix(in srgb, var(--te-neutral-900) 24%, transparent),
     0 0 0 1px color-mix(in srgb, var(--te-card-bg) 40%, transparent);
-  transition: transform 0.5s var(--te-ease-soft);
+  transition: transform var(--te-motion-return) var(--te-ease-out-quint);
   will-change: transform;
 }
 
@@ -775,6 +795,7 @@ function playDailyAll(): void {
 }
 
 .hero-stage:hover .hero-collage-card-0 {
+  transition-duration: var(--te-motion-settle);
   transform: translateY(-56%) rotate(-1.5deg) scale(1.03);
 }
 
@@ -791,7 +812,7 @@ function playDailyAll(): void {
 
 .collage-enter-active,
 .collage-leave-active {
-  transition: opacity 0.6s var(--te-ease-soft);
+  transition: opacity 0.6s var(--te-ease-out-quint);
 }
 
 .collage-enter-from,
@@ -821,8 +842,8 @@ function playDailyAll(): void {
   overflow: hidden;
   box-shadow: var(--home-shadow);
   transition:
-    transform var(--te-motion-hover) var(--te-ease-soft),
-    box-shadow var(--te-motion-hover),
+    transform var(--te-motion-return) var(--te-ease-out-quint),
+    box-shadow var(--te-motion-return) var(--te-ease-out-quint),
     border-color var(--te-motion-hover);
 }
 
@@ -855,6 +876,7 @@ function playDailyAll(): void {
 }
 
 .duo-card:hover {
+  transition-duration: var(--te-motion-settle);
   transform: translateY(-3px);
   border-color: color-mix(in srgb, var(--home-ink) 16%, transparent);
   box-shadow: var(--home-shadow-lift);
@@ -877,7 +899,7 @@ function playDailyAll(): void {
   box-shadow:
     0 10px 22px color-mix(in srgb, var(--te-neutral-900) 20%, transparent),
     0 0 0 2px var(--te-card-bg);
-  transition: transform var(--te-motion-hover) var(--te-ease-soft);
+  transition: transform var(--te-motion-return) var(--te-ease-out-quint);
 }
 
 .duo-stack-cover :deep(img) {
@@ -917,6 +939,10 @@ function playDailyAll(): void {
 
 .duo-card:hover .duo-stack-cover-2 {
   transform: rotate(-9deg) scale(0.88) translateY(-2px);
+}
+
+.duo-card:hover .duo-stack-cover {
+  transition-duration: var(--te-motion-settle);
 }
 
 .duo-stack-empty {
@@ -971,12 +997,13 @@ function playDailyAll(): void {
   font-size: 13px;
   background: color-mix(in srgb, var(--te-card-bg) 72%, transparent);
   transition:
-    transform var(--te-motion-hover) var(--te-ease-soft),
+    transform var(--te-motion-return) var(--te-ease-out-quint),
     background var(--te-motion-hover),
     color var(--te-motion-hover);
 }
 
 .duo-card:hover .duo-arrow {
+  transition-duration: var(--te-motion-settle);
   transform: translateX(4px);
   background: var(--home-ink);
   color: var(--te-card-bg);
@@ -1023,7 +1050,7 @@ function playDailyAll(): void {
   transition:
     color var(--te-motion-hover),
     border-color var(--te-motion-hover),
-    transform var(--te-motion-hover) var(--te-ease-soft);
+    transform var(--te-motion-return) var(--te-ease-out-quint);
 }
 
 .section-more i {
@@ -1031,6 +1058,7 @@ function playDailyAll(): void {
 }
 
 .section-more:hover {
+  transition-duration: var(--te-motion-settle);
   color: var(--home-ink);
   border-color: color-mix(in srgb, var(--home-ink) 26%, transparent);
   transform: translateX(2px);
@@ -1230,8 +1258,8 @@ function playDailyAll(): void {
   background: var(--te-subtle-bg);
   box-shadow: 0 14px 30px color-mix(in srgb, var(--te-neutral-900) 12%, transparent);
   transition:
-    transform var(--te-motion-hover) var(--te-ease-soft),
-    box-shadow var(--te-motion-hover);
+    transform var(--te-motion-return) var(--te-ease-out-quint),
+    box-shadow var(--te-motion-return) var(--te-ease-out-quint);
 }
 
 .shelf-cover :deep(img) {
@@ -1239,15 +1267,17 @@ function playDailyAll(): void {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform 0.45s var(--te-ease-soft);
+  transition: transform 0.35s var(--te-ease-out-quint);
 }
 
 .shelf-tile:hover .shelf-cover {
+  transition-duration: var(--te-motion-settle);
   transform: translateY(-4px);
   box-shadow: 0 20px 42px color-mix(in srgb, var(--te-neutral-900) 20%, transparent);
 }
 
 .shelf-tile:hover .shelf-cover :deep(img) {
+  transition-duration: 0.9s;
   transform: scale(1.06);
 }
 
@@ -1292,11 +1322,12 @@ function playDailyAll(): void {
   opacity: 0;
   transform: translateY(4px);
   transition:
-    opacity var(--te-motion-hover),
-    transform var(--te-motion-hover) var(--te-ease-soft);
+    opacity var(--te-motion-return),
+    transform var(--te-motion-return) var(--te-ease-out-quint);
 }
 
 .shelf-tile:hover .shelf-count {
+  transition-duration: var(--te-motion-settle);
   opacity: 1;
   transform: translateY(0);
 }
@@ -1317,11 +1348,12 @@ function playDailyAll(): void {
   opacity: 0;
   transform: translateY(6px) scale(0.9);
   transition:
-    opacity var(--te-motion-hover),
-    transform var(--te-motion-hover) var(--te-ease-spring);
+    opacity var(--te-motion-return),
+    transform var(--te-motion-return) var(--te-ease-spring);
 }
 
 .shelf-tile:hover .shelf-open {
+  transition-duration: var(--te-motion-settle);
   opacity: 1;
   transform: translateY(0) scale(1);
 }
@@ -1368,7 +1400,7 @@ function playDailyAll(): void {
   background: var(--te-card-bg);
   overflow: hidden;
   box-shadow: var(--home-shadow);
-  animation: home-rise 0.5s var(--te-ease-soft) both;
+  animation: home-rise 0.62s var(--te-ease-out-quint) both;
 }
 
 .invite-orb {
@@ -1483,18 +1515,20 @@ function playDailyAll(): void {
   cursor: pointer;
   box-shadow: 0 16px 34px color-mix(in srgb, var(--home-ink) 26%, transparent);
   transition:
-    transform var(--te-motion-hover) var(--te-ease-soft),
-    box-shadow var(--te-motion-hover),
+    transform var(--te-motion-return) var(--te-ease-out-quint),
+    box-shadow var(--te-motion-return) var(--te-ease-out-quint),
     background var(--te-motion-hover);
 }
 
 .invite-cta:hover {
+  transition-duration: var(--te-motion-settle);
   transform: translateY(-2px);
   background: color-mix(in srgb, var(--home-ink) 84%, var(--te-primary-500));
   box-shadow: 0 20px 42px color-mix(in srgb, var(--home-ink) 34%, transparent);
 }
 
 .invite-cta:active {
+  transition-duration: var(--te-motion-press);
   transform: scale(var(--te-motion-press-scale));
 }
 

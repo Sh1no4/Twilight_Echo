@@ -24,7 +24,20 @@
   --te-glow-cyan: rgba(34, 211, 238, 0.18);
   --color-text: var(--te-neutral-900);
   --te-ease-enter: cubic-bezier(0.4, 0, 0.2, 1);
-  --te-ease-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* Soft = out-quint: fast start, long settling tail (osu!lazer-style motion). */
+  --te-ease-soft: var(--te-ease-out-quint);
+  --te-ease-spring: cubic-bezier(0.22, 1.14, 0.36, 1);
+  --te-ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --te-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --te-motion-press: 90ms;
+  --te-motion-hover: 160ms;
+  --te-motion-panel: 280ms;
+  --te-motion-page: 400ms;
+  /* Asymmetric motion: hover-in settles on a long out-quint tail, hover-out returns fast. */
+  --te-motion-settle: 500ms;
+  --te-motion-return: 220ms;
+  --te-motion-press-scale: 0.96;
+  --te-motion-hover-translate: -1px;
   --te-ui-scale: 0.94;
   --te-menu-width: clamp(132px, 18vw, 216px);
   --te-radius-global: 10px;
@@ -187,6 +200,82 @@
   --te-warning-soft-fg: #d97706;
   --te-danger-soft-bg: #fef2f2;
   --te-danger-soft-fg: #b91c1c;
+}
+
+:where(button, [role='button'], [role='switch'], [data-te-interactive]) {
+  -webkit-tap-highlight-color: transparent;
+  transition: translate var(--te-motion-hover) var(--te-ease-soft);
+}
+
+:where(button, [role='button'], [role='switch'], [data-te-interactive]):focus-visible {
+  outline: 2px solid var(--te-navigation-indicator, var(--te-primary-500));
+  outline-offset: 2px;
+}
+
+:where(button, [role='button'], [role='switch'], [data-te-interactive]):is(
+  :disabled,
+  [aria-disabled='true']
+) {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+html[data-te-motion='full']
+  :where(button, [role='button'], [role='switch'], [data-te-interactive]):not(:disabled):not(
+    [aria-disabled='true']
+  ):active {
+  animation: te-interactive-press var(--te-motion-press) var(--te-ease-soft);
+}
+
+@media (hover: hover) {
+  html[data-te-motion='full']
+    :where(button, [role='button'], [role='switch'], [data-te-interactive]):not(:disabled):not(
+      [aria-disabled='true']
+    ):hover {
+    translate: 0 var(--te-motion-hover-translate);
+  }
+}
+
+@keyframes te-interactive-press {
+  0%,
+  100% {
+    scale: 1;
+  }
+
+  48% {
+    scale: var(--te-motion-press-scale);
+  }
+}
+
+html[data-te-motion='reduced'] {
+  --te-motion-press: 0ms;
+  --te-motion-hover: 100ms;
+  --te-motion-panel: 120ms;
+  --te-motion-page: 120ms;
+  --te-motion-press-scale: 1;
+  --te-motion-hover-translate: 0px;
+}
+
+/* Near-zero durations (not e.g. 100ms): a non-zero universal transition-duration
+   would give every element an implicit `transition-property: all` tween, adding
+   motion instead of reducing it. Delays are zeroed so staggered entrances with
+   `fill: both` don't leave content invisible until their delay elapses. */
+html[data-te-motion='reduced'] *,
+html[data-te-motion='reduced'] *::before,
+html[data-te-motion='reduced'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  transition-delay: 0ms !important;
+}
+
+html[data-te-motion='off'] *,
+html[data-te-motion='off'] *::before,
+html[data-te-motion='off'] *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
 }
 
 :root,

@@ -1,6 +1,6 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, type IpcMainInvokeEvent } from 'electron'
 import { randomUUID } from 'crypto'
-import { basename, dirname, join, resolve } from 'path'
+import { basename, dirname, extname, join, resolve } from 'path'
 import { readFileSync, existsSync } from 'fs'
 import { readFile, writeFile, rm, stat } from 'fs/promises'
 import { parseFile } from 'music-metadata'
@@ -19,11 +19,7 @@ import {
 import { createDuplicateDetectionIpcHandlers } from '../library/duplicateDetectionIpc.ts'
 import { runtime } from '../core/runtime'
 import type { AppSettings, PlaybackSession } from '../core/types'
-import {
-    createSettingsSnapshot,
-  getDefaultCachePath,
-  normalizeAppSettings
-} from '../core/settings'
+import { createSettingsSnapshot, getDefaultCachePath, normalizeAppSettings } from '../core/settings'
 import { exportAppSettingsForBackup, importAppSettingsBackup } from '../core/settingsBackup'
 import { loadThemeLibrary } from '../themes/themeLibrary.ts'
 import { restoreThemeLibraryFromBackup } from './themes.ts'
@@ -38,7 +34,7 @@ import {
   normalizeBackgroundImageImportData,
   readCachedCover
 } from '../library/coverCache'
-import { encodeAudioFileUrlPath, findLyricsInDir, getMimeType } from '../library/scan'
+import { encodeAudioFileUrlPath, getMimeType } from '../library/scan'
 import {
   LocalLibraryIndexCoordinator,
   toLocalLibraryScanUpdate
@@ -749,9 +745,13 @@ export function setupDataIpc(): void {
           return null
         }
       }
-      // 1. Try external .lrc file
-      const lrc = findLyricsInDir(resolvedDir, safeFileName)
-      if (lrc) return lrc
+      try {
+        const lrcPath = join(resolvedDir, `${basename(safeFileName, extname(safeFileName))}.lrc`)
+        const lrc = await readFile(lrcPath, 'utf-8')
+        if (lrc) return lrc
+      } catch {
+        // no external .lrc next to the audio file — fall through to embedded lyrics
+      }
 
       // 2. Try embedded lyrics from audio file metadata
       if (resolvedFilePath) {

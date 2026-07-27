@@ -353,6 +353,7 @@ function formatDuration(seconds: number): string {
             v-for="sub in podcast.subscriptions.value"
             :key="sub.id"
             :class="{ active: selectedPodcastId === sub.id }"
+            data-te-interactive
             @click="selectedPodcastId = sub.id"
           >
             <strong>{{ sub.title }}</strong>

@@ -19,6 +19,8 @@ export type ChannelRoutingMode =
   | 'stereo-to-7.1'
   | 'mono-to-stereo'
   | 'mono-to-multichannel'
+/** PCM → DSD output-stage modulation; off keeps PCM sources on the float/typed PCM path. */
+export type PcmToDsdMode = 'off' | 'dsd64' | 'dsd128' | 'dsd256'
 export type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native'
 export type SacdProgramMode = 'auto' | 'stereo' | 'multichannel'
 export type EqualizerFilterType =
@@ -114,6 +116,8 @@ export interface OutputConfig {
   preferredBufferSize: number
   routingMode: ChannelRoutingMode
   wasapiExclusivePushMode?: boolean
+  /** After float decode/DSP, modulate PCM to DSD64/128/256 via native DSD or DoP. */
+  pcmToDsdMode?: PcmToDsdMode
   upmixCenterGain?: number
   upmixLfeGain?: number
   upmixLfeLowpassHz?: number

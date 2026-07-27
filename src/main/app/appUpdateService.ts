@@ -158,6 +158,20 @@ export async function checkForAppUpdate(): Promise<AppUpdateCheckResult> {
     }
 
     const checksumSha256 = await resolveChecksum(release, asset)
+    if (!checksumSha256) {
+      lastResolved = null
+      return {
+        hasUpdate: true,
+        currentVersion,
+        latestVersion: latestTag,
+        releaseUrl,
+        releaseNotes: release.body || '',
+        assetName: asset.name,
+        assetSize: typeof asset.size === 'number' ? asset.size : 0,
+        hasChecksum: false,
+        error: 'no-checksum'
+      }
+    }
     lastResolved = {
       name: asset.name,
       size: typeof asset.size === 'number' ? asset.size : 0,
@@ -218,6 +232,9 @@ export async function downloadAppUpdate(): Promise<AppUpdateDownloadResult> {
       if (check.error === 'network') return { ok: false, error: '网络错误，无法获取更新信息' }
       if (check.error === 'no-asset') {
         return { ok: false, error: 'GitHub Release 中未找到 Windows 安装包' }
+      }
+      if (check.error === 'no-checksum') {
+        return { ok: false, error: 'GitHub Release 未提供 Windows 安装包的 SHA-256 校验和' }
       }
       if (!check.hasUpdate) return { ok: false, error: '当前已是最新版本' }
       asset = lastResolved
@@ -438,5 +455,4 @@ export function getAppUpdateMeta(): {
     repo: GITHUB_REPO
   }
 }
-
 

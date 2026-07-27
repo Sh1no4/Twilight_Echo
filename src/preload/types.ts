@@ -3,6 +3,7 @@ export type AudioEngineEndFileCallback = (reason: string) => void
 
 import type { DspGraphStatus, DspScene } from '../shared/dspGraph.ts'
 import type { SleepTimerSettings } from '../shared/sleepTimer.ts'
+import type { MotionPreference } from '../shared/motion.ts'
 import type {
   StructuredPluginTheme,
   ThemeSelection,
@@ -31,6 +32,7 @@ export type {
 } from '../shared/theme.ts'
 
 export type { VersionedDataEnvelope } from '../shared/versionedPersistence.ts'
+export type { MotionPreference } from '../shared/motion.ts'
 export type {
   LyricsManagementDocument,
   LyricTrackOverride,
@@ -343,6 +345,9 @@ export type TwilightMediaProviderMethod =
   | 'fetchLikedTracksPage'
   | 'fetchRecommendSongs'
   | 'fetchRecommendPlaylists'
+  | 'fetchPlaylistCategories'
+  | 'fetchDiscoveryPlaylists'
+  | 'fetchHighQualityPlaylists'
   | 'fetchPersonalFm'
   | 'fetchPrivateContent'
   | 'fetchArtistTopSongs'
@@ -704,11 +709,14 @@ export interface AppSettings {
   cachePolicy: MusicCachePolicySettings
   autoAnalyzeBpm: boolean
   closeToTray: boolean
+  /** First-run welcome wizard has been completed or skipped. */
+  onboardingCompleted: boolean
   startupHomePage: StartupHomePage
   theme: AppTheme
   pluginThemeId: string | null
   activeTheme: ThemeSelection
   themeWindowInheritance: ThemeWindowInheritance
+  motionPreference: MotionPreference
   blurEffect: boolean
   windowTransparency: boolean
   windowTransparencyEffect: WindowTransparencyEffectSettings
@@ -1004,10 +1012,19 @@ export interface TwilightPluginExtensionContribution {
   themes: TwilightThemeContribution[]
 }
 
+export type PcmToDsdMode = 'off' | 'dsd64' | 'dsd128' | 'dsd256'
+
 export interface OutputConfig {
   preferredBufferSize: number
   routingMode: ChannelRoutingMode
   wasapiExclusivePushMode?: boolean
+  pcmToDsdMode?: PcmToDsdMode
+  upmixCenterGain?: number
+  upmixLfeGain?: number
+  upmixLfeLowpassHz?: number
+  upmixSurroundGain?: number
+  upmixSideGain?: number
+  upmixSurroundDelayMs?: number
 }
 
 export interface OutputConfigApplyStatus {

@@ -2,6 +2,7 @@
 
 #include "FFmpegDecoderUtils.h"
 #include "SacdIsoProbe.h"
+#include "../dsp/DspTypes.h"
 
 #include <algorithm>
 #include <cctype>
@@ -660,44 +661,86 @@ bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* erro
   av_channel_layout_uninit(&impl_->targetLayout);
   av_channel_layout_default(&impl_->targetLayout, format.channelCount);
 
-  int ret = swr_alloc_set_opts2(
-      &impl_->swr,
-      &impl_->targetLayout,
-      swrSampleFormatFor(format.sampleFormat),
-      format.sampleRate,
-      &impl_->codecContext->ch_layout,
-      impl_->codecContext->sample_fmt,
-      impl_->codecContext->sample_rate,
-      0,
-      nullptr);
+  const auto allocateSwr = [&]() -> int {
+    if (impl_->swr) swr_free(&impl_->swr);
+    return swr_alloc_set_opts2(
+        &impl_->swr,
+        &impl_->targetLayout,
+        swrSampleFormatFor(format.sampleFormat),
+        format.sampleRate,
+        &impl_->codecContext->ch_layout,
+        impl_->codecContext->sample_fmt,
+        impl_->codecContext->sample_rate,
+        0,
+        nullptr);
+  };
+  const auto applySwrQuality = [&](ResamplerQuality quality) {
+    switch (quality) {
+      case ResamplerQuality::Ultra:
+        av_opt_set_int(impl_->swr, "filter_size", 64, 0);
+        av_opt_set_int(impl_->swr, "phase_shift", 10, 0);
+        av_opt_set_double(impl_->swr, "cutoff", 0.99, 0);
+        break;
+      case ResamplerQuality::High:
+        av_opt_set_int(impl_->swr, "filter_size", 32, 0);
+        av_opt_set_int(impl_->swr, "phase_shift", 10, 0);
+        av_opt_set_double(impl_->swr, "cutoff", 0.97, 0);
+        break;
+      case ResamplerQuality::Native:
+      default:
+        av_opt_set_int(impl_->swr, "filter_size", 16, 0);
+        av_opt_set_int(impl_->swr, "phase_shift", 8, 0);
+        av_opt_set_double(impl_->swr, "cutoff", 0.90, 0);
+        break;
+    }
+  };
+
+  int ret = allocateSwr();
   if (ret < 0 || !impl_->swr) {
     if (error) *error = "无法分配解码重采样器";
     return false;
   }
 
-  switch (impl_->resamplerQuality) {
-    case ResamplerQuality::Ultra:
-      av_opt_set_int(impl_->swr, "filter_size", 64, 0);
-      av_opt_set_int(impl_->swr, "phase_shift", 10, 0);
-      av_opt_set_double(impl_->swr, "cutoff", 0.99, 0);
-      break;
-    case ResamplerQuality::High:
-      av_opt_set_int(impl_->swr, "filter_size", 32, 0);
-      av_opt_set_int(impl_->swr, "phase_shift", 10, 0);
-      av_opt_set_double(impl_->swr, "cutoff", 0.97, 0);
-      break;
-    case ResamplerQuality::Native:
-    default:
-      av_opt_set_int(impl_->swr, "filter_size", 16, 0);
-      av_opt_set_int(impl_->swr, "phase_shift", 8, 0);
-      av_opt_set_double(impl_->swr, "cutoff", 0.90, 0);
-      break;
+  const bool wantsSoxr = impl_->resamplerQuality == ResamplerQuality::SoxrHq ||
+                         impl_->resamplerQuality == ResamplerQuality::SoxrVhq;
+  bool initialized = false;
+  if (wantsSoxr && soxrRuntimeAvailability() != SoxrRuntimeState::Unavailable) {
+    // Probe the SoX engine at runtime. FFmpeg accepts the "resampler"/"engine"
+    // option name even when libsoxr is absent — the failure only shows up at
+    // swr_init ("Requested resampling engine is unavailable").
+    const int engineSet = av_opt_set(impl_->swr, "resampler", "soxr", 0);
+    if (engineSet >= 0) {
+      av_opt_set_int(
+          impl_->swr,
+          "precision",
+          impl_->resamplerQuality == ResamplerQuality::SoxrVhq ? 28 : 20,
+          0);
+      if (swr_init(impl_->swr) >= 0) {
+        initialized = true;
+        reportSoxrRuntimeAvailability(true);
+      }
+    }
+    if (!initialized) {
+      reportSoxrRuntimeAvailability(false);
+      // Recreate with the default swr engine; a failed init leaves the
+      // context poisoned with the unavailable engine selection.
+      ret = allocateSwr();
+      if (ret < 0 || !impl_->swr) {
+        if (error) *error = "无法分配解码重采样器";
+        return false;
+      }
+    }
   }
 
-  ret = swr_init(impl_->swr);
-  if (ret < 0) {
-    if (error) *error = "无法初始化解码重采样器，错误码：" + std::to_string(ret);
-    return false;
+  if (!initialized) {
+    // Soxr tiers degrade to the strongest built-in swr settings when the
+    // engine is unavailable, keeping playback honest instead of failing.
+    applySwrQuality(wantsSoxr ? ResamplerQuality::Ultra : impl_->resamplerQuality);
+    ret = swr_init(impl_->swr);
+    if (ret < 0) {
+      if (error) *error = "无法初始化解码重采样器，错误码：" + std::to_string(ret);
+      return false;
+    }
   }
 
   impl_->outputFormat = format;

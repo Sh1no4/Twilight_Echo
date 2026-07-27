@@ -9,6 +9,7 @@
 #include "../dsp/DspChain.h"
 #include "../dsp/FftSpectrumAnalyzer.h"
 #include "../dsp/ChannelRouter.h"
+#include "../dsp/PcmToDsdModulator.h"
 #include "../dsp/WsolaResampler.h"
 #include "../output/IOutputBackend.h"
 
@@ -382,6 +383,7 @@ class AudioPipeline {
   std::atomic<bool> renderGaplessEnabled_{true};
   std::atomic<bool> renderDopPathActive_{false};
   std::atomic<bool> renderNativeDsdPathActive_{false};
+  std::atomic<bool> renderPcmToDsdPathActive_{false};
   std::atomic<bool> renderTypedPassthroughActive_{false};
   std::atomic<bool> renderActiveUsesPreloadDspChain_{false};
   std::atomic<bool> renderPromotionPending_{false};
@@ -407,7 +409,14 @@ class AudioPipeline {
   bool gaplessEnabled_ = true;
   bool dopPathActive_ = false;
   bool nativeDsdPathActive_ = false;
+  bool pcmToDsdPathActive_ = false;
   bool typedPassthroughActive_ = false;
+  PcmToDsdModulator pcmToDsdModulator_;
+  DopPacker pcmToDsdDopPacker_;
+  std::vector<float> pcmToDsdFloatScratch_;
+  std::vector<uint8_t> pcmToDsdPlanarBytes_;
+  std::vector<uint8_t> pcmToDsdInterleavedBytes_;
+  std::vector<uint8_t*> pcmToDsdChannelPtrs_;
   // Sticky reason when the most recent preload attempt failed due to format/config mismatch.
   bool lastPreloadFormatMismatch_ = false;
   bool activeUsesPreloadDspChain_ = false;

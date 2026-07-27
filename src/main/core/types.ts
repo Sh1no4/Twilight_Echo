@@ -11,8 +11,10 @@ import type { MiniPlayerSettings } from '../../shared/miniPlayer'
 import type { DspScene } from '../../shared/dspGraph'
 import type { SleepTimerSettings } from '../../shared/sleepTimer.ts'
 import type { ThemeSelection, ThemeWindowInheritance } from '../../shared/theme.ts'
+import type { MotionPreference } from '../../shared/motion.ts'
 
 export type { MiniPlayerSettings } from '../../shared/miniPlayer'
+export type { MotionPreference } from '../../shared/motion.ts'
 
 /** Global shortcuts are string-only; remote control may send structured seek/volume/queue commands. */
 export type PlayerShortcutAction =
@@ -155,11 +157,14 @@ export interface AppSettings {
   cachePolicy: MusicCachePolicySettings
   autoAnalyzeBpm: boolean
   closeToTray: boolean
+  /** First-run welcome wizard has been completed or skipped. */
+  onboardingCompleted: boolean
   startupHomePage: StartupHomePage
   theme: AppTheme
   pluginThemeId: string | null
   activeTheme: ThemeSelection
   themeWindowInheritance: ThemeWindowInheritance
+  motionPreference: MotionPreference
   blurEffect: boolean
   windowTransparency: boolean
   windowTransparencyEffect: WindowTransparencyEffectSettings

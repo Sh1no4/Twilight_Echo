@@ -74,6 +74,7 @@ import type {
   MiniPlayerSettings,
   MiniPlayerSettingsPatch,
   MiniPlayerStateSnapshot,
+  MotionPreference,
   DspAsset,
   DspAssetKind,
   DspCorrectionImportResult,
@@ -142,6 +143,7 @@ const desktopLyricsLoadFailedCallbacks = new Set<
 >()
 const miniPlayerStateCallbacks = new Set<(state: MiniPlayerStateSnapshot) => void>()
 const miniPlayerSettingsCallbacks = new Set<(settings: MiniPlayerSettings) => void>()
+const miniPlayerMotionPreferenceCallbacks = new Set<(preference: MotionPreference) => void>()
 const miniPlayerCommandCallbacks = new Set<(command: MiniPlayerCommand) => void>()
 const savePlaybackSessionCallbacks = new Set<() => Promise<void> | void>()
 const pluginChangedCallbacks = new Set<() => void>()
@@ -308,6 +310,10 @@ ipcRenderer.on('miniPlayer:settings', (_event, settings: MiniPlayerSettings) => 
   for (const cb of miniPlayerSettingsCallbacks) cb(settings)
 })
 
+ipcRenderer.on('miniPlayer:motionPreference', (_event, preference: MotionPreference) => {
+  for (const cb of miniPlayerMotionPreferenceCallbacks) cb(preference)
+})
+
 ipcRenderer.on('miniPlayer:command', (_event, command: MiniPlayerCommand) => {
   for (const cb of miniPlayerCommandCallbacks) cb(command)
 })
@@ -345,6 +351,10 @@ const miniPlayerWindowApi = {
   onSettings: (cb: (settings: MiniPlayerSettings) => void): (() => void) => {
     miniPlayerSettingsCallbacks.add(cb)
     return () => miniPlayerSettingsCallbacks.delete(cb)
+  },
+  onMotionPreference: (cb: (preference: MotionPreference) => void): (() => void) => {
+    miniPlayerMotionPreferenceCallbacks.add(cb)
+    return () => miniPlayerMotionPreferenceCallbacks.delete(cb)
   }
 }
 
@@ -1123,9 +1133,7 @@ const api = {
       desktopLyricsSettingsUpdateCallbacks.add(cb)
       return () => desktopLyricsSettingsUpdateCallbacks.delete(cb)
     },
-    onLoadFailed: (
-      cb: (payload: { code: number; description: string }) => void
-    ): (() => void) => {
+    onLoadFailed: (cb: (payload: { code: number; description: string }) => void): (() => void) => {
       desktopLyricsLoadFailedCallbacks.add(cb)
       return () => desktopLyricsLoadFailedCallbacks.delete(cb)
     },
@@ -1142,6 +1150,16 @@ const api = {
   miniPlayer: miniPlayerHostApi
 }
 
+// Cover display in the mini player window goes through the shared coverLoader,
+// which needs cover materialization + remote re-grant IPC. Expose only those
+// two data methods there — never the full data surface. Must be declared before
+// exposedApiForDocument() runs below (const is not hoisted).
+const miniPlayerCoverDataApi = {
+  getCover: (handle: string): Promise<string | null> => ipcRenderer.invoke('cover:get', handle),
+  grantRemoteCover: (source: string): Promise<string> =>
+    ipcRenderer.invoke('cover:grantRemote', source)
+}
+
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('api', exposedApiForDocument())
@@ -1156,9 +1174,11 @@ if (process.contextIsolated) {
 function exposedApiForDocument():
   | typeof api
   | { desktopLyrics: typeof api.desktopLyrics }
-  | { miniPlayer: typeof miniPlayerWindowApi } {
+  | { miniPlayer: typeof miniPlayerWindowApi; data: typeof miniPlayerCoverDataApi } {
   if (isDesktopLyricsDocument()) return { desktopLyrics: api.desktopLyrics }
-  if (isMiniPlayerDocument()) return { miniPlayer: miniPlayerWindowApi }
+  if (isMiniPlayerDocument()) {
+    return { miniPlayer: miniPlayerWindowApi, data: miniPlayerCoverDataApi }
+  }
   return api
 }
 

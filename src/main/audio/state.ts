@@ -18,7 +18,10 @@ import {
 import { derivePlaybackEvents } from '../plugins/events'
 import { ensureMusicCacheDirectories } from '../cache/ncmCache'
 import { applyDiscordRpcSetting } from '../integrations/discord'
-import { applyMiniPlayerSettingsFromApp } from '../integrations/miniPlayer'
+import {
+  applyMiniPlayerMotionPreferenceFromApp,
+  applyMiniPlayerSettingsFromApp
+} from '../integrations/miniPlayer'
 import { applyRuntimeSettings } from '../integrations/shortcutsTray'
 import { applyLibraryWatchers } from '../library/watcher'
 
@@ -255,6 +258,10 @@ export async function updateAppSettings(patch: Partial<AppSettings>): Promise<Se
 
   if (Object.prototype.hasOwnProperty.call(patch, 'miniPlayer')) {
     applyMiniPlayerSettingsFromApp(runtime.appSettings.miniPlayer)
+  }
+
+  if (Object.prototype.hasOwnProperty.call(patch, 'motionPreference')) {
+    applyMiniPlayerMotionPreferenceFromApp(runtime.appSettings.motionPreference)
   }
 
   applyRuntimeSettings()

@@ -98,6 +98,11 @@ DspResamplerQuality parseResamplerQuality(const std::string& quality) {
   const std::string normalized = toLower(quality);
   if (normalized == "high") return DspResamplerQuality::High;
   if (normalized == "ultra") return DspResamplerQuality::Ultra;
+  if (normalized == "soxrhq") return DspResamplerQuality::SoxrHq;
+  if (normalized == "soxrvhq") return DspResamplerQuality::SoxrVhq;
+  // Unknown soxr-family values still request maximum quality: fall back to
+  // the strongest built-in swr tier instead of silently dropping to native.
+  if (normalized.rfind("soxr", 0) == 0) return DspResamplerQuality::Ultra;
   return DspResamplerQuality::Native;
 }
 
@@ -241,10 +246,24 @@ const char* resamplerQualityName(DspResamplerQuality quality) {
       return "high";
     case DspResamplerQuality::Ultra:
       return "ultra";
+    case DspResamplerQuality::SoxrHq:
+      return "soxrHq";
+    case DspResamplerQuality::SoxrVhq:
+      return "soxrVhq";
     case DspResamplerQuality::Native:
     default:
       return "native";
   }
+}
+
+bool resamplerQualityUsesSoxr(DspResamplerQuality quality) {
+  return quality == DspResamplerQuality::SoxrHq || quality == DspResamplerQuality::SoxrVhq;
+}
+
+// Honest status: engine actually in effect for the requested quality tier.
+const char* resamplerEngineName(DspResamplerQuality quality) {
+  if (!resamplerQualityUsesSoxr(quality)) return "swr";
+  return soxrRuntimeAvailability() == SoxrRuntimeState::Unavailable ? "swr" : "soxr";
 }
 
 const char* ditherModeName(DspDitherMode mode) {
@@ -860,9 +879,15 @@ std::string DspChain::graphStatusJson() const {
   }
   const bool outputTargetRequested = config_.outputTargetSampleRate > 0;
   const bool outputActive = outputTargetRequested && config_.outputTargetSampleRate == format_.sampleRate;
-  const std::string outputReason = !outputTargetRequested ? "Using the device native rate" :
-                                   outputActive ? "Input already matches the requested output rate" :
-                                   "Output sample-rate conversion is pending the output backend";
+  const bool soxrRequested = resamplerQualityUsesSoxr(config_.resamplerQuality);
+  const bool soxrFallback =
+      soxrRequested && soxrRuntimeAvailability() == SoxrRuntimeState::Unavailable;
+  std::string outputReason = !outputTargetRequested ? "Using the device native rate" :
+                             outputActive ? "Input already matches the requested output rate" :
+                             "Output sample-rate conversion is pending the output backend";
+  if (soxrFallback) {
+    outputReason += "; SoX resampler unavailable in this FFmpeg build, using swr ultra fallback";
+  }
   json << "],\"compileState\":\"ready\",\"meter\":{\"momentaryLufs\":";
   writeFiniteJsonNumber(json, meter_ ? meter_->momentaryLufs() : -std::numeric_limits<double>::infinity());
   json << ",\"shortTermLufs\":";
@@ -883,7 +908,9 @@ std::string DspChain::graphStatusJson() const {
   }
   json << ",\"actualSampleRate\":" << (format_.sampleRate > 0 ? std::to_string(format_.sampleRate) : "null")
        << ",\"resamplerQuality\":\"" << resamplerQualityName(config_.resamplerQuality)
-       << "\",\"dither\":\"" << ditherModeName(config_.ditherMode) << "\",\"active\":"
+       << "\",\"resamplerEngine\":\"" << resamplerEngineName(config_.resamplerQuality)
+       << "\",\"resamplerFallback\":" << (soxrFallback ? "true" : "false")
+       << ",\"dither\":\"" << ditherModeName(config_.ditherMode) << "\",\"active\":"
        << (outputActive ? "true" : "false") << ",\"reason\":\"" << json_utils::escape(outputReason)
        << "\"}}";
   return json.str();

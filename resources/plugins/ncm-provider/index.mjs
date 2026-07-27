@@ -23,6 +23,7 @@ const PROVIDER_WRITE_IDEMPOTENCY_SETTINGS_KEY = 'providerWriteIdempotency'
 const MAX_PLAYLIST_TRACKS = 5000
 const PLAYLIST_TRACK_PAGE_SIZE = 1000
 let likedTracksCache = null
+let playlistCatalogueCache = null
 let likedSongIdListCache = null
 let likedSongIds = new Set()
 let ownedPlaylistIds = new Set()
@@ -82,6 +83,9 @@ export async function activate(context) {
     fetchLikedTracksPage,
     fetchRecommendSongs,
     fetchRecommendPlaylists,
+    fetchPlaylistCategories,
+    fetchDiscoveryPlaylists,
+    fetchHighQualityPlaylists,
     fetchPersonalFm,
     fetchPrivateContent,
     fetchArtistTopSongs,
@@ -181,6 +185,7 @@ function resetCaches() {
   streamUrlCache.clear()
   providerWriteResults.clear()
   likedTracksCache = null
+  playlistCatalogueCache = null
   likedSongIdListCache = null
   likedSongIds = new Set()
   ownedPlaylistIds = new Set()
@@ -395,6 +400,26 @@ async function requestAuthedRead(path, { attempts = 2, label = path } = {}) {
   throw lastError
 }
 
+async function requestOptionalAuth(path, requestContext) {
+  // Anonymous-capable read: attaches the cookie when logged in, but never requires one.
+  return request(path, await getCookie(), requestContext)
+}
+
+async function requestOptionalAuthRead(path, { attempts = 2, label = path } = {}) {
+  let lastError = null
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await requestOptionalAuth(path)
+    } catch (error) {
+      lastError = error
+      if (attempt >= attempts || !isReadApiTransientError(error)) break
+      await wait(250 * attempt)
+    }
+  }
+  getContext().logger.warn(`网易云读取接口失败：${label}：${getErrorMessage(lastError)}`)
+  throw lastError
+}
+
 async function ensureProfile() {
   const login = await checkLogin()
   if (!login.loggedIn || !login.profile) throw new Error('请先登录网易云音乐')
@@ -564,7 +589,10 @@ function normalizeArtist(item) {
 
 function getPlaylistItems(data) {
   if (Array.isArray(data.playlist)) return data.playlist
+  // /api/playlist/list and /api/playlist/highquality/list use the plural key.
+  if (Array.isArray(data.playlists)) return data.playlists
   if (Array.isArray(data.data?.playlist)) return data.data.playlist
+  if (Array.isArray(data.data?.playlists)) return data.data.playlists
   return []
 }
 
@@ -909,7 +937,7 @@ async function fetchSongDetailsByIds(ids, label) {
 async function fetchSongDetailChunk(ids, label) {
   if (ids.length === 0) return []
   try {
-    const detail = await requestAuthedRead(`/song/detail?ids=${ids.join(',')}`, {
+    const detail = await requestOptionalAuthRead(`/song/detail?ids=${ids.join(',')}`, {
       attempts: 3,
       label: `${label} song detail`
     })
@@ -936,7 +964,7 @@ async function fetchPlaylistTracksViaTrackAll(playlistId) {
     const limit = Math.min(PLAYLIST_TRACK_PAGE_SIZE, remaining)
     let pageSongs = []
     try {
-      const trackAllData = await requestAuthedRead(
+      const trackAllData = await requestOptionalAuthRead(
         `/playlist/track/all?id=${encodeURIComponent(String(playlistId))}&limit=${limit}&offset=${offset}`,
         { attempts: 3, label: `playlist ${playlistId} track/all ${offset}` }
       )
@@ -971,7 +999,7 @@ async function fetchPlaylistTracksViaTrackAll(playlistId) {
 }
 
 async function fetchPlaylistTracksViaDetail(playlistId) {
-  const detailData = await requestAuthedRead(
+  const detailData = await requestOptionalAuthRead(
     `/playlist/detail?id=${encodeURIComponent(String(playlistId))}`,
     { attempts: 3, label: `playlist ${playlistId} detail` }
   )
@@ -1275,6 +1303,107 @@ async function fetchRecommendPlaylists() {
     }))
   } catch {
     return []
+  }
+}
+
+function getCatalogueSubItems(data) {
+  if (Array.isArray(data.sub)) return data.sub
+  if (Array.isArray(data.data?.sub)) return data.data.sub
+  return []
+}
+
+function getCatalogueCategoryMap(data) {
+  const categories = data.categories ?? data.data?.categories
+  return categories && typeof categories === 'object' ? categories : {}
+}
+
+function getHotTagNames(data) {
+  const tags = Array.isArray(data.tags) ? data.tags : Array.isArray(data.data?.tags) ? data.data.tags : []
+  return tags.map((tag) => tag?.name).filter((name) => typeof name === 'string' && name.trim())
+}
+
+function normalizeDiscoveryPlaylist(item) {
+  const playCount = Number(item.playCount ?? item.playcount)
+  const summary = normalizePlaylist(item)
+  if (Number.isFinite(playCount) && playCount > 0) summary.playCount = playCount
+  return summary
+}
+
+async function fetchPlaylistCategories() {
+  if (playlistCatalogueCache) return playlistCatalogueCache
+  const [catData, hotData] = await Promise.all([
+    requestOptionalAuthRead('/playlist/catlist', { attempts: 3, label: 'playlist catlist' }),
+    requestOptionalAuthRead('/playlist/hot', { label: 'playlist hot tags' }).catch(() => ({}))
+  ])
+
+  const categoryMap = getCatalogueCategoryMap(catData)
+  const subItems = getCatalogueSubItems(catData)
+  const groups = Object.entries(categoryMap)
+    .map(([id, name]) => ({
+      id: Number(id),
+      name: typeof name === 'string' ? name : String(name ?? ''),
+      tags: subItems
+        .filter((item) => Number(item?.category) === Number(id) && typeof item?.name === 'string')
+        .map((item) => ({ name: item.name, hot: item.hot === true }))
+    }))
+    .filter((group) => group.name && group.tags.length > 0)
+
+  let hotTags = getHotTagNames(hotData)
+  if (hotTags.length === 0) {
+    hotTags = subItems
+      .filter((item) => item?.hot === true && typeof item?.name === 'string')
+      .map((item) => item.name)
+  }
+
+  const result = { hotTags, groups }
+  playlistCatalogueCache = result
+  return result
+}
+
+async function fetchDiscoveryPlaylists(cat = '全部', order = 'hot', limit = 30, offset = 0) {
+  const normalizedCat = typeof cat === 'string' && cat.trim() ? cat.trim() : '全部'
+  const normalizedOrder = order === 'new' ? 'new' : 'hot'
+  const normalizedLimit = normalizePageNumber(limit, 30, 1, 100)
+  const normalizedOffset = normalizePageNumber(offset, 0, 0, Number.MAX_SAFE_INTEGER)
+  const data = await requestOptionalAuthRead(
+    `/top/playlist?cat=${encodeURIComponent(normalizedCat)}&order=${normalizedOrder}&limit=${normalizedLimit}&offset=${normalizedOffset}`,
+    { attempts: 3, label: `top playlists ${normalizedCat} ${normalizedOffset}` }
+  )
+  const items = getPlaylistItems(data).map(normalizeDiscoveryPlaylist)
+  const total = typeof data.total === 'number' ? data.total : normalizedOffset + items.length
+  const more = getPagedMoreFlag(data)
+  return {
+    items,
+    total,
+    hasMore: typeof more === 'boolean' ? more : normalizedOffset + items.length < total,
+    offset: normalizedOffset,
+    limit: normalizedLimit
+  }
+}
+
+async function fetchHighQualityPlaylists(cat = '全部', limit = 30, before = 0) {
+  const normalizedCat = typeof cat === 'string' && cat.trim() ? cat.trim() : '全部'
+  const normalizedLimit = normalizePageNumber(limit, 30, 1, 100)
+  const normalizedBefore = Number(before)
+  const beforeParam =
+    Number.isFinite(normalizedBefore) && normalizedBefore > 0 ? `&before=${normalizedBefore}` : ''
+  const data = await requestOptionalAuthRead(
+    `/top/playlist/highquality?cat=${encodeURIComponent(normalizedCat)}&limit=${normalizedLimit}${beforeParam}`,
+    { attempts: 3, label: `highquality playlists ${normalizedCat}` }
+  )
+  const rawItems = getPlaylistItems(data)
+  const lastUpdateTime = Number(rawItems[rawItems.length - 1]?.updateTime)
+  const lasttime = Number(data.lasttime ?? data.data?.lasttime)
+  return {
+    items: rawItems.map(normalizeDiscoveryPlaylist),
+    total: typeof data.total === 'number' ? data.total : rawItems.length,
+    hasMore: getPagedMoreFlag(data) === true,
+    lasttime:
+      Number.isFinite(lasttime) && lasttime > 0
+        ? lasttime
+        : Number.isFinite(lastUpdateTime) && lastUpdateTime > 0
+          ? lastUpdateTime
+          : 0
   }
 }
 

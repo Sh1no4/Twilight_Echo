@@ -83,11 +83,13 @@ const fallbackSettings: AppSettings = {
   },
   autoAnalyzeBpm: true,
   closeToTray: false,
+  onboardingCompleted: false,
   startupHomePage: 'local',
   theme: 'system',
   pluginThemeId: null,
   activeTheme: { kind: 'builtin', id: 'builtin:twilight-echo-default' },
   themeWindowInheritance: { miniPlayer: true, desktopLyrics: true },
+  motionPreference: 'system',
   blurEffect: true,
   windowTransparency: false,
   windowTransparencyEffect: {
@@ -169,7 +171,9 @@ const fallbackSettings: AppSettings = {
   audioExclusiveMode: false,
   audioOutputConfig: {
     preferredBufferSize: 0,
-    routingMode: 'auto'
+    routingMode: 'auto',
+    wasapiExclusivePushMode: false,
+    pcmToDsdMode: 'off'
   },
   audioProcessing: fallbackAudioProcessing,
   dspScenes: [

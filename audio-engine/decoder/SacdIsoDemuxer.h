@@ -15,6 +15,7 @@ struct SacdIsoTrackInfo {
   std::string area = "stereo";
   std::string title;
   std::string artist;
+  std::string albumTitle;
   double durationSeconds = 0.0;
   uint64_t startSector = 0;
   uint64_t sectorCount = 0;
@@ -23,6 +24,9 @@ struct SacdIsoTrackInfo {
   int channelCount = 2;
   int sampleRate = 2822400;
   bool isDst = false;
+  // True when the track comes from a real Scarletbook TOC: its data range is
+  // multiplexed 2048-byte audio sectors (packet demux) rather than raw bytes.
+  bool scarletbook = false;
   std::vector<uint32_t> dstFrameSizes;
   bool playable = false;
   std::string reasonCode;
@@ -60,6 +64,7 @@ class SacdIsoDemuxer {
   std::unique_ptr<Impl> impl_;
 
   size_t readDstBytes(const SacdIsoTrackInfo& track, uint8_t* output, size_t maxBytes);
+  size_t readScarletbookBytes(const SacdIsoTrackInfo& track, uint8_t* output, size_t maxBytes);
 };
 
 } // namespace twilight::audio

@@ -13,7 +13,11 @@ class FFmpegDecoder {
   enum class ResamplerQuality {
     Native,
     High,
-    Ultra
+    Ultra,
+    // SoX engine tiers (libswresample "resampler=soxr", precision 20 / 28).
+    // When the linked FFmpeg lacks libsoxr they fall back to Ultra swr settings.
+    SoxrHq,
+    SoxrVhq
   };
 
   FFmpegDecoder();

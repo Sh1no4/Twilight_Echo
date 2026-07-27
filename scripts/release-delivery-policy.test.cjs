@@ -1,5 +1,7 @@
 const assert = require('node:assert/strict')
+const { createHash } = require('node:crypto')
 const fs = require('node:fs')
+const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 
@@ -31,6 +33,27 @@ test('Windows packaging strips copied native binaries while signed releases stay
   assert.match(releaseBuild, /TWILIGHT_RELEASE_SIGNING_THUMBPRINT is required/)
   assert.match(releaseBuild, /TWILIGHT_RELEASE_BUILD: '1'/)
   assert.match(releaseBuild, /electron-builder\.release-win\.yml/)
+  assert.match(releaseBuild, /findInstaller/)
+  assert.match(releaseBuild, /createHash\('sha256'\)/)
+  assert.match(releaseBuild, /\.sha256/)
+})
+
+test('release packaging writes an SHA-256 companion file for the installer', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-release-checksum-'))
+  try {
+    const installer = path.join(root, 'TwilightEcho-1.0.1-setup.exe')
+    fs.writeFileSync(installer, 'twilight-release')
+    const { writeInstallerChecksum } = require('./build-windows-release.cjs')
+    const checksumPath = await writeInstallerChecksum(root)
+    assert.equal(checksumPath, `${installer}.sha256`)
+    const expected = createHash('sha256').update('twilight-release').digest('hex')
+    assert.equal(
+      fs.readFileSync(checksumPath, 'utf8'),
+      `${expected}  TwilightEcho-1.0.1-setup.exe\n`
+    )
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('development packages use maximum compression without a missing NSIS include', () => {
@@ -60,6 +83,8 @@ test('update checks download GitHub release installers without electron-updater'
   assert.doesNotMatch(service, /autoUpdater/)
   assert.match(service, /shell\.openPath/)
   assert.match(service, /createHash\('sha256'\)/)
+  assert.match(service, /error: 'no-checksum'/)
+  assert.match(service, /GitHub Release 未提供 Windows 安装包的 SHA-256 校验和/)
   const settingsTypes = read('src/renderer/src/components/settings-page/types.ts')
   const about = read('src/renderer/src/components/settings-page/AboutSettingsSection.vue')
   assert.match(settingsTypes, /from '\.\.\/\.\.\/\.\.\/\.\.\/shared\/projectUrls\.ts'/)

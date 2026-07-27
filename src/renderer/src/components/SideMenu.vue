@@ -178,8 +178,8 @@ function handleImportClick(): void {
   transform-origin: left center;
   will-change: transform;
   transition:
-    transform 0.32s var(--te-ease-soft),
-    box-shadow 0.32s var(--te-ease-soft);
+    transform var(--te-motion-page) var(--te-ease-soft),
+    box-shadow var(--te-motion-panel) var(--te-ease-soft);
   font-family: var(--te-font-sans);
 }
 
@@ -242,13 +242,56 @@ function handleImportClick(): void {
   opacity: 0;
   transform-origin: left center;
   transition:
-    transform 0.28s var(--te-ease-soft),
-    opacity 0.2s ease;
+    transform var(--te-motion-panel) var(--te-ease-soft),
+    opacity var(--te-motion-hover) ease;
 }
 
 .side-menu.open .menu-items {
   transform: translate3d(0, 0, 0);
   opacity: 1;
+}
+
+.side-menu.open .menu-nav .menu-item {
+  animation: side-menu-item-in var(--te-motion-panel) var(--te-ease-soft) both;
+}
+
+.side-menu.open .menu-nav .menu-item:nth-child(2) {
+  animation-delay: 28ms;
+}
+
+.side-menu.open .menu-nav .menu-item:nth-child(3) {
+  animation-delay: 56ms;
+}
+
+.side-menu.open .menu-nav .menu-item:nth-child(4) {
+  animation-delay: 84ms;
+}
+
+.side-menu.open .menu-nav .menu-item:nth-child(5) {
+  animation-delay: 112ms;
+}
+
+.side-menu.open .menu-nav .menu-item:nth-child(6) {
+  animation-delay: 140ms;
+}
+
+.side-menu.open .menu-nav .menu-item:nth-child(7) {
+  animation-delay: 168ms;
+}
+
+.side-menu.open .menu-nav .menu-item:nth-child(8) {
+  animation-delay: 196ms;
+}
+
+@keyframes side-menu-item-in {
+  from {
+    opacity: 0;
+    transform: translate3d(-8px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
 }
 
 .menu-items {
@@ -293,9 +336,9 @@ function handleImportClick(): void {
   font: inherit;
   text-align: left;
   transition:
-    background 0.2s cubic-bezier(0.4, 0, 0.2, 1),
-    color 0.2s cubic-bezier(0.4, 0, 0.2, 1),
-    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    background var(--te-motion-hover) var(--te-ease-enter),
+    color var(--te-motion-hover) var(--te-ease-enter),
+    transform var(--te-motion-hover) var(--te-ease-enter);
 }
 
 .menu-item:focus-visible {
@@ -328,6 +371,17 @@ function handleImportClick(): void {
   box-shadow: 0 0 8px color-mix(in srgb, var(--te-navigation-indicator) 50%, transparent);
 }
 
+:global(html[data-te-motion='full'] .menu-item.active::before) {
+  animation: side-menu-indicator-in var(--te-motion-press) var(--te-ease-spring) both;
+}
+
+@keyframes side-menu-indicator-in {
+  from {
+    opacity: 0;
+    scale: 1 0.45;
+  }
+}
+
 .item-icon {
   width: 22px;
   height: 22px;
@@ -351,7 +405,7 @@ function handleImportClick(): void {
 }
 
 .menu-item:hover .item-icon {
-  transform: scale(1.1);
+  transform: translateX(1px) scale(1.12) rotate(-4deg);
   color: var(--te-navigation-hover-text);
 }
 

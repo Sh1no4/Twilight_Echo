@@ -617,7 +617,7 @@ test('bundled NCM provider preserves NetEase network risk messages', async () =>
   providerModule.deactivate()
 })
 
-test('bundled NCM provider does not return local cache paths as playback URLs', async () => {
+test('bundled NCM provider prefers local cache path and falls back to remote URL', async () => {
   const requests: NcmRequest[] = []
   const registeredProvider: { current?: TestNcmProvider } = {}
   const settings = new Map<string, unknown>([['cookie', 'MUSIC_U=test-token']])
@@ -676,15 +676,9 @@ test('bundled NCM provider does not return local cache paths as playback URLs', 
 
   assert.equal(
     await registeredProvider.current?.getPlaybackUrl({ id: 'ncm:2609824992' }),
-    'https://music.example/song.flac'
+    cachedPath
   )
-  assert.equal(requests.length, 1)
-
-  assert.equal(
-    await registeredProvider.current?.getPlaybackUrl({ id: 'ncm:2609824992' }),
-    'https://music.example/song.flac'
-  )
-  assert.equal(requests.length, 1)
+  assert.equal(requests.length, 0)
 
   providerModule.deactivate()
 })

@@ -64,6 +64,7 @@ pnpm run test:production-audit
 pnpm run audit:production -- --output output/release-evidence/production-dependency-audit.json
 pnpm run test:plugins
 pnpm run test:audio-manager
+pnpm run test:radio-remote
 pnpm run test:tag-duplicate-management
 pnpm run test:duplicate-detection-benchmark
 pnpm run benchmark:duplicate-detection:ci -- --output output/release-evidence/duplicate-detection-benchmark.json --manifest output/release-evidence/duplicate-detection-benchmark.manifest.json
@@ -72,6 +73,7 @@ pnpm run test:playlist-lifecycle
 pnpm run test:lyrics-management
 pnpm run test:cue
 pnpm run test:local-perf
+pnpm run test:themes
 pnpm run test:dsp-graph
 pnpm run test:dsp-assets
 pnpm run test:plugin-tooling
@@ -94,6 +96,11 @@ contract, current source/runner/lockfile hashes, and evidence-manifest digest. T
 separate sequential command: it performs three unmeasured warmups and twenty measured runs for both
 unique and collision-heavy 10k libraries, then fails against the declared p95 budgets. Do not run it
 in parallel with other performance gates. All three commands are part of `test:no-real-device`.
+
+`test:radio-remote` covers library watcher extension policy, radio playlist import and directory
+fallback, podcast parsing/persistence, remote-control authentication, UPnP/Chromecast discovery and
+control, media-token authorization, and renderer cover handles. `test:themes` validates the theme
+token contract, archive preflight, scheduling, plugin runtime integration, and large-list switching.
 
 `test:playlist-lifecycle` drives the production SongList lifecycle composable through a real
 Electron/Vue/Pinia DOM. It covers all three export downloads, pre-read import limits, visible
@@ -192,6 +199,10 @@ Only `gate:release:win` loads `electron-builder.release-win.yml`, which enables 
 ```powershell
 pnpm run gate:release:win
 ```
+
+`gate:release:win` runs `gate:release:preflight` before signing. On success it writes
+`dist/<installer>-setup.exe.sha256`; upload that file alongside the installer and publish the same
+SHA-256 in the GitHub Release body.
 
 The gate checks every shipped DLL/EXE/NODE file under the packaged audio-engine directory for a
 non-zero size and a size budget. It additionally checks each required self-built native runtime

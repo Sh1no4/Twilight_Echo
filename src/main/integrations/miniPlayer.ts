@@ -20,6 +20,7 @@ import {
   type MiniPlayerSettingsPatch,
   type MiniPlayerStateSnapshot
 } from '../../shared/miniPlayer'
+import type { MotionPreference } from '../../shared/motion.ts'
 import { runtime } from '../core/runtime'
 import { createSettingsSnapshot, writeAppSettings } from '../core/settings'
 import { importBackgroundImage } from '../library/coverCache'
@@ -162,9 +163,19 @@ function sendMiniPlayerSettings(settings = currentMiniPlayerSettings()): void {
   win.webContents.send('miniPlayer:settings', settings)
 }
 
+function sendMiniPlayerMotionPreference(preference = runtime.appSettings.motionPreference): void {
+  const win = runtime.miniPlayerWindow
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return
+  win.webContents.send('miniPlayer:motionPreference', preference)
+}
+
 export function applyMiniPlayerSettingsFromApp(settings: MiniPlayerSettings): void {
   applyMiniPlayerWindowSettings(settings)
   sendMiniPlayerSettings(settings)
+}
+
+export function applyMiniPlayerMotionPreferenceFromApp(preference: MotionPreference): void {
+  sendMiniPlayerMotionPreference(preference)
 }
 
 function enterMiniPlayerMode(win: BrowserWindow): void {
@@ -173,6 +184,7 @@ function enterMiniPlayerMode(win: BrowserWindow): void {
   win.focus()
   runtime.mainWindow?.hide()
   sendMiniPlayerSettings()
+  sendMiniPlayerMotionPreference()
   sendMiniPlayerState(runtime.latestMiniPlayerState ?? { ...EMPTY_MINI_PLAYER_STATE })
 }
 
@@ -258,6 +270,7 @@ function createMiniPlayerWindow(): BrowserWindow {
   win.webContents.on('will-navigate', (event) => event.preventDefault())
   win.webContents.on('did-finish-load', () => {
     sendMiniPlayerSettings()
+    sendMiniPlayerMotionPreference()
     sendMiniPlayerState(runtime.latestMiniPlayerState ?? { ...EMPTY_MINI_PLAYER_STATE })
   })
   win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, _url, isMainFrame) => {
@@ -388,7 +401,8 @@ export function setupMiniPlayerIpc(): void {
     assertSenderWindow(event, runtime.miniPlayerWindow, 'mini player window IPC')
     return {
       state: runtime.latestMiniPlayerState ?? { ...EMPTY_MINI_PLAYER_STATE },
-      settings: currentMiniPlayerSettings()
+      settings: currentMiniPlayerSettings(),
+      motionPreference: runtime.appSettings.motionPreference
     }
   })
 

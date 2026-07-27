@@ -40,7 +40,11 @@ function getIconInfo(id: string, type: string[]): { cls: string; icon: string; s
   if (id.includes('ncm')) return { cls: 'ncm', icon: 'pi pi-cloud' }
   if (type.includes('provider')) return { cls: 'provider', icon: 'pi pi-music' }
   if (type.includes('dsp')) return { cls: 'dsp', icon: 'pi pi-wave-pulse' }
-  return { cls: '', icon: 'pi pi-puzzle', style: 'background: linear-gradient(135deg, #e0e7ff, #c7d2fe); color: #4f46e5;' }
+  return {
+    cls: '',
+    icon: 'pi pi-puzzle',
+    style: 'background: linear-gradient(135deg, #e0e7ff, #c7d2fe); color: #4f46e5;'
+  }
 }
 
 function getTags(type: string[]): Array<{ label: string; cls: string; style?: string }> {
@@ -50,7 +54,12 @@ function getTags(type: string[]): Array<{ label: string; cls: string; style?: st
     else if (t === 'ui') tags.push({ label: 'UI', cls: 'ui' })
     else if (t === 'dsp') tags.push({ label: 'DSP NATIVE', cls: 'dsp' })
     else if (t === 'tool') tags.push({ label: 'TOOL', cls: 'tool' })
-    else if (t === 'theme') tags.push({ label: 'THEME', cls: '', style: 'background: rgba(168, 85, 247, 0.1); color: #a855f7;' })
+    else if (t === 'theme')
+      tags.push({
+        label: 'THEME',
+        cls: '',
+        style: 'background: rgba(168, 85, 247, 0.1); color: #a855f7;'
+      })
   }
   return tags
 }
@@ -61,30 +70,32 @@ const filteredInstalled = computed(() => {
   const list = installedPlugins.value
   if (!searchText.value.trim()) return list
   const q = searchText.value.toLowerCase()
-  return list.filter(p =>
-    p.name.toLowerCase().includes(q) ||
-    p.author.toLowerCase().includes(q) ||
-    p.id.toLowerCase().includes(q)
+  return list.filter(
+    (p) =>
+      p.name.toLowerCase().includes(q) ||
+      p.author.toLowerCase().includes(q) ||
+      p.id.toLowerCase().includes(q)
   )
 })
 
 const filteredIndex = computed(() => {
-  const list = indexEntries.value.filter(e => e.installState !== 'built-in-blocked')
+  const list = indexEntries.value.filter((e) => e.installState !== 'built-in-blocked')
   if (!searchText.value.trim()) return list
   const q = searchText.value.toLowerCase()
-  return list.filter(e =>
-    e.name.toLowerCase().includes(q) ||
-    e.author.toLowerCase().includes(q) ||
-    e.id.toLowerCase().includes(q)
+  return list.filter(
+    (e) =>
+      e.name.toLowerCase().includes(q) ||
+      e.author.toLowerCase().includes(q) ||
+      e.id.toLowerCase().includes(q)
   )
 })
 
 const updateEntries = computed(() => {
-  return indexEntries.value.filter(e => e.installState === 'update-available')
+  return indexEntries.value.filter((e) => e.installState === 'update-available')
 })
 
 const marketRepoUrl = computed(() => {
-  const entry = indexEntries.value.find(e => e.repository || e.homepage)
+  const entry = indexEntries.value.find((e) => e.repository || e.homepage)
   return entry?.repository || entry?.homepage || ''
 })
 
@@ -285,64 +296,160 @@ onUnmounted(() => {
 <template>
   <div class="plugin-page">
     <div class="plugin-window">
-      
       <!-- Sidebar -->
       <aside class="sidebar">
         <div class="sidebar-header">
           <h1><PuzzleIcon /> 扩展中心</h1>
         </div>
         <nav class="nav-menu">
-          <div class="nav-item" :class="{ active: activeTab === 'installed' }" @click="switchTab('installed')">
+          <div
+            class="nav-item"
+            data-te-interactive
+            role="button"
+            tabindex="0"
+            :aria-pressed="activeTab === 'installed'"
+            :class="{ active: activeTab === 'installed' }"
+            @click="switchTab('installed')"
+            @keydown.enter.prevent="switchTab('installed')"
+            @keydown.space.prevent="switchTab('installed')"
+          >
             <i class="pi pi-check-circle"></i>
             <span>已安装</span>
           </div>
-          <div class="nav-item" :class="{ active: activeTab === 'discover' }" @click="switchTab('discover')">
+          <div
+            class="nav-item"
+            data-te-interactive
+            role="button"
+            tabindex="0"
+            :aria-pressed="activeTab === 'discover'"
+            :class="{ active: activeTab === 'discover' }"
+            @click="switchTab('discover')"
+            @keydown.enter.prevent="switchTab('discover')"
+            @keydown.space.prevent="switchTab('discover')"
+          >
             <i class="pi pi-compass"></i>
             <span>发现市场</span>
           </div>
-          <div class="nav-item" :class="{ active: activeTab === 'updates' }" @click="switchTab('updates')">
+          <div
+            class="nav-item"
+            data-te-interactive
+            role="button"
+            tabindex="0"
+            :aria-pressed="activeTab === 'updates'"
+            :class="{ active: activeTab === 'updates' }"
+            @click="switchTab('updates')"
+            @keydown.enter.prevent="switchTab('updates')"
+            @keydown.space.prevent="switchTab('updates')"
+          >
             <i class="pi pi-cloud-download"></i>
-            <span>更新 <span v-if="updateEntries.length > 0" style="background: #ef4444; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 100px; margin-left: 4px;">{{ updateEntries.length }}</span></span>
+            <span
+              >更新
+              <span
+                v-if="updateEntries.length > 0"
+                style="
+                  background: #ef4444;
+                  color: #fff;
+                  font-size: 10px;
+                  padding: 2px 6px;
+                  border-radius: 100px;
+                  margin-left: 4px;
+                "
+                >{{ updateEntries.length }}</span
+              ></span
+            >
           </div>
         </nav>
 
         <div class="sidebar-footer">
           <div class="dev-mode-toggle">
             <span>开发者模式</span>
-            <div class="switch" :class="{ on: devMode }" @click="devMode = !devMode"></div>
+            <div
+              class="switch"
+              data-te-interactive
+              role="switch"
+              tabindex="0"
+              aria-label="开发者模式"
+              :aria-checked="devMode"
+              :class="{ on: devMode }"
+              @click="devMode = !devMode"
+              @keydown.enter.prevent="devMode = !devMode"
+              @keydown.space.prevent="devMode = !devMode"
+            ></div>
           </div>
         </div>
       </aside>
 
       <!-- Main Content -->
       <main class="main-content">
-        
         <!-- Topbar -->
         <header class="topbar">
           <div class="search-box">
             <i class="pi pi-search"></i>
-            <input 
-              type="text" 
+            <input
+              type="text"
               v-model="searchText"
-              :placeholder="activeTab === 'installed' ? '搜索已安装插件名称或作者...' : activeTab === 'discover' ? '搜索当前插件索引...' : '在可用更新中搜索...'"
-            >
+              :placeholder="
+                activeTab === 'installed'
+                  ? '搜索已安装插件名称或作者...'
+                  : activeTab === 'discover'
+                    ? '搜索当前插件索引...'
+                    : '在可用更新中搜索...'
+              "
+            />
           </div>
           <div class="top-actions">
-            <button v-if="activeTab === 'installed'" class="btn btn-outline" @click="installFromLocal">
+            <button
+              v-if="activeTab === 'installed'"
+              class="btn btn-outline"
+              @click="installFromLocal"
+            >
               <i class="pi pi-folder-open"></i> 从本地安装包 (.tep)
             </button>
-            <button v-if="activeTab === 'discover'" class="btn btn-outline" @click="refreshMarket" :disabled="loading">
+            <button
+              v-if="activeTab === 'discover'"
+              class="btn btn-outline"
+              @click="refreshMarket"
+              :disabled="loading"
+            >
               <i class="pi pi-refresh"></i> {{ loading ? '刷新中...' : '刷新市场' }}
             </button>
           </div>
         </header>
 
         <!-- Error / warning banners -->
-        <div v-if="errorMsg" style="margin: 0 32px 16px; padding: 12px 16px; background: var(--te-danger-soft-bg); border: 1px solid var(--te-danger-soft-fg); border-radius: 12px; color: var(--te-danger-soft-fg); font-size: 13px; display: flex; align-items: center; gap: 8px;">
+        <div
+          v-if="errorMsg"
+          style="
+            margin: 0 32px 16px;
+            padding: 12px 16px;
+            background: var(--te-danger-soft-bg);
+            border: 1px solid var(--te-danger-soft-fg);
+            border-radius: 12px;
+            color: var(--te-danger-soft-fg);
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+          "
+        >
           <i class="pi pi-exclamation-triangle"></i>
           {{ errorMsg }}
         </div>
-        <div v-if="warningMsg" style="margin: 0 32px 16px; padding: 12px 16px; background: var(--te-warning-soft-bg, #fff7ed); border: 1px solid var(--te-warning-soft-fg, #c2410c); border-radius: 12px; color: var(--te-warning-soft-fg, #c2410c); font-size: 13px; display: flex; align-items: center; gap: 8px;">
+        <div
+          v-if="warningMsg"
+          style="
+            margin: 0 32px 16px;
+            padding: 12px 16px;
+            background: var(--te-warning-soft-bg, #fff7ed);
+            border: 1px solid var(--te-warning-soft-fg, #c2410c);
+            border-radius: 12px;
+            color: var(--te-warning-soft-fg, #c2410c);
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+          "
+        >
           <i class="pi pi-info-circle"></i>
           {{ warningMsg }}
         </div>
@@ -354,14 +461,25 @@ onUnmounted(() => {
           </div>
 
           <!-- Empty state -->
-          <div v-if="filteredInstalled.length === 0" style="text-align: center; padding: 60px 20px; color: var(--te-neutral-400, #9ca3af); font-size: 14px;">
-            <i class="pi pi-inbox" style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3;"></i>
+          <div
+            v-if="filteredInstalled.length === 0"
+            style="
+              text-align: center;
+              padding: 60px 20px;
+              color: var(--te-neutral-400, #9ca3af);
+              font-size: 14px;
+            "
+          >
+            <i
+              class="pi pi-inbox"
+              style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3"
+            ></i>
             <p>{{ searchText ? '没有匹配的插件' : '暂无已安装插件' }}</p>
             <button
               v-if="!searchText"
               type="button"
               class="btn btn-outline"
-              style="margin-top: 16px;"
+              style="margin-top: 16px"
               @click="switchTab('discover')"
             >
               去发现插件
@@ -369,16 +487,19 @@ onUnmounted(() => {
           </div>
 
           <div class="plugin-grid" v-else>
-            
-            <div 
-              v-for="plugin in filteredInstalled" 
-              :key="plugin.id" 
+            <div
+              v-for="plugin in filteredInstalled"
+              :key="plugin.id"
               class="plugin-card"
               :style="{ opacity: plugin.enabled ? 1 : 0.7 }"
             >
               <div v-if="plugin.builtIn" class="builtin-label">系统内置</div>
               <div class="plugin-card-header">
-                <div class="plugin-icon" :class="getIconInfo(plugin.id, plugin.type).cls" :style="getIconInfo(plugin.id, plugin.type).style">
+                <div
+                  class="plugin-icon"
+                  :class="getIconInfo(plugin.id, plugin.type).cls"
+                  :style="getIconInfo(plugin.id, plugin.type).style"
+                >
                   <i :class="getIconInfo(plugin.id, plugin.type).icon"></i>
                 </div>
                 <div class="plugin-info">
@@ -391,58 +512,88 @@ onUnmounted(() => {
                     {{ plugin.author }}
                   </div>
                   <div class="plugin-tags">
-                    <span 
-                      v-for="(tag, idx) in getTags(plugin.type)" 
-                      :key="idx" 
-                      class="tag" 
+                    <span
+                      v-for="(tag, idx) in getTags(plugin.type)"
+                      :key="idx"
+                      class="tag"
                       :class="tag.cls"
                       :style="tag.style"
-                    >{{ tag.label }}</span>
+                      >{{ tag.label }}</span
+                    >
                   </div>
                 </div>
               </div>
               <div class="plugin-desc">
                 {{ plugin.description }}
-                <div v-if="plugin.error" style="margin-top: 8px; color: #ef4444; font-size: 12px;">
+                <div v-if="plugin.error" style="margin-top: 8px; color: #ef4444; font-size: 12px">
                   <i class="pi pi-exclamation-circle"></i> {{ plugin.error }}
                 </div>
               </div>
               <div class="plugin-footer">
-                <div class="switch-wrap" @click="togglePlugin(plugin)">
+                <div
+                  class="switch-wrap"
+                  data-te-interactive
+                  role="switch"
+                  tabindex="0"
+                  :aria-label="`启用 ${plugin.name}`"
+                  :aria-checked="plugin.enabled"
+                  @click="togglePlugin(plugin)"
+                  @keydown.enter.prevent="togglePlugin(plugin)"
+                  @keydown.space.prevent="togglePlugin(plugin)"
+                >
                   <div class="switch" :class="{ on: plugin.enabled }"></div>
                   <span class="switch-label">{{ plugin.enabled ? '已启用' : '已停用' }}</span>
                 </div>
                 <div class="plugin-actions">
-                  <button v-if="!plugin.builtIn" class="icon-btn" title="查看日志" @click="openLog(plugin)">
+                  <button
+                    v-if="!plugin.builtIn"
+                    class="icon-btn"
+                    title="查看日志"
+                    @click="openLog(plugin)"
+                  >
                     <i class="pi pi-align-left"></i>
                   </button>
-                  <button v-if="!plugin.builtIn" class="icon-btn danger" title="卸载" @click="uninstallPlugin(plugin)">
+                  <button
+                    v-if="!plugin.builtIn"
+                    class="icon-btn danger"
+                    title="卸载"
+                    @click="uninstallPlugin(plugin)"
+                  >
                     <i class="pi pi-trash"></i>
                   </button>
                 </div>
               </div>
             </div>
-
           </div>
         </div>
 
         <!-- Scroll Area: Discover -->
         <div class="scroll-area" v-else-if="activeTab === 'discover'">
-          
           <div class="discover-banner">
             <div class="banner-text">
               <h2>{{ indexSourceLabel }}</h2>
-              <p>当前索引用于发现插件；安装前展示来源、有效期、SHA-256、签名、权限与代码执行风险。</p>
+              <p>
+                当前索引用于发现插件；安装前展示来源、有效期、SHA-256、签名、权限与代码执行风险。
+              </p>
             </div>
             <div class="banner-art">
               <i class="pi pi-server"></i>
             </div>
-            <button 
-              v-if="marketRepoUrl" 
-              class="btn btn-outline" 
-              style="position: absolute; right: 32px; bottom: 32px; background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2); color: #fff;"
+            <button
+              v-if="marketRepoUrl"
+              class="btn btn-outline"
+              style="
+                position: absolute;
+                right: 32px;
+                bottom: 32px;
+                background: rgba(255, 255, 255, 0.1);
+                border-color: rgba(255, 255, 255, 0.2);
+                color: #fff;
+              "
               @click="openExternal(marketRepoUrl)"
-            >浏览插件仓库 <i class="pi pi-external-link"></i></button>
+            >
+              浏览插件仓库 <i class="pi pi-external-link"></i>
+            </button>
           </div>
 
           <div v-if="indexStatus" class="market-status">
@@ -454,7 +605,9 @@ onUnmounted(() => {
             <span v-if="!indexStatus.originVerified" class="warn">来源未验证</span>
             <span v-if="indexStatus.trustStoreError" class="warn">签名信任库不可用</span>
             <span v-if="indexStatus.error" class="warn">最近错误：{{ indexStatus.error }}</span>
-            <span class="source-url" :title="indexStatus.sourceUrl">{{ indexStatus.sourceUrl }}</span>
+            <span class="source-url" :title="indexStatus.sourceUrl">{{
+              indexStatus.sourceUrl
+            }}</span>
             <span
               v-if="indexStatus.configuredSourceUrl !== indexStatus.sourceUrl"
               class="source-url warn"
@@ -464,26 +617,38 @@ onUnmounted(() => {
             </span>
           </div>
 
-          <div class="page-title" style="font-size: 18px; margin-bottom: 16px;">
-            可用插件
-          </div>
+          <div class="page-title" style="font-size: 18px; margin-bottom: 16px">可用插件</div>
 
           <!-- Empty state -->
-          <div v-if="filteredIndex.length === 0" style="text-align: center; padding: 60px 20px; color: var(--te-neutral-400, #9ca3af); font-size: 14px;">
-            <i class="pi pi-search" style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3;"></i>
+          <div
+            v-if="filteredIndex.length === 0"
+            style="
+              text-align: center;
+              padding: 60px 20px;
+              color: var(--te-neutral-400, #9ca3af);
+              font-size: 14px;
+            "
+          >
+            <i
+              class="pi pi-search"
+              style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3"
+            ></i>
             {{ searchText ? '没有匹配的插件' : '插件市场暂无可用插件' }}
           </div>
 
           <div class="plugin-grid" v-else>
-            
-            <div 
-              v-for="entry in filteredIndex" 
-              :key="entry.id" 
+            <div
+              v-for="entry in filteredIndex"
+              :key="entry.id"
               class="plugin-card"
               :style="{ opacity: entry.installState === 'incompatible' ? 0.6 : 1 }"
             >
               <div class="plugin-card-header">
-                <div class="plugin-icon" :class="getIconInfo(entry.id, entry.type).cls" :style="getIconInfo(entry.id, entry.type).style">
+                <div
+                  class="plugin-icon"
+                  :class="getIconInfo(entry.id, entry.type).cls"
+                  :style="getIconInfo(entry.id, entry.type).style"
+                >
                   <i :class="getIconInfo(entry.id, entry.type).icon"></i>
                 </div>
                 <div class="plugin-info">
@@ -496,13 +661,14 @@ onUnmounted(() => {
                     {{ entry.author }}
                   </div>
                   <div class="plugin-tags">
-                    <span 
-                      v-for="(tag, idx) in getTags(entry.type)" 
-                      :key="idx" 
-                      class="tag" 
+                    <span
+                      v-for="(tag, idx) in getTags(entry.type)"
+                      :key="idx"
+                      class="tag"
                       :class="tag.cls"
                       :style="tag.style"
-                    >{{ tag.label }}</span>
+                      >{{ tag.label }}</span
+                    >
                   </div>
                 </div>
               </div>
@@ -511,7 +677,11 @@ onUnmounted(() => {
               </div>
               <div class="plugin-footer">
                 <div class="plugin-trust-stack">
-                  <div class="plugin-trust" :class="`trust-${pluginTrust(entry).tone}`" :title="pluginTrust(entry).detail">
+                  <div
+                    class="plugin-trust"
+                    :class="`trust-${pluginTrust(entry).tone}`"
+                    :title="pluginTrust(entry).detail"
+                  >
                     <i :class="pluginTrust(entry).icon"></i> {{ pluginTrust(entry).label }}
                   </div>
                   <span
@@ -522,84 +692,140 @@ onUnmounted(() => {
                     {{ entry.verification.keyFingerprintSha256?.slice(0, 12) || '无' }}
                   </span>
                 </div>
-                
+
                 <!-- Install states -->
-                <button 
-                  v-if="entry.installState === 'not-installed'" 
-                  class="btn btn-primary" 
-                  style="padding: 6px 16px;"
+                <button
+                  v-if="entry.installState === 'not-installed'"
+                  class="btn btn-primary"
+                  style="padding: 6px 16px"
                   :disabled="busyIds.has(entry.id)"
                   @click="installFromIndex(entry)"
                 >
                   <i v-if="busyIds.has(entry.id)" class="pi pi-spin pi-spinner"></i>
                   {{ busyIds.has(entry.id) ? '安装中' : '获取' }}
                 </button>
-                <span v-else-if="entry.installState === 'installed'" style="font-size: 13px; font-weight: 600; color: var(--te-neutral-400); display: flex; align-items: center; gap: 4px;">
+                <span
+                  v-else-if="entry.installState === 'installed'"
+                  style="
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: var(--te-neutral-400);
+                    display: flex;
+                    align-items: center;
+                    gap: 4px;
+                  "
+                >
                   <i class="pi pi-check"></i> 已安装
                 </span>
-                <button 
-                  v-else-if="entry.installState === 'update-available'" 
-                  class="btn btn-primary" 
-                  style="padding: 6px 16px;"
+                <button
+                  v-else-if="entry.installState === 'update-available'"
+                  class="btn btn-primary"
+                  style="padding: 6px 16px"
                   :disabled="busyIds.has(entry.id)"
                   @click="installFromIndex(entry)"
                 >
                   <i v-if="busyIds.has(entry.id)" class="pi pi-spin pi-spinner"></i>
                   {{ busyIds.has(entry.id) ? '更新中' : '更新' }}
                 </button>
-                <span v-else-if="entry.installState === 'incompatible'" style="font-size: 13px; font-weight: 600; color: var(--te-neutral-400);">
+                <span
+                  v-else-if="entry.installState === 'incompatible'"
+                  style="font-size: 13px; font-weight: 600; color: var(--te-neutral-400)"
+                >
                   不兼容
                 </span>
               </div>
             </div>
-
           </div>
         </div>
 
         <!-- Scroll Area: Updates -->
         <div class="scroll-area" v-else-if="activeTab === 'updates'">
-          
           <div class="page-title">
-            可用更新 <span v-if="updateEntries.length > 0" class="badge" style="background: var(--te-danger-soft-bg); color: var(--te-danger-soft-fg);">{{ updateEntries.length }}</span>
+            可用更新
+            <span
+              v-if="updateEntries.length > 0"
+              class="badge"
+              style="background: var(--te-danger-soft-bg); color: var(--te-danger-soft-fg)"
+              >{{ updateEntries.length }}</span
+            >
           </div>
 
           <!-- Empty state -->
-          <div v-if="updateEntries.length === 0" style="text-align: center; padding: 60px 20px; color: var(--te-neutral-400, #9ca3af); font-size: 14px;">
-            <i class="pi pi-check-circle" style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3;"></i>
+          <div
+            v-if="updateEntries.length === 0"
+            style="
+              text-align: center;
+              padding: 60px 20px;
+              color: var(--te-neutral-400, #9ca3af);
+              font-size: 14px;
+            "
+          >
+            <i
+              class="pi pi-check-circle"
+              style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3"
+            ></i>
             所有插件均为最新版本
           </div>
 
           <template v-else>
-            <div style="margin-bottom: 24px; padding: 16px; background: rgba(99, 102, 241, 0.05); border: 1px solid rgba(99, 102, 241, 0.1); border-radius: 16px; display: flex; justify-content: space-between; align-items: center;">
-              <div style="font-size: 14px; font-weight: 600; color: var(--te-primary-600);">有 {{ updateEntries.length }} 个插件可以更新。</div>
+            <div
+              style="
+                margin-bottom: 24px;
+                padding: 16px;
+                background: rgba(99, 102, 241, 0.05);
+                border: 1px solid rgba(99, 102, 241, 0.1);
+                border-radius: 16px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+              "
+            >
+              <div style="font-size: 14px; font-weight: 600; color: var(--te-primary-600)">
+                有 {{ updateEntries.length }} 个插件可以更新。
+              </div>
               <button class="btn btn-primary" @click="updateAll">全部更新</button>
             </div>
 
-            <div class="plugin-grid" style="grid-template-columns: 1fr;">
-              
-              <div 
-                v-for="entry in updateEntries" 
+            <div class="plugin-grid" style="grid-template-columns: 1fr">
+              <div
+                v-for="entry in updateEntries"
                 :key="entry.id"
-                class="plugin-card" 
-                style="flex-direction: row; align-items: center; justify-content: space-between; padding: 20px;"
+                class="plugin-card"
+                style="
+                  flex-direction: row;
+                  align-items: center;
+                  justify-content: space-between;
+                  padding: 20px;
+                "
               >
-                <div class="plugin-card-header" style="align-items: center; margin-bottom: 0;">
-                  <div class="plugin-icon" :class="getIconInfo(entry.id, entry.type).cls" :style="getIconInfo(entry.id, entry.type).style" style="width: 48px; height: 48px; font-size: 20px;">
+                <div class="plugin-card-header" style="align-items: center; margin-bottom: 0">
+                  <div
+                    class="plugin-icon"
+                    :class="getIconInfo(entry.id, entry.type).cls"
+                    :style="getIconInfo(entry.id, entry.type).style"
+                    style="width: 48px; height: 48px; font-size: 20px"
+                  >
                     <i :class="getIconInfo(entry.id, entry.type).icon"></i>
                   </div>
-                  <div class="plugin-info" style="margin-left: 16px;">
+                  <div class="plugin-info" style="margin-left: 16px">
                     <div class="plugin-title-row">
-                      <div class="plugin-name" style="font-size: 16px;">{{ entry.name }}</div>
+                      <div class="plugin-name" style="font-size: 16px">{{ entry.name }}</div>
                     </div>
-                    <div class="plugin-author">{{ entry.installedVersion ? `v${entry.installedVersion}` : '未知版本' }} <i class="pi pi-arrow-right" style="font-size: 10px; margin: 0 4px;"></i> <span style="color: var(--te-primary-600); font-weight: 600;">v{{ entry.version }}</span></div>
+                    <div class="plugin-author">
+                      {{ entry.installedVersion ? `v${entry.installedVersion}` : '未知版本' }}
+                      <i class="pi pi-arrow-right" style="font-size: 10px; margin: 0 4px"></i>
+                      <span style="color: var(--te-primary-600); font-weight: 600"
+                        >v{{ entry.version }}</span
+                      >
+                    </div>
                   </div>
                 </div>
-                <div style="flex: 1; margin: 0 32px; font-size: 13px; color: var(--te-neutral-500);">
+                <div style="flex: 1; margin: 0 32px; font-size: 13px; color: var(--te-neutral-500)">
                   {{ entry.description }}
                 </div>
-                <button 
-                  class="btn btn-primary" 
-                  style="padding: 6px 16px;"
+                <button
+                  class="btn btn-primary"
+                  style="padding: 6px 16px"
                   :disabled="busyIds.has(entry.id)"
                   @click="installFromIndex(entry)"
                 >
@@ -607,12 +833,9 @@ onUnmounted(() => {
                   {{ busyIds.has(entry.id) ? '更新中' : '更新' }}
                 </button>
               </div>
-
             </div>
           </template>
-
         </div>
-
       </main>
     </div>
   </div>
@@ -628,8 +851,6 @@ onUnmounted(() => {
   flex-direction: column;
   box-sizing: border-box;
 }
-
-
 
 .plugin-window {
   width: 100%;
@@ -744,7 +965,7 @@ onUnmounted(() => {
   background: #fff; /* keep-white: toggle knob */
   border-radius: 50%;
   transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .switch.on {
@@ -777,7 +998,7 @@ onUnmounted(() => {
 .search-box {
   display: flex;
   align-items: center;
-  background: rgba(0,0,0,0.04);
+  background: rgba(0, 0, 0, 0.04);
   border-radius: 100px;
   padding: 8px 16px;
   width: 300px;
@@ -863,7 +1084,7 @@ onUnmounted(() => {
 .badge {
   font-size: 12px;
   font-weight: 600;
-  background: rgba(0,0,0,0.06);
+  background: rgba(0, 0, 0, 0.06);
   color: var(--te-neutral-600, #4b5563);
   padding: 4px 10px;
   border-radius: 100px;
@@ -889,7 +1110,7 @@ onUnmounted(() => {
 .market-status span {
   max-width: 100%;
   border-radius: 999px;
-  background: rgba(0,0,0,0.04);
+  background: rgba(0, 0, 0, 0.04);
   padding: 6px 10px;
 }
 
@@ -916,11 +1137,11 @@ onUnmounted(() => {
   flex-direction: column;
   position: relative;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02);
 }
 
 .plugin-card:hover {
-  box-shadow: 0 10px 20px -5px rgba(0,0,0,0.05);
+  box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.05);
   transform: translateY(-2px);
   border-color: rgba(99, 102, 241, 0.3);
 }
@@ -995,7 +1216,7 @@ onUnmounted(() => {
 .plugin-version {
   font-size: 11px;
   color: var(--te-neutral-400, #9ca3af);
-  background: rgba(0,0,0,0.04);
+  background: rgba(0, 0, 0, 0.04);
   padding: 2px 6px;
   border-radius: 6px;
 }
@@ -1089,7 +1310,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-top: 1px solid rgba(0,0,0,0.04);
+  border-top: 1px solid rgba(0, 0, 0, 0.04);
   padding-top: 16px;
 }
 
@@ -1115,7 +1336,7 @@ onUnmounted(() => {
   height: 32px;
   border-radius: 8px;
   border: none;
-  background: rgba(0,0,0,0.04);
+  background: rgba(0, 0, 0, 0.04);
   color: var(--te-neutral-600, #4b5563);
   cursor: pointer;
   display: flex;
@@ -1125,7 +1346,7 @@ onUnmounted(() => {
 }
 
 .icon-btn:hover {
-  background: rgba(0,0,0,0.08);
+  background: rgba(0, 0, 0, 0.08);
   color: var(--te-neutral-900, #111827);
 }
 

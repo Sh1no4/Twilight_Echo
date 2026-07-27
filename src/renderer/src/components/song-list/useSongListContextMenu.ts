@@ -49,7 +49,7 @@ export function useSongListContextMenu({
   handleCreatePlaylist: () => void
   completeCreatePlaylistDialog: () => void
   handleCreatePlaylistFromMenu: () => void
-  handleDeletePlaylist: (playlistId: string, event: MouseEvent) => void
+  handleDeletePlaylist: (playlistId: string, event: MouseEvent | KeyboardEvent) => void
 } {
   const showContextMenu = ref(false)
   const menuX = ref(0)
@@ -176,7 +176,7 @@ export function useSongListContextMenu({
     openCreatePlaylistDialog(selectedTrack.value ?? undefined)
   }
 
-  function handleDeletePlaylist(playlistId: string, event: MouseEvent): void {
+  function handleDeletePlaylist(playlistId: string, event: MouseEvent | KeyboardEvent): void {
     event.stopPropagation()
     deletePlaylist(playlistId)
   }

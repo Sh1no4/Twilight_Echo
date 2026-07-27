@@ -73,9 +73,7 @@ function progressLabel(): string {
       <div class="about-copy">
         <h3>Twilight Echo</h3>
         <span>Version {{ appVersion || '—' }}</span>
-        <p>
-          一款专为发烧友打造的现代级桌面音乐枢纽，支持海量本地高解析度音频与插件化流媒体扩展。
-        </p>
+        <p>一款专为发烧友打造的现代级桌面音乐枢纽，支持海量本地高解析度音频与插件化流媒体扩展。</p>
         <p class="about-honesty">
           默认软件音量 70% 保护听感；Shared 模式会经系统混音。Source Exact + Output Perfect + Unity
           100% + 独占/直通 才是 bit-perfect。当前发布以 Windows 验证为主；macOS / Linux
@@ -117,12 +115,8 @@ function progressLabel(): string {
           <span v-if="updateError" class="update-error">{{ updateError }}</span>
           <span v-else-if="updateActionState === 'downloading' || updateActionState === 'ready'">
             {{ progressLabel() || assetName || '—' }}
-            <template v-if="updateActionState === 'ready' && !hasChecksum">
-              · 未提供 SHA-256，仅完成下载
-            </template>
-            <template v-else-if="updateActionState === 'ready' && hasChecksum">
-              · SHA-256 已校验
-            </template>
+            <!-- downloads are refused without a checksum, so a ready package is always verified -->
+            <template v-if="updateActionState === 'ready'"> · SHA-256 已校验 </template>
           </span>
           <span v-else-if="updateCheckState === 'available' && assetName">
             {{ assetName }}{{ hasChecksum ? ' · 可校验' : ' · 无校验和' }}
@@ -149,7 +143,7 @@ function progressLabel(): string {
           <template v-else-if="updateActionState === 'ready'">
             <button class="brand-soft-button" type="button" @click="emit('installUpdate')">
               <i class="pi pi-download"></i>
-              {{ hasChecksum ? '安装并退出' : '仍要安装并退出' }}
+              安装并退出
             </button>
             <button class="soft-button" type="button" @click="emit('openReleasePage')">
               打开发布页
@@ -200,12 +194,8 @@ function progressLabel(): string {
 
     <div class="about-links">
       <button type="button" @click="openGithub"><i class="pi pi-github"></i> GitHub</button>
-      <button type="button" @click="openChangelog">
-        <i class="pi pi-file-o"></i> 更新日志
-      </button>
-      <button type="button" @click="openHomepage">
-        <i class="pi pi-heart-fill"></i> 开源致谢
-      </button>
+      <button type="button" @click="openChangelog"><i class="pi pi-file-o"></i> 更新日志</button>
+      <button type="button" @click="openHomepage"><i class="pi pi-heart-fill"></i> 开源致谢</button>
     </div>
   </section>
 </template>

@@ -21,7 +21,7 @@ export type DspNodeType =
   | 'vst3Plugin'
   | 'meter'
 
-export type DspResamplerQuality = 'native' | 'high' | 'ultra'
+export type DspResamplerQuality = 'native' | 'high' | 'ultra' | 'soxrHq' | 'soxrVhq'
 export type DspDitherMode = 'off' | 'tpdf' | 'highpassTpdf' | 'noiseShaped'
 
 export interface DspOutputStageConfig {
@@ -140,6 +140,10 @@ export interface DspOutputStageStatus {
   targetSampleRate: number | null
   actualSampleRate: number | null
   resamplerQuality: DspResamplerQuality
+  /** Engine actually in effect ('soxr' or 'swr'); absent on older native builds. */
+  resamplerEngine?: 'swr' | 'soxr'
+  /** True when a soxr tier was requested but the FFmpeg build lacks libsoxr. */
+  resamplerFallback?: boolean
   dither: DspDitherMode
   active: boolean
   reason: string
@@ -332,7 +336,9 @@ export const DSP_RESAMPLER_QUALITY_OPTIONS: readonly {
 }[] = [
   { value: 'native', label: 'Native' },
   { value: 'high', label: 'High' },
-  { value: 'ultra', label: 'Ultra' }
+  { value: 'ultra', label: 'Ultra' },
+  { value: 'soxrHq', label: 'SoX HQ' },
+  { value: 'soxrVhq', label: 'SoX VHQ (最高)' }
 ] as const
 
 export const DSP_DITHER_MODE_OPTIONS: readonly {
@@ -402,7 +408,10 @@ export function normalizeDspOutputStage(value: unknown): DspOutputStageConfig {
         ? Math.max(8000, Math.min(768000, Math.trunc(raw.targetSampleRate)))
         : DEFAULT_DSP_OUTPUT_STAGE.targetSampleRate
   const resamplerQuality =
-    raw.resamplerQuality === 'high' || raw.resamplerQuality === 'ultra'
+    raw.resamplerQuality === 'high' ||
+    raw.resamplerQuality === 'ultra' ||
+    raw.resamplerQuality === 'soxrHq' ||
+    raw.resamplerQuality === 'soxrVhq'
       ? raw.resamplerQuality
       : 'native'
   const dither =
@@ -775,9 +784,7 @@ export function extractStereoImageFromGraph(
     midGainDb: stereoParams.midGainDb,
     sideGainDb: stereoParams.sideGainDb,
     invertLeft:
-      stereoParams.invertLeft === true ||
-      left.polarityInverted === true ||
-      left.polarity === true,
+      stereoParams.invertLeft === true || left.polarityInverted === true || left.polarity === true,
     invertRight:
       stereoParams.invertRight === true ||
       right.polarityInverted === true ||
@@ -787,10 +794,7 @@ export function extractStereoImageFromGraph(
   })
 }
 
-function buildStereoFieldNode(
-  image: DspStereoImageConfig,
-  _dspEnabled: boolean
-): DspGraphNode {
+function buildStereoFieldNode(image: DspStereoImageConfig, _dspEnabled: boolean): DspGraphNode {
   // Stereo image is independent of classic master-DSP flag; active params enable the node.
   void _dspEnabled
   return {
@@ -810,10 +814,7 @@ function buildStereoFieldNode(
   }
 }
 
-function buildChannelStripNode(
-  image: DspStereoImageConfig,
-  _dspEnabled: boolean
-): DspGraphNode {
+function buildChannelStripNode(image: DspStereoImageConfig, _dspEnabled: boolean): DspGraphNode {
   void _dspEnabled
   const polarityActive = image.invertLeft || image.invertRight
   return {

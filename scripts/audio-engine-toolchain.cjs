@@ -27,6 +27,7 @@ const MINGW_EXPECTED_CTESTS = Object.freeze([
   'twilight_bitperfect_unit',
   'twilight_ffmpeg_decoder_unit',
   'twilight_dsd_dop_unit',
+  'twilight_pcm_to_dsd_unit',
   'twilight_queue_unit',
   'twilight_backend_factory_unit',
   'twilight_wasapi_format_negotiator_unit',

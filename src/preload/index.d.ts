@@ -257,6 +257,9 @@ type TwilightMediaProviderMethod =
   | 'fetchLikedTracksPage'
   | 'fetchRecommendSongs'
   | 'fetchRecommendPlaylists'
+  | 'fetchPlaylistCategories'
+  | 'fetchDiscoveryPlaylists'
+  | 'fetchHighQualityPlaylists'
   | 'fetchPersonalFm'
   | 'fetchPrivateContent'
   | 'fetchArtistTopSongs'
@@ -450,6 +453,7 @@ interface DesktopLyricsSettings {
 type MiniPlayerBackgroundKind = 'solid' | 'gradient' | 'cover' | 'image'
 type MiniPlayerImageFit = 'cover' | 'contain'
 type MiniPlayerLayoutPreference = 'auto' | 'compact' | 'standard' | 'wide'
+type MotionPreference = 'system' | 'full' | 'reduced' | 'off'
 
 interface MiniPlayerBackgroundSettings {
   kind: MiniPlayerBackgroundKind
@@ -522,6 +526,7 @@ interface MiniPlayerTrackSnapshot {
   artist: string
   album: string
   cover: string | null
+  coverSource: string | null
 }
 
 interface MiniPlayerStateSnapshot {
@@ -555,6 +560,7 @@ type MiniPlayerSettingsPatch = Partial<
 interface MiniPlayerBootstrap {
   state: MiniPlayerStateSnapshot
   settings: MiniPlayerSettings
+  motionPreference: MotionPreference
 }
 
 interface MusicCachePolicySettings {
@@ -631,11 +637,14 @@ interface AppSettings {
   cachePolicy: MusicCachePolicySettings
   autoAnalyzeBpm: boolean
   closeToTray: boolean
+  /** First-run welcome wizard has been completed or skipped. */
+  onboardingCompleted: boolean
   startupHomePage: StartupHomePage
   theme: AppTheme
   pluginThemeId: string | null
   activeTheme: ThemeSelection
   themeWindowInheritance: ThemeWindowInheritance
+  motionPreference: MotionPreference
   blurEffect: boolean
   windowTransparency: boolean
   windowTransparencyEffect: WindowTransparencyEffectSettings
@@ -1047,10 +1056,19 @@ interface TwilightPluginExtensionContribution {
   themes: TwilightThemeContribution[]
 }
 
+type PcmToDsdMode = 'off' | 'dsd64' | 'dsd128' | 'dsd256'
+
 interface OutputConfig {
   preferredBufferSize: number
   routingMode: ChannelRoutingMode
   wasapiExclusivePushMode?: boolean
+  pcmToDsdMode?: PcmToDsdMode
+  upmixCenterGain?: number
+  upmixLfeGain?: number
+  upmixLfeLowpassHz?: number
+  upmixSurroundGain?: number
+  upmixSideGain?: number
+  upmixSurroundDelayMs?: number
 }
 
 interface OutputConfigApplyStatus {
@@ -1730,6 +1748,7 @@ interface WindowAPI {
     publishState: (state: MiniPlayerStateSnapshot) => void
     onState: (cb: (state: MiniPlayerStateSnapshot) => void) => () => void
     onSettings: (cb: (settings: MiniPlayerSettings) => void) => () => void
+    onMotionPreference: (cb: (preference: MotionPreference) => void) => () => void
     onCommand: (cb: (command: MiniPlayerCommand) => void) => () => void
   }
 }

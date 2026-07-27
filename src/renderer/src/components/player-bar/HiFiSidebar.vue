@@ -117,6 +117,7 @@ const emit = defineEmits<{
   setReplayGainPreamp: [db: number]
   setPreferredBufferSize: [frames: number]
   setRoutingMode: [mode: ChannelRoutingMode]
+  setPcmToDsdMode: [mode: import('../../types/settings').PcmToDsdMode]
   setDsdOutputMode: [mode: DsdOutputMode]
   setOutputStage: [partial: Partial<DspOutputStageConfig>]
   setStereoImage: [partial: Partial<DspStereoImageConfig>]
@@ -205,6 +206,14 @@ const routingModeOptions: { value: ChannelRoutingMode; label: string }[] = [
   { value: 'mono-to-stereo', label: 'Mono → Stereo' },
   { value: 'mono-to-multichannel', label: 'Mono → Multi' }
 ]
+
+const pcmToDsdModeOptions: { value: import('../../types/settings').PcmToDsdMode; label: string }[] =
+  [
+    { value: 'off', label: '关闭' },
+    { value: 'dsd64', label: 'DSD64' },
+    { value: 'dsd128', label: 'DSD128' },
+    { value: 'dsd256', label: 'DSD256' }
+  ]
 
 const dsdOutputModeOptions = DSD_OUTPUT_MODE_OPTIONS
 const replayGainOptions = VOLUME_NORMALIZATION_OPTIONS
@@ -413,6 +422,13 @@ function onBufferChange(event: Event): void {
 
 function onRoutingChange(event: Event): void {
   emit('setRoutingMode', (event.target as HTMLSelectElement).value as ChannelRoutingMode)
+}
+
+function onPcmToDsdModeChange(event: Event): void {
+  emit(
+    'setPcmToDsdMode',
+    (event.target as HTMLSelectElement).value as import('../../types/settings').PcmToDsdMode
+  )
 }
 
 function onDsdModeChange(event: Event): void {
@@ -880,6 +896,22 @@ const deckAccentVars = computed(() => {
                   </select>
                 </label>
               </div>
+              <label class="deck-field">
+                <span>PCM → DSD</span>
+                <select
+                  class="deck-select"
+                  :value="audioOutputConfig.pcmToDsdMode ?? 'off'"
+                  @change="onPcmToDsdModeChange"
+                >
+                  <option
+                    v-for="option in pcmToDsdModeOptions"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </option>
+                </select>
+              </label>
               <label class="deck-field">
                 <span>DSD Mode</span>
                 <select

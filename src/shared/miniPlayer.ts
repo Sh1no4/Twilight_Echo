@@ -1,3 +1,5 @@
+import type { MotionPreference } from './motion.ts'
+
 export const DEFAULT_MINI_PLAYER_STYLE_ID = 'aurora-glass'
 export const PORCELAIN_MINI_PLAYER_STYLE_ID = 'porcelain'
 
@@ -81,6 +83,12 @@ export interface MiniPlayerTrackSnapshot {
   artist: string
   album: string
   cover: string | null
+  /**
+   * Durable remote cover origin (http/https). Session-scoped twilight-media
+   * grants in `cover` die with the main process; the mini player re-grants
+   * from this the same way the main window does.
+   */
+  coverSource: string | null
 }
 
 export interface MiniPlayerStateSnapshot {
@@ -114,6 +122,7 @@ export type MiniPlayerSettingsPatch = Partial<
 export interface MiniPlayerBootstrap {
   state: MiniPlayerStateSnapshot
   settings: MiniPlayerSettings
+  motionPreference: MotionPreference
 }
 
 const DEFAULT_MINI_PLAYER_VISIBILITY: MiniPlayerVisibilitySettings = {
@@ -265,6 +274,9 @@ export const EMPTY_MINI_PLAYER_STATE: Readonly<MiniPlayerStateSnapshot> = Object
 
 const MAX_TRACK_TEXT_LENGTH = 512
 const MAX_COVER_URL_LENGTH = 16_384
+// Legacy embedded library covers are full data: URLs and routinely exceed the
+// generic URL cap; a sliced data: URL is corrupt, so they get their own bound.
+const MAX_COVER_DATA_URL_LENGTH = 4_194_304
 const MAX_STYLE_ID_LENGTH = 64
 const MAX_BACKGROUND_IMAGE_URL_LENGTH = 512
 const MAX_THEME_PROFILE_COUNT = 32
@@ -548,14 +560,26 @@ function normalizeTrack(raw: unknown): MiniPlayerTrackSnapshot | null {
   const title = normalizeText(value.title, MAX_TRACK_TEXT_LENGTH)
   if (!id && !title) return null
 
-  const cover = normalizeText(value.cover, MAX_COVER_URL_LENGTH)
+  const cover = normalizeCoverHandle(value.cover)
+  const coverSource = normalizeText(value.coverSource, MAX_COVER_URL_LENGTH)
   return {
     id: id || title,
     title: title || '未知曲目',
     artist: normalizeText(value.artist, MAX_TRACK_TEXT_LENGTH) || '未知艺术家',
     album: normalizeText(value.album, MAX_TRACK_TEXT_LENGTH),
-    cover: cover || null
+    cover: cover || null,
+    coverSource: /^https?:\/\//i.test(coverSource) ? coverSource : null
   }
+}
+
+function normalizeCoverHandle(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  if (/^data:/i.test(trimmed)) {
+    // Truncating a data: URL corrupts the image — drop instead of slicing.
+    return trimmed.length <= MAX_COVER_DATA_URL_LENGTH ? trimmed : ''
+  }
+  return trimmed.length <= MAX_COVER_URL_LENGTH ? trimmed : ''
 }
 
 function normalizeOptionalStyleId(value: unknown): string | null {

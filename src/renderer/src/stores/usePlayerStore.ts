@@ -103,6 +103,10 @@ export interface AudioEngineRecoveryNotice {
   canResume?: boolean
 }
 
+export interface LyricsLoadState {
+  trackId: string
+  status: 'idle' | 'loading' | 'ready'
+}
 
 const currentTrack = ref<Track | null>(null)
 const dominantColor = ref('#1a73e8')
@@ -111,6 +115,7 @@ const themeCoverUrl = ref('')
 const themeCoverIdentity = ref('')
 const isPlaying = ref(false)
 const isLoading = ref(false)
+const lyricsLoadState = ref<LyricsLoadState>({ trackId: '', status: 'idle' })
 const isStreamBuffering = ref(false)
 /** Live ICY StreamTitle from native radio playback (empty when unavailable). */
 const streamNowPlaying = ref('')
@@ -2102,6 +2107,12 @@ async function ensureCurrentTrackLyricsLoaded(
   const isCurrentGeneration = (): boolean =>
     lyricsLoadGenerationByTrackId.get(triggerTrack.id) === loadGeneration &&
     currentTrack.value?.id === triggerTrack.id
+  lyricsLoadState.value = { trackId: triggerTrack.id, status: 'loading' }
+  const completeIfCurrent = (): void => {
+    if (isCurrentGeneration()) {
+      lyricsLoadState.value = { trackId: triggerTrack.id, status: 'ready' }
+    }
+  }
 
   const lyricsManagement = useLyricsManagement()
   try {
@@ -2134,6 +2145,7 @@ async function ensureCurrentTrackLyricsLoaded(
         translatedLyricsSource: null
       })
     }
+    completeIfCurrent()
     return
   }
 
@@ -2180,6 +2192,7 @@ async function ensureCurrentTrackLyricsLoaded(
       lyricsSource: resolverTrack.lyricsSource ?? (hasOriginal ? 'embedded' : null),
       translatedLyricsSource: resolverTrack.translatedLyricsSource ?? null
     })
+    completeIfCurrent()
     return
   }
 
@@ -2213,10 +2226,11 @@ async function ensureCurrentTrackLyricsLoaded(
       : undefined
   })
   // Bound async lyric fetches so the now-playing pane cannot stick on "加载歌词…".
+  let resolveTimeout: number | null = null
   const resolved = await Promise.race([
     resolvePromise,
     new Promise<Awaited<ReturnType<typeof resolveLyricsWithSources>>>((resolve) => {
-      window.setTimeout(
+      resolveTimeout = window.setTimeout(
         () =>
           resolve({
             lyrics: hasOriginal ? resolverTrack.lyrics! : null,
@@ -2224,17 +2238,23 @@ async function ensureCurrentTrackLyricsLoaded(
             lyricsSource: resolverTrack.lyricsSource ?? (hasOriginal ? 'embedded' : null),
             translatedLyricsSource: resolverTrack.translatedLyricsSource ?? null
           }),
-        12_000
+        4_000
       )
     })
-  ])
+  ]).finally(() => {
+    if (resolveTimeout !== null) window.clearTimeout(resolveTimeout)
+  })
 
   if (!isCurrentGeneration()) return
   // Source selection can change while an async local/provider resolver is
   // pending. Do not let a stale forced lookup overwrite the newer Auto (or
   // manual) choice when it finally completes.
-  if ((lyricsManagement.entryFor(triggerTrack.id)?.source ?? 'auto') !== requestedSource) return
+  if ((lyricsManagement.entryFor(triggerTrack.id)?.source ?? 'auto') !== requestedSource) {
+    completeIfCurrent()
+    return
+  }
   commitResolvedLyrics(triggerTrack, resolverTrack, resolved)
+  completeIfCurrent()
 }
 
 async function resolvePlayTarget(track: Track): Promise<string> {
@@ -4025,6 +4045,7 @@ export function usePlayerStore(): {
   themeCoverIdentity: Ref<string>
   isPlaying: Ref<boolean>
   isLoading: Ref<boolean>
+  lyricsLoadState: Ref<LyricsLoadState>
   isStreamBuffering: Ref<boolean>
   streamNowPlaying: Ref<string>
   currentTime: Ref<number>
@@ -4439,6 +4460,7 @@ export function usePlayerStore(): {
     themeCoverIdentity,
     isPlaying,
     isLoading,
+    lyricsLoadState,
     isStreamBuffering,
     streamNowPlaying,
     currentTime,

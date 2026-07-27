@@ -718,7 +718,7 @@ test('MinGW CTest validation requires every native test registration, including 
     ...cmakeLists.matchAll(/add_test\(\s*NAME\s+(twilight_[a-z0-9_]+)/g)
   ].map((match) => match[1])
 
-  assert.equal(MINGW_EXPECTED_CTESTS.length, 21)
+  assert.equal(MINGW_EXPECTED_CTESTS.length, 23)
   assert.ok(MINGW_EXPECTED_CTESTS.includes('twilight_audio_performance_gate'))
   assert.deepEqual([...MINGW_EXPECTED_CTESTS].sort(), registeredTests.sort())
   assert.match(cmakeLists, /target_compile_options\(twilight_audio_performance_gate PRIVATE -UNDEBUG\)/)

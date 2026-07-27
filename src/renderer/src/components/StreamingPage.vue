@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue'
 import type { Track } from '../types/music'
 import {
   useNcmStore,
@@ -19,10 +19,13 @@ import type {
   MediaProviderProfile
 } from '../providers/mediaProvider'
 import StreamingHome from './StreamingHome.vue'
+import StreamingDiscovery from './StreamingDiscovery.vue'
 import StreamingLibrary from './StreamingLibrary.vue'
 import StreamingSearch from './StreamingSearch.vue'
+import AnimatedInput from './AnimatedInput.vue'
 import StreamingDetailStage from './streaming-page/StreamingDetailStage.vue'
 import StreamingSocialStage from './streaming-page/StreamingSocialStage.vue'
+import StreamingLoadingStage from './streaming-page/StreamingLoadingStage.vue'
 import {
   buildStreamingSidebarItems,
   getFirstVisibleStreamingTab,
@@ -52,11 +55,16 @@ import {
   type SearchSource,
   type SearchSourceOption
 } from './streaming-page/useStreamingSearch'
+import { useStreamingDiscovery } from './streaming-page/useStreamingDiscovery'
 import { useTrackMultiSelect } from './song-list/useTrackMultiSelect'
 import {
   executeStreamingBatchRemoval,
   removeStreamingProviderFavorite
 } from './streaming-page/streamingBatchRemoval.ts'
+import { useAppNoticeStore } from '../stores/useAppNoticeStore'
+import { getTrackSource } from '../utils/logicalTrackModel'
+import { friendlyStreamingError } from './streaming-page/friendlyStreamingError.ts'
+import { useEscapeToClose, useFocusTrap } from '../app/useDismissLayer.ts'
 
 interface RecSection {
   key: string
@@ -125,13 +133,33 @@ const streamingViewKey = computed(() => {
   }
 })
 
+// Scroll offsets per streamingViewKey, saved on forward navigation and restored
+// when the user navigates back (Transition after-enter, once layout exists).
+const savedScrollPositions = new Map<string, number>()
+
+function saveStreamingScrollPosition(): void {
+  const el = streamingContentRef.value
+  if (el) savedScrollPositions.set(streamingViewKey.value, el.scrollTop)
+}
+
+function restoreStreamingScrollPosition(): void {
+  const saved = savedScrollPositions.get(streamingViewKey.value)
+  if (saved == null) return
+  savedScrollPositions.delete(streamingViewKey.value)
+  const el = streamingContentRef.value
+  if (el) el.scrollTop = saved
+}
+
 function beginDetailTransition(): void {
   streamingTransitionName.value = 'stream-detail-forward'
+  saveStreamingScrollPosition()
   const el = streamingContentRef.value
   if (el) el.scrollTop = 0
 }
 
-const detailTracks = ref<Track[]>([])
+// shallowRef + whole-array replacement only: liked songs / playlists can hold
+// thousands of tracks and deep reactivity over them is pure overhead.
+const detailTracks = shallowRef<Track[]>([])
 const detailUsers = ref<NcmUserSummary[]>([])
 const artistAlbums = ref<NcmAlbumSummary[]>([])
 const artistPlaylists = ref<NcmPlaylistSummary[]>([])
@@ -163,6 +191,7 @@ const providerStore = useProviderStore()
 const settingsStore = useSettingsStore()
 const musicStore = useMusicStore()
 const mediaProviders = useMediaProviders()
+const { pushNotice } = useAppNoticeStore()
 
 const NCM_PROVIDER_ID = 'ncm'
 const ncmNavigationAvailable = computed(() => providerStore.hasProvider(NCM_PROVIDER_ID))
@@ -274,7 +303,7 @@ async function loadRecommendations(): Promise<void> {
     privateContentSongs.value = pvt
     recommendPlaylists.value = playlists
   } catch (e) {
-    recsError.value = e instanceof Error ? e.message : '加载推荐失败'
+    recsError.value = friendlyStreamingError(e, '加载推荐失败')
   } finally {
     recsLoading.value = false
   }
@@ -307,7 +336,7 @@ const hasOnlineNavigationEntries = computed(() => hasStreamingSidebarEntries(sid
 const visibleTabs = computed(() =>
   sidebarItems.value.filter(
     (item): item is SidebarItem & { tab: StreamingTab } =>
-      item.tab === 'home' || item.tab === 'library'
+      item.tab === 'home' || item.tab === 'discover' || item.tab === 'library'
   )
 )
 const currentView = computed(() => visibleTabs.value.find((item) => item.tab === activeTab.value))
@@ -339,6 +368,9 @@ const {
   fetchLikedTracksPage,
   fetchRecommendSongs,
   fetchRecommendPlaylists,
+  fetchPlaylistCategories,
+  fetchDiscoveryPlaylists,
+  fetchHighQualityPlaylists,
   fetchPersonalFm,
   fetchPrivateContent,
   searchSongs,
@@ -511,6 +543,12 @@ const {
   playTrack
 })
 
+const discovery = useStreamingDiscovery({
+  fetchPlaylistCategories,
+  fetchDiscoveryPlaylists,
+  fetchHighQualityPlaylists
+})
+
 const sourceMenuOpen = ref(false)
 const activeSourceOption = computed(
   () =>
@@ -523,10 +561,12 @@ function selectSearchSource(sourceId: SearchSource): void {
   sourceMenuOpen.value = false
 }
 
-function closeSourceMenuDelayed(): void {
-  setTimeout(() => {
-    sourceMenuOpen.value = false
-  }, 150)
+// Close only when focus leaves the whole dropdown — a blur timeout would race
+// against keyboard activation of the (focusable) options.
+function onSourceMenuFocusOut(event: FocusEvent): void {
+  const next = event.relatedTarget as Node | null
+  const container = event.currentTarget as HTMLElement | null
+  if (!next || !container?.contains(next)) sourceMenuOpen.value = false
 }
 
 // Like button state
@@ -540,6 +580,11 @@ async function onLikeTrack(track: Track, event: MouseEvent): Promise<void> {
   likingTracks.value = new Set([...likingTracks.value, songId])
   try {
     await likeTrack(songId, !currentlyLiked)
+  } catch {
+    pushNotice({
+      kind: 'error',
+      message: `${currentlyLiked ? '取消收藏' : '收藏'}「${track.title}」失败，请稍后重试`
+    })
   } finally {
     const next = new Set(likingTracks.value)
     next.delete(songId)
@@ -1038,8 +1083,10 @@ async function refreshExternalProviderState(id: string): Promise<void> {
   } catch (error) {
     state.loggedIn = false
     state.profile = null
-    state.libraryError =
-      error instanceof Error ? error.message : `${externalProviderName(id)} 登录状态检查失败`
+    state.libraryError = friendlyStreamingError(
+      error,
+      `${externalProviderName(id)} 登录状态检查失败`
+    )
   }
 }
 
@@ -1061,8 +1108,10 @@ async function ensureExternalLibraryLoaded(id: string, force = false): Promise<v
       .map((playlist) => String(playlist.id))
     state.libraryLoaded = true
   } catch (error) {
-    state.libraryError =
-      error instanceof Error ? error.message : `加载 ${externalProviderName(id)} 音乐库失败`
+    state.libraryError = friendlyStreamingError(
+      error,
+      `加载 ${externalProviderName(id)} 音乐库失败`
+    )
   } finally {
     state.libraryLoading = false
   }
@@ -1116,7 +1165,7 @@ async function openLikedTracks(force = false): Promise<void> {
     void ensureLikedTracksScrollable()
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
-    detailError.value = error instanceof Error ? error.message : '加载收藏歌曲失败'
+    detailError.value = friendlyStreamingError(error, '加载收藏歌曲失败')
     detailTracks.value = []
   } finally {
     if (isActiveDetailLoad(token)) {
@@ -1153,7 +1202,7 @@ async function loadMoreLikedTracks(): Promise<void> {
     void ensureLikedTracksScrollable()
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
-    likedTracksLoadMoreError.value = error instanceof Error ? error.message : '继续加载收藏歌曲失败'
+    likedTracksLoadMoreError.value = friendlyStreamingError(error, '继续加载收藏歌曲失败')
   } finally {
     if (isActiveDetailLoad(token)) {
       likedTracksLoadingMore.value = false
@@ -1184,7 +1233,7 @@ async function openPlaylist(playlist: MediaProviderPlaylistSummary, force = fals
     detailTracks.value = tracks
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
-    detailError.value = error instanceof Error ? error.message : '加载列表失败'
+    detailError.value = friendlyStreamingError(error, '加载列表失败')
     detailTracks.value = []
   } finally {
     if (isActiveDetailLoad(token)) {
@@ -1204,7 +1253,7 @@ async function openAlbum(album: NcmAlbumSummary): Promise<void> {
     detailTracks.value = tracks
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
-    detailError.value = error instanceof Error ? error.message : '加载专辑失败'
+    detailError.value = friendlyStreamingError(error, '加载专辑失败')
     detailTracks.value = []
   } finally {
     if (isActiveDetailLoad(token)) {
@@ -1283,7 +1332,7 @@ async function openArtist(
     artistFollowed.value = followed
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
-    detailError.value = error instanceof Error ? error.message : '加载歌手页面失败'
+    detailError.value = friendlyStreamingError(error, '加载歌手页面失败')
     detailTracks.value = []
     artistAlbums.value = []
     artistPlaylists.value = []
@@ -1316,10 +1365,10 @@ async function openUserList(listType: 'follows' | 'followers'): Promise<void> {
     }
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
-    detailError.value =
-      error instanceof Error
-        ? error.message
-        : `加载${listType === 'follows' ? '关注' : '粉丝'}列表失败`
+    detailError.value = friendlyStreamingError(
+      error,
+      `加载${listType === 'follows' ? '关注' : '粉丝'}列表失败`
+    )
   } finally {
     if (isActiveDetailLoad(token)) {
       detailLoading.value = false
@@ -1340,7 +1389,7 @@ async function openUserPlaylists(user: NcmUserSummary): Promise<void> {
     }
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
-    detailError.value = error instanceof Error ? error.message : '加载用户歌单失败'
+    detailError.value = friendlyStreamingError(error, '加载用户歌单失败')
   } finally {
     if (isActiveDetailLoad(token)) {
       detailLoading.value = false
@@ -1378,7 +1427,7 @@ async function openRecent(): Promise<void> {
     detailTracks.value = tracks
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
-    detailError.value = error instanceof Error ? error.message : '加载最近播放失败'
+    detailError.value = friendlyStreamingError(error, '加载最近播放失败')
     detailTracks.value = []
   } finally {
     if (isActiveDetailLoad(token)) {
@@ -1405,7 +1454,7 @@ async function openRanking(): Promise<void> {
     detailTracks.value = tracks
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
-    detailError.value = error instanceof Error ? error.message : '加载听歌排行失败'
+    detailError.value = friendlyStreamingError(error, '加载听歌排行失败')
     detailTracks.value = []
   } finally {
     if (isActiveDetailLoad(token)) {
@@ -1453,8 +1502,10 @@ async function toggleCurrentDetailFollow(): Promise<void> {
       detail.user.followed = nextFollowState
     }
   } catch (error) {
-    followActionError.value =
-      error instanceof Error ? error.message : nextFollowState ? '关注失败' : '取消关注失败'
+    followActionError.value = friendlyStreamingError(
+      error,
+      nextFollowState ? '关注失败' : '取消关注失败'
+    )
   } finally {
     followActionLoading.value = false
   }
@@ -1523,6 +1574,8 @@ function closeStreamingContextMenu(): void {
   showStreamingPlaylistSubmenu.value = false
   streamingContextMenuTrack.value = null
 }
+
+useEscapeToClose(showStreamingContextMenu, closeStreamingContextMenu)
 
 function onStreamingTrackContextMenu(track: Track, index: number, event: MouseEvent): void {
   event.preventDefault()
@@ -1794,12 +1847,18 @@ async function handleStreamingBatchFavorite(): Promise<void> {
   const selected = getSelectedTracks()
   if (selected.length === 0) return
   const allLiked = selectionAllFavorited.value
+  const actionLabel = allLiked ? '取消收藏' : '收藏'
+  let succeeded = 0
+  let failed = 0
   for (const track of selected) {
     if (track.ncmSongId != null) {
       if (likingTracks.value.has(track.ncmSongId)) continue
       likingTracks.value = new Set([...likingTracks.value, track.ncmSongId])
       try {
         await likeTrack(track.ncmSongId, !allLiked)
+        succeeded++
+      } catch {
+        failed++
       } finally {
         const next = new Set(likingTracks.value)
         next.delete(track.ncmSongId)
@@ -1807,9 +1866,19 @@ async function handleStreamingBatchFavorite(): Promise<void> {
       }
     } else if (allLiked) {
       musicStore.removeFavoriteTrack(track)
+      succeeded++
     } else {
       musicStore.addFavoriteTrack(track)
+      succeeded++
     }
+  }
+  if (failed > 0) {
+    pushNotice({
+      kind: 'error',
+      message: `${actionLabel}完成 ${succeeded}/${succeeded + failed} 首，${failed} 首失败`
+    })
+  } else if (selected.length > 1) {
+    pushNotice({ kind: 'success', message: `已${actionLabel} ${succeeded} 首歌曲` })
   }
 }
 
@@ -1823,6 +1892,8 @@ const addToNcmPlaylistBusy = ref(false)
 const addToNcmPlaylistError = ref('')
 const addToNcmPlaylistTracks = ref<Track[]>([])
 const deletingNcmPlaylistId = ref<string | number | null>(null)
+const createNcmPlaylistDialogRef = ref<HTMLElement | null>(null)
+const addToNcmPlaylistDialogRef = ref<HTMLElement | null>(null)
 
 const ownedUserPlaylists = computed(() =>
   userPlaylistEntries.value.filter((playlist) => playlist.owned === true)
@@ -1853,6 +1924,9 @@ function closeCreateNcmPlaylistDialog(): void {
   createNcmPlaylistError.value = ''
 }
 
+useEscapeToClose(showCreateNcmPlaylistDialog, closeCreateNcmPlaylistDialog)
+useFocusTrap(createNcmPlaylistDialogRef, showCreateNcmPlaylistDialog)
+
 async function confirmCreateNcmPlaylist(): Promise<void> {
   const name = newNcmPlaylistName.value.trim()
   if (!name || createNcmPlaylistBusy.value) return
@@ -1871,7 +1945,7 @@ async function confirmCreateNcmPlaylist(): Promise<void> {
     newNcmPlaylistName.value = ''
     clearSelection()
   } catch (error) {
-    createNcmPlaylistError.value = error instanceof Error ? error.message : '创建歌单失败'
+    createNcmPlaylistError.value = friendlyStreamingError(error, '创建歌单失败')
   } finally {
     createNcmPlaylistBusy.value = false
   }
@@ -1893,7 +1967,7 @@ async function handleDeleteNcmPlaylist(playlist: MediaProviderPlaylistSummary): 
       detailTracks.value = []
     }
   } catch (error) {
-    libraryError.value = error instanceof Error ? error.message : '删除歌单失败'
+    libraryError.value = friendlyStreamingError(error, '删除歌单失败')
   } finally {
     deletingNcmPlaylistId.value = null
   }
@@ -1919,6 +1993,9 @@ function closeAddToNcmPlaylistDialog(): void {
   addToNcmPlaylistTracks.value = []
   addToNcmPlaylistError.value = ''
 }
+
+useEscapeToClose(showAddToNcmPlaylistDialog, closeAddToNcmPlaylistDialog)
+useFocusTrap(addToNcmPlaylistDialogRef, showAddToNcmPlaylistDialog)
 
 function convertAddToCreatePlaylist(): void {
   if (addToNcmPlaylistBusy.value) return
@@ -1962,7 +2039,7 @@ async function confirmAddTracksToNcmPlaylist(
     addToNcmPlaylistTracks.value = []
     clearSelection()
   } catch (error) {
-    addToNcmPlaylistError.value = error instanceof Error ? error.message : '添加到歌单失败'
+    addToNcmPlaylistError.value = friendlyStreamingError(error, '添加到歌单失败')
   } finally {
     addToNcmPlaylistBusy.value = false
   }
@@ -1974,11 +2051,15 @@ async function handleStreamingBatchDelete(): Promise<void> {
 
   if (canMutateCurrentNcmPlaylist.value && currentDetail.value?.type === 'playlist') {
     const playlistId = currentDetail.value.playlist.id
+    const playlistName = currentDetail.value.playlist.name
     const trackIds = selected
       .map((track) => track.ncmSongId)
       .filter((id): id is number => id != null && Number.isFinite(id) && id > 0)
     if (trackIds.length === 0) {
       setStreamingBatchRemovalError('所选曲目没有可从网易云歌单移除的歌曲 ID')
+      return
+    }
+    if (!window.confirm(`确定从歌单「${playlistName}」移除所选 ${trackIds.length} 首歌曲？`)) {
       return
     }
     try {
@@ -1995,9 +2076,27 @@ async function handleStreamingBatchDelete(): Promise<void> {
         }
       }
       clearSelection()
+      pushNotice({
+        kind: 'success',
+        message: `已从歌单「${playlistName}」移除 ${trackIds.length} 首歌曲`
+      })
     } catch (error) {
-      setStreamingBatchRemovalError(error instanceof Error ? error.message : '从歌单移除失败')
+      setStreamingBatchRemovalError(friendlyStreamingError(error, '从歌单移除失败'))
     }
+    return
+  }
+
+  const localCount = selected.filter((track) => getTrackSource(track) === 'local').length
+  const providerCount = selected.length - localCount
+  const consequences = [
+    localCount > 0 ? `${localCount} 首将从本地曲库移除` : '',
+    providerCount > 0 ? `${providerCount} 首将取消收藏` : ''
+  ]
+    .filter(Boolean)
+    .join('，')
+  if (
+    !window.confirm(`确定删除所选 ${selected.length} 首歌曲？${consequences}。此操作不可撤销。`)
+  ) {
     return
   }
 
@@ -2016,10 +2115,18 @@ async function handleStreamingBatchDelete(): Promise<void> {
     if (isSearching.value) {
       searchResults.value = searchResults.value.filter((track) => !removed.has(track.id))
     }
-    setStreamingBatchRemovalError(result.failures.map((failure) => failure.message).join('；'))
+    if (result.failures.length > 0) {
+      setStreamingBatchRemovalError(
+        `已删除 ${removed.size}/${selected.length} 首；失败：${result.failures
+          .map((failure) => failure.message)
+          .join('；')}`
+      )
+    } else if (removed.size > 0) {
+      pushNotice({ kind: 'success', message: `已删除 ${removed.size} 首歌曲` })
+    }
     clearSelection()
   } catch (error) {
-    setStreamingBatchRemovalError(error instanceof Error ? error.message : '移除曲目失败')
+    setStreamingBatchRemovalError(friendlyStreamingError(error, '移除曲目失败'))
   }
 }
 
@@ -2027,9 +2134,11 @@ function handleStreamingBatchAddToPlaylist(): void {
   openAddToNcmPlaylistDialog(getSelectedTracks())
 }
 
+// Batch-action failures go to the app notice channel — never into searchError/detailError,
+// which would replace the whole results view with a "search failed" state.
 function setStreamingBatchRemovalError(message: string): void {
-  if (isSearching.value && !currentDetail.value) searchError.value = message
-  else detailError.value = message
+  if (!message.trim()) return
+  pushNotice({ kind: 'error', message })
 }
 
 function onStreamingContentScroll(event: Event): void {
@@ -2090,9 +2199,19 @@ async function retryCurrentView(): Promise<void> {
 }
 
 watch(isSearching, (searching, wasSearching) => {
+  if (
+    searching &&
+    !wasSearching &&
+    activeTab.value === 'discover' &&
+    availableSearchTypes.value.includes('playlists')
+  ) {
+    // Searching from the discover tab implies looking for playlists.
+    searchType.value = 'playlists'
+  }
   if (currentDetail.value) return
   if (searching && !wasSearching) {
     streamingTransitionName.value = 'stream-detail-forward'
+    saveStreamingScrollPosition()
     const el = streamingContentRef.value
     if (el) el.scrollTop = 0
     return
@@ -2136,6 +2255,8 @@ watch(activeProvider, async (provider, oldProvider) => {
     if (!ncmNavigationAvailable.value) return
     if (activeTab.value === 'home' && isLoggedIn.value) {
       loadRecommendations()
+    } else if (activeTab.value === 'discover') {
+      void discovery.ensureLoaded()
     } else if (activeTab.value === 'library') {
       await ensureLibraryLoaded()
     }
@@ -2163,6 +2284,10 @@ watch(activeTab, async (tab) => {
   if (!ncmNavigationAvailable.value) return
   if (tab === 'home' && isLoggedIn.value) {
     loadRecommendations()
+  }
+  if (tab === 'discover') {
+    // Discovery browsing is anonymous-capable — no login gate here.
+    void discovery.ensureLoaded()
   }
   if (tab === 'library' && isLoggedIn.value) {
     await ensureLibraryLoaded()
@@ -2200,6 +2325,8 @@ onMounted(async () => {
     await checkLogin()
     if (activeTab.value === 'home' && isLoggedIn.value) {
       loadRecommendations()
+    } else if (activeTab.value === 'discover') {
+      void discovery.ensureLoaded()
     } else if (activeTab.value === 'library') {
       await ensureLibraryLoaded()
     }
@@ -2228,9 +2355,13 @@ onMounted(async () => {
             v-for="item in sidebarItems"
             :key="item.key"
             class="streaming-menu-item"
+            role="button"
+            tabindex="0"
             data-te-interactive
             :class="{ active: isSidebarItemActive(item) }"
             @click="selectSidebarItem(item)"
+            @keydown.enter.prevent="selectSidebarItem(item)"
+            @keydown.space.prevent="selectSidebarItem(item)"
           >
             <i class="streaming-menu-icon" :class="item.icon"></i>
             <span class="streaming-menu-label">{{ item.label }}</span>
@@ -2240,8 +2371,12 @@ onMounted(async () => {
           <div class="streaming-menu-separator"></div>
           <div
             class="streaming-menu-item streaming-local-btn"
+            role="button"
+            tabindex="0"
             data-te-interactive
             @click="emit('backToLocal')"
+            @keydown.enter.prevent="emit('backToLocal')"
+            @keydown.space.prevent="emit('backToLocal')"
           >
             <i class="streaming-menu-icon pi pi-desktop"></i>
             <span class="streaming-menu-label">本地模式</span>
@@ -2301,7 +2436,7 @@ onMounted(async () => {
             :class="{ focused: searchInputFocused }"
           >
             <i class="pi pi-search streaming-search-icon"></i>
-            <input
+            <AnimatedInput
               v-model="searchQuery"
               type="text"
               class="streaming-search-input"
@@ -2343,42 +2478,78 @@ onMounted(async () => {
           <div
             class="search-tab-pill"
             data-te-interactive
+            role="button"
+            :tabindex="availableSearchTypes.includes('songs') ? 0 : -1"
+            :aria-pressed="searchType === 'songs'"
+            :aria-disabled="!availableSearchTypes.includes('songs')"
             :class="{
               active: searchType === 'songs',
               disabled: !availableSearchTypes.includes('songs')
             }"
             @click="availableSearchTypes.includes('songs') && (searchType = 'songs')"
+            @keydown.enter.prevent="
+              availableSearchTypes.includes('songs') && (searchType = 'songs')
+            "
+            @keydown.space.prevent="
+              availableSearchTypes.includes('songs') && (searchType = 'songs')
+            "
           >
             单曲
           </div>
           <div
             class="search-tab-pill"
             data-te-interactive
+            role="button"
+            :tabindex="availableSearchTypes.includes('playlists') ? 0 : -1"
+            :aria-pressed="searchType === 'playlists'"
+            :aria-disabled="!availableSearchTypes.includes('playlists')"
             :class="{
               active: searchType === 'playlists',
               disabled: !availableSearchTypes.includes('playlists')
             }"
             @click="availableSearchTypes.includes('playlists') && (searchType = 'playlists')"
+            @keydown.enter.prevent="
+              availableSearchTypes.includes('playlists') && (searchType = 'playlists')
+            "
+            @keydown.space.prevent="
+              availableSearchTypes.includes('playlists') && (searchType = 'playlists')
+            "
           >
             歌单
           </div>
           <div
             class="search-tab-pill"
             data-te-interactive
+            role="button"
+            :tabindex="availableSearchTypes.includes('artists') ? 0 : -1"
+            :aria-pressed="searchType === 'artists'"
+            :aria-disabled="!availableSearchTypes.includes('artists')"
             :class="{
               active: searchType === 'artists',
               disabled: !availableSearchTypes.includes('artists')
             }"
             @click="availableSearchTypes.includes('artists') && (searchType = 'artists')"
+            @keydown.enter.prevent="
+              availableSearchTypes.includes('artists') && (searchType = 'artists')
+            "
+            @keydown.space.prevent="
+              availableSearchTypes.includes('artists') && (searchType = 'artists')
+            "
           >
             歌手
           </div>
         </div>
-        <div class="search-source-dropdown" :class="{ open: sourceMenuOpen }">
+        <div
+          class="search-source-dropdown"
+          :class="{ open: sourceMenuOpen }"
+          @focusout="onSourceMenuFocusOut"
+          @keydown.esc.prevent="sourceMenuOpen = false"
+        >
           <button
             class="search-source-trigger"
+            aria-haspopup="listbox"
+            :aria-expanded="sourceMenuOpen"
             @click="sourceMenuOpen = !sourceMenuOpen"
-            @blur="closeSourceMenuDelayed"
           >
             <i
               v-if="activeSourceOption?.icon"
@@ -2389,13 +2560,19 @@ onMounted(async () => {
             <span>{{ activeSourceOption?.label ?? '音源' }}</span>
             <i class="pi pi-chevron-down" style="font-size: 10px"></i>
           </button>
-          <div v-if="sourceMenuOpen" class="search-source-menu">
+          <div v-if="sourceMenuOpen" class="search-source-menu" role="listbox" aria-label="音源">
             <div
               v-for="source in searchSources"
               :key="source.id"
               class="search-source-option"
+              role="option"
+              :tabindex="source.available ? 0 : -1"
+              :aria-selected="searchSource === source.id"
+              :aria-disabled="!source.available"
               :class="{ active: searchSource === source.id, disabled: !source.available }"
               @mousedown.prevent="selectSearchSource(source.id)"
+              @keydown.enter.prevent="selectSearchSource(source.id)"
+              @keydown.space.prevent="selectSearchSource(source.id)"
             >
               <i v-if="source.icon" class="pi" :class="source.icon" style="font-size: 13px"></i>
               <span>{{ source.label }}</span>
@@ -2409,7 +2586,11 @@ onMounted(async () => {
         </div>
       </div>
 
-      <Transition :name="streamingTransitionName" mode="out-in">
+      <Transition
+        :name="streamingTransitionName"
+        mode="out-in"
+        @after-enter="restoreStreamingScrollPosition"
+      >
         <div
           v-if="showUnifiedSearch && isSearching && !currentDetail"
           key="search-results"
@@ -2469,6 +2650,37 @@ onMounted(async () => {
             @request-login="emit('login', activeProvider)"
           />
 
+          <StreamingDiscovery
+            v-else-if="
+              activeTab === 'discover' &&
+              !currentDetail &&
+              activeProviderAvailable &&
+              !isExternalActive
+            "
+            :catalogue="discovery.catalogue.value"
+            :catalogue-loading="discovery.catalogueLoading.value"
+            :catalogue-error="discovery.catalogueError.value"
+            :selected-tag="discovery.selectedTag.value"
+            :order="discovery.order.value"
+            :high-quality="discovery.highQuality.value"
+            :panel-expanded="discovery.panelExpanded.value"
+            :playlists="discovery.playlists.value"
+            :total="discovery.total.value"
+            :offset="discovery.offset.value"
+            :has-more="discovery.hasMore.value"
+            :list-loading="discovery.listLoading.value"
+            :list-error="discovery.listError.value"
+            :loading-more="discovery.loadingMore.value"
+            @select-tag="discovery.selectTag"
+            @set-order="discovery.setOrder"
+            @toggle-high-quality="discovery.toggleHighQuality"
+            @toggle-panel="discovery.togglePanel"
+            @page-change="discovery.onPageChange"
+            @load-more="discovery.loadMore"
+            @open-playlist="openPlaylist"
+            @retry="discovery.retry"
+          />
+
           <div
             v-else-if="(!activeProviderAvailable || activeProviderUnavailable) && !currentDetail"
             class="streaming-placeholder"
@@ -2505,11 +2717,10 @@ onMounted(async () => {
             </button>
           </div>
 
-          <div v-else-if="rootLoading && !currentDetail" class="streaming-placeholder">
-            <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
-            <p class="placeholder-title">正在加载音乐库</p>
-            <p class="placeholder-hint">请稍候...</p>
-          </div>
+          <StreamingLoadingStage
+            v-else-if="rootLoading && !currentDetail"
+            :provider-label="activeProviderLabel"
+          />
 
           <div v-else-if="!currentDetail && activeLibraryError" class="streaming-placeholder">
             <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
@@ -2668,11 +2879,27 @@ onMounted(async () => {
         :style="{ top: `${streamingContextMenuY}px`, left: `${streamingContextMenuX}px` }"
         @click.stop
       >
-        <div class="menu-item" data-te-interactive @click="handleContextPlayTrack">
+        <div
+          class="menu-item"
+          role="menuitem"
+          tabindex="0"
+          data-te-interactive
+          @click="handleContextPlayTrack"
+          @keydown.enter.prevent="handleContextPlayTrack"
+          @keydown.space.prevent="handleContextPlayTrack"
+        >
           <i class="pi pi-play"></i>
           <span>播放</span>
         </div>
-        <div class="menu-item" data-te-interactive @click="handleContextFavorite">
+        <div
+          class="menu-item"
+          role="menuitem"
+          tabindex="0"
+          data-te-interactive
+          @click="handleContextFavorite"
+          @keydown.enter.prevent="handleContextFavorite"
+          @keydown.space.prevent="handleContextFavorite"
+        >
           <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
           <span>
             {{ selectionAllFavorited ? '取消收藏' : '加入收藏' }}{{ selectionActionLabel }}
@@ -2681,8 +2908,12 @@ onMounted(async () => {
         <div
           v-if="contextMenuCanLike"
           class="menu-item"
+          role="menuitem"
+          tabindex="0"
           data-te-interactive
           @click="handleContextLikeTrack"
+          @keydown.enter.prevent="handleContextLikeTrack"
+          @keydown.space.prevent="handleContextLikeTrack"
         >
           <i :class="contextMenuSingleLiked ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
           <span>{{ contextMenuSingleLiked ? '取消喜欢' : '喜欢' }}</span>
@@ -2699,8 +2930,12 @@ onMounted(async () => {
           <div v-if="showStreamingPlaylistSubmenu" class="submenu">
             <div
               class="menu-item create-playlist-menu-item"
+              role="menuitem"
+              tabindex="0"
               data-te-interactive
               @click="handleContextCreatePlaylist"
+              @keydown.enter.prevent="handleContextCreatePlaylist"
+              @keydown.space.prevent="handleContextCreatePlaylist"
             >
               <i class="pi pi-plus"></i>
               <span>创建新歌单</span>
@@ -2712,12 +2947,24 @@ onMounted(async () => {
               v-for="playlist in ownedUserPlaylists"
               :key="playlist.id"
               class="menu-item"
+              role="menuitem"
+              tabindex="0"
               data-te-interactive
               @click="handleContextAddToOwnedPlaylist(playlist)"
+              @keydown.enter.prevent="handleContextAddToOwnedPlaylist(playlist)"
+              @keydown.space.prevent="handleContextAddToOwnedPlaylist(playlist)"
             >
               {{ playlist.name }}
             </div>
-            <div class="menu-item" data-te-interactive @click="handleContextAddToPlaylist">
+            <div
+              class="menu-item"
+              role="menuitem"
+              tabindex="0"
+              data-te-interactive
+              @click="handleContextAddToPlaylist"
+              @keydown.enter.prevent="handleContextAddToPlaylist"
+              @keydown.space.prevent="handleContextAddToPlaylist"
+            >
               <i class="pi pi-list"></i>
               <span>选择歌单…</span>
             </div>
@@ -2726,8 +2973,12 @@ onMounted(async () => {
         <div
           v-if="canMutateCurrentNcmPlaylist"
           class="menu-item danger"
+          role="menuitem"
+          tabindex="0"
           data-te-interactive
           @click="handleContextRemoveFromPlaylist"
+          @keydown.enter.prevent="handleContextRemoveFromPlaylist"
+          @keydown.space.prevent="handleContextRemoveFromPlaylist"
         >
           <i class="pi pi-minus-circle"></i>
           <span>从歌单移除{{ selectionActionLabel }}</span>
@@ -2742,11 +2993,18 @@ onMounted(async () => {
           class="ncm-playlist-dialog-overlay"
           @click.self="closeCreateNcmPlaylistDialog"
         >
-          <div class="ncm-playlist-dialog" role="dialog" aria-modal="true" aria-label="创建歌单">
+          <div
+            ref="createNcmPlaylistDialogRef"
+            class="ncm-playlist-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="创建歌单"
+          >
             <h3>创建网易云歌单</h3>
-            <input
+            <AnimatedInput
               v-model="newNcmPlaylistName"
               type="text"
+              class="ncm-playlist-name-input"
               maxlength="50"
               placeholder="请输入歌单名称"
               :disabled="createNcmPlaylistBusy"
@@ -2785,7 +3043,13 @@ onMounted(async () => {
           class="ncm-playlist-dialog-overlay"
           @click.self="closeAddToNcmPlaylistDialog"
         >
-          <div class="ncm-playlist-dialog" role="dialog" aria-modal="true" aria-label="添加到歌单">
+          <div
+            ref="addToNcmPlaylistDialogRef"
+            class="ncm-playlist-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="添加到歌单"
+          >
             <h3>添加到网易云歌单</h3>
             <p class="ncm-playlist-dialog-hint">
               已选 {{ addToNcmPlaylistTracks.length }} 首，选择目标歌单

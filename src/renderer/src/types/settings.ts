@@ -2,8 +2,10 @@ import type { MiniPlayerSettings } from '../../../shared/miniPlayer.ts'
 import type { DspScene } from '../../../shared/dspGraph.ts'
 import type { SleepTimerSettings } from '../../../shared/sleepTimer.ts'
 import type { ThemeSelection, ThemeWindowInheritance } from '../../../shared/theme.ts'
+import type { MotionPreference } from '../../../shared/motion.ts'
 
 export type { MiniPlayerSettings } from '../../../shared/miniPlayer.ts'
+export type { MotionPreference } from '../../../shared/motion.ts'
 
 export type AppTheme = 'system' | 'pureWhite' | 'dark'
 export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
@@ -246,10 +248,13 @@ export interface AudioDeviceOption {
 
 export type AudioCapabilitySupportState = 'verified' | 'runtime-probed' | 'unsupported' | 'unknown'
 
+export type PcmToDsdMode = 'off' | 'dsd64' | 'dsd128' | 'dsd256'
+
 export interface OutputConfig {
   preferredBufferSize: number
   routingMode: ChannelRoutingMode
   wasapiExclusivePushMode?: boolean
+  pcmToDsdMode?: PcmToDsdMode
   upmixCenterGain?: number
   upmixLfeGain?: number
   upmixLfeLowpassHz?: number
@@ -279,11 +284,14 @@ export interface AppSettings {
   cachePolicy: MusicCachePolicySettings
   autoAnalyzeBpm: boolean
   closeToTray: boolean
+  /** First-run welcome wizard has been completed or skipped. */
+  onboardingCompleted: boolean
   startupHomePage: StartupHomePage
   theme: AppTheme
   pluginThemeId: string | null
   activeTheme: ThemeSelection
   themeWindowInheritance: ThemeWindowInheritance
+  motionPreference: MotionPreference
   blurEffect: boolean
   windowTransparency: boolean
   windowTransparencyEffect: WindowTransparencyEffectSettings

@@ -1164,5 +1164,61 @@ int main() {
     for (float sample : samples) assert(std::isfinite(sample));
   }
 
+  {
+    // SoX-quality resampler tiers: parsing, status naming, and honest runtime
+    // fallback reporting when the linked FFmpeg lacks the soxr engine.
+    const auto graphWithQuality = [](const std::string& quality) {
+      return std::string(R"({"revision":30,"sceneId":"soxr","graph":{"outputStage":{"targetSampleRate":96000,"resamplerQuality":")") +
+             quality + R"(","dither":"off","safetyClamp":true},"nodes":[{"id":"meter","type":"meter","enabled":true,"params":{}}]}})";
+    };
+
+    DspChain chain;
+    chain.configure(DspConfig{});
+    chain.prepare(testFormat());
+    std::string error;
+
+    assert(chain.configureGraphJson(graphWithQuality("soxrHq"), &error));
+    std::string statusJson = chain.graphStatusJson();
+    assert(statusJson.find("\"resamplerQuality\":\"soxrHq\"") != std::string::npos);
+    assert(statusJson.find("\"resamplerEngine\":\"") != std::string::npos);
+    assert(statusJson.find("\"resamplerFallback\":") != std::string::npos);
+
+    assert(chain.configureGraphJson(graphWithQuality("soxrVhq"), &error));
+    assert(chain.graphStatusJson().find("\"resamplerQuality\":\"soxrVhq\"") != std::string::npos);
+
+    // Unknown soxr-family values keep the quality intent as Ultra.
+    assert(chain.configureGraphJson(graphWithQuality("soxrUltraMax"), &error));
+    assert(chain.graphStatusJson().find("\"resamplerQuality\":\"ultra\"") != std::string::npos);
+
+    // Unknown non-soxr values still fall back to native.
+    assert(chain.configureGraphJson(graphWithQuality("bogus"), &error));
+    assert(chain.graphStatusJson().find("\"resamplerQuality\":\"native\"") != std::string::npos);
+
+    // Simulate the decode-side probe outcome: unavailable → engine reports the
+    // honest swr fallback and the reason string carries the fallback fact.
+    reportSoxrRuntimeAvailability(false);
+    assert(chain.configureGraphJson(graphWithQuality("soxrVhq"), &error));
+    statusJson = chain.graphStatusJson();
+    assert(statusJson.find("\"resamplerEngine\":\"swr\"") != std::string::npos);
+    assert(statusJson.find("\"resamplerFallback\":true") != std::string::npos);
+    assert(statusJson.find("SoX resampler unavailable") != std::string::npos);
+
+    // Available → soxr engine is reported and no fallback is claimed.
+    reportSoxrRuntimeAvailability(true);
+    statusJson = chain.graphStatusJson();
+    assert(statusJson.find("\"resamplerEngine\":\"soxr\"") != std::string::npos);
+    assert(statusJson.find("\"resamplerFallback\":false") != std::string::npos);
+    assert(statusJson.find("SoX resampler unavailable") == std::string::npos);
+
+    // Non-soxr tiers always report the swr engine regardless of probe state.
+    assert(chain.configureGraphJson(graphWithQuality("ultra"), &error));
+    statusJson = chain.graphStatusJson();
+    assert(statusJson.find("\"resamplerEngine\":\"swr\"") != std::string::npos);
+    assert(statusJson.find("\"resamplerFallback\":false") != std::string::npos);
+
+    // Reset the process-wide probe state for any later assertions.
+    soxrRuntimeStateStorage().store(0);
+  }
+
   return 0;
 }

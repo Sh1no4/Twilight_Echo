@@ -48,7 +48,10 @@ test('playbar lyrics manager panel manages provider tracks and projects into Pla
       }
     })
     const bundleName = (await readdir(bundleDirectory)).find((name) => name.endsWith('.iife.js'))
-    assert.ok(bundleName, 'Vite should bundle the real PlayingMusic + LyricsManagerPanel components')
+    assert.ok(
+      bundleName,
+      'Vite should bundle the real PlayingMusic + LyricsManagerPanel components'
+    )
     await writeFile(htmlPath, runtimeHtml(bundleName), 'utf8')
     await writeFile(runnerPath, electronRunnerSource(), 'utf8')
 
@@ -163,20 +166,20 @@ window.runPlayingMusicLyricsRuntime = async () => {
   }
   const textareas = panel.querySelectorAll('textarea')
   const source = panel.querySelector('select')
-  const importButton = button('Import LRC')
-  const saveLrcButton = button('Save LRC')
+  const importButton = button('导入 LRC')
+  const saveLrcButton = button('导出 LRC')
 
   window.__lyricsFixture.rejectNextSave = true
-  button('Original').click()
+  button('原文').click()
   await waitFor(
     () => document.querySelector('.lyric-manager-error')?.textContent.includes('fixture CAS conflict'),
     'CAS conflict was not surfaced in the actual manager UI'
   )
-  expect(button('Original').getAttribute('aria-pressed') === 'true', 'CAS authority was not restored in the UI')
+  expect(button('原文').getAttribute('aria-pressed') === 'true', 'CAS authority was not restored in the UI')
 
-  button('Romanization').click()
+  button('音译').click()
   await waitFor(
-    () => button('Romanization').getAttribute('aria-pressed') === 'true',
+    () => button('音译').getAttribute('aria-pressed') === 'true',
     'romanization toggle was not persisted and projected'
   )
   expect(!document.querySelector('.lyric-manager-error'), 'successful retry left a stale CAS error')
@@ -188,13 +191,13 @@ window.runPlayingMusicLyricsRuntime = async () => {
     () =>
       window.__lyricsFixture.importCalls === 1 &&
       !importButton.disabled &&
-      buttons().some((item) => item.textContent.trim() === 'Import LRC'),
+      buttons().some((item) => item.textContent.trim() === '导入 LRC'),
     'import cancel did not finish through the UI bridge'
   )
   expect(textareas[0].value === originalBeforeCancel, 'import cancel changed the editor')
 
   window.__lyricsFixture.importResult = '[00:03.00]Imported original'
-  button('Import LRC').click()
+  button('导入 LRC').click()
   await waitFor(
     () =>
       window.__lyricsFixture.importCalls === 2 &&
@@ -211,7 +214,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
   await waitFor(
     () =>
       window.__lyricsFixture.saveCalls === 1 &&
-      buttons().some((item) => item.textContent.trim() === 'Save LRC'),
+      buttons().some((item) => item.textContent.trim() === '导出 LRC'),
     'save cancel did not finish through the UI bridge'
   )
   expect(!document.querySelector('.lyric-manager-notice'), 'save cancel reported a successful write')
@@ -221,7 +224,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
   await waitFor(
     () =>
       document.querySelector('.lyric-manager-notice')?.textContent.includes('edited.lrc') &&
-      buttons().some((item) => item.textContent.trim() === 'Save LRC'),
+      buttons().some((item) => item.textContent.trim() === '导出 LRC'),
     'successful LRC save was not reported'
   )
   expect(window.__lyricsFixture.lastSavedContents === '[00:03.00]Imported original', 'Save LRC did not use edited original text')
@@ -231,7 +234,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
   await waitFor(
     () =>
       window.__lyricsFixture.saveCalls === 3 &&
-      buttons().some((item) => item.textContent.trim() === 'Save LRC'),
+      buttons().some((item) => item.textContent.trim() === '导出 LRC'),
     'second save cancel did not complete'
   )
   expect(
@@ -239,7 +242,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
     'save cancel retained a stale success notice'
   )
 
-  button('Save lyrics').click()
+  button('保存歌词').click()
   await waitFor(
     () => window.__lyricsFixture.document.tracks[track.id]?.original === '[00:03.00]Imported original',
     'Save lyrics did not persist the draft'
@@ -261,6 +264,22 @@ window.runPlayingMusicLyricsRuntime = async () => {
     JSON.stringify(player.queue.value) === beforeQueue,
     'manual UI projection mutated queue; before=' + beforeQueue + '; after=' + JSON.stringify(player.queue.value)
   )
+
+  const sourceSelectors = panel.querySelectorAll('select')
+  sourceSelectors[2].value = 'automatic'
+  sourceSelectors[2].dispatchEvent(new Event('change', { bubbles: true }))
+  await tick()
+  expect(!button('保存歌词').disabled, 'layer source change did not mark the lyric draft dirty')
+  button('保存歌词').click()
+  await waitFor(
+    () => window.__lyricsFixture.document.tracks[track.id]?.translationSelection === 'automatic',
+    'translation source did not persist independently from manual original and romanization'
+  )
+  const mixedStored = window.__lyricsFixture.document.tracks[track.id]
+  expect(mixedStored.source === 'auto', 'mixed source selections did not keep automatic resolver active')
+  expect(mixedStored.originalSelection === 'manual', 'manual original selection was lost')
+  expect(mixedStored.translationSelection === 'automatic', 'automatic translation selection was lost')
+  expect(mixedStored.romanizationSelection === 'manual', 'manual romanization selection was lost')
 
   const playbackTrack = {
     ...track,

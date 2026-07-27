@@ -47,6 +47,7 @@ import {
 } from '../../shared/miniPlayer'
 import { DEFAULT_SOFTWARE_VOLUME } from '../../shared/audioProcessingOptions'
 import { normalizeThemeSelection, normalizeThemeWindowInheritance } from '../../shared/theme.ts'
+import { normalizeMotionPreference } from '../../shared/motion.ts'
 import { DEFAULT_SLEEP_TIMER_SETTINGS, type SleepTimerSettings } from '../../shared/sleepTimer.ts'
 import {
   loadSettingsFile,
@@ -101,11 +102,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   cachePolicy: DEFAULT_MUSIC_CACHE_POLICY,
   autoAnalyzeBpm: true,
   closeToTray: false,
+  onboardingCompleted: false,
   startupHomePage: 'local',
   theme: 'system',
   pluginThemeId: null,
   activeTheme: { kind: 'builtin', id: 'builtin:twilight-echo-default' },
   themeWindowInheritance: { miniPlayer: true, desktopLyrics: true },
+  motionPreference: 'system',
   blurEffect: true,
   windowTransparency: false,
   windowTransparencyEffect: {
@@ -189,7 +192,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   audioOutputConfig: {
     preferredBufferSize: 0,
     routingMode: 'auto',
-    wasapiExclusivePushMode: false
+    wasapiExclusivePushMode: false,
+    pcmToDsdMode: 'off'
   },
   audioProcessing: DEFAULT_AUDIO_PROCESSING,
   dspScenes: [
@@ -521,6 +525,10 @@ export function normalizeChannelRoutingMode(value: unknown): ChannelRoutingMode 
     : 'auto'
 }
 
+export function normalizePcmToDsdMode(value: unknown): NonNullable<OutputConfig['pcmToDsdMode']> {
+  return value === 'dsd64' || value === 'dsd128' || value === 'dsd256' ? value : 'off'
+}
+
 export function normalizeOutputConfig(config: unknown): OutputConfig {
   if (!config || typeof config !== 'object') return { ...DEFAULT_SETTINGS.audioOutputConfig }
   const value = config as Partial<Record<keyof OutputConfig, unknown>>
@@ -531,6 +539,7 @@ export function normalizeOutputConfig(config: unknown): OutputConfig {
         : DEFAULT_SETTINGS.audioOutputConfig.preferredBufferSize,
     routingMode: normalizeChannelRoutingMode(value.routingMode),
     wasapiExclusivePushMode: value.wasapiExclusivePushMode === true,
+    pcmToDsdMode: normalizePcmToDsdMode(value.pcmToDsdMode),
     upmixCenterGain: clampNumber(value.upmixCenterGain, 0, 2, 0.7071),
     upmixLfeGain: clampNumber(value.upmixLfeGain, 0, 2, 0.5),
     upmixLfeLowpassHz: clampNumber(value.upmixLfeLowpassHz, 20, 500, 120),
@@ -635,12 +644,14 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     cachePolicy: normalizeMusicCachePolicy(settings.cachePolicy),
     autoAnalyzeBpm: settings.autoAnalyzeBpm !== false,
     closeToTray,
+    onboardingCompleted: settings.onboardingCompleted === true,
     startupHomePage: normalizeStartupHomePage(settings.startupHomePage),
     theme: normalizeAppTheme(settings.theme),
     pluginThemeId:
       activeTheme.kind === 'plugin' ? `${activeTheme.pluginId}:${activeTheme.themeId}` : null,
     activeTheme,
     themeWindowInheritance,
+    motionPreference: normalizeMotionPreference(settings.motionPreference),
     blurEffect: settings.blurEffect !== false,
     windowTransparency: settings.windowTransparency === true,
     windowTransparencyEffect: normalizeWindowTransparencyEffect(settings.windowTransparencyEffect),

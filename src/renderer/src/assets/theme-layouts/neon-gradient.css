@@ -1,0 +1,792 @@
+/* Layout identity for builtin:neon-gradient. All rules scoped to html[data-te-preset-layout='neon-gradient']. */
+/* Synthwave Arcade — 斜切角、渐变描边、辉光、大字、动势。
+   协同 modes：navigation=compact/lg icons、player.layout=minimal、controls=pro、
+   progress=spectrum、titleAlign=center。所有颜色均由 --te-* 令牌派生。 */
+
+html[data-te-preset-layout='neon-gradient'] {
+  --ng-grad: linear-gradient(100deg, var(--te-primary-500), var(--te-accent-cyan));
+  --ng-grad-v: linear-gradient(180deg, var(--te-primary-500), var(--te-accent-cyan));
+  --ng-glow-a: color-mix(in oklab, var(--te-primary-500) 50%, transparent);
+  --ng-glow-b: color-mix(in oklab, var(--te-accent-cyan) 42%, transparent);
+  --ng-line: color-mix(in srgb, var(--te-primary-500) 40%, transparent);
+  --ng-line-cyan: color-mix(in srgb, var(--te-accent-cyan) 45%, transparent);
+  --ng-tint-a: color-mix(in srgb, var(--te-primary-500) 12%, transparent);
+  --ng-tint-b: color-mix(in srgb, var(--te-accent-cyan) 10%, transparent);
+  --ng-on-grad: oklch(from var(--te-primary-500) 0.985 0.004 h);
+  --ng-clip-card: polygon(
+    22px 0,
+    100% 0,
+    100% calc(100% - 22px),
+    calc(100% - 22px) 100%,
+    0 100%,
+    0 22px
+  );
+  --ng-clip-tile: polygon(
+    12px 0,
+    100% 0,
+    100% calc(100% - 12px),
+    calc(100% - 12px) 100%,
+    0 100%,
+    0 12px
+  );
+  --ng-clip-slant: polygon(12px 0, 100% 0, calc(100% - 12px) 100%, 0 100%);
+}
+
+/* ═══════════ 1. 应用壳 / 侧边导航：霓虹灯牌立柱 ═══════════ */
+
+/* compact 模式下的宽度由 navigation.style=compact 自身的 --te-menu-width 提供；
+   本表只做结构改造，不重新赋值 --te-* 令牌。 */
+
+html[data-te-preset-layout='neon-gradient'] .side-menu {
+  border-right: 1px solid var(--ng-line);
+  border-radius: 0;
+  box-shadow:
+    1px 0 0 var(--ng-line-cyan),
+    12px 0 44px color-mix(in srgb, var(--te-primary-500) 10%, transparent);
+}
+
+html[data-te-preset-layout='neon-gradient'] .side-menu .menu-items {
+  padding: 18px 8px 14px;
+  min-width: 0;
+}
+
+html[data-te-preset-layout='neon-gradient'] .side-menu .menu-nav {
+  gap: 8px;
+}
+
+/* 灯牌块：图标为主、竖排、斜切角 */
+html[data-te-preset-layout='neon-gradient'] .side-menu .menu-nav .menu-item,
+html[data-te-preset-layout='neon-gradient'] .side-menu .menu-bottom .menu-item {
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  height: auto;
+  min-height: 62px;
+  width: 100%;
+  margin-left: 0;
+  padding: 10px 4px 8px;
+  border-radius: 0;
+  clip-path: var(--ng-clip-tile);
+  background: color-mix(in srgb, var(--te-card-bg) 26%, transparent);
+}
+
+html[data-te-preset-layout='neon-gradient'] .side-menu .menu-nav .menu-item:hover,
+html[data-te-preset-layout='neon-gradient'] .side-menu .menu-bottom .menu-item:hover {
+  transform: translateY(-1px);
+  background:
+    linear-gradient(150deg, var(--ng-tint-a), var(--ng-tint-b)),
+    color-mix(in srgb, var(--te-card-bg) 30%, transparent);
+}
+
+html[data-te-preset-layout='neon-gradient'] .side-menu .menu-nav .menu-item.active,
+html[data-te-preset-layout='neon-gradient'] .side-menu .menu-bottom .menu-item.active {
+  background:
+    linear-gradient(
+      150deg,
+      color-mix(in srgb, var(--te-primary-500) 20%, transparent),
+      color-mix(in srgb, var(--te-accent-cyan) 14%, transparent)
+    ),
+    color-mix(in srgb, var(--te-card-bg) 40%, transparent);
+  box-shadow:
+    inset 0 0 0 1px var(--ng-line),
+    inset 0 0 22px color-mix(in srgb, var(--te-primary-500) 12%, transparent);
+  filter: drop-shadow(0 0 12px var(--ng-glow-a));
+}
+
+/* 选中指示器 → 粗竖光条 */
+html[data-te-preset-layout='neon-gradient'] .side-menu .menu-nav .menu-item.active::before,
+html[data-te-preset-layout='neon-gradient'] .side-menu .menu-bottom .menu-item.active::before {
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 5px;
+  border-radius: 0;
+  opacity: 1;
+  background: var(--ng-grad-v);
+  box-shadow: 0 0 14px var(--ng-glow-b);
+}
+
+html[data-te-preset-layout='neon-gradient'] .side-menu .menu-item .item-icon {
+  width: 28px;
+  height: 28px;
+  font-size: 24px;
+}
+
+/* 文字小号大写灯牌字 */
+html[data-te-preset-layout='neon-gradient'] .side-menu .menu-item .item-label {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.25;
+}
+
+html[data-te-preset-layout='neon-gradient'] .side-menu .menu-separator {
+  height: 2px;
+  margin: 12px 10px;
+  background: var(--ng-grad);
+  clip-path: polygon(0 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+  opacity: 0.45;
+}
+
+html[data-te-preset-layout='neon-gradient'] .side-menu .scanning-text {
+  text-align: center;
+  padding: 8px 4px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+/* ═══════════ 2. 本地音乐首页：夜城橱窗 ═══════════ */
+
+html[data-te-preset-layout='neon-gradient'] .home .home-inner {
+  gap: clamp(2.6rem, 4.2vw, 3.6rem);
+}
+
+/* 标语区：斜体渐变大字 + 斜切能量块日期徽章 */
+html[data-te-preset-layout='neon-gradient'] .home .hd .hd-chip {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  border-radius: 0;
+  clip-path: var(--ng-clip-slant);
+  border: 1px solid var(--ng-line);
+  background:
+    linear-gradient(100deg, var(--ng-tint-a), var(--ng-tint-b)),
+    color-mix(in srgb, var(--te-card-bg) 60%, transparent);
+  box-shadow: 0 0 14px var(--ng-glow-a);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .hd .hd-greeting {
+  font-style: italic;
+  font-weight: 800;
+  letter-spacing: -0.015em;
+  background: var(--ng-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 14px var(--ng-glow-a));
+}
+
+/* 随机漫游按钮 → 斜切能量面板 */
+html[data-te-preset-layout='neon-gradient'] .home .hd .hd-shuffle {
+  border-radius: 0;
+  clip-path: var(--ng-clip-slant);
+  border: 1px solid var(--ng-line);
+  background:
+    linear-gradient(100deg, var(--ng-tint-a), var(--ng-tint-b)),
+    color-mix(in srgb, var(--te-card-bg) 72%, transparent);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .hd .hd-shuffle:hover {
+  transform: translateY(-2px);
+  filter: drop-shadow(0 6px 18px var(--ng-glow-a));
+}
+
+/* 主打卡（正在播放橱窗）：大斜切角 + 顶部能量条 + 霓虹描边 */
+html[data-te-preset-layout='neon-gradient'] .home .now-card {
+  border-radius: 0;
+  clip-path: polygon(
+    30px 0,
+    100% 0,
+    100% calc(100% - 30px),
+    calc(100% - 30px) 100%,
+    0 100%,
+    0 30px
+  );
+  border: 1px solid var(--ng-line);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--te-accent-cyan) 20%, transparent),
+    inset 0 0 90px color-mix(in srgb, var(--te-primary-500) 7%, transparent);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .now-card::before {
+  content: '';
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  left: 30px;
+  right: 0;
+  height: 3px;
+  background: var(--ng-grad);
+  pointer-events: none;
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .now-info .now-title {
+  letter-spacing: 0.01em;
+  text-shadow: 0 0 24px var(--ng-glow-a);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .now-cover {
+  border-radius: 0;
+  clip-path: var(--ng-clip-tile);
+  box-shadow: inset 0 0 0 1px var(--ng-line);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .now-progress .now-rail span {
+  background: var(--ng-grad);
+  box-shadow: 0 0 12px var(--ng-glow-b);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .now-actions .round-play {
+  box-shadow:
+    0 0 0 2px var(--ng-line-cyan),
+    0 0 20px var(--ng-glow-a);
+}
+
+/* 统计带：斜切磁贴，数字用渐变 display 大字 */
+html[data-te-preset-layout='neon-gradient'] .home .stat-row {
+  gap: 1.1rem;
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .stat-row .stat-tile {
+  border-radius: 0;
+  clip-path: var(--ng-clip-tile);
+  border: 1px solid var(--ng-line);
+  padding: 1.25rem 1.4rem;
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .stat-tile .stat-copy small {
+  text-transform: uppercase;
+  letter-spacing: 0.26em;
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .stat-tile .stat-copy strong {
+  font-family: var(--te-font-display);
+  font-size: clamp(1.4rem, 2.2vw, 1.9rem);
+  font-weight: 800;
+  font-style: italic;
+  line-height: 1.05;
+  background: var(--ng-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 16px var(--ng-glow-a));
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .signal-card {
+  border-radius: 0;
+  clip-path: var(--ng-clip-card);
+  border: 1px solid var(--ng-line-cyan);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .signal-card:hover {
+  filter: drop-shadow(0 8px 22px var(--ng-glow-b));
+}
+
+/* 区块标题：斜切能量块 icon + 竖光条 heading */
+html[data-te-preset-layout='neon-gradient'] .home .sec-head .sec-icon {
+  border-radius: 0;
+  clip-path: var(--ng-clip-tile);
+  box-shadow: inset 0 0 0 1px var(--ng-line);
+  filter: drop-shadow(0 0 12px var(--ng-glow-a));
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .sec-head .sec-copy,
+html[data-te-preset-layout='neon-gradient'] .home-view .section-head .section-head-copy {
+  position: relative;
+  padding-left: 18px;
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .sec-head .sec-copy::before,
+html[data-te-preset-layout='neon-gradient'] .home-view .section-head .section-head-copy::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 8px;
+  background: var(--ng-grad-v);
+  clip-path: polygon(0 0, 100% 6px, 100% 100%, 0 calc(100% - 6px));
+  box-shadow: 0 0 14px var(--ng-glow-a);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .sec-copy h3,
+html[data-te-preset-layout='neon-gradient'] .home-view .section-head-copy h3 {
+  letter-spacing: 0.05em;
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .sec-head .sec-link,
+html[data-te-preset-layout='neon-gradient'] .home-view .section-head .section-more {
+  border-radius: 0;
+  clip-path: var(--ng-clip-slant);
+  border-color: var(--ng-line);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* 橱窗卡带：更大的封面、斜切角、霓虹 hover */
+html[data-te-preset-layout='neon-gradient'] .home .recent-grid {
+  grid-template-columns: repeat(auto-fill, minmax(clamp(140px, 15vw, 210px), 1fr));
+  gap: clamp(1rem, 1.8vw, 1.5rem);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .track-card .track-cover {
+  border-radius: 0;
+  clip-path: var(--ng-clip-tile);
+  box-shadow: inset 0 0 0 1px var(--ng-line);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .recent-grid .track-card:hover {
+  transform: translateY(-4px);
+  filter: drop-shadow(0 10px 26px var(--ng-glow-a));
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .track-card .format-badge {
+  border-radius: 0;
+  clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
+  background: var(--ng-grad);
+  color: var(--ng-on-grad);
+  letter-spacing: 0.1em;
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .album-grid {
+  grid-template-columns: repeat(auto-fill, minmax(clamp(150px, 16vw, 220px), 1fr));
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .album-tile .album-art {
+  border-radius: 0;
+  clip-path: var(--ng-clip-tile);
+  box-shadow: inset 0 0 0 1px var(--ng-line);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .album-grid .album-tile:hover {
+  transform: translateY(-4px);
+  filter: drop-shadow(0 10px 26px var(--ng-glow-b));
+}
+
+/* 聆听足迹：常听榜与日历同穿斜切外壳，榜单序号用渐变斜体 */
+html[data-te-preset-layout='neon-gradient'] .home .footprint-grid .chart-card,
+html[data-te-preset-layout='neon-gradient'] .home .footprint-grid .cal-card {
+  border-radius: 0;
+  clip-path: var(--ng-clip-card);
+  border: 1px solid var(--ng-line);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .chart-row .row-rank {
+  font-style: italic;
+  background: var(--ng-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .chart-row .row-bar-fill {
+  background: var(--ng-grad);
+  box-shadow: 0 0 10px var(--ng-glow-b);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home .empty-card .empty-cta {
+  border-radius: 0;
+  clip-path: var(--ng-clip-slant);
+  background: var(--ng-grad);
+  color: var(--ng-on-grad);
+  box-shadow: 0 0 24px var(--ng-glow-a);
+}
+
+/* DSP 路由弹窗也换上斜切外壳 */
+html[data-te-preset-layout='neon-gradient'] .home .dsp-route-dialog {
+  border-radius: 0;
+  clip-path: var(--ng-clip-card);
+  border: 1px solid var(--ng-line);
+}
+
+/* ═══════════ 3. 流媒体首页：霓虹橱窗 ═══════════ */
+
+html[data-te-preset-layout='neon-gradient'] .home-view .hero {
+  border-radius: 0;
+  clip-path: polygon(
+    32px 0,
+    100% 0,
+    100% calc(100% - 32px),
+    calc(100% - 32px) 100%,
+    0 100%,
+    0 32px
+  );
+  border: 1px solid var(--ng-line);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--te-accent-cyan) 18%, transparent);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home-view .hero::before {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  left: 32px;
+  right: 0;
+  height: 3px;
+  background: var(--ng-grad);
+  pointer-events: none;
+}
+
+html[data-te-preset-layout='neon-gradient'] .home-view .hero .hero-title {
+  font-style: italic;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  background: var(--ng-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 22px var(--ng-glow-a));
+}
+
+html[data-te-preset-layout='neon-gradient'] .home-view .hero .hero-title-en {
+  letter-spacing: 0.52em;
+  color: color-mix(in srgb, var(--te-accent-cyan) 82%, var(--te-neutral-900));
+  text-shadow: 0 0 16px var(--ng-glow-b);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home-view .hero .hero-kicker-day {
+  border-radius: 0;
+  clip-path: var(--ng-clip-slant);
+  background: var(--ng-grad);
+  color: var(--ng-on-grad);
+  font-style: italic;
+}
+
+html[data-te-preset-layout='neon-gradient'] .home-view .hero-actions .hero-play {
+  border-radius: 0;
+  clip-path: var(--ng-clip-slant);
+  background: var(--ng-grad);
+  color: var(--ng-on-grad);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  box-shadow: 0 0 26px var(--ng-glow-a);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home-view .hero-actions .hero-play:hover {
+  background: var(--ng-grad);
+  transform: translateY(-2px);
+  box-shadow: 0 0 40px var(--ng-glow-a);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home-view .hero-actions .hero-open {
+  border-radius: 0;
+  clip-path: var(--ng-clip-slant);
+  border-color: var(--ng-line-cyan);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home-view .hero-stage .hero-collage-card {
+  border-radius: 6px;
+  box-shadow:
+    0 0 0 1px var(--ng-line),
+    0 18px 42px color-mix(in srgb, var(--te-neutral-900) 26%, transparent),
+    0 0 26px var(--ng-glow-b);
+}
+
+/* 双电台卡 → 倾斜面板 */
+html[data-te-preset-layout='neon-gradient'] .home-view .duo .duo-card {
+  border-radius: 0;
+  clip-path: polygon(18px 0, 100% 0, calc(100% - 18px) 100%, 0 100%);
+  border: 1px solid var(--ng-line);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home-view .duo .duo-card:hover {
+  transform: translateY(-3px);
+  box-shadow: none;
+  filter: drop-shadow(0 10px 26px var(--ng-glow-a));
+}
+
+html[data-te-preset-layout='neon-gradient'] .home-view .duo .duo-arrow {
+  border-radius: 0;
+  clip-path: var(--ng-clip-slant);
+  border-color: var(--ng-line-cyan);
+}
+
+/* 精选速览：斜切行 + 渐变斜体序号 */
+html[data-te-preset-layout='neon-gradient'] .home-view .chart .chart-grid {
+  gap: 8px 22px;
+}
+
+html[data-te-preset-layout='neon-gradient'] .home-view .chart .chart-row {
+  border-radius: 0;
+  clip-path: var(--ng-clip-slant);
+  background: color-mix(in srgb, var(--te-card-bg) 55%, transparent);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home-view .chart .chart-row:hover {
+  background: linear-gradient(100deg, var(--ng-tint-a), var(--ng-tint-b));
+}
+
+html[data-te-preset-layout='neon-gradient'] .home-view .chart .chart-row.is-playing {
+  background: linear-gradient(
+    100deg,
+    color-mix(in srgb, var(--te-primary-500) 18%, transparent),
+    color-mix(in srgb, var(--te-accent-cyan) 12%, transparent)
+  );
+  box-shadow: inset 0 0 0 1px var(--ng-line);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home-view .chart .chart-index {
+  font-style: italic;
+  background: var(--ng-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+html[data-te-preset-layout='neon-gradient'] .home-view .chart .chart-cover {
+  border-radius: 0;
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+}
+
+/* 歌单橱窗 */
+html[data-te-preset-layout='neon-gradient'] .home-view .shelf .shelf-grid {
+  grid-template-columns: repeat(auto-fill, minmax(clamp(150px, 15vw, 200px), 1fr));
+}
+
+html[data-te-preset-layout='neon-gradient'] .home-view .shelf-tile .shelf-cover {
+  border-radius: 0;
+  clip-path: var(--ng-clip-tile);
+  box-shadow: inset 0 0 0 1px var(--ng-line);
+}
+
+html[data-te-preset-layout='neon-gradient'] .home-view .shelf-grid .shelf-tile:hover {
+  filter: drop-shadow(0 10px 24px var(--ng-glow-a));
+}
+
+html[data-te-preset-layout='neon-gradient'] .home-view .shelf-tile:hover .shelf-cover {
+  transform: translateY(-4px);
+  box-shadow: inset 0 0 0 1px var(--ng-line-cyan);
+}
+
+/* 未登录邀请页 */
+html[data-te-preset-layout='neon-gradient'] .home-view .hero-invite .invite-title {
+  font-style: italic;
+  background: var(--ng-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 20px var(--ng-glow-a));
+}
+
+html[data-te-preset-layout='neon-gradient'] .home-view .hero-invite .invite-cta {
+  border-radius: 0;
+  clip-path: var(--ng-clip-slant);
+  background: var(--ng-grad);
+  color: var(--ng-on-grad);
+  box-shadow: 0 0 26px var(--ng-glow-a);
+}
+
+/* ═══════════ 4. 播放页：舞台灯光（minimal + 居中） ═══════════ */
+
+html[data-te-preset-layout='neon-gradient'] .playing-music .layout .cover-column {
+  position: relative;
+}
+
+/* 舞台底光：封面后方的多层光晕 */
+html[data-te-preset-layout='neon-gradient'] .playing-music .layout .cover-column::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  left: 50%;
+  top: 42%;
+  width: min(74vw, 620px);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 42% 40%, var(--ng-glow-a), transparent 58%),
+    radial-gradient(circle at 64% 66%, var(--ng-glow-b), transparent 55%);
+  filter: blur(34px);
+  pointer-events: none;
+}
+
+html[data-te-preset-layout='neon-gradient'] .playing-music .cover-column .cover-frame {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--te-primary-500) 52%, transparent),
+    0 0 44px var(--ng-glow-a),
+    0 0 120px var(--ng-glow-b),
+    0 36px 90px color-mix(in srgb, var(--te-neutral-900) 34%, transparent);
+  animation: ng-stage-breathe 6.5s ease-in-out infinite;
+}
+
+/* 标题大字居中发光（titleAlign=center 已居中） */
+html[data-te-preset-layout='neon-gradient'] .playing-music .cover-meta .track-title {
+  font-size: clamp(26px, 3.4vw, 44px);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.14;
+  text-shadow:
+    0 0 18px var(--ng-glow-a),
+    0 0 46px var(--ng-glow-b);
+}
+
+html[data-te-preset-layout='neon-gradient'] .playing-music .cover-meta .track-artist {
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+html[data-te-preset-layout='neon-gradient'] .playing-music .visualizer-toggle-button {
+  border-radius: 0;
+  clip-path: var(--ng-clip-slant);
+  box-shadow: inset 0 0 0 1px var(--ng-line);
+}
+
+html[data-te-preset-layout='neon-gradient'] .playing-music .lyrics-head .time-chip {
+  border-radius: 0;
+  clip-path: var(--ng-clip-slant);
+  border-color: var(--ng-line-cyan);
+  letter-spacing: 0.12em;
+}
+
+/* ═══════════ 5. 播放栏：居中街机操控台 ═══════════ */
+
+html[data-te-preset-layout='neon-gradient'] .player-bar-shell .player-bar {
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  height: 80px;
+  max-width: min(1020px, calc(100vw - 24px));
+  border: 0;
+  border-radius: 0;
+  clip-path: polygon(26px 0, calc(100% - 26px) 0, 100% 100%, 0 100%);
+  background:
+    linear-gradient(90deg, var(--te-primary-500), var(--te-accent-cyan)) top center /
+      calc(100% - 52px) 2px no-repeat,
+    linear-gradient(100deg, var(--ng-tint-a), var(--ng-tint-b)),
+    color-mix(in srgb, var(--te-card-bg) 94%, transparent);
+  box-shadow:
+    inset 0 0 0 1px var(--ng-line),
+    inset 0 0 60px color-mix(in srgb, var(--te-primary-500) 6%, transparent);
+  filter: drop-shadow(0 -4px 26px var(--ng-glow-a));
+}
+
+/* 左翼：倾斜切角的信息面板 */
+html[data-te-preset-layout='neon-gradient'] .player-bar .player-left {
+  padding: 8px 20px 8px 14px;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 16px) 100%, 0 100%);
+  background: color-mix(in srgb, var(--te-primary-500) 7%, transparent);
+}
+
+html[data-te-preset-layout='neon-gradient'] .player-bar .player-left .player-title {
+  font-family: var(--te-font-display);
+  letter-spacing: 0.03em;
+  text-shadow: 0 0 14px var(--ng-glow-a);
+}
+
+html[data-te-preset-layout='neon-gradient'] .player-bar .player-left .player-cover-slot {
+  border-radius: 0;
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+  box-shadow: inset 0 0 0 1px var(--ng-line);
+}
+
+/* 右翼：镜像斜切面板 */
+html[data-te-preset-layout='neon-gradient'] .player-bar .player-right {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 8px 14px 8px 20px;
+  clip-path: polygon(16px 0, 100% 0, 100% 100%, 0 100%);
+  background: color-mix(in srgb, var(--te-accent-cyan) 6%, transparent);
+}
+
+/* 控制簇放大居中；播放键最大并带渐变描边环 */
+html[data-te-preset-layout='neon-gradient'] .player-bar .player-center .player-controls {
+  gap: 18px;
+}
+
+html[data-te-preset-layout='neon-gradient'] .player-bar .player-controls .ctrl-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--ng-line);
+}
+
+html[data-te-preset-layout='neon-gradient'] .player-bar .player-controls .ctrl-btn:hover {
+  background: linear-gradient(120deg, var(--ng-tint-a), var(--ng-tint-b));
+  box-shadow: inset 0 0 0 1px var(--ng-line-cyan);
+}
+
+html[data-te-preset-layout='neon-gradient'] .player-bar .player-controls .btn-play {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  background: var(--ng-grad);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--te-card-bg) 85%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--te-accent-cyan) 60%, transparent),
+    0 0 26px var(--ng-glow-a);
+}
+
+html[data-te-preset-layout='neon-gradient'] .player-bar .player-controls .btn-play:hover {
+  background: var(--ng-grad);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--te-card-bg) 85%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--te-accent-cyan) 78%, transparent),
+    0 0 40px var(--ng-glow-a);
+}
+
+html[data-te-preset-layout='neon-gradient'] .player-bar .player-controls .btn-play.is-playing {
+  animation: ng-play-pulse 3.2s ease-in-out infinite;
+}
+
+/* 进度条（若用户开启波形位）：加粗渐变 + 光晕，兼容 spectrum 分段 */
+html[data-te-preset-layout='neon-gradient'] .player-bar .progress-area .progress-track {
+  height: 12px;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--ng-line);
+  background: color-mix(in srgb, var(--te-primary-500) 10%, transparent);
+}
+
+html[data-te-preset-layout='neon-gradient'] .player-bar .progress-area .progress-fill {
+  border-radius: 2px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 3px,
+      color-mix(in srgb, var(--te-card-bg) 72%, transparent) 3px 6px
+    ),
+    var(--ng-grad);
+  box-shadow: 0 0 14px var(--ng-glow-a);
+}
+
+html[data-te-preset-layout='neon-gradient'] .player-bar .progress-area .time-label {
+  font-style: italic;
+  letter-spacing: 0.06em;
+}
+
+/* 队列抽屉 / HiFi 面板同语言 */
+html[data-te-preset-layout='neon-gradient'] .player-bar-shell .playlist-panel {
+  border-radius: 0;
+  clip-path: var(--ng-clip-card);
+  border: 1px solid var(--ng-line);
+}
+
+html[data-te-preset-layout='neon-gradient'] .player-bar-shell .hifi-overlay {
+  border-left: 1px solid var(--ng-line-cyan);
+}
+
+/* ═══════════ 6. 动效克制：reduced 模式关掉持续发光动画 ═══════════ */
+
+html[data-te-preset-layout='neon-gradient'][data-te-effects-mode='reduced']
+  .playing-music
+  .cover-column
+  .cover-frame,
+html[data-te-preset-layout='neon-gradient'][data-te-effects-mode='reduced']
+  .player-bar
+  .player-controls
+  .btn-play.is-playing {
+  animation: none;
+}
+
+@keyframes ng-stage-breathe {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.06);
+  }
+}
+
+@keyframes ng-play-pulse {
+  0%,
+  100% {
+    filter: brightness(1) saturate(1);
+  }
+  50% {
+    filter: brightness(1.12) saturate(1.15);
+  }
+}

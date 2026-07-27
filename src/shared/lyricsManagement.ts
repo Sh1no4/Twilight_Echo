@@ -3,10 +3,14 @@
  * folder can never discard a user's timing correction or hand-edited text.
  */
 export type LyricSourcePreference = 'auto' | 'local' | 'provider' | 'manual'
+export type LyricLayerSourceSelection = 'automatic' | 'manual'
 
 export interface LyricTrackOverride {
   offsetMs: number
   source: LyricSourcePreference
+  originalSelection?: LyricLayerSourceSelection
+  translationSelection?: LyricLayerSourceSelection
+  romanizationSelection?: LyricLayerSourceSelection
   original: string | null
   translation: string | null
   romanization: string | null
@@ -54,23 +58,52 @@ export function effectiveLyricOffsetSeconds(globalOffsetMs: number, trackOffsetM
   return (clampLyricOffset(globalOffsetMs) + clampLyricOffset(trackOffsetMs)) / 1000
 }
 
-/** Manual text has explicit precedence; every non-manual selection leaves the
- * existing resolver result intact so source fallback rules stay centralized. */
 export function projectManagedLyrics(
   automatic: ManagedLyricsProjection,
   override: LyricTrackOverride | undefined
 ): ManagedLyricsProjection {
-  if (override?.source !== 'manual') return automatic
+  if (!override) return automatic
+  const originalSelection = layerSelection(override, 'originalSelection')
+  const translationSelection = layerSelection(override, 'translationSelection')
+  const romanizationSelection = layerSelection(override, 'romanizationSelection')
+  if (
+    originalSelection === 'automatic' &&
+    translationSelection === 'automatic' &&
+    romanizationSelection === 'automatic'
+  ) {
+    return automatic
+  }
   // null means "unset" on disk; for manual presentation treat as confirmed empty
   // so the now-playing pane shows 暂无歌词 instead of 加载歌词… forever.
   return {
-    original: override.original ?? '',
-    translation: override.translation ?? null,
-    romanization: override.romanization ?? null,
-    originalSource: 'manual',
-    translationSource: override.translation ? 'manual' : null,
-    romanizationSource: override.romanization ? 'manual' : null
+    original: originalSelection === 'manual' ? (override.original ?? '') : automatic.original,
+    translation:
+      translationSelection === 'manual' ? (override.translation ?? null) : automatic.translation,
+    romanization:
+      romanizationSelection === 'manual' ? (override.romanization ?? null) : automatic.romanization,
+    originalSource: originalSelection === 'manual' ? 'manual' : automatic.originalSource,
+    translationSource:
+      translationSelection === 'manual'
+        ? override.translation
+          ? 'manual'
+          : null
+        : automatic.translationSource,
+    romanizationSource:
+      romanizationSelection === 'manual'
+        ? override.romanization
+          ? 'manual'
+          : null
+        : automatic.romanizationSource
   }
+}
+
+function layerSelection(
+  override: LyricTrackOverride,
+  key: 'originalSelection' | 'translationSelection' | 'romanizationSelection'
+): LyricLayerSourceSelection {
+  const selection = override[key]
+  if (selection === 'automatic' || selection === 'manual') return selection
+  return override.source === 'manual' ? 'manual' : 'automatic'
 }
 
 export function projectLyricDisplay(
@@ -131,6 +164,9 @@ function isLyricTrackOverride(id: string, value: unknown): value is LyricTrackOv
     typeof entry.offsetMs === 'number' &&
     Number.isFinite(entry.offsetMs) &&
     isLyricSourcePreference(entry.source) &&
+    isOptionalLyricLayerSourceSelection(entry.originalSelection) &&
+    isOptionalLyricLayerSourceSelection(entry.translationSelection) &&
+    isOptionalLyricLayerSourceSelection(entry.romanizationSelection) &&
     isLyricText(entry.original) &&
     isLyricText(entry.translation) &&
     isLyricText(entry.romanization) &&
@@ -139,12 +175,13 @@ function isLyricTrackOverride(id: string, value: unknown): value is LyricTrackOv
 }
 
 function isLyricSourcePreference(value: unknown): value is LyricSourcePreference {
-  return (
-    value === 'auto' ||
-    value === 'local' ||
-    value === 'provider' ||
-    value === 'manual'
-  )
+  return value === 'auto' || value === 'local' || value === 'provider' || value === 'manual'
+}
+
+function isOptionalLyricLayerSourceSelection(
+  value: unknown
+): value is LyricLayerSourceSelection | undefined {
+  return value === undefined || value === 'automatic' || value === 'manual'
 }
 
 function isLyricText(value: unknown): value is string | null {

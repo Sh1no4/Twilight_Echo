@@ -264,7 +264,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
     <!-- Feature Cards: Recent & Ranking portals (ncm only — external providers don't implement these) -->
     <section class="feature-cards" v-if="isLoggedIn && showFeatureCards !== false">
       <!-- Recent Played Card -->
-      <div class="glass-card feature-card recent-card" @click="emit('openRecent')">
+      <div class="glass-card feature-card recent-card" data-te-interactive @click="emit('openRecent')">
         <div class="feature-info">
           <div class="icon-wrap">
             <i class="pi pi-history" style="font-size: 1.1rem"></i>
@@ -280,7 +280,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
       </div>
 
       <!-- Top Ranking Card -->
-      <div class="glass-card feature-card ranking-card" @click="emit('openRanking')">
+      <div class="glass-card feature-card ranking-card" data-te-interactive @click="emit('openRanking')">
         <div class="feature-info">
           <div class="icon-wrap">
             <i class="pi pi-chart-bar" style="font-size: 1.1rem"></i>

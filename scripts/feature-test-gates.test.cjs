@@ -28,11 +28,25 @@ const lyricsTests = [
   'src/renderer/src/components/PlayingMusic.lyrics.behavior.test.ts'
 ]
 
-const offlineTests = [
-  'src/main/offline/offlineDownloadService.test.ts',
-  'src/main/offline/offlineRequestAuthorization.test.ts',
-  'src/main/offline/offlineNativeQueue.integration.test.ts',
-  'src/renderer/src/components/OfflineDownloadsPanel.behavior.test.ts'
+const radioRemoteTests = [
+  'src/main/library/watcher.test.ts',
+  'src/main/radio/playlistImport.test.ts',
+  'src/main/radio/radioBrowserClient.test.ts',
+  'src/main/radio/radioMediaIpc.test.ts',
+  'src/main/radio/radioMediaService.test.ts',
+  'src/main/radio/rssParser.test.ts',
+  'src/main/remote/auth.test.ts',
+  'src/main/remote/chromecastClient.test.ts',
+  'src/main/remote/didl.test.ts',
+  'src/main/remote/httpServer.mediaOnly.test.ts',
+  'src/main/remote/mediaTokens.test.ts',
+  'src/main/remote/soap.test.ts',
+  'src/main/remote/ssdp.test.ts',
+  'src/renderer/src/utils/coverLoader.test.ts',
+  'src/renderer/src/utils/trackCoverDisplay.test.ts',
+  'src/shared/podcastSubscriptions.test.ts',
+  'src/shared/radioStations.test.ts',
+  'src/shared/remoteControl.test.ts'
 ]
 
 const playlistLifecycleTests = [
@@ -76,10 +90,10 @@ test('lyrics management gate owns every core, persistence, source, and real UI b
   for (const file of lyricsTests) assert.match(command, new RegExp(escapeRegExp(file)))
 })
 
-test('offline download gate retains service, authorization, native queue, and real UI tests', () => {
-  const command = packageJson.scripts['test:offline-downloads']
+test('radio and remote gate owns library watcher, radio, podcast, cover, and remote control tests', () => {
+  const command = packageJson.scripts['test:radio-remote']
   assert.equal(typeof command, 'string')
-  for (const file of offlineTests) assert.match(command, new RegExp(escapeRegExp(file)))
+  for (const file of radioRemoteTests) assert.match(command, new RegExp(escapeRegExp(file)))
 })
 
 test('playlist lifecycle gate retains production DOM, persistence, format, and validation tests', () => {
@@ -122,8 +136,9 @@ test('required Ubuntu CI installs a bounded Xvfb dependency and runs real Electr
   assert.match(workflow, /command -v xvfb-run/)
   assert.match(workflow, /xvfb-run -a pnpm run test:playlist-lifecycle/)
   assert.match(workflow, /xvfb-run -a pnpm run test:lyrics-management/)
-  assert.match(workflow, /xvfb-run -a pnpm run test:offline-downloads/)
+  assert.match(workflow, /pnpm run test:radio-remote/)
   assert.match(workflow, /xvfb-run -a pnpm run test:tag-duplicate-management/)
+  assert.match(workflow, /pnpm run test:themes/)
   assert.match(workflow, /pnpm run test:duplicate-detection-benchmark/)
   assert.match(workflow, /pnpm run benchmark:duplicate-detection:ci --/)
   assert.match(workflow, /duplicate-detection-benchmark\.manifest\.json/)
@@ -141,14 +156,16 @@ test('Windows no-device and release gates cannot omit product suites or the live
   const noDevice = packageJson.scripts['test:no-real-device']
   assert.match(noDevice, /pnpm run test:playlist-lifecycle/)
   assert.match(noDevice, /pnpm run test:lyrics-management/)
-  assert.match(noDevice, /pnpm run test:offline-downloads/)
+  assert.match(noDevice, /pnpm run test:radio-remote/)
   assert.match(noDevice, /pnpm run test:tag-duplicate-management/)
+  assert.match(noDevice, /pnpm run test:themes/)
   assert.match(noDevice, /pnpm run test:duplicate-detection-benchmark/)
   assert.match(noDevice, /pnpm run benchmark:duplicate-detection:ci/)
   assert.match(windowsReleaseGate, /pnpm run test:playlist-lifecycle/)
   assert.match(windowsReleaseGate, /pnpm run test:lyrics-management/)
-  assert.match(windowsReleaseGate, /pnpm run test:offline-downloads/)
+  assert.match(windowsReleaseGate, /pnpm run test:radio-remote/)
   assert.match(windowsReleaseGate, /pnpm run test:tag-duplicate-management/)
+  assert.match(windowsReleaseGate, /pnpm run test:themes/)
   assert.match(windowsReleaseGate, /pnpm run test:duplicate-detection-benchmark/)
   assert.match(windowsReleaseGate, /pnpm run benchmark:duplicate-detection:ci/)
 })
@@ -166,7 +183,9 @@ test('CI and the final integrated gate retain all newly owned regression suites'
   for (const script of [
     'test:renderer-data-tooling',
     'test:sleep-timer',
-    'test:cross-cutting-regressions'
+    'test:cross-cutting-regressions',
+    'test:radio-remote',
+    'test:themes'
   ]) {
     assert.match(workflow, new RegExp(`pnpm run ${escapeRegExp(script)}`))
     assert.match(
@@ -184,7 +203,9 @@ test('Windows release documentation fail-closes on every newly owned regression 
   for (const script of [
     'test:renderer-data-tooling',
     'test:sleep-timer',
-    'test:cross-cutting-regressions'
+    'test:cross-cutting-regressions',
+    'test:radio-remote',
+    'test:themes'
   ]) {
     assert.match(commandBlock, new RegExp(`^pnpm run ${escapeRegExp(script)}$`, 'm'))
     assert.match(explanation, new RegExp('`' + escapeRegExp(script) + '`'))

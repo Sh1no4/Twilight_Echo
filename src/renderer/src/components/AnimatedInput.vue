@@ -1,0 +1,214 @@
+<script setup lang="ts">
+import { computed, ref, useAttrs, watch } from 'vue'
+
+// osu!lazer-style textbox: each committed grapheme pops in with a spring, and
+// shrinks away on delete. A transparent native <input> keeps focus/IME/caret
+// behavior; an overlaid mirror renders the per-character animation.
+const props = withDefaults(
+  defineProps<{
+    modelValue: string
+    placeholder?: string
+    maxAnimatedLength?: number
+  }>(),
+  { placeholder: '', maxAnimatedLength: 60 }
+)
+
+const emit = defineEmits<{ (e: 'update:modelValue', value: string): void }>()
+
+defineOptions({ inheritAttrs: false })
+
+const attrs = useAttrs()
+const rootClass = computed(() => attrs.class)
+const rootStyle = computed(() => attrs.style)
+const inputAttrs = computed(() => {
+  const { class: _class, style: _style, ...rest } = attrs
+  return rest
+})
+
+interface AnimatedChar {
+  id: number
+  char: string
+}
+
+const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+let nextCharId = 1
+const chars = ref<AnimatedChar[]>([])
+const inputEl = ref<HTMLInputElement | null>(null)
+const scrollX = ref(0)
+const composing = ref(false)
+
+// Diff by common prefix/suffix so mid-string edits keep stable ids: untouched
+// characters must not re-key, or every keystroke would replay all animations.
+function reconcile(value: string): void {
+  const prev = chars.value
+  const next = Array.from(segmenter.segment(value), (part) => part.segment)
+  let start = 0
+  const shared = Math.min(prev.length, next.length)
+  while (start < shared && prev[start].char === next[start]) start++
+  let prevEnd = prev.length
+  let nextEnd = next.length
+  while (prevEnd > start && nextEnd > start && prev[prevEnd - 1].char === next[nextEnd - 1]) {
+    prevEnd--
+    nextEnd--
+  }
+  const inserted = next.slice(start, nextEnd).map((char) => ({ id: nextCharId++, char }))
+  chars.value = [...prev.slice(0, start), ...inserted, ...prev.slice(prevEnd)]
+}
+
+watch(() => props.modelValue, reconcile, { immediate: true })
+
+const animated = computed(() => chars.value.length <= props.maxAnimatedLength)
+
+function syncScroll(): void {
+  requestAnimationFrame(() => {
+    if (inputEl.value) scrollX.value = inputEl.value.scrollLeft
+  })
+}
+
+// Mirror native v-model semantics: hold updates while an IME composition is in
+// flight so the committed text animates in as one burst, not per pinyin key.
+function onInput(event: Event): void {
+  if (composing.value) return
+  emit('update:modelValue', (event.target as HTMLInputElement).value)
+  syncScroll()
+}
+
+function onCompositionEnd(event: Event): void {
+  composing.value = false
+  onInput(event)
+}
+</script>
+
+<template>
+  <span
+    class="animated-input"
+    :class="[rootClass, { 'is-composing': composing }]"
+    :style="rootStyle"
+  >
+    <input
+      ref="inputEl"
+      class="animated-input-field"
+      :value="modelValue"
+      :placeholder="placeholder"
+      v-bind="inputAttrs"
+      @input="onInput"
+      @scroll="syncScroll"
+      @compositionstart="composing = true"
+      @compositionend="onCompositionEnd"
+    />
+    <span class="animated-input-mirror" aria-hidden="true">
+      <span class="animated-input-track" :style="{ transform: `translate3d(${-scrollX}px, 0, 0)` }">
+        <TransitionGroup v-if="animated" name="ai-char">
+          <span v-for="c in chars" :key="c.id" class="ai-char">{{ c.char }}</span>
+        </TransitionGroup>
+        <span v-else class="ai-plain">{{ modelValue }}</span>
+      </span>
+    </span>
+  </span>
+</template>
+
+<style scoped>
+.animated-input {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+.animated-input-field {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  letter-spacing: inherit;
+  color: transparent;
+  /* Wins over host selectors that set `color` on descendant inputs. */
+  -webkit-text-fill-color: transparent;
+  caret-color: var(--ai-caret, var(--te-primary-500));
+}
+
+.animated-input-field::placeholder {
+  color: var(--ai-placeholder, #bbb);
+}
+
+.animated-input-field::selection {
+  color: transparent;
+  background: color-mix(in srgb, var(--te-primary-500) 24%, transparent);
+}
+
+/* While composing, show the raw native text so the inline IME string stays visible. */
+.animated-input.is-composing .animated-input-field {
+  color: inherit;
+  -webkit-text-fill-color: currentColor;
+}
+
+.animated-input.is-composing .animated-input-mirror {
+  opacity: 0;
+}
+
+.animated-input-mirror {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  /* Track the host's padding so mirrored text lines up with the native caret. */
+  padding: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: var(--ai-justify, flex-start);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.animated-input-track {
+  display: inline-flex;
+  align-items: baseline;
+  white-space: pre;
+  will-change: transform;
+}
+
+.ai-char,
+.ai-plain {
+  display: inline-block;
+  white-space: pre;
+  transform-origin: 50% 80%;
+}
+
+.ai-char-enter-active {
+  transition:
+    opacity 180ms ease-out,
+    transform var(--te-motion-panel) var(--te-ease-spring);
+}
+
+.ai-char-enter-from {
+  opacity: 0;
+  transform: translateY(0.35em) scale(0.4);
+}
+
+.ai-char-leave-active {
+  position: absolute;
+  transition:
+    opacity var(--te-motion-return) ease,
+    transform var(--te-motion-return) var(--te-ease-out-quint);
+}
+
+.ai-char-leave-to {
+  opacity: 0;
+  transform: translateY(0.3em) scale(0.3);
+}
+
+.ai-char-move {
+  transition: transform var(--te-motion-panel) var(--te-ease-out-quint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-char-enter-active,
+  .ai-char-leave-active,
+  .ai-char-move {
+    transition: none;
+  }
+}
+</style>

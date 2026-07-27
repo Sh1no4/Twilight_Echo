@@ -1,0 +1,1046 @@
+/* Layout identity for builtin:obsidian-glass. All rules scoped to html[data-te-preset-layout='obsidian-glass']. */
+
+/* ============================================================================
+   PRECISION CONSOLE — Bloomberg-terminal / Linear-inspired structural identity.
+   Everything edge-flush, hairline-separated, square-cornered, dense.
+   Zero color literals: every color derives from --te-* tokens via color-mix().
+   ==========================================================================*/
+
+html[data-te-preset-layout='obsidian-glass'] {
+  --og-hairline: color-mix(in oklab, var(--te-neutral-900) 13%, transparent);
+  --og-hairline-strong: color-mix(in oklab, var(--te-neutral-900) 24%, transparent);
+  --og-ink: var(--te-neutral-900);
+  --og-ink-mute: var(--te-neutral-500);
+  --og-accent: var(--te-primary-500);
+  --og-accent-soft: color-mix(in oklab, var(--te-primary-500) 12%, transparent);
+  --og-accent-line: color-mix(in oklab, var(--te-primary-500) 55%, transparent);
+  --og-panel: var(--te-card-bg);
+  --og-bar-h: 64px;
+  --og-radius: 2px;
+}
+
+/* ── App shell: title bar hairline, flush square chrome ───────────────────*/
+
+html[data-te-preset-layout='obsidian-glass'] .title-bar.drag-region {
+  box-shadow: inset 0 -1px 0 var(--og-hairline) !important;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .title-bar .control-btn,
+html[data-te-preset-layout='obsidian-glass'] .title-bar .menu-btn,
+html[data-te-preset-layout='obsidian-glass'] .title-bar .settings-btn,
+html[data-te-preset-layout='obsidian-glass'] .title-bar .plugins-btn,
+html[data-te-preset-layout='obsidian-glass'] .title-bar .login-btn {
+  border-radius: var(--og-radius);
+}
+
+/* ── Side navigation: flush square toolbar, hairline edge, 2px active tick ─*/
+
+html[data-te-preset-layout='obsidian-glass'] .side-menu {
+  border-radius: 0;
+  border-right: 1px solid var(--og-hairline);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .side-menu .menu-items {
+  padding: 8px 0;
+  min-width: 0;
+  max-width: 100%;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .side-menu .menu-nav {
+  gap: 0;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .side-menu .menu-item {
+  width: 100%;
+  height: 38px;
+  margin-left: 0;
+  padding: 0 10px;
+  justify-content: center;
+  border-radius: 0;
+  gap: 10px;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .side-menu .menu-item:hover {
+  transform: none;
+  background: color-mix(in oklab, var(--te-neutral-900) 6%, transparent);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .side-menu .menu-item:hover .item-icon {
+  transform: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .side-menu .menu-item.active {
+  background: var(--og-accent-soft);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .side-menu .menu-item.active::before {
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  border-radius: 0;
+  box-shadow: none;
+  opacity: 1;
+  background: var(--og-accent);
+  animation: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .side-menu.open .menu-nav .menu-item {
+  animation: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .side-menu .menu-separator {
+  margin: 6px 10px;
+  border-color: var(--og-hairline);
+  background: var(--og-hairline);
+}
+
+/* ── Local dashboard: dense data-grid console ─────────────────────────────*/
+
+html[data-te-preset-layout='obsidian-glass'] .home .home-sky {
+  display: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .home-inner {
+  width: 100%;
+  max-width: none;
+  gap: clamp(1.2rem, 2vw, 1.9rem);
+  padding-inline: clamp(14px, 2vw, 30px);
+}
+
+/* Masthead becomes a slim console header strip */
+html[data-te-preset-layout='obsidian-glass'] .home .hd {
+  align-items: center;
+  gap: 1rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--og-hairline);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .hd-chip {
+  border-radius: var(--og-radius);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .hd-greeting {
+  font-size: clamp(1.05rem, 1.7vw, 1.45rem);
+  letter-spacing: 0.01em;
+  line-height: 1.25;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .hd-shuffle {
+  min-width: 0;
+  padding: 8px 14px;
+  gap: 0.6rem;
+  border: 1px solid var(--og-hairline);
+  border-radius: var(--og-radius);
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .hd-shuffle:hover {
+  transform: none;
+  border-color: var(--og-accent-line);
+  box-shadow: none;
+  background: var(--og-accent-soft);
+}
+
+/* Flat panels: hairline borders replace shadows everywhere */
+html[data-te-preset-layout='obsidian-glass'] .home .stat-tile,
+html[data-te-preset-layout='obsidian-glass'] .home .signal-card,
+html[data-te-preset-layout='obsidian-glass'] .home .chart-card,
+html[data-te-preset-layout='obsidian-glass'] .home .cal-card,
+html[data-te-preset-layout='obsidian-glass'] .home .empty-card,
+html[data-te-preset-layout='obsidian-glass'] .home .dsp-route-dialog {
+  border-radius: var(--og-radius);
+  border: 1px solid var(--og-hairline);
+  background: var(--og-panel);
+  box-shadow: none;
+}
+
+/* Now-playing card: compact flat strip instead of a floating stage */
+html[data-te-preset-layout='obsidian-glass'] .home .now-card {
+  min-height: 0;
+  border-radius: var(--og-radius);
+  border: 1px solid var(--og-hairline);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .now-layout {
+  min-height: 0;
+  flex-direction: row-reverse;
+  align-items: center;
+  gap: clamp(1rem, 2.4vw, 2.2rem);
+  padding: clamp(14px, 1.8vw, 22px) clamp(16px, 2.2vw, 28px);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .feature-backdrop img {
+  filter: blur(52px) saturate(0.8) brightness(0.55);
+  opacity: 0.55;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .now-eyebrow {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .now-title {
+  font-size: clamp(1.15rem, 2vw, 1.7rem);
+  letter-spacing: 0.02em;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .now-artist {
+  margin-top: 0.3rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .now-chips .now-chip {
+  border-radius: var(--og-radius);
+}
+
+/* Cover art: single small square, no halo theatrics */
+html[data-te-preset-layout='obsidian-glass'] .home .now-art {
+  width: clamp(120px, 12vw, 168px);
+  height: clamp(120px, 12vw, 168px);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .now-halo {
+  display: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .now-cover {
+  border-radius: var(--og-radius);
+  border: 1px solid var(--og-hairline-strong);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .now-cover img {
+  border-radius: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .round-btn,
+html[data-te-preset-layout='obsidian-glass'] .home .pill-primary,
+html[data-te-preset-layout='obsidian-glass'] .home .pill-ghost,
+html[data-te-preset-layout='obsidian-glass'] .home .empty-cta,
+html[data-te-preset-layout='obsidian-glass'] .home .cal-nav-btn,
+html[data-te-preset-layout='obsidian-glass'] .home .sec-link {
+  border-radius: var(--og-radius);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .now-rail,
+html[data-te-preset-layout='obsidian-glass'] .home .now-rail span {
+  border-radius: 0;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .now-rail span::after {
+  display: none;
+}
+
+/* Stat band: flat narrow strip, precise numerals */
+html[data-te-preset-layout='obsidian-glass'] .home .stat-row {
+  margin-top: 0;
+  gap: 0.75rem;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .stat-tile {
+  padding: 0.75rem 1rem;
+  gap: 0.75rem;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .stat-tile:not(.is-static):hover {
+  transform: none;
+  border-color: var(--og-accent-line);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .stat-tile .stat-icon {
+  border-radius: var(--og-radius);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .stat-copy strong {
+  font-size: clamp(1.15rem, 1.7vw, 1.55rem);
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .route-stage,
+html[data-te-preset-layout='obsidian-glass'] .home .route-stage-icon,
+html[data-te-preset-layout='obsidian-glass'] .home .dialog-node-row,
+html[data-te-preset-layout='obsidian-glass'] .home .dialog-node-icon,
+html[data-te-preset-layout='obsidian-glass'] .home .dialog-icon-button {
+  border-radius: var(--og-radius);
+}
+
+/* Sections: hairline top rule + small uppercase console labels */
+html[data-te-preset-layout='obsidian-glass'] .home .sec {
+  border-top: 1px solid var(--og-hairline);
+  padding-top: 1rem;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .sec-head {
+  align-items: center;
+  gap: 0.7rem;
+  margin-bottom: 0.9rem;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .sec-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--og-radius);
+  font-size: 0.85rem;
+  color: var(--og-accent);
+  background: var(--og-accent-soft);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .sec-copy h3 {
+  font-size: 0.8rem;
+  font-weight: 750;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .sec-copy p {
+  margin-top: 0.25rem;
+  font-size: 0.64rem;
+  letter-spacing: 0.08em;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .sec-link {
+  padding: 0.32rem 0.62rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* Recently added: dense uniform tile grid — no feature spans */
+html[data-te-preset-layout='obsidian-glass'] .home .recent-grid {
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 10px;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .track-text {
+  padding: 0 0.15rem;
+  gap: 0.22rem;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .track-text strong {
+  color: var(--og-ink);
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .track-text small {
+  color: var(--og-ink-mute);
+  font-size: 0.66rem;
+  text-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .track-card {
+  gap: 0.45rem;
+  border: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+  border-radius: var(--og-radius);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .track-cover {
+  border-radius: var(--og-radius);
+  border: 1px solid var(--og-hairline);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .track-card:hover {
+  transform: none;
+  box-shadow: none;
+  border-color: transparent;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .track-card:hover .track-cover {
+  transform: none;
+  border-color: var(--og-accent-line);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .track-card:hover .track-cover img {
+  transform: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .track-play {
+  width: 28px;
+  height: 28px;
+  right: 8px;
+  bottom: 8px;
+  border-radius: var(--og-radius);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .format-badge {
+  top: 6px;
+  left: 6px;
+  border-radius: 0;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Listening footprint: table-like ranked rows with hairline separators */
+html[data-te-preset-layout='obsidian-glass'] .home .footprint-grid {
+  grid-template-columns: minmax(0, 1.65fr) minmax(280px, 0.7fr);
+  gap: 0.75rem;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .chart-champion,
+html[data-te-preset-layout='obsidian-glass'] .home .champion-cover {
+  border-radius: var(--og-radius);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .chart-rows {
+  gap: 0;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .chart-row {
+  grid-template-columns: 24px 30px minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  padding: 0.42rem 0.5rem;
+  border: 0;
+  border-radius: 0;
+  box-shadow: inset 0 -1px 0 var(--og-hairline);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .chart-row:last-child {
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .chart-row:hover {
+  background: color-mix(in oklab, var(--te-neutral-900) 6%, transparent);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .row-cover {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--og-radius);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .row-rank {
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .row-bar,
+html[data-te-preset-layout='obsidian-glass'] .home .row-bar-fill {
+  height: 2px;
+  border-radius: 0;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .row-plays {
+  font-size: 0.62rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+/* Calendar: crisp square cells */
+html[data-te-preset-layout='obsidian-glass'] .home .cal-cell {
+  border-radius: 0;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .cal-cell:hover:not(.is-blank) {
+  transform: none;
+}
+
+/* Album shelf: dense flat tiles */
+html[data-te-preset-layout='obsidian-glass'] .home .album-grid {
+  grid-template-columns: repeat(auto-fill, minmax(122px, 1fr));
+  gap: 10px;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .album-tile {
+  gap: 0.45rem;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .album-art {
+  border-radius: var(--og-radius);
+  border: 1px solid var(--og-hairline);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .album-tile:hover .album-art {
+  transform: none;
+  border-color: var(--og-accent-line);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home .album-play {
+  border-radius: var(--og-radius);
+  box-shadow: none;
+}
+
+/* ── Streaming home: same dense console grammar ───────────────────────────*/
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .home-flow {
+  gap: 1.4rem;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .home-flow > section {
+  animation: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .home-flow > section + section {
+  border-top: 1px solid var(--og-hairline);
+  padding-top: 1rem;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .hero {
+  border-radius: var(--og-radius);
+  border: 1px solid var(--og-hairline);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .hero-inner {
+  min-height: clamp(180px, 22vw, 230px);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .hero-copy {
+  padding: clamp(16px, 2vw, 26px) clamp(18px, 2.4vw, 30px);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .hero-ambient-img {
+  filter: blur(44px) saturate(0.85) brightness(0.6);
+  opacity: 0.35;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .hero-kicker-day {
+  min-width: 34px;
+  height: 34px;
+  border-radius: 0;
+  font-size: 15px;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .hero-title {
+  margin-top: 12px;
+  font-size: clamp(20px, 2.6vw, 30px);
+  font-weight: 750;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .hero-title-en {
+  margin-top: 4px;
+  font-size: 10px;
+  letter-spacing: 0.5em;
+  color: var(--og-accent);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .hero-desc {
+  font-size: 12px;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .hero-play,
+html[data-te-preset-layout='obsidian-glass'] .home-view .hero-open,
+html[data-te-preset-layout='obsidian-glass'] .home-view .section-more,
+html[data-te-preset-layout='obsidian-glass'] .home-view .invite-cta,
+html[data-te-preset-layout='obsidian-glass'] .home-view .home-error-retry {
+  height: 34px;
+  border-radius: var(--og-radius);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .hero-collage-card {
+  border-radius: var(--og-radius);
+  box-shadow: 0 0 0 1px var(--og-hairline-strong);
+}
+
+/* Duo radios: flat narrow strips */
+html[data-te-preset-layout='obsidian-glass'] .home-view .duo {
+  gap: 0.75rem;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .duo-card {
+  padding: 12px 16px;
+  border-radius: var(--og-radius);
+  border: 1px solid var(--og-hairline);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .duo-card:hover {
+  transform: none;
+  border-color: var(--og-accent-line);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .duo-stack-cover {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--og-radius);
+  box-shadow: 0 0 0 1px var(--og-hairline);
+}
+
+/* Streaming section heads: uppercase console labels */
+html[data-te-preset-layout='obsidian-glass'] .home-view .section-head-copy h3 {
+  font-size: 0.8rem;
+  font-weight: 750;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .section-head-copy p {
+  font-size: 0.64rem;
+  letter-spacing: 0.08em;
+}
+
+/* Chart: hairline-separated tabular rows */
+html[data-te-preset-layout='obsidian-glass'] .home-view .chart-grid {
+  gap: 0 24px;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .chart-row {
+  grid-template-columns: 26px 32px minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 0;
+  box-shadow: inset 0 -1px 0 var(--og-hairline);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .chart-row:hover {
+  background: color-mix(in oklab, var(--te-neutral-900) 6%, transparent);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .chart-index {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .chart-cover {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--og-radius);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .chart-duration {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+}
+
+/* Playlist shelf: dense flat tiles */
+html[data-te-preset-layout='obsidian-glass'] .home-view .shelf-grid {
+  grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
+  gap: 12px 10px;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .shelf-cover {
+  border-radius: var(--og-radius);
+  border: 1px solid var(--og-hairline);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .shelf-tile:hover .shelf-cover {
+  transform: none;
+  border-color: var(--og-accent-line);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .home-view .shelf-count,
+html[data-te-preset-layout='obsidian-glass'] .home-view .shelf-open {
+  border-radius: var(--og-radius);
+}
+
+/* Streaming shell chrome */
+html[data-te-preset-layout='obsidian-glass'] .streaming-page .streaming-sidebar {
+  border-radius: 0;
+  border-right: 1px solid var(--og-hairline);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .streaming-page .streaming-menu-item {
+  position: relative;
+  border-radius: 0;
+  min-height: 34px;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .streaming-page .streaming-menu-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--og-accent);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .streaming-page .streaming-content-header {
+  box-shadow: inset 0 -1px 0 var(--og-hairline);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .streaming-page .streaming-content-title {
+  font-size: 0.95rem;
+  font-weight: 750;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+/* ── Library / song list pages: ledger rows ───────────────────────────────*/
+
+html[data-te-preset-layout='obsidian-glass'] .song-list .song-list-title {
+  font-size: 0.95rem;
+  font-weight: 750;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .song-list .song-list-header {
+  border-bottom: 1px solid var(--og-hairline);
+}
+
+/* Hairline row separators without touching virtual-scroll row heights */
+html[data-te-preset-layout='obsidian-glass'] .song-list .track-row {
+  border-radius: 0;
+  box-shadow: inset 0 -1px 0 var(--og-hairline);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .song-list .track-row .cover-img,
+html[data-te-preset-layout='obsidian-glass'] .song-list .track-row .cover-placeholder {
+  border-radius: var(--og-radius);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .song-list .duration-time {
+  font-variant-numeric: tabular-nums;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .song-list .album-cover,
+html[data-te-preset-layout='obsidian-glass'] .song-list .artist-cover,
+html[data-te-preset-layout='obsidian-glass'] .song-list .playlist-card,
+html[data-te-preset-layout='obsidian-glass'] .song-list .album-cover-placeholder,
+html[data-te-preset-layout='obsidian-glass'] .song-list .artist-cover-placeholder,
+html[data-te-preset-layout='obsidian-glass'] .song-list .btn-play-all,
+html[data-te-preset-layout='obsidian-glass'] .song-list .btn-shuffle-all,
+html[data-te-preset-layout='obsidian-glass'] .song-list .search-box {
+  border-radius: var(--og-radius);
+}
+
+/* ── Playing page (full-cover + pro): edge-anchored control band ─────────*/
+
+html[data-te-preset-layout='obsidian-glass'] .playing-music .visualizer-toggle-button {
+  border-radius: var(--og-radius);
+}
+
+html[data-te-preset-layout='obsidian-glass'][data-te-player-layout='full-cover']
+  .playing-music
+  .cover-meta {
+  left: 0;
+  right: 0;
+  bottom: var(--og-bar-h);
+  width: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 16px;
+  row-gap: 2px;
+  padding: 10px clamp(16px, 3vw, 30px);
+  border-radius: 0;
+  border-top: 1px solid var(--og-hairline);
+  background: color-mix(in oklab, var(--te-player-bg) 82%, transparent);
+  backdrop-filter: blur(14px);
+  text-align: left;
+}
+
+html[data-te-preset-layout='obsidian-glass'][data-te-player-layout='full-cover']
+  .playing-music
+  .cover-meta
+  .track-title {
+  margin: 0;
+  font-size: clamp(14px, 1.5vw, 19px);
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+}
+
+html[data-te-preset-layout='obsidian-glass'][data-te-player-layout='full-cover']
+  .playing-music
+  .cover-meta
+  .track-artist {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: color-mix(in oklab, var(--te-neutral-900) 66%, transparent);
+}
+
+html[data-te-preset-layout='obsidian-glass'][data-te-player-layout='full-cover']
+  .playing-music
+  .cover-meta
+  .track-album {
+  margin: 0;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: color-mix(in oklab, var(--te-neutral-900) 45%, transparent);
+}
+
+/* Lyrics: flush right-edge console panel, hairline left rule */
+html[data-te-preset-layout='obsidian-glass'][data-te-player-layout='full-cover']
+  .playing-music
+  .lyrics-column {
+  top: 40px;
+  right: 0;
+  bottom: calc(var(--og-bar-h) + 46px);
+  width: min(44vw, 560px);
+  padding: 18px clamp(16px, 2.4vw, 28px);
+  border: 0;
+  border-left: 1px solid var(--og-hairline);
+  border-radius: 0;
+  background: color-mix(in oklab, var(--te-player-bg) 58%, transparent);
+  backdrop-filter: blur(26px);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .playing-music .lyric-row {
+  border-radius: var(--og-radius);
+}
+
+/* ── Player bar: full-width flat console strip ────────────────────────────*/
+
+html[data-te-preset-layout='obsidian-glass'] .player-bar-shell {
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .player-bar-shell.menu-open {
+  left: var(--te-menu-width);
+  right: 0;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .player-bar {
+  height: var(--og-bar-h);
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding: 0 clamp(10px, 1.6vw, 22px);
+  grid-template-columns: minmax(0, 320px) minmax(0, 1fr) minmax(0, 320px);
+  column-gap: 14px;
+  border: 0;
+  border-top: 1px solid var(--og-hairline-strong);
+  border-radius: 0;
+  background: color-mix(in oklab, var(--te-player-bg) 94%, transparent);
+  box-shadow: none;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+/* Left cluster: small square artwork, precise typography */
+html[data-te-preset-layout='obsidian-glass'] .player-bar .player-cover-slot,
+html[data-te-preset-layout='obsidian-glass'] .player-bar .player-cover,
+html[data-te-preset-layout='obsidian-glass'] .player-bar .player-cover-slot img.player-cover,
+html[data-te-preset-layout='obsidian-glass'] .player-bar .player-cover-placeholder {
+  width: 40px;
+  height: 40px;
+  border-radius: 0;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .player-bar .player-cover-slot:hover .player-cover,
+html[data-te-preset-layout='obsidian-glass']
+  .player-bar
+  .player-cover-slot:hover
+  img.player-cover {
+  transform: none;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .player-bar .player-title {
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .player-bar .player-artist {
+  margin-top: 1px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--og-ink-mute);
+}
+
+/* Center: transport + inline precise time readout on a single row */
+html[data-te-preset-layout='obsidian-glass'] .player-bar .player-center {
+  position: static;
+  flex-direction: row;
+  justify-content: center;
+  gap: 16px;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .player-bar .player-controls {
+  gap: 8px;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .player-bar .ctrl-btn,
+html[data-te-preset-layout='obsidian-glass'] .player-bar .icon-btn {
+  border: 1px solid transparent;
+  border-radius: var(--og-radius);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .player-bar .ctrl-btn:hover,
+html[data-te-preset-layout='obsidian-glass'] .player-bar .icon-btn:hover {
+  border-color: var(--og-hairline);
+  background: color-mix(in oklab, var(--te-neutral-900) 7%, transparent);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .player-bar .btn-play {
+  border: 1px solid var(--og-accent-line);
+  border-radius: var(--og-radius);
+  background: var(--og-accent-soft);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .player-bar .btn-play:hover {
+  background: color-mix(in oklab, var(--te-primary-500) 20%, transparent);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .player-bar .progress-area {
+  display: inline-flex;
+  width: auto;
+  align-items: center;
+  gap: 3px;
+  margin: 0;
+}
+
+/* Small, exact, monospaced-digit time readout (re-shown as console data) */
+html[data-te-preset-layout='obsidian-glass'] .player-bar .time-label {
+  display: inline-block;
+  min-width: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+  color: var(--og-ink-mute);
+}
+
+html[data-te-preset-layout='obsidian-glass']
+  .player-bar
+  .progress-area
+  .time-label:first-child::after {
+  content: '/';
+  margin: 0 2px 0 6px;
+  opacity: 0.45;
+}
+
+/* Progress: a 2px full-width line along the very top edge of the bar */
+html[data-te-preset-layout='obsidian-glass'] .player-bar .progress-slider-wrap {
+  display: flex;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 10px;
+  margin: 0;
+  min-width: 0;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .player-bar .progress-track {
+  top: 0;
+  height: 2px;
+  transform: none;
+  border-radius: 0;
+  background: color-mix(in oklab, var(--te-neutral-900) 14%, transparent);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .player-bar .progress-fill {
+  border-radius: 0;
+  background: var(--og-accent);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .player-bar .ab-loop-range {
+  top: 0;
+  height: 4px;
+  transform: none;
+  border-radius: 0;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .player-bar .progress-slider {
+  height: 100%;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .player-bar .progress-slider::-webkit-slider-thumb {
+  width: 8px;
+  height: 8px;
+  border-radius: 0;
+  opacity: 0;
+}
+
+html[data-te-preset-layout='obsidian-glass']
+  .player-bar
+  .progress-slider:hover::-webkit-slider-thumb {
+  opacity: 1;
+}
+
+/* Resume offer floats above the flat bar instead of stacking inside it */
+html[data-te-preset-layout='obsidian-glass'] .player-bar .resume-offer {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  border: 1px solid var(--og-hairline);
+  border-radius: var(--og-radius);
+  background: var(--og-panel);
+}
+
+/* Drawers and panels attached to the bar: flat, hairline, square */
+html[data-te-preset-layout='obsidian-glass'] .player-bar-shell .playlist-panel,
+html[data-te-preset-layout='obsidian-glass'] .player-bar-shell .volume-drawer {
+  border-radius: var(--og-radius);
+  border: 1px solid var(--og-hairline);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='obsidian-glass'] .player-bar-shell .playlist-item {
+  border-radius: 0;
+  box-shadow: inset 0 -1px 0 var(--og-hairline);
+}
+
+html[data-te-preset-layout='obsidian-glass'] .player-bar-shell .playlist-cover,
+html[data-te-preset-layout='obsidian-glass'] .player-bar-shell .playlist-cover-placeholder {
+  border-radius: var(--og-radius);
+}
+
+/* ── Reduced effects: strip blur; no continuous animation exists here ─────*/
+
+html[data-te-preset-layout='obsidian-glass'][data-te-effects-mode='reduced'] .player-bar,
+html[data-te-preset-layout='obsidian-glass'][data-te-effects-mode='reduced']
+  .playing-music
+  .cover-meta,
+html[data-te-preset-layout='obsidian-glass'][data-te-effects-mode='reduced']
+  .playing-music
+  .lyrics-column {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}

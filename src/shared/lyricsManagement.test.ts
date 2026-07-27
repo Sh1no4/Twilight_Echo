@@ -58,6 +58,36 @@ test('manual lyrics take precedence without changing automatic resolver output f
   })
 })
 
+test('layer source selections combine manual and automatic lyrics independently', () => {
+  const automatic = {
+    original: '[00:01.00]Local original',
+    translation: '[00:01.00]Provider translation',
+    romanization: '[00:01.00]Provider romanization',
+    originalSource: 'local',
+    translationSource: 'provider',
+    romanizationSource: 'provider'
+  }
+  const mixed = projectManagedLyrics(automatic, {
+    ...manualOverride(),
+    source: 'auto',
+    originalSelection: 'manual',
+    translationSelection: 'automatic',
+    romanizationSelection: 'manual',
+    original: '[00:01.00]Custom original',
+    translation: '[00:01.00]Unused translation',
+    romanization: '[00:01.00]Custom romanization'
+  })
+
+  assert.deepEqual(mixed, {
+    original: '[00:01.00]Custom original',
+    translation: '[00:01.00]Provider translation',
+    romanization: '[00:01.00]Custom romanization',
+    originalSource: 'manual',
+    translationSource: 'provider',
+    romanizationSource: 'manual'
+  })
+})
+
 test('lyric display toggles independently hide original, translation, and romanization', () => {
   const line = { text: 'Original', translation: 'Translation', romanization: 'Roma' }
   assert.deepEqual(

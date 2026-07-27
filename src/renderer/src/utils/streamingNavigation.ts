@@ -1,4 +1,4 @@
-export type StreamingTabKey = 'home' | 'library' | 'recent'
+export type StreamingTabKey = 'home' | 'discover' | 'library' | 'recent'
 
 export interface StreamingNavigationProvider {
   id: string
@@ -60,6 +60,13 @@ export function buildStreamingSidebarItems({
       label: '主页',
       icon: 'pi pi-sparkles',
       tab: 'home'
+    })
+    items.push({
+      key: 'discover',
+      provider: NCM_PROVIDER_ID,
+      label: '发现歌单',
+      icon: 'pi pi-th-large',
+      tab: 'discover'
     })
   }
   if (getUnifiedLibraryProviders({ ncmAvailable, providers }).length > 0) {

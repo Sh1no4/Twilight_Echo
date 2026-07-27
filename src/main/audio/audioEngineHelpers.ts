@@ -108,6 +108,7 @@ export const DEFAULT_OUTPUT_CONFIG: OutputConfig = {
   preferredBufferSize: 0,
   routingMode: 'auto',
   wasapiExclusivePushMode: false,
+  pcmToDsdMode: 'off',
   upmixCenterGain: 0.7071,
   upmixLfeGain: 0.5,
   upmixLfeLowpassHz: 120,
@@ -451,6 +452,10 @@ export function normalizeChannelRoutingMode(value: unknown): ChannelRoutingMode 
     : 'auto'
 }
 
+export function normalizePcmToDsdMode(value: unknown): NonNullable<OutputConfig['pcmToDsdMode']> {
+  return value === 'dsd64' || value === 'dsd128' || value === 'dsd256' ? value : 'off'
+}
+
 export function normalizeOutputConfig(config?: Partial<OutputConfig>): OutputConfig {
   return {
     preferredBufferSize: Number.isFinite(config?.preferredBufferSize)
@@ -458,6 +463,7 @@ export function normalizeOutputConfig(config?: Partial<OutputConfig>): OutputCon
       : DEFAULT_OUTPUT_CONFIG.preferredBufferSize,
     routingMode: normalizeChannelRoutingMode(config?.routingMode),
     wasapiExclusivePushMode: config?.wasapiExclusivePushMode === true,
+    pcmToDsdMode: normalizePcmToDsdMode(config?.pcmToDsdMode),
     upmixCenterGain: clampNumber(config?.upmixCenterGain, 0, 2, 0.7071),
     upmixLfeGain: clampNumber(config?.upmixLfeGain, 0, 2, 0.5),
     upmixLfeLowpassHz: clampNumber(config?.upmixLfeLowpassHz, 20, 500, 120),
@@ -472,6 +478,7 @@ export function outputConfigsEqual(left: OutputConfig, right: OutputConfig): boo
     left.preferredBufferSize === right.preferredBufferSize &&
     left.routingMode === right.routingMode &&
     left.wasapiExclusivePushMode === right.wasapiExclusivePushMode &&
+    (left.pcmToDsdMode ?? 'off') === (right.pcmToDsdMode ?? 'off') &&
     left.upmixCenterGain === right.upmixCenterGain &&
     left.upmixLfeGain === right.upmixLfeGain &&
     left.upmixLfeLowpassHz === right.upmixLfeLowpassHz &&

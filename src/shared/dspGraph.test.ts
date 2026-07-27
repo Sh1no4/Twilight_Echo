@@ -7,9 +7,11 @@ import {
   DEFAULT_DSP_OUTPUT_STAGE,
   DEFAULT_DSP_STEREO_IMAGE,
   DSP_FACTORY_SCENE_TEMPLATES,
+  DSP_RESAMPLER_QUALITY_OPTIONS,
   extractStereoImageFromGraph,
   mergeDspOutputStage,
   mergeDspStereoImage,
+  normalizeDspOutputStage,
   normalizeDspScenes,
   outputStageIsActive,
   resolveDspScene,
@@ -68,6 +70,35 @@ test('createLegacyDspGraph preserves HiFi outputStage sample-rate lock', () => {
   assert.equal(graph.outputStage.safetyClamp, true)
 })
 
+test('normalizeDspOutputStage accepts SoX resampler tiers and rejects unknown values', () => {
+  assert.equal(
+    normalizeDspOutputStage({ ...DEFAULT_DSP_OUTPUT_STAGE, resamplerQuality: 'soxrHq' })
+      .resamplerQuality,
+    'soxrHq'
+  )
+  assert.equal(
+    normalizeDspOutputStage({ ...DEFAULT_DSP_OUTPUT_STAGE, resamplerQuality: 'soxrVhq' })
+      .resamplerQuality,
+    'soxrVhq'
+  )
+  assert.equal(
+    normalizeDspOutputStage({ ...DEFAULT_DSP_OUTPUT_STAGE, resamplerQuality: 'soxr' })
+      .resamplerQuality,
+    'native'
+  )
+  assert.deepEqual(
+    DSP_RESAMPLER_QUALITY_OPTIONS.map((option) => option.value),
+    ['native', 'high', 'ultra', 'soxrHq', 'soxrVhq']
+  )
+  // A SoX tier alone (device rate, no dither) still forces non-passthrough SRC.
+  assert.equal(
+    outputStageIsActive(
+      mergeDspOutputStage(DEFAULT_DSP_OUTPUT_STAGE, { resamplerQuality: 'soxrVhq' })
+    ),
+    true
+  )
+})
+
 test('outputStageIsActive and mergeDspOutputStage treat device+native+off as inactive', () => {
   assert.equal(outputStageIsActive(DEFAULT_DSP_OUTPUT_STAGE), false)
   assert.equal(
@@ -75,8 +106,10 @@ test('outputStageIsActive and mergeDspOutputStage treat device+native+off as ina
     true
   )
   assert.equal(
-    mergeDspOutputStage({ ...DEFAULT_DSP_OUTPUT_STAGE, targetSampleRate: 44100 }, { dither: 'tpdf' })
-      .targetSampleRate,
+    mergeDspOutputStage(
+      { ...DEFAULT_DSP_OUTPUT_STAGE, targetSampleRate: 44100 },
+      { dither: 'tpdf' }
+    ).targetSampleRate,
     44100
   )
 })

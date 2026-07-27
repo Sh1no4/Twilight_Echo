@@ -67,224 +67,227 @@ function emitPage(first: number): void {
 <template>
   <div class="search-view">
     <div v-if="searchLoading && searchOffset === 0" class="streaming-placeholder">
-        <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
-        <p class="placeholder-title">正在搜索</p>
-      </div>
-      <div v-else-if="searchError" class="streaming-placeholder">
-        <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
-        <p class="placeholder-title">搜索失败</p>
-        <p class="placeholder-hint">{{ searchError }}</p>
-        <button type="button" class="search-action-btn" @click="emit('retry')">重试</button>
-      </div>
-      <div v-else-if="searchTotal === 0 && !searchLoading" class="streaming-placeholder">
-        <i class="pi pi-search" style="font-size: 40px; color: #ccc"></i>
-        <p class="placeholder-title">无搜索结果</p>
-        <p class="placeholder-hint">换个关键词试试吧</p>
-      </div>
-      <div v-else class="search-results-content">
-        <div v-if="searchType === 'songs'" class="detail-content">
-          <div class="track-table-wrapper">
-            <div v-if="hasSelection" class="selection-toolbar">
-              <span class="selection-count">已选择 {{ selectedCount }} 首</span>
-              <div class="selection-actions">
-                <button type="button" class="selection-btn" @click="emit('batchFavorite')">
-                  <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
-                  <span>{{ selectionAllFavorited ? '取消收藏' : '加入收藏' }}</span>
-                </button>
-                <button
-                  v-if="canAddToPlaylist"
-                  type="button"
-                  class="selection-btn"
-                  @click="emit('batchAddToPlaylist')"
-                >
-                  <i class="pi pi-list"></i>
-                  <span>添加到歌单</span>
-                </button>
-                <button type="button" class="selection-btn danger" @click="emit('batchDelete')">
-                  <i class="pi pi-trash"></i>
-                  <span>删除</span>
-                </button>
-                <button type="button" class="selection-btn ghost" @click="emit('clearSelection')">
-                  <i class="pi pi-times"></i>
-                  <span>取消</span>
-                </button>
-              </div>
-            </div>
-            <table class="track-table">
-              <thead>
-                <tr>
-                  <th class="col-cover-header"></th>
-                  <th class="col-index">#</th>
-                  <th class="col-info">标题</th>
-                  <th class="col-like-header"></th>
-                  <th class="col-album">专辑</th>
-                  <th class="col-duration">时长</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="(track, index) in searchResults"
-                  :key="track.id"
-                  class="track-row"
-                  :class="{
-                    'track-playing': currentTrack?.id === track.id,
-                    'track-selected': isSelected(track.id)
-                  }"
-                  @click="emit('searchTrackClick', track, $event)"
-                  @contextmenu.prevent="emit('trackContextMenu', track, index, $event)"
-                >
-                  <td class="col-cover">
-                    <img v-if="track.cover" :src="track.cover" class="cover-img" alt="cover" />
-                    <div v-else class="cover-placeholder">
-                      <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
-                    </div>
-                  </td>
-                  <td class="col-index">
-                    <span v-if="currentTrack?.id === track.id" class="playing-indicator">
-                      <i class="pi pi-volume-up" style="font-size: 12px; color: #1a73e8"></i>
-                    </span>
-                    <span v-else>{{ index + 1 + searchOffset }}</span>
-                  </td>
-                  <td class="col-info">
-                    <div class="track-title">{{ track.title }}</div>
-                    <div class="track-artist">{{ track.artist }}</div>
-                  </td>
-                  <td class="col-like">
-                    <button
-                      class="btn-like"
-                      :class="{
-                        liked: isTrackLiked(track.ncmSongId),
-                        loading: likingTracks.has(track.ncmSongId ?? 0)
-                      }"
-                      :disabled="likingTracks.has(track.ncmSongId ?? 0)"
-                      title="喜欢"
-                      @click.stop="emit('likeTrack', track, $event)"
-                    >
-                      <i
-                        v-if="likingTracks.has(track.ncmSongId ?? 0)"
-                        class="pi pi-spin pi-spinner"
-                        style="font-size: 14px"
-                      ></i>
-                      <i
-                        v-else
-                        :class="isTrackLiked(track.ncmSongId) ? 'pi pi-heart-fill' : 'pi pi-heart'"
-                        style="font-size: 14px"
-                      ></i>
-                    </button>
-                  </td>
-                  <td class="col-album">{{ track.album }}</td>
-                  <td class="col-duration">{{ formatTime(track.duration) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div v-if="searchTotal > 30" class="search-paginator">
-            <button
-              type="button"
-              class="pager-btn"
-              :disabled="searchOffset <= 0"
-              @click="emitPage(searchOffset - pageSize)"
-            >
-              上一页
-            </button>
-            <span class="pager-text">
-              {{ Math.floor(searchOffset / pageSize) + 1 }} /
-              {{ Math.ceil(searchTotal / pageSize) }}
-            </span>
-            <button
-              type="button"
-              class="pager-btn"
-              :disabled="searchOffset + pageSize >= searchTotal"
-              @click="emitPage(searchOffset + pageSize)"
-            >
-              下一页
-            </button>
-          </div>
-        </div>
-        <div v-else-if="searchType === 'playlists'" class="rec-sections">
-          <div class="playlist-grid">
-            <div
-              v-for="playlist in searchPlaylistsResults"
-              :key="playlist.id"
-              class="playlist-grid-card"
-              @click="emit('openPlaylist', playlist)"
-            >
-              <img v-if="playlist.cover" :src="playlist.cover" class="playlist-grid-cover" alt="" />
-              <div v-else class="playlist-grid-cover-placeholder">
-                <i class="pi pi-list" style="font-size: 28px; color: #bbb"></i>
-              </div>
-              <div class="playlist-grid-name">{{ playlist.name }}</div>
-              <div class="playlist-grid-count">{{ playlist.trackCount }} 首</div>
+      <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
+      <p class="placeholder-title">正在搜索</p>
+    </div>
+    <div v-else-if="searchError" class="streaming-placeholder">
+      <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
+      <p class="placeholder-title">搜索失败</p>
+      <p class="placeholder-hint">{{ searchError }}</p>
+      <button type="button" class="search-action-btn" @click="emit('retry')">重试</button>
+    </div>
+    <div v-else-if="searchTotal === 0 && !searchLoading" class="streaming-placeholder">
+      <i class="pi pi-search" style="font-size: 40px; color: #ccc"></i>
+      <p class="placeholder-title">无搜索结果</p>
+      <p class="placeholder-hint">换个关键词试试吧</p>
+    </div>
+    <div v-else class="search-results-content">
+      <div v-if="searchType === 'songs'" class="detail-content">
+        <div class="track-table-wrapper">
+          <div v-if="hasSelection" class="selection-toolbar">
+            <span class="selection-count">已选择 {{ selectedCount }} 首</span>
+            <div class="selection-actions">
+              <button type="button" class="selection-btn" @click="emit('batchFavorite')">
+                <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
+                <span>{{ selectionAllFavorited ? '取消收藏' : '加入收藏' }}</span>
+              </button>
+              <button
+                v-if="canAddToPlaylist"
+                type="button"
+                class="selection-btn"
+                @click="emit('batchAddToPlaylist')"
+              >
+                <i class="pi pi-list"></i>
+                <span>添加到歌单</span>
+              </button>
+              <button type="button" class="selection-btn danger" @click="emit('batchDelete')">
+                <i class="pi pi-trash"></i>
+                <span>删除</span>
+              </button>
+              <button type="button" class="selection-btn ghost" @click="emit('clearSelection')">
+                <i class="pi pi-times"></i>
+                <span>取消</span>
+              </button>
             </div>
           </div>
-          <div v-if="searchTotal > 30" class="search-paginator">
-            <button
-              type="button"
-              class="pager-btn"
-              :disabled="searchOffset <= 0"
-              @click="emitPage(searchOffset - pageSize)"
-            >
-              上一页
-            </button>
-            <span class="pager-text">
-              {{ Math.floor(searchOffset / pageSize) + 1 }} /
-              {{ Math.ceil(searchTotal / pageSize) }}
-            </span>
-            <button
-              type="button"
-              class="pager-btn"
-              :disabled="searchOffset + pageSize >= searchTotal"
-              @click="emitPage(searchOffset + pageSize)"
-            >
-              下一页
-            </button>
-          </div>
+          <table class="track-table">
+            <thead>
+              <tr>
+                <th class="col-cover-header"></th>
+                <th class="col-index">#</th>
+                <th class="col-info">标题</th>
+                <th class="col-like-header"></th>
+                <th class="col-album">专辑</th>
+                <th class="col-duration">时长</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="(track, index) in searchResults"
+                :key="track.id"
+                class="track-row"
+                data-te-interactive
+                :class="{
+                  'track-playing': currentTrack?.id === track.id,
+                  'track-selected': isSelected(track.id)
+                }"
+                @click="emit('searchTrackClick', track, $event)"
+                @contextmenu.prevent="emit('trackContextMenu', track, index, $event)"
+              >
+                <td class="col-cover">
+                  <img v-if="track.cover" :src="track.cover" class="cover-img" alt="cover" />
+                  <div v-else class="cover-placeholder">
+                    <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
+                  </div>
+                </td>
+                <td class="col-index">
+                  <span v-if="currentTrack?.id === track.id" class="playing-indicator">
+                    <i class="pi pi-volume-up" style="font-size: 12px; color: #1a73e8"></i>
+                  </span>
+                  <span v-else>{{ index + 1 + searchOffset }}</span>
+                </td>
+                <td class="col-info">
+                  <div class="track-title">{{ track.title }}</div>
+                  <div class="track-artist">{{ track.artist }}</div>
+                </td>
+                <td class="col-like">
+                  <button
+                    class="btn-like"
+                    :class="{
+                      liked: isTrackLiked(track.ncmSongId),
+                      loading: likingTracks.has(track.ncmSongId ?? 0)
+                    }"
+                    :disabled="likingTracks.has(track.ncmSongId ?? 0)"
+                    title="喜欢"
+                    @click.stop="emit('likeTrack', track, $event)"
+                  >
+                    <i
+                      v-if="likingTracks.has(track.ncmSongId ?? 0)"
+                      class="pi pi-spin pi-spinner"
+                      style="font-size: 14px"
+                    ></i>
+                    <i
+                      v-else
+                      :class="isTrackLiked(track.ncmSongId) ? 'pi pi-heart-fill' : 'pi pi-heart'"
+                      style="font-size: 14px"
+                    ></i>
+                  </button>
+                </td>
+                <td class="col-album">{{ track.album }}</td>
+                <td class="col-duration">{{ formatTime(track.duration) }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <div v-else-if="searchType === 'artists'" class="rec-sections">
-          <div class="playlist-grid">
-            <div
-              v-for="artist in searchArtistsResults"
-              :key="artist.id"
-              class="playlist-grid-card artist-card"
-              @click="emit('openArtist', artist)"
-            >
-              <img
-                v-if="artist.picUrl"
-                :src="artist.picUrl"
-                class="playlist-grid-cover artist-cover"
-                alt=""
-              />
-              <div v-else class="playlist-grid-cover-placeholder artist-cover">
-                <i class="pi pi-user" style="font-size: 28px; color: #bbb"></i>
-              </div>
-              <div class="playlist-grid-name">{{ artist.name }}</div>
-              <div class="playlist-grid-count">{{ artist.musicSize ?? 0 }} 首单曲</div>
-            </div>
-          </div>
-          <div v-if="searchTotal > 30" class="search-paginator">
-            <button
-              type="button"
-              class="pager-btn"
-              :disabled="searchOffset <= 0"
-              @click="emitPage(searchOffset - pageSize)"
-            >
-              上一页
-            </button>
-            <span class="pager-text">
-              {{ Math.floor(searchOffset / pageSize) + 1 }} /
-              {{ Math.ceil(searchTotal / pageSize) }}
-            </span>
-            <button
-              type="button"
-              class="pager-btn"
-              :disabled="searchOffset + pageSize >= searchTotal"
-              @click="emitPage(searchOffset + pageSize)"
-            >
-              下一页
-            </button>
-          </div>
+        <div v-if="searchTotal > 30" class="search-paginator">
+          <button
+            type="button"
+            class="pager-btn"
+            :disabled="searchOffset <= 0"
+            @click="emitPage(searchOffset - pageSize)"
+          >
+            上一页
+          </button>
+          <span class="pager-text">
+            {{ Math.floor(searchOffset / pageSize) + 1 }} /
+            {{ Math.ceil(searchTotal / pageSize) }}
+          </span>
+          <button
+            type="button"
+            class="pager-btn"
+            :disabled="searchOffset + pageSize >= searchTotal"
+            @click="emitPage(searchOffset + pageSize)"
+          >
+            下一页
+          </button>
         </div>
       </div>
+      <div v-else-if="searchType === 'playlists'" class="rec-sections">
+        <div class="playlist-grid">
+          <div
+            v-for="playlist in searchPlaylistsResults"
+            :key="playlist.id"
+            class="playlist-grid-card"
+            data-te-interactive
+            @click="emit('openPlaylist', playlist)"
+          >
+            <img v-if="playlist.cover" :src="playlist.cover" class="playlist-grid-cover" alt="" />
+            <div v-else class="playlist-grid-cover-placeholder">
+              <i class="pi pi-list" style="font-size: 28px; color: #bbb"></i>
+            </div>
+            <div class="playlist-grid-name">{{ playlist.name }}</div>
+            <div class="playlist-grid-count">{{ playlist.trackCount }} 首</div>
+          </div>
+        </div>
+        <div v-if="searchTotal > 30" class="search-paginator">
+          <button
+            type="button"
+            class="pager-btn"
+            :disabled="searchOffset <= 0"
+            @click="emitPage(searchOffset - pageSize)"
+          >
+            上一页
+          </button>
+          <span class="pager-text">
+            {{ Math.floor(searchOffset / pageSize) + 1 }} /
+            {{ Math.ceil(searchTotal / pageSize) }}
+          </span>
+          <button
+            type="button"
+            class="pager-btn"
+            :disabled="searchOffset + pageSize >= searchTotal"
+            @click="emitPage(searchOffset + pageSize)"
+          >
+            下一页
+          </button>
+        </div>
+      </div>
+      <div v-else-if="searchType === 'artists'" class="rec-sections">
+        <div class="playlist-grid">
+          <div
+            v-for="artist in searchArtistsResults"
+            :key="artist.id"
+            class="playlist-grid-card artist-card"
+            data-te-interactive
+            @click="emit('openArtist', artist)"
+          >
+            <img
+              v-if="artist.picUrl"
+              :src="artist.picUrl"
+              class="playlist-grid-cover artist-cover"
+              alt=""
+            />
+            <div v-else class="playlist-grid-cover-placeholder artist-cover">
+              <i class="pi pi-user" style="font-size: 28px; color: #bbb"></i>
+            </div>
+            <div class="playlist-grid-name">{{ artist.name }}</div>
+            <div class="playlist-grid-count">{{ artist.musicSize ?? 0 }} 首单曲</div>
+          </div>
+        </div>
+        <div v-if="searchTotal > 30" class="search-paginator">
+          <button
+            type="button"
+            class="pager-btn"
+            :disabled="searchOffset <= 0"
+            @click="emitPage(searchOffset - pageSize)"
+          >
+            上一页
+          </button>
+          <span class="pager-text">
+            {{ Math.floor(searchOffset / pageSize) + 1 }} /
+            {{ Math.ceil(searchTotal / pageSize) }}
+          </span>
+          <button
+            type="button"
+            class="pager-btn"
+            :disabled="searchOffset + pageSize >= searchTotal"
+            @click="emitPage(searchOffset + pageSize)"
+          >
+            下一页
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 

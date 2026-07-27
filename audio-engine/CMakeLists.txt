@@ -58,6 +58,7 @@ set(TAE_ENGINE_SOURCES
   decoder/vendor/dstdec/dstdec.cpp
   decoder/FFmpegDecoder.cpp
   decoder/SacdIsoDemuxer.cpp
+  decoder/ScarletbookToc.cpp
   devices/DeviceManager.cpp
   dsp/ChannelRouter.cpp
   dsp/ConvolverProcessor.cpp
@@ -67,6 +68,7 @@ set(TAE_ENGINE_SOURCES
   dsp/FftSpectrumAnalyzer.cpp
   dsp/KissFftAdapter.cpp
   dsp/ParametricEqProcessor.cpp
+  dsp/PcmToDsdModulator.cpp
   dsp/ReplayGainProcessor.cpp
   dsp/Vst3BridgeProcessor.cpp
   dsp/WsolaResampler.cpp
@@ -356,6 +358,7 @@ if(TAE_BUILD_TESTS)
     metadata/metadata_tests.cpp
     metadata/AudioMetadataService.cpp
     decoder/SacdIsoDemuxer.cpp
+    decoder/ScarletbookToc.cpp
     decoder/DstDecoder.cpp
     decoder/SacdDstDecoderProvider.cpp
     decoder/vendor/dstdec/dstdec.cpp
@@ -395,6 +398,7 @@ if(TAE_BUILD_TESTS)
     decoder/DopPacker.cpp
     decoder/DsdReader.cpp
     decoder/SacdIsoDemuxer.cpp
+    decoder/ScarletbookToc.cpp
     decoder/DstDecoder.cpp
     decoder/SacdDstDecoderProvider.cpp
     decoder/vendor/dstdec/dstdec.cpp
@@ -402,6 +406,14 @@ if(TAE_BUILD_TESTS)
   )
   target_include_directories(twilight_dsd_dop_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   add_test(NAME twilight_dsd_dop_unit COMMAND twilight_dsd_dop_tests)
+
+  add_executable(twilight_pcm_to_dsd_tests
+    tests/pcm_to_dsd_tests.cpp
+    dsp/PcmToDsdModulator.cpp
+    core/AudioTypes.cpp
+  )
+  target_include_directories(twilight_pcm_to_dsd_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(NAME twilight_pcm_to_dsd_unit COMMAND twilight_pcm_to_dsd_tests)
 
   add_executable(twilight_queue_tests
     tests/queue_tests.cpp
@@ -517,6 +529,7 @@ if(TAE_BUILD_TESTS)
     decoder/DopPacker.cpp
     decoder/DsdReader.cpp
     decoder/SacdIsoDemuxer.cpp
+    decoder/ScarletbookToc.cpp
     decoder/DstDecoder.cpp
     decoder/SacdDstDecoderProvider.cpp
     decoder/vendor/dstdec/dstdec.cpp
@@ -582,6 +595,7 @@ if(TAE_BUILD_TESTS)
     decoder/DopPacker.cpp
     decoder/DsdReader.cpp
     decoder/SacdIsoDemuxer.cpp
+    decoder/ScarletbookToc.cpp
     decoder/DstDecoder.cpp
     decoder/SacdDstDecoderProvider.cpp
     decoder/vendor/dstdec/dstdec.cpp

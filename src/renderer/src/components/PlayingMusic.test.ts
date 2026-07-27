@@ -33,6 +33,28 @@ test('clicking a timed lyric releases manual scroll lock before seeking', () => 
   assert.match(source, /class="lyric-row"[\s\S]*@pointerdown\.stop[\s\S]*@click="jumpToLyric/)
 })
 
+test('now playing isolates high-frequency playhead updates from the full lyrics list', () => {
+  const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+  const words = readFileSync(new URL('./PlayingLyricWords.vue', import.meta.url), 'utf8')
+  const timeChip = readFileSync(new URL('./PlayingMusicTimeChip.vue', import.meta.url), 'utf8')
+
+  assert.match(source, /lyricsLoadState\.value\.status === 'loading'/)
+  assert.match(
+    source,
+    /watch\(\[lyricLines, currentTime, currentLyricOffsetSeconds\], syncActiveLyricIndex/
+  )
+  assert.match(source, /<PlayingLyricWords/)
+  assert.match(source, /<PlayingMusicTimeChip/)
+  assert.doesNotMatch(source, /formatTime\(currentTime\)/)
+  assert.doesNotMatch(source, /findActiveWordIndex/)
+  assert.match(words, /if \(!props\.active\) return -1/)
+  assert.match(
+    words,
+    /findActiveWordIndex\(props\.words, currentTime\.value \+ props\.offsetSeconds\)/
+  )
+  assert.match(timeChip, /const \{ currentTime, duration, formatTime \} = usePlayerStore\(\)/)
+})
+
 test('now playing and player bar share the same playback singleton', () => {
   const nowPlaying = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
   const playerBar = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
@@ -131,8 +153,8 @@ test('playbar lyrics section hosts the lyrics manager panel', () => {
   assert.match(sidebar, /import LyricsManagerPanel from '\.\/LyricsManagerPanel\.vue'/)
   assert.match(sidebar, /<LyricsManagerPanel \/>/)
   assert.match(panel, /class="lyric-manager lyric-manager--panel"/)
-  assert.match(panel, /Save lyrics/)
-  assert.match(panel, /Import LRC/)
+  assert.match(panel, /保存歌词/)
+  assert.match(panel, /导入 LRC/)
 })
 
 test('desktop lyrics html exposes lyric source metadata on hover', () => {

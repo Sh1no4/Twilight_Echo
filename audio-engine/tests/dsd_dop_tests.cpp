@@ -17,6 +17,7 @@
 #include <numeric>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace twilight::audio;
@@ -374,6 +375,216 @@ std::filesystem::path writeSacdIsoFixture(
       offset += dstFrameSizes[frameIndex];
     }
   }
+
+  std::ofstream out(path, std::ios::binary);
+  out.write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));
+  return path;
+}
+
+void writeBe16To(uint8_t* data, uint16_t value) {
+  data[0] = static_cast<uint8_t>((value >> 8) & 0xff);
+  data[1] = static_cast<uint8_t>(value & 0xff);
+}
+
+// Writes one Scarletbook audio sector at `sector` with a single audio packet
+// carrying `payload`. Non-DST sectors carry a 3-byte frame-info entry, DST
+// sectors a 4-byte one, matching the on-disc layout.
+void writeScarletbookAudioSector(
+    std::vector<uint8_t>& image,
+    uint32_t lsn,
+    bool dst,
+    bool frameStart,
+    const std::vector<uint8_t>& payload) {
+  uint8_t* sector = image.data() + static_cast<size_t>(lsn) * 2048;
+  // Header: packet_info_count=1 (bits 7-5), frame_info_count=1 (bits 4-2),
+  // dst_encoded (bit 0).
+  sector[0] = static_cast<uint8_t>(0x20 | 0x04 | (dst ? 0x01 : 0x00));
+  // Packet info: frame_start (bit 15), data_type=2 audio (bits 13-11),
+  // packet_length (bits 10-0).
+  const uint16_t length = static_cast<uint16_t>(payload.size());
+  sector[1] = static_cast<uint8_t>((frameStart ? 0x80 : 0x00) | (2 << 3) | ((length >> 8) & 0x07));
+  sector[2] = static_cast<uint8_t>(length & 0xff);
+  // Frame info: timecode (m/s/f) + DST channel byte.
+  const size_t frameInfoSize = dst ? 4 : 3;
+  const size_t payloadOffset = 1 + 2 + frameInfoSize;
+  std::copy(payload.begin(), payload.end(), sector + payloadOffset);
+}
+
+// Builds a minimal spec-conformant Scarletbook SACD ISO: ISO9660 descriptor +
+// SACD directory (probe requirements), Master TOC at LSN 510 ("SACDMTOC"),
+// master text at 511 ("SACDText"), a 2CH area TOC at 520 and an MC area TOC
+// at 530 with SACDTTxt / SACDTRL1 / SACDTRL2 sectors, and audio sectors.
+std::filesystem::path writeScarletbookIsoFixture(const std::string& name, bool dstStereoArea) {
+  const auto path = std::filesystem::temp_directory_path() / name;
+  constexpr uint32_t kRootSector = 20;
+  constexpr uint32_t kSacdSector = 21;
+  constexpr uint32_t kSectorSize = 2048;
+  constexpr uint32_t kTwoChTocLsn = 520;
+  constexpr uint32_t kMcTocLsn = 530;
+  constexpr uint32_t kTrack1Lsn = 540;
+  constexpr uint32_t kTrack2Lsn = 542;
+  constexpr uint32_t kMcTrackLsn = 544;
+  std::vector<uint8_t> image(560 * kSectorSize, 0);
+
+  // --- ISO9660 wrapper (satisfies the probe) ---
+  uint8_t* pvd = image.data() + 16 * kSectorSize;
+  pvd[0] = 1;
+  std::memcpy(pvd + 1, "CD001", 5);
+  pvd[6] = 1;
+  writeLe32To(pvd + 156 + 2, kRootSector);
+  writeBe32To(pvd + 156 + 6, kRootSector);
+  writeLe32To(pvd + 156 + 10, kSectorSize);
+  writeBe32To(pvd + 156 + 14, kSectorSize);
+  pvd[156] = 34;
+  pvd[156 + 25] = 0x02;
+  pvd[156 + 28] = 1;
+  pvd[156 + 31] = 1;
+  pvd[156 + 32] = 1;
+  uint8_t* terminator = image.data() + 17 * kSectorSize;
+  terminator[0] = 255;
+  std::memcpy(terminator + 1, "CD001", 5);
+  terminator[6] = 1;
+
+  std::vector<uint8_t> root(kSectorSize, 0);
+  writeSpecialDirectoryRecord(root, 0, kRootSector, kSectorSize, 0);
+  writeSpecialDirectoryRecord(root, 34, kRootSector, kSectorSize, 1);
+  writeDirectoryRecord(root, 68, kSacdSector, kSectorSize, true, "SACD");
+  std::copy(root.begin(), root.end(), image.begin() + kRootSector * kSectorSize);
+
+  std::vector<uint8_t> sacd(kSectorSize, 0);
+  writeSpecialDirectoryRecord(sacd, 0, kSacdSector, kSectorSize, 0);
+  writeSpecialDirectoryRecord(sacd, 34, kRootSector, kSectorSize, 1);
+  writeDirectoryRecord(sacd, 68, 510, 10 * kSectorSize, false, "MASTER.TOC");
+  writeDirectoryRecord(sacd, 112, kTwoChTocLsn, 4 * kSectorSize, false, "TWOCH_AREA.TOC");
+  writeDirectoryRecord(sacd, 160, kMcTocLsn, 4 * kSectorSize, false, "MCH_AREA.TOC");
+  std::copy(sacd.begin(), sacd.end(), image.begin() + kSacdSector * kSectorSize);
+
+  // --- Master TOC (LSN 510) ---
+  uint8_t* mtoc = image.data() + 510 * kSectorSize;
+  std::memcpy(mtoc, "SACDMTOC", 8);
+  mtoc[8] = 1;   // version major
+  mtoc[9] = 20;  // version minor
+  std::memcpy(mtoc + 24, "TWILIGHT-0001", 13);  // album_catalog_number
+  writeBe32To(mtoc + 64, kTwoChTocLsn);         // area_1_toc_1_start
+  writeBe32To(mtoc + 72, kMcTocLsn);            // area_2_toc_1_start
+  writeBe16To(mtoc + 84, 4);                    // area_1_toc_size
+  writeBe16To(mtoc + 86, 4);                    // area_2_toc_size
+  writeBe16To(mtoc + 120, 2020);                // disc_date_year
+  mtoc[122] = 6;
+  mtoc[123] = 15;
+
+  // --- Master text (LSN 511) ---
+  uint8_t* mtext = image.data() + 511 * kSectorSize;
+  std::memcpy(mtext, "SACDText", 8);
+  const auto putMasterText = [&](size_t positionOffset, uint16_t position, const char* text) {
+    writeBe16To(mtext + positionOffset, position);
+    std::memcpy(mtext + position, text, std::strlen(text));
+  };
+  putMasterText(16, 128, "Twilight Album");   // album_title_position
+  putMasterText(20, 160, "Echo Ensemble");    // album_artist_position
+  putMasterText(32, 192, "Twilight Disc");    // disc_title_position
+  putMasterText(36, 224, "Echo Disc Artist"); // disc_artist_position
+
+  // --- Area TOC writer ---
+  const auto writeAreaToc = [&](uint32_t tocLsn,
+                                const char* signature,
+                                bool dst,
+                                uint8_t channels,
+                                uint8_t trackCount,
+                                uint32_t trackStart,
+                                uint32_t trackEnd,
+                                const std::vector<uint32_t>& startLsns,
+                                const std::vector<uint32_t>& lengthLsns,
+                                const std::vector<std::array<uint8_t, 3>>& startTimes,
+                                const std::vector<std::array<uint8_t, 3>>& durations,
+                                const std::vector<std::pair<std::string, std::string>>& texts) {
+    uint8_t* atoc = image.data() + static_cast<size_t>(tocLsn) * kSectorSize;
+    std::memcpy(atoc, signature, 8);
+    atoc[8] = 1;
+    atoc[9] = 20;
+    writeBe16To(atoc + 10, 4);          // size in sectors
+    atoc[20] = 0x04;                    // sample_frequency: 64 * 44.1 kHz
+    atoc[21] = dst ? 0x00 : 0x02;       // frame_format: 0 DST, 2 DSD-3-in-14
+    atoc[32] = channels;                // channel_count
+    atoc[69] = trackCount;              // track_count
+    writeBe32To(atoc + 72, trackStart); // track_start LSN
+    writeBe32To(atoc + 76, trackEnd);   // track_end LSN
+
+    // SACDTTxt sector (+1)
+    uint8_t* ttxt = image.data() + static_cast<size_t>(tocLsn + 1) * kSectorSize;
+    std::memcpy(ttxt, "SACDTTxt", 8);
+    uint16_t recordPosition = 256;
+    for (uint8_t trackIndex = 0; trackIndex < trackCount; ++trackIndex) {
+      writeBe16To(ttxt + 8 + trackIndex * 2, recordPosition);
+      uint8_t* record = ttxt + recordPosition;
+      record[0] = 2;  // amount: title + performer
+      size_t cursor = 4;
+      const auto writeEntry = [&](uint8_t type, const std::string& text) {
+        record[cursor++] = type;
+        record[cursor++] = 0x20;
+        std::memcpy(record + cursor, text.data(), text.size());
+        cursor += text.size();
+        record[cursor++] = 0;  // NUL run separates entries
+      };
+      writeEntry(0x01, texts[trackIndex].first);
+      writeEntry(0x02, texts[trackIndex].second);
+      recordPosition = static_cast<uint16_t>(recordPosition + 128);
+    }
+
+    // SACDTRL1 sector (+2)
+    uint8_t* trl1 = image.data() + static_cast<size_t>(tocLsn + 2) * kSectorSize;
+    std::memcpy(trl1, "SACDTRL1", 8);
+    for (uint8_t trackIndex = 0; trackIndex < trackCount; ++trackIndex) {
+      writeBe32To(trl1 + 8 + trackIndex * 4, startLsns[trackIndex]);
+      writeBe32To(trl1 + 1028 + trackIndex * 4, lengthLsns[trackIndex]);
+    }
+
+    // SACDTRL2 sector (+3)
+    uint8_t* trl2 = image.data() + static_cast<size_t>(tocLsn + 3) * kSectorSize;
+    std::memcpy(trl2, "SACDTRL2", 8);
+    for (uint8_t trackIndex = 0; trackIndex < trackCount; ++trackIndex) {
+      std::memcpy(trl2 + 8 + trackIndex * 4, startTimes[trackIndex].data(), 3);
+      std::memcpy(trl2 + 1028 + trackIndex * 4, durations[trackIndex].data(), 3);
+    }
+  };
+
+  writeAreaToc(
+      kTwoChTocLsn, "TWOCHTOC", dstStereoArea, 2, 2, kTrack1Lsn, kMcTrackLsn,
+      {kTrack1Lsn, kTrack2Lsn}, {2, 2},
+      {{{0, 0, 0}}, {{0, 1, 0}}},
+      {{{0, 1, 0}}, {{0, 2, 0}}},
+      {{"Song One", "Artist One"}, {"Song Two", "Artist Two"}});
+  writeAreaToc(
+      kMcTocLsn, "MULCHTOC", false, 6, 1, kMcTrackLsn, kMcTrackLsn + 2,
+      {kMcTrackLsn}, {2},
+      {{{0, 0, 0}}},
+      {{{0, 3, 0}}},
+      {{"Surround One", "Artist Multi"}});
+
+  // --- Audio sectors ---
+  const auto sequencePayload = [](uint8_t base, size_t size) {
+    std::vector<uint8_t> payload(size);
+    for (size_t index = 0; index < size; ++index) {
+      payload[index] = static_cast<uint8_t>(base + (index & 0x3f));
+    }
+    return payload;
+  };
+  if (dstStereoArea) {
+    // Track 1: one DST access unit spanning two sectors (frame_start only on
+    // the first). Track 2: two single-sector frames, exercising frame
+    // completion when the next frame_start packet arrives.
+    writeScarletbookAudioSector(image, kTrack1Lsn, true, true, sequencePayload(0x41, 24));
+    writeScarletbookAudioSector(image, kTrack1Lsn + 1, true, false, sequencePayload(0x51, 24));
+    writeScarletbookAudioSector(image, kTrack2Lsn, true, true, sequencePayload(0x61, 24));
+    writeScarletbookAudioSector(image, kTrack2Lsn + 1, true, true, sequencePayload(0x71, 24));
+  } else {
+    writeScarletbookAudioSector(image, kTrack1Lsn, false, true, sequencePayload(0x80, 32));
+    writeScarletbookAudioSector(image, kTrack1Lsn + 1, false, true, sequencePayload(0x90, 32));
+    writeScarletbookAudioSector(image, kTrack2Lsn, false, true, sequencePayload(0xa0, 32));
+    writeScarletbookAudioSector(image, kTrack2Lsn + 1, false, true, sequencePayload(0xb0, 32));
+  }
+  writeScarletbookAudioSector(image, kMcTrackLsn, false, true, sequencePayload(0x20, 30));
+  writeScarletbookAudioSector(image, kMcTrackLsn + 1, false, true, sequencePayload(0x30, 30));
 
   std::ofstream out(path, std::ios::binary);
   out.write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));
@@ -1118,6 +1329,185 @@ void testSacdDstTrackUnplayableWithoutProvider() {
   }
 }
 
+void testScarletbookTocParsesTracksAndMetadata() {
+  const auto iso = writeScarletbookIsoFixture("twilight-scarletbook-dsd-fixture.iso", false);
+  SacdIsoDemuxer demuxer;
+  std::string error;
+  if (!demuxer.open(iso.string(), &error)) {
+    std::cerr << "Scarletbook fixture failed to open: " << error << '\n';
+    failTest("Scarletbook fixture did not open");
+  }
+
+  // 2 stereo tracks + 1 multichannel track from the real area TOCs.
+  const auto& tracks = demuxer.tracks();
+  size_t stereoCount = 0;
+  size_t multiCount = 0;
+  for (const auto& track : tracks) {
+    if (track.area == "stereo") ++stereoCount;
+    if (track.area == "multichannel") ++multiCount;
+    if (!track.scarletbook) failTest("Scarletbook track missing scarletbook flag");
+  }
+  if (tracks.size() != 3 || stereoCount != 2 || multiCount != 1) {
+    std::cerr << "tracks=" << tracks.size() << " stereo=" << stereoCount << " multi=" << multiCount << '\n';
+    failTest("Scarletbook TOC produced the wrong track counts");
+  }
+
+  for (const auto& track : tracks) {
+    if (track.area == "stereo" && track.trackNumber == 1) {
+      if (track.title != "Song One" || track.artist != "Artist One") {
+        std::cerr << "title=" << track.title << " artist=" << track.artist << '\n';
+        failTest("Scarletbook track 1 title/performer not parsed from SACDTTxt");
+      }
+      if (track.albumTitle != "Twilight Album") failTest("Scarletbook album title not parsed from SACDText");
+      if (track.isDst) failTest("DSD area track incorrectly flagged as DST");
+      if (track.channelCount != 2 || track.sampleRate != 2822400) failTest("Scarletbook 2CH format wrong");
+      if (track.startSector != 540 || track.sectorCount != 2) failTest("Scarletbook track 1 extent wrong");
+      if (std::abs(track.durationSeconds - 1.0) > 1e-9) failTest("Scarletbook track 1 duration wrong");
+      if (!track.playable) failTest("Scarletbook DSD track must be playable");
+    }
+    if (track.area == "stereo" && track.trackNumber == 2) {
+      if (track.title != "Song Two" || track.artist != "Artist Two") failTest("Scarletbook track 2 text wrong");
+      if (track.startSector != 542 || std::abs(track.durationSeconds - 2.0) > 1e-9) {
+        failTest("Scarletbook track 2 start/duration wrong");
+      }
+    }
+    if (track.area == "multichannel") {
+      if (track.channelCount != 6) failTest("Scarletbook MC channel count wrong");
+      if (track.title != "Surround One") failTest("Scarletbook MC track title wrong");
+      if (std::abs(track.durationSeconds - 3.0) > 1e-9) failTest("Scarletbook MC duration wrong");
+    }
+  }
+
+  // Area selection: stereo preferred by default, MC reachable explicitly.
+  if (!demuxer.selectTrack("multichannel", 1, &error)) failTest("Scarletbook MC area selection failed");
+  if (demuxer.streamInfo().sourceFormat.channelCount != 6) failTest("MC selection returned wrong channel count");
+
+  // DSD byte extraction: demultiplexed audio-packet payload, not raw sectors.
+  if (!demuxer.selectTrack("stereo", 1, &error)) failTest("Scarletbook stereo selection failed");
+  std::vector<uint8_t> bytes(40, 0xee);
+  const size_t read = demuxer.readBytes(bytes.data(), bytes.size());
+  if (read != bytes.size()) failTest("Scarletbook DSD readBytes returned short");
+  for (size_t index = 0; index < 32; ++index) {
+    if (bytes[index] != static_cast<uint8_t>(0x80 + (index & 0x3f))) {
+      failTest("Scarletbook DSD payload mismatch in first sector");
+    }
+  }
+  for (size_t index = 32; index < 40; ++index) {
+    if (bytes[index] != static_cast<uint8_t>(0x90 + ((index - 32) & 0x3f))) {
+      failTest("Scarletbook DSD payload mismatch across sector boundary");
+    }
+  }
+
+  // Seek back to zero re-syncs on the first frame-start packet.
+  if (!demuxer.seek(0.0, &error)) failTest("Scarletbook seek failed");
+  std::fill(bytes.begin(), bytes.end(), 0xee);
+  if (demuxer.readBytes(bytes.data(), 8) != 8 || bytes[0] != 0x80) {
+    failTest("Scarletbook seek did not return to the track start");
+  }
+
+  {
+    std::error_code ignored;
+    std::filesystem::remove(iso, ignored);
+  }
+}
+
+void testScarletbookDstAreaFlagsAndDecode() {
+  const auto iso = writeScarletbookIsoFixture("twilight-scarletbook-dst-fixture.iso", true);
+
+  // Without a provider the DST tracks must stay unplayable.
+  {
+    SacdIsoDemuxer demuxer;
+    std::string error;
+    if (!demuxer.open(iso.string(), &error)) failTest("Scarletbook DST fixture did not open");
+    for (const auto& track : demuxer.tracks()) {
+      if (track.area == "stereo") {
+        if (!track.isDst) failTest("Scarletbook DST area track not flagged as DST");
+        if (track.playable) failTest("Scarletbook DST track playable without provider");
+        if (track.reasonCode != kSacdDstDsdProviderUnavailableReasonCode) {
+          failTest("Scarletbook DST track missing provider-unavailable reason");
+        }
+      } else if (track.isDst) {
+        failTest("Scarletbook MC DSD area incorrectly flagged as DST");
+      }
+    }
+  }
+
+  // With an echo provider, DST access units are assembled from the
+  // multiplexed packets: track 1 is one frame spanning two sectors (first
+  // payload byte 0x41), track 2 is two single-sector frames (0x61, 0x71).
+  {
+    EchoDstDecoderProvider provider;
+    SacdIsoDemuxer demuxer;
+    demuxer.setDstDecoderProvider(&provider);
+    std::string error;
+    if (!demuxer.open(iso.string(), &error) || !demuxer.selectTrack("stereo", 1, &error)) {
+      failTest("Scarletbook DST select with provider failed");
+    }
+    if (demuxer.streamInfo().codec != "dst") failTest("Scarletbook DST codec not reported");
+    std::vector<uint8_t> bytes(8, 0xee);
+    if (demuxer.readBytes(bytes.data(), bytes.size()) != bytes.size() || bytes[0] != 0x41) {
+      std::cerr << "first=" << static_cast<int>(bytes[0]) << '\n';
+      failTest("Scarletbook DST frame did not decode from assembled access unit");
+    }
+
+    if (!demuxer.selectTrack("stereo", 2, &error)) failTest("Scarletbook DST track 2 select failed");
+    std::vector<uint8_t> frames(16, 0xee);
+    const size_t read = demuxer.readBytes(frames.data(), frames.size());
+    if (read != frames.size() || frames[0] != 0x61 || frames[8] != 0x71) {
+      std::cerr << "read=" << read << " f0=" << static_cast<int>(frames[0])
+                << " f8=" << static_cast<int>(frames[8]) << '\n';
+      failTest("Scarletbook DST frame boundaries not detected via frame_start packets");
+    }
+  }
+
+  {
+    std::error_code ignored;
+    std::filesystem::remove(iso, ignored);
+  }
+}
+
+void testScarletbookMalformedTocFallsBackGracefully() {
+  // A Scarletbook master TOC pointing at a bogus area TOC must not crash and
+  // must fall back to the legacy heuristics (which find nothing here, so open
+  // fails with a clean error instead of a crash).
+  const auto path = std::filesystem::temp_directory_path() / "twilight-scarletbook-malformed.iso";
+  {
+    const auto valid = writeScarletbookIsoFixture("twilight-scarletbook-malformed-src.iso", false);
+    std::ifstream in(valid, std::ios::binary);
+    std::vector<uint8_t> image((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    {
+      std::error_code ignored;
+      std::filesystem::remove(valid, ignored);
+    }
+    // Corrupt the 2CH area TOC signature and point the MC area out of range.
+    std::memcpy(image.data() + 520 * 2048, "GARBAGE!", 8);
+    uint8_t* mtoc = image.data() + 510 * 2048;
+    mtoc[72] = 0xff;
+    mtoc[73] = 0xff;
+    mtoc[74] = 0xff;
+    mtoc[75] = 0xff;
+    std::ofstream out(path, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));
+  }
+
+  SacdIsoDemuxer demuxer;
+  std::string error;
+  const bool opened = demuxer.open(path.string(), &error);
+  if (opened) {
+    // Fallback heuristics may still surface marker-derived tracks; the only
+    // hard requirement is no crash and no Scarletbook-flagged tracks.
+    for (const auto& track : demuxer.tracks()) {
+      if (track.scarletbook) failTest("Malformed Scarletbook TOC produced scarletbook tracks");
+    }
+  }
+
+  {
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -1144,6 +1534,9 @@ int main() {
   testSacdDstSeekUsesDecodedFrameTimeInsteadOfCompressedByteRatio();
   testSacdDstSeekUsesFrameTableForVariableFrames();
   testSacdDstTrackUnplayableWithoutProvider();
+  testScarletbookTocParsesTracksAndMetadata();
+  testScarletbookDstAreaFlagsAndDecode();
+  testScarletbookMalformedTocFallsBackGracefully();
   assert(sourceLooksDsfOrDff("song.DSF"));
   assert(sourceLooksDsfOrDff("song.dff"));
   assert(inferDsdRateFromSampleRate(11289600) == 256);

@@ -694,11 +694,11 @@ try {
 
   $fullPlan = @(Get-FullStagePlan)
   $fullIds = @($fullPlan | ForEach-Object { [string]$_.id })
-  Assert-Equal $fullIds.Count 52 'Full gate plan must retain every mandatory stage'
+  Assert-Equal $fullIds.Count 53 'Full gate plan must retain every mandatory stage'
   Assert-Equal @($fullIds | Sort-Object -Unique).Count $fullIds.Count 'Full gate plan must not contain duplicate IDs'
   Assert-True ($fullIds.IndexOf('renderer-budget') -gt $fullIds.IndexOf('build')) 'Renderer budget verification must run after the production build'
   Assert-Equal $fullIds[-1] 'mandatory-stage-coverage' 'Mandatory stage coverage must close the full plan'
-  foreach ($required in @('test-renderer-data-tooling', 'test-sleep-timer', 'test-cross-cutting-regressions', 'test-playlist-lifecycle', 'test-tag-duplicate-management', 'test-lyrics-management', 'test-offline-downloads', 'test-cue', 'native-ctest-evidence-check')) {
+  foreach ($required in @('test-renderer-data-tooling', 'test-sleep-timer', 'test-cross-cutting-regressions', 'test-radio-remote', 'test-themes', 'test-playlist-lifecycle', 'test-tag-duplicate-management', 'test-lyrics-management', 'test-cue', 'native-ctest-evidence-check')) {
     Assert-True ($fullIds -contains $required) "Full gate plan is missing mandatory stage: $required"
   }
   $dryRunPlan = Show-DryRunPlan | ConvertFrom-Json

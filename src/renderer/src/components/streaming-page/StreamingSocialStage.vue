@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { Track } from '../../types/music'
 import CoverImg from '../CoverImg.vue'
+import { useProgressiveList } from './useProgressiveList.ts'
 
 export type SocialStageKind = 'artist' | 'user_list' | 'user_playlists' | string
 
@@ -124,6 +125,12 @@ const emit = defineEmits<{
   trackContextMenu: [track: Track, index: number, event: MouseEvent]
 }>()
 
+const {
+  visibleItems: visibleTracks,
+  hasMoreToRender,
+  sentinelRef
+} = useProgressiveList(() => props.tracks)
+
 const kindLabel = computed(() => {
   switch (props.kind) {
     case 'artist':
@@ -150,7 +157,9 @@ const showCollectionPanel = computed(() => {
 })
 
 const canPlay = computed(() => !props.loading && props.tracks.length > 0)
-const avatarCover = computed(() => isPeopleMode.value || isArtistMode.value || isCollectionOnlyMode.value)
+const avatarCover = computed(
+  () => isPeopleMode.value || isArtistMode.value || isCollectionOnlyMode.value
+)
 
 const emptyMessage = computed(() => {
   if (isPeopleMode.value) return props.peopleEmptyTitle
@@ -199,7 +208,12 @@ function onContextMenu(track: Track, index: number, event: MouseEvent): void {
           :class="{ avatar: avatarCover }"
           alt="cover"
         />
-        <div v-else class="stage-cover stage-cover-fallback" :class="{ avatar: avatarCover }" aria-hidden="true">
+        <div
+          v-else
+          class="stage-cover stage-cover-fallback"
+          :class="{ avatar: avatarCover }"
+          aria-hidden="true"
+        >
           <i :class="icon"></i>
         </div>
         <span class="stage-cover-ring" :class="{ avatar: avatarCover }" aria-hidden="true"></span>
@@ -290,7 +304,10 @@ function onContextMenu(track: Track, index: number, event: MouseEvent): void {
           <span class="sk sk-line mid"></span>
         </div>
       </div>
-      <div v-else-if="showCollectionPanel || isCollectionOnlyMode" class="stage-collection-grid skeleton-grid">
+      <div
+        v-else-if="showCollectionPanel || isCollectionOnlyMode"
+        class="stage-collection-grid skeleton-grid"
+      >
         <div v-for="i in 8" :key="i" class="stage-collection-card skeleton-card">
           <span class="sk sk-square"></span>
           <span class="sk sk-line wide"></span>
@@ -430,9 +447,10 @@ function onContextMenu(track: Track, index: number, event: MouseEvent): void {
 
         <ul class="stage-rows" role="list">
           <li
-            v-for="(track, index) in tracks"
+            v-for="(track, index) in visibleTracks"
             :key="track.id"
             class="stage-row"
+            data-te-interactive
             :class="{
               playing: currentTrackId === track.id,
               selected: isSelected(track.id)
@@ -450,9 +468,7 @@ function onContextMenu(track: Track, index: number, event: MouseEvent): void {
                 title="正在播放"
                 @click="onPlayRow(track, index, $event)"
               >
-                <span class="eq-bars" aria-hidden="true">
-                  <i></i><i></i><i></i>
-                </span>
+                <span class="eq-bars" aria-hidden="true"> <i></i><i></i><i></i> </span>
               </button>
               <button
                 v-else
@@ -511,6 +527,13 @@ function onContextMenu(track: Track, index: number, event: MouseEvent): void {
               {{ formatTime(track.duration) }}
             </div>
           </li>
+          <li
+            v-if="hasMoreToRender"
+            :ref="sentinelRef"
+            class="stage-rows-sentinel"
+            role="presentation"
+            aria-hidden="true"
+          ></li>
         </ul>
       </div>
     </div>

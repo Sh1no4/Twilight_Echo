@@ -11,6 +11,7 @@ import { getRecentTracks, useListeningStatsStore } from '../stores/useListeningS
 import type { Track } from '../types/music'
 import { resolveUnifiedRecentTracks } from '../utils/unifiedRecentTracks'
 import { getTrackSource as getLogicalTrackSource } from '../utils/logicalTrackModel'
+import { useEscapeToClose } from '../app/useDismissLayer.ts'
 import { buildMetadataMatchCandidates } from '../utils/musicMetadataMatching'
 import {
   formatPlaylistSourceSummary,
@@ -82,7 +83,7 @@ const {
 } = useMusicStore()
 const playbackStore = usePlayerStore()
 const { currentTrack } = playbackStore
-const { playTrack, playTrackFromPosition } = playbackStore
+const { playTrack, playTrackFromPosition, setPlayMode } = playbackStore
 const playbackBookmarks = usePlaybackBookmarks()
 void playbackBookmarks.ensureLoaded()
 const mediaProviders = useMediaProviders()
@@ -323,6 +324,51 @@ const viewTitle = computed(() => {
   return '我的音乐'
 })
 
+const viewKicker = computed(() => {
+  if (props.category === 'allSongs') return 'LIBRARY · 音乐库'
+  if (props.category === 'recent') return 'HISTORY · 回放'
+  if (props.category === 'artists') return 'ARTISTS · 艺术家'
+  if (props.category === 'albums') return 'ALBUMS · 专辑'
+  if (props.category === 'genres') return 'GENRES · 流派'
+  if (props.category === 'playlists') return 'PLAYLISTS · 歌单'
+  if (props.category === 'folders') return 'FOLDERS · 文件夹'
+  return 'LIBRARY · 音乐库'
+})
+
+const gridStatsText = computed(() => {
+  const count = gridTotalCount.value
+  if (count === 0) return ''
+  const unit =
+    props.category === 'artists'
+      ? '位艺术家'
+      : props.category === 'albums'
+        ? '张专辑'
+        : props.category === 'genres'
+          ? '种流派'
+          : props.category === 'playlists'
+            ? '份歌单'
+            : props.category === 'folders'
+              ? '个文件夹'
+              : '个条目'
+  return `共 ${count} ${unit}`
+})
+
+const totalDurationText = computed(() => {
+  let total = 0
+  for (const track of displayTracks.value) total += track.duration || 0
+  if (total <= 0) return ''
+  const minutes = Math.round(total / 60)
+  if (minutes < 1) return '不足 1 分钟'
+  const hours = Math.floor(minutes / 60)
+  return hours > 0 ? `${hours} 小时 ${minutes % 60} 分钟` : `${minutes} 分钟`
+})
+
+const viewStatsText = computed(() => {
+  const count = displayTracks.value.length
+  if (count === 0) return ''
+  return totalDurationText.value ? `${count} 首 · ${totalDurationText.value}` : `${count} 首`
+})
+
 const currentPlaylistName = computed(() => {
   if (props.category !== 'playlists' || !props.filter?.startsWith('playlist:')) return null
   return props.filter.slice(9)
@@ -445,6 +491,30 @@ const currentGridItems = computed<GridItem[]>(() => {
 
 function onRowDblClick(track: Track): void {
   playTrack(track, displayTracks.value)
+}
+
+function playAllTracks(): void {
+  const list = displayTracks.value
+  if (list.length === 0) return
+  playTrack(list[0], list)
+}
+
+function shufflePlayTracks(): void {
+  const list = displayTracks.value
+  if (list.length === 0) return
+  setPlayMode('shuffle')
+  playTrack(list[Math.floor(Math.random() * list.length)], list)
+}
+
+function trackQualityLabel(track: Track): string {
+  const parts: string[] = []
+  if (track.format) parts.push(track.format.toUpperCase())
+  if (typeof track.sampleRate === 'number' && track.sampleRate > 0) {
+    const khz = track.sampleRate / 1000
+    parts.push(`${Number.isInteger(khz) ? khz : khz.toFixed(1)} kHz`)
+  }
+  if (typeof track.bitDepth === 'number' && track.bitDepth > 0) parts.push(`${track.bitDepth} bit`)
+  return parts.join(' · ')
 }
 
 function metadataMatchLabel(track: Track): string {
@@ -642,6 +712,8 @@ const {
   createPlaylist,
   deletePlaylist
 })
+
+useEscapeToClose(showContextMenu, closeContextMenu)
 
 const {
   containerRef,
@@ -1022,7 +1094,16 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
       <div :key="viewKey" :class="showGrid ? 'grid-view' : 'table-view'">
         <template v-if="showGrid">
           <div class="song-list-header">
-            <h2 class="song-list-title">{{ viewTitle }}</h2>
+            <div class="title-group">
+              <p class="view-kicker">
+                <span class="kicker-rule" aria-hidden="true"></span>
+                <span>{{ viewKicker }}</span>
+              </p>
+              <div class="title-line">
+                <h2 class="song-list-title">{{ viewTitle }}</h2>
+                <span v-if="gridStatsText" class="view-stats">{{ gridStatsText }}</span>
+              </div>
+            </div>
             <div class="header-right">
               <div class="search-box" :class="{ focused: searchInputFocused }">
                 <ThemeIcon class="search-icon" icon-slot="library.search" />
@@ -1063,6 +1144,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 v-for="artist in visibleArtists"
                 :key="artist.name"
                 class="artist-card"
+                data-te-interactive
                 @click="emit('selectView', 'artists', `artist:${artist.name}`)"
               >
                 <CoverImg
@@ -1087,6 +1169,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 v-for="album in visibleAlbums"
                 :key="album.id"
                 class="album-card"
+                data-te-interactive
                 @click="emit('selectView', 'albums', `album:${album.id}`)"
               >
                 <CoverImg v-if="album.cover" :cover="album.cover" class="album-cover" alt="cover" />
@@ -1103,6 +1186,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 v-for="genre in visibleGenres"
                 :key="genre.name"
                 class="artist-card"
+                data-te-interactive
                 @click="emit('selectView', 'genres', `genre:${genre.name}`)"
               >
                 <CoverImg
@@ -1124,7 +1208,10 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
             <!-- Playlist Cards -->
             <template v-if="category === 'playlists'">
               <!-- Create Playlist Card -->
-              <div class="playlist-card create-playlist-card" @click="openCreatePlaylistDialog()">
+              <div
+                class="playlist-card create-playlist-card"
+                data-te-interactive
+                @click="openCreatePlaylistDialog()">
                 <div class="playlist-cover-placeholder create-placeholder">
                   <ThemeIcon class="library-placeholder-icon" icon-slot="library.add" />
                 </div>
@@ -1135,6 +1222,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 v-for="playlist in visiblePlaylists"
                 :key="playlist.id"
                 class="playlist-card"
+                data-te-interactive
                 @click="emit('selectView', 'playlists', `playlist:${playlist.name}`)"
               >
                 <CoverImg
@@ -1161,6 +1249,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 <div
                   v-if="!playlist.isDefault"
                   class="playlist-delete-btn"
+                  data-te-interactive
                   title="删除歌单"
                   @click="handleDeletePlaylist(playlist.id || '', $event)"
                 >
@@ -1173,6 +1262,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 v-for="folder in visibleFolders"
                 :key="folder.path"
                 class="playlist-card folder-card"
+                data-te-interactive
                 @click="emit('selectView', 'folders', `folder:${folder.path}`)"
               >
                 <CoverImg
@@ -1202,11 +1292,39 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 <i class="pi pi-arrow-left"></i>
               </button>
               <div class="title-group">
-                <h2 class="song-list-title">{{ viewTitle }}</h2>
+                <p class="view-kicker">
+                  <span class="kicker-rule" aria-hidden="true"></span>
+                  <span>{{ viewKicker }}</span>
+                </p>
+                <div class="title-line">
+                  <h2 class="song-list-title">{{ viewTitle }}</h2>
+                  <span v-if="viewStatsText" class="view-stats">{{ viewStatsText }}</span>
+                </div>
                 <span v-if="repairMessage" class="repair-status">{{ repairMessage }}</span>
                 <span v-else-if="libraryRepairStatusText" class="library-repair-status">
                   {{ libraryRepairStatusText }}
                 </span>
+              </div>
+              <div class="header-play-actions">
+                <button
+                  type="button"
+                  class="btn-play-all"
+                  title="播放全部"
+                  :disabled="displayTracks.length === 0"
+                  @click="playAllTracks"
+                >
+                  <i class="ph ph-play"></i>
+                  <span>播放全部</span>
+                </button>
+                <button
+                  type="button"
+                  class="btn-shuffle-all"
+                  title="随机播放"
+                  :disabled="displayTracks.length === 0"
+                  @click="shufflePlayTracks"
+                >
+                  <i class="ph ph-shuffle"></i>
+                </button>
               </div>
             </div>
             <div class="header-right">
@@ -1640,6 +1758,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   v-for="(track, index) in visibleTracks"
                   :key="track.id"
                   class="track-row"
+                  data-te-interactive
                   :class="{
                     'track-playing': currentTrack?.id === track.id,
                     'track-selected': isSelected(track.id),
@@ -1718,7 +1837,12 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                     <div class="track-artist">{{ track.artist }}</div>
                   </td>
                   <td class="col-album">{{ track.album }}</td>
-                  <td class="col-duration">{{ formatDuration(track.duration) }}</td>
+                  <td class="col-duration">
+                    <span class="duration-time">{{ formatDuration(track.duration) }}</span>
+                    <span v-if="trackQualityLabel(track)" class="duration-quality">
+                      {{ trackQualityLabel(track) }}
+                    </span>
+                  </td>
                 </tr>
                 <tr
                   class="virtual-spacer"
@@ -1743,6 +1867,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 <div
                   v-if="selectedLocalTrackCount > 0"
                   class="menu-item"
+                  data-te-interactive
                   @click="handleContextRemoveFromLibrary"
                 >
                   <i class="pi pi-minus-circle"></i>
@@ -1751,6 +1876,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 <div
                   v-if="selectedLocalTrackCount > 0"
                   class="menu-item danger"
+                  data-te-interactive
                   @click="handleContextMoveToTrash"
                 >
                   <i class="pi pi-trash"></i>
@@ -1759,12 +1885,13 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 <div
                   v-if="isPlaylistDetail"
                   class="menu-item"
+                  data-te-interactive
                   @click="handleContextRemoveFromPlaylist"
                 >
                   <i class="pi pi-minus-circle"></i>
                   <span>从歌单移除{{ selectionActionLabel }}</span>
                 </div>
-                <div class="menu-item" @click="handleContextFavorite">
+                <div class="menu-item" data-te-interactive @click="handleContextFavorite">
                   <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
                   <span
                     >{{ selectionAllFavorited ? '取消收藏' : '加入收藏'
@@ -1774,6 +1901,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 <div
                   v-if="canRematchSelectedTrack && selectedCount <= 1"
                   class="menu-item"
+                  data-te-interactive
                   @click="handleRematchTrack"
                 >
                   <i class="pi pi-refresh"></i>
@@ -1782,6 +1910,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 <div
                   v-if="canRematchMetadataSelectedTrack && selectedCount <= 1"
                   class="menu-item"
+                  data-te-interactive
                   @click="handleRematchMetadata"
                 >
                   <i class="pi pi-sync"></i>
@@ -1790,18 +1919,20 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 <div
                   v-if="canClearMetadataMatchSelectedTrack && selectedCount <= 1"
                   class="menu-item"
+                  data-te-interactive
                   @click="handleClearMetadataMatch"
                 >
                   <i class="pi pi-times-circle"></i>
                   <span>取消流媒体匹配</span>
                 </div>
-                <div v-if="selectedCount <= 1" class="menu-item" @click="handleOpenFolder">
+                <div v-if="selectedCount <= 1" class="menu-item" data-te-interactive @click="handleOpenFolder">
                   <i class="pi pi-folder-open"></i>
                   <span>打开文件所在位置</span>
                 </div>
                 <div
                   v-if="canContinueFromBookmark"
                   class="menu-item"
+                  data-te-interactive
                   @click="handleContinueFromBookmark"
                 >
                   <i class="pi pi-bookmark"></i>
@@ -1819,6 +1950,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   <div v-if="showPlaylistSubmenu" class="submenu">
                     <div
                       class="menu-item create-playlist-menu-item"
+                      data-te-interactive
                       @click="handleContextCreatePlaylist"
                     >
                       <i class="pi pi-plus" style="font-size: 14px; margin-right: 6px"></i>
@@ -1829,13 +1961,14 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                       v-for="pl in playlists"
                       :key="pl.id"
                       class="menu-item"
+                      data-te-interactive
                       @click="handleContextAddToPlaylist(pl.name)"
                     >
                       {{ pl.name }}
                     </div>
                   </div>
                 </div>
-                <div class="menu-item" @click="customizeLibraryAppearance">
+                <div class="menu-item" data-te-interactive @click="customizeLibraryAppearance">
                   <i class="ph ph-palette"></i>
                   <span>定制此区域外观</span>
                 </div>

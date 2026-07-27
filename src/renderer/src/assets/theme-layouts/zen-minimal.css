@@ -1,0 +1,1223 @@
+/* Layout identity for builtin:zen-minimal. All rules scoped to html[data-te-preset-layout='zen-minimal']. */
+
+/* ============================================================================
+   ZEN GALLERY — 禅意画廊
+   一切装饰归零：无边框、无阴影、无底色块，只剩内容与留白。
+   层级只靠字重、灰度与位置表达。行高与间距放大，字号缩一档。
+   协同 modes：navigation rail / player minimal + center / progress line /
+   effects reduced / artwork shadow off。
+   ========================================================================== */
+
+/* ── 应用壳 / rail 侧边导航：几乎隐形 ──────────────────────────────────── */
+
+html[data-te-preset-layout='zen-minimal'] .side-menu {
+  border-right: 0;
+  border-radius: 0;
+  background: transparent;
+  background-image: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .side-menu .navigation-brand {
+  border-bottom: 0;
+}
+
+html[data-te-preset-layout='zen-minimal'] .side-menu .menu-separator {
+  background: color-mix(in oklab, var(--te-navigation-text) 14%, transparent);
+  margin-inline: 14px;
+}
+
+html[data-te-preset-layout='zen-minimal'] .side-menu .menu-item {
+  background: transparent;
+  border-radius: 0;
+}
+
+html[data-te-preset-layout='zen-minimal'] .side-menu .menu-item .item-icon {
+  color: color-mix(in oklab, var(--te-navigation-text) 52%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .side-menu .menu-item:hover {
+  background: transparent;
+  transform: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .side-menu .menu-item:hover .item-icon {
+  transform: none;
+  color: var(--te-neutral-900);
+}
+
+html[data-te-preset-layout='zen-minimal'] .side-menu .menu-item.active {
+  background: transparent;
+  font-weight: 500;
+}
+
+html[data-te-preset-layout='zen-minimal'] .side-menu .menu-item.active .item-icon {
+  color: var(--te-neutral-900);
+}
+
+/* 选中项：仅图标下方一枚 3px 圆点，替代默认左侧指示条 */
+html[data-te-preset-layout='zen-minimal'] .side-menu .menu-item.active::before {
+  left: 50%;
+  top: auto;
+  bottom: 2px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  transform: translateX(-50%);
+  background: var(--te-navigation-indicator);
+  box-shadow: none;
+  opacity: 1;
+  animation: none;
+}
+
+/* ── 本地音乐首页：画廊陈列 ─────────────────────────────────────────────── */
+
+/* 环境光斑装饰归零 */
+html[data-te-preset-layout='zen-minimal'] .home .home-sky {
+  display: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .home-inner {
+  max-width: 900px;
+  gap: clamp(4rem, 8vh, 6.5rem);
+  line-height: 1.7;
+  padding-bottom: 180px;
+}
+
+/* 页首：居中、小号、字距拉开；胶囊底色隐去 */
+html[data-te-preset-layout='zen-minimal'] .home .hd {
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 1.3rem;
+  text-align: center;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .hd-copy {
+  align-items: center;
+  gap: 1rem;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .hd-chip {
+  align-self: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+  letter-spacing: 0.34em;
+  font-weight: 500;
+  font-size: 0.62rem;
+  color: color-mix(in oklab, var(--te-neutral-900) 42%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .hd-chip i {
+  font-size: 0.72rem;
+  color: color-mix(in oklab, var(--te-neutral-900) 42%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .hd-greeting {
+  font-size: clamp(1.4rem, 2.8vw, 2rem);
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  line-height: 1.6;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .hd-mood {
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  color: color-mix(in oklab, var(--te-neutral-900) 46%, transparent);
+}
+
+/* 随机播放：降级为一条发丝线胶囊 */
+html[data-te-preset-layout='zen-minimal'] .home .hd-shuffle {
+  align-self: center;
+  margin-top: 0.4rem;
+  padding: 0.5rem 1.3rem;
+  border: 1px solid color-mix(in oklab, var(--te-neutral-900) 20%, transparent);
+  border-radius: 999px;
+  background: transparent;
+  backdrop-filter: none;
+  color: var(--te-neutral-900);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .hd-shuffle:hover {
+  background: color-mix(in oklab, var(--te-neutral-900) 5%, transparent);
+  border-color: color-mix(in oklab, var(--te-neutral-900) 44%, transparent);
+  transform: none;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .hd-shuffle-icon {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--te-neutral-900);
+  font-size: 0.85rem;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .hd-shuffle-copy strong {
+  font-weight: 400;
+  font-size: 0.74rem;
+  letter-spacing: 0.14em;
+  color: var(--te-neutral-900);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .hd-shuffle-copy small {
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  color: color-mix(in oklab, var(--te-neutral-900) 42%, transparent);
+}
+
+/* 库存索引：从卡片瓦片化为居中的一行素数字 */
+html[data-te-preset-layout='zen-minimal'] .home .stat-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: clamp(1.6rem, 5vw, 3.6rem);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .stat-tile {
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .stat-tile:not(.is-static):hover {
+  transform: none;
+  box-shadow: none;
+}
+
+/* 图标底枕与箭头属纯装饰，隐去（整块瓦片仍可点击） */
+html[data-te-preset-layout='zen-minimal'] .home .stat-icon,
+html[data-te-preset-layout='zen-minimal'] .home .stat-caret {
+  display: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .stat-copy {
+  align-items: center;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .stat-copy strong {
+  font-weight: 400;
+  font-size: clamp(1.25rem, 2.2vw, 1.7rem);
+  letter-spacing: 0.02em;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .stat-copy small {
+  letter-spacing: 0.26em;
+  font-size: 0.58rem;
+  color: color-mix(in oklab, var(--te-neutral-900) 42%, transparent);
+}
+
+/* 正在播放：一件展品 —— 封面居中在上，文案居中在下；幕布与光晕隐去 */
+html[data-te-preset-layout='zen-minimal'] .home .now-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .now-card::after {
+  content: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .feature-backdrop,
+html[data-te-preset-layout='zen-minimal'] .home .now-halo {
+  display: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .now-layout {
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(1.8rem, 4vh, 2.8rem);
+  padding: clamp(0.5rem, 2vh, 1.5rem) 0;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .now-art {
+  width: min(100%, clamp(200px, 40vw, 330px));
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .now-cover {
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  box-shadow: 0 1px 3px color-mix(in oklab, var(--te-neutral-900) 14%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .now-info {
+  flex: none;
+  align-items: center;
+  max-width: 560px;
+  gap: 0.85rem;
+  text-align: center;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .now-eyebrow {
+  justify-content: center;
+  letter-spacing: 0.32em;
+  font-weight: 500;
+  font-size: 0.6rem;
+  color: color-mix(in oklab, var(--te-neutral-900) 44%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .now-title {
+  font-size: clamp(1.1rem, 2.2vw, 1.5rem);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .now-artist {
+  font-size: 0.76rem;
+  letter-spacing: 0.1em;
+  color: color-mix(in oklab, var(--te-neutral-900) 52%, transparent);
+}
+
+/* 信息芯片：居中一行，浅灰小字 */
+html[data-te-preset-layout='zen-minimal'] .home .now-chips {
+  justify-content: center;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .now-chip {
+  border-color: color-mix(in oklab, var(--te-neutral-900) 14%, transparent);
+  background: transparent;
+  color: color-mix(in oklab, var(--te-neutral-900) 52%, transparent);
+}
+
+/* 进度：发丝线 */
+html[data-te-preset-layout='zen-minimal'] .home .now-progress {
+  width: min(100%, 420px);
+  max-width: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .now-rail {
+  padding: 7.5px 0;
+  background-image: linear-gradient(
+    color-mix(in oklab, var(--te-neutral-900) 16%, transparent),
+    color-mix(in oklab, var(--te-neutral-900) 16%, transparent)
+  );
+  background-size: 100% 1px;
+  border-radius: 0;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .now-rail span {
+  height: 1px;
+  border-radius: 0;
+  background: var(--te-primary-500);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .now-actions {
+  justify-content: center;
+}
+
+/* 控制按钮：无底色纯线条 */
+html[data-te-preset-layout='zen-minimal'] .home .round-btn,
+html[data-te-preset-layout='zen-minimal'] .home .round-btn.round-play,
+html[data-te-preset-layout='zen-minimal'] .home .pill-primary,
+html[data-te-preset-layout='zen-minimal'] .home .pill-ghost {
+  background: transparent;
+  border: 1px solid color-mix(in oklab, var(--te-neutral-900) 22%, transparent);
+  color: var(--te-neutral-900);
+  backdrop-filter: none;
+  font-weight: 400;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .round-btn:hover,
+html[data-te-preset-layout='zen-minimal'] .home .round-btn.round-play:hover,
+html[data-te-preset-layout='zen-minimal'] .home .pill-primary:hover,
+html[data-te-preset-layout='zen-minimal'] .home .pill-ghost:hover {
+  background: color-mix(in oklab, var(--te-neutral-900) 5%, transparent);
+  border-color: color-mix(in oklab, var(--te-neutral-900) 44%, transparent);
+  color: var(--te-neutral-900);
+  transform: none;
+  box-shadow: none;
+}
+
+/* 播放链路：收敛为居中一行静句；路径条与统计脚注隐去（点击仍可打开详情） */
+html[data-te-preset-layout='zen-minimal'] .home .signal-card {
+  align-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+  padding-inline: 0;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .signal-card:hover {
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .signal-card .dsp-route-strip.is-compact,
+html[data-te-preset-layout='zen-minimal'] .home .signal-card .signal-foot {
+  display: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .signal-head {
+  justify-content: center;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .signal-icon {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: transparent;
+  color: color-mix(in oklab, var(--te-neutral-900) 42%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .signal-title h2 {
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: 0.26em;
+  color: var(--te-neutral-900);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .signal-title small {
+  letter-spacing: 0.08em;
+  font-size: 0.62rem;
+  color: color-mix(in oklab, var(--te-neutral-900) 44%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .dsp-state {
+  margin-left: 0;
+  background: transparent;
+  border-color: color-mix(in oklab, var(--te-neutral-900) 20%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .signal-caret {
+  opacity: 0.5;
+}
+
+/* 区块标题：小号、字距拉开、居中；图标底枕隐去 */
+html[data-te-preset-layout='zen-minimal'] .home .sec {
+  gap: clamp(1.6rem, 4vh, 2.4rem);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .sec-head {
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  text-align: center;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .sec-icon {
+  display: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .sec-copy {
+  align-items: center;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .sec-copy h3 {
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: 0.26em;
+  color: var(--te-neutral-900);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .sec-copy p {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  white-space: normal;
+  color: color-mix(in oklab, var(--te-neutral-900) 44%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .sec-link {
+  margin-left: 0;
+  padding: 0.2rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+  font-weight: 400;
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  color: color-mix(in oklab, var(--te-neutral-900) 50%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .sec-link:hover {
+  background: transparent;
+  border: 0;
+  color: var(--te-neutral-900);
+}
+
+/* 最近添加：双列大间距展陈，格式角标隐去 */
+html[data-te-preset-layout='zen-minimal'] .home .recent-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr));
+  gap: clamp(2.4rem, 5vh, 3.8rem) clamp(1.8rem, 4vw, 3rem);
+  justify-items: center;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .track-card {
+  max-width: 360px;
+  width: 100%;
+  gap: 1rem;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .track-cover {
+  border: 0;
+  border-radius: 2px;
+  box-shadow: 0 1px 3px color-mix(in oklab, var(--te-neutral-900) 12%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .track-card:hover .track-cover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px color-mix(in oklab, var(--te-neutral-900) 14%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .format-badge {
+  display: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .track-text {
+  align-items: center;
+  text-align: center;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .track-text strong {
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+/* 聆听足迹：榜单与日历上下单列陈列，卡片底色归零 */
+html[data-te-preset-layout='zen-minimal'] .home .footprint-grid {
+  grid-template-columns: 1fr;
+  gap: clamp(2.6rem, 5vh, 4rem);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .chart-card,
+html[data-te-preset-layout='zen-minimal'] .home .cal-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+  padding-inline: 0;
+  max-width: 640px;
+  width: 100%;
+  margin-inline: auto;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .card-head {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-bottom: 0;
+  text-align: center;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .card-title {
+  letter-spacing: 0.3em;
+  font-size: 0.6rem;
+  font-weight: 500;
+  color: color-mix(in oklab, var(--te-neutral-900) 44%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .card-title i {
+  display: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .card-head small {
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  color: color-mix(in oklab, var(--te-neutral-900) 40%, transparent);
+}
+
+/* 冠军曲目：徽章装饰隐去，封面素框 */
+html[data-te-preset-layout='zen-minimal'] .home .champion-badge {
+  display: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .champion-cover {
+  border: 0;
+  border-radius: 2px;
+  box-shadow: 0 1px 3px color-mix(in oklab, var(--te-neutral-900) 12%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .champion-copy strong {
+  font-weight: 500;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .chart-row {
+  border-radius: 0;
+  border-bottom: 1px solid color-mix(in oklab, var(--te-neutral-900) 7%, transparent);
+  padding-block: 0.7rem;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .chart-row:hover {
+  background: color-mix(in oklab, var(--te-neutral-900) 4%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .row-rank {
+  font-weight: 400;
+  color: color-mix(in oklab, var(--te-neutral-900) 34%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .row-cover {
+  border: 0;
+  border-radius: 2px;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .row-bar {
+  height: 1px;
+}
+
+/* 专辑精选：大间距居中陈列 */
+html[data-te-preset-layout='zen-minimal'] .home .album-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  gap: clamp(2.2rem, 5vh, 3.4rem) clamp(1.6rem, 3.5vw, 2.6rem);
+  justify-items: center;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .album-tile {
+  max-width: 300px;
+  width: 100%;
+  gap: 1rem;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .album-art {
+  border: 0;
+  border-radius: 2px;
+  box-shadow: 0 1px 3px color-mix(in oklab, var(--te-neutral-900) 12%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .album-text {
+  align-items: center;
+  text-align: center;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .album-name {
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .album-sub {
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  color: color-mix(in oklab, var(--te-neutral-900) 46%, transparent);
+}
+
+/* 空状态：一段安静的居中文字，涟漪装饰隐去 */
+html[data-te-preset-layout='zen-minimal'] .home .empty-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .empty-ripple {
+  display: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .empty-bubble {
+  background: transparent;
+  color: color-mix(in oklab, var(--te-neutral-900) 40%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .empty-card h2 {
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .empty-card p {
+  color: color-mix(in oklab, var(--te-neutral-900) 50%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .empty-cta {
+  background: transparent;
+  border: 1px solid color-mix(in oklab, var(--te-neutral-900) 22%, transparent);
+  color: var(--te-neutral-900);
+  font-weight: 400;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .empty-cta:hover {
+  background: color-mix(in oklab, var(--te-neutral-900) 5%, transparent);
+  border-color: color-mix(in oklab, var(--te-neutral-900) 44%, transparent);
+  color: var(--te-neutral-900);
+  transform: none;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home .empty-hints i {
+  color: color-mix(in oklab, var(--te-neutral-900) 42%, transparent);
+}
+
+/* ── 流媒体首页：同一间画廊 ─────────────────────────────────────────────── */
+
+html[data-te-preset-layout='zen-minimal'] .home-view .home-flow {
+  gap: clamp(3.6rem, 7vh, 6rem);
+  max-width: 900px;
+  margin-inline: auto;
+  width: 100%;
+}
+
+/* Hero：封面为展品居中在上，文案居中在下；环境光与卡片壳归零 */
+html[data-te-preset-layout='zen-minimal'] .home-view .hero {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .hero-ambient {
+  display: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .hero-inner {
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(1.8rem, 4vh, 2.6rem);
+  min-height: 0;
+  padding: clamp(0.6rem, 2vh, 1.6rem) 0;
+  text-align: center;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .hero-copy {
+  flex: none;
+  align-items: center;
+  padding: 0;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .hero-kicker {
+  justify-content: center;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .hero-kicker-day {
+  min-width: 0;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 0.85rem;
+  color: color-mix(in oklab, var(--te-neutral-900) 55%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .hero-title {
+  margin-top: 14px;
+  font-size: clamp(1.5rem, 3vw, 2.1rem);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .hero-title-en {
+  letter-spacing: 0.52em;
+  font-weight: 500;
+  color: color-mix(in oklab, var(--te-neutral-900) 40%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .hero-desc {
+  margin-inline: auto;
+  font-size: 0.78rem;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: color-mix(in oklab, var(--te-neutral-900) 48%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .hero-actions {
+  justify-content: center;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .hero-play,
+html[data-te-preset-layout='zen-minimal'] .home-view .hero-open {
+  background: transparent;
+  border: 1px solid color-mix(in oklab, var(--te-neutral-900) 24%, transparent);
+  color: var(--te-neutral-900);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .hero-play:hover,
+html[data-te-preset-layout='zen-minimal'] .home-view .hero-open:hover {
+  transform: none;
+  background: color-mix(in oklab, var(--te-neutral-900) 5%, transparent);
+  border-color: color-mix(in oklab, var(--te-neutral-900) 46%, transparent);
+  color: var(--te-neutral-900);
+  box-shadow: none;
+}
+
+/* 拼贴舞台化为单幅展品 */
+html[data-te-preset-layout='zen-minimal'] .home-view .hero-stage {
+  position: relative;
+  flex: 0 0 auto;
+  order: -1;
+  width: min(100%, clamp(180px, 36vw, 320px));
+  aspect-ratio: 1;
+  overflow: visible;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .hero-stage .hero-collage-card {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: none;
+  border-radius: 2px;
+  box-shadow: 0 1px 3px color-mix(in oklab, var(--te-neutral-900) 12%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal']
+  .home-view
+  .hero-stage
+  .hero-collage-card:not(.hero-collage-card-0) {
+  display: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .hero-stage:hover .hero-collage-card {
+  transform: none;
+}
+
+/* 电台双卡：素排，晕染底色归零 */
+html[data-te-preset-layout='zen-minimal'] .home-view .duo {
+  gap: clamp(1.4rem, 4vw, 2.6rem);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .duo-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0.9rem 0.4rem;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .duo-card::before {
+  content: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .duo-card:hover {
+  transform: none;
+  border: 0;
+  box-shadow: none;
+  background: color-mix(in oklab, var(--te-neutral-900) 4%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .duo-name {
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .duo-arrow {
+  opacity: 0.4;
+}
+
+/* 区块标题与榜单：居中小标题 + 单列清单 */
+html[data-te-preset-layout='zen-minimal'] .home-view .section-head {
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.55rem;
+  margin-bottom: clamp(1.6rem, 3.5vh, 2.2rem);
+  text-align: center;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .section-head-copy h3 {
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: 0.26em;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .section-head-copy p {
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  color: color-mix(in oklab, var(--te-neutral-900) 44%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .section-more {
+  height: auto;
+  padding: 0.2rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  font-size: 0.66rem;
+  color: color-mix(in oklab, var(--te-neutral-900) 52%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .section-more:hover {
+  transform: none;
+  border: 0;
+  color: var(--te-neutral-900);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .chart-grid {
+  grid-template-columns: 1fr;
+  gap: 2px;
+  width: min(100%, 640px);
+  margin-inline: auto;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .chart-row {
+  border-radius: 0;
+  padding: 0.7rem 0.5rem;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .chart-row:hover {
+  background: color-mix(in oklab, var(--te-neutral-900) 4%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .chart-index {
+  font-weight: 400;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  color: color-mix(in oklab, var(--te-neutral-900) 34%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .chart-cover {
+  border-radius: 2px;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .chart-title {
+  font-weight: 500;
+}
+
+/* 歌单陈列：更大间距，角标与幕布隐去 */
+html[data-te-preset-layout='zen-minimal'] .home-view .shelf-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr));
+  gap: clamp(2rem, 4vh, 3.2rem) clamp(1.6rem, 3vw, 2.6rem);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .shelf-cover {
+  border-radius: 2px;
+  box-shadow: 0 1px 3px color-mix(in oklab, var(--te-neutral-900) 12%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .shelf-tile:hover .shelf-cover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px color-mix(in oklab, var(--te-neutral-900) 14%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .shelf-scrim,
+html[data-te-preset-layout='zen-minimal'] .home-view .shelf-count {
+  display: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .shelf-name {
+  margin-top: 0.8rem;
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+}
+
+/* 未登录邀请：静置居中，浮光装饰隐去 */
+html[data-te-preset-layout='zen-minimal'] .home-view .hero-invite {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: center;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .invite-orb,
+html[data-te-preset-layout='zen-minimal'] .home-view .invite-notes {
+  display: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .invite-title {
+  font-weight: 400;
+  letter-spacing: 0.06em;
+}
+
+html[data-te-preset-layout='zen-minimal'] .home-view .invite-cta {
+  background: transparent;
+  border: 1px solid color-mix(in oklab, var(--te-neutral-900) 24%, transparent);
+  color: var(--te-neutral-900);
+  box-shadow: none;
+}
+
+/* 流媒体页外壳：侧栏隐形 */
+html[data-te-preset-layout='zen-minimal'] .streaming-sidebar {
+  background: transparent;
+  border-right: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .streaming-menu-separator {
+  background: color-mix(in oklab, var(--te-neutral-900) 12%, transparent);
+}
+
+/* ── 播放页：一间空房 ───────────────────────────────────────────────────── */
+
+html[data-te-preset-layout='zen-minimal'] .playing-music .backdrop-accent {
+  display: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .playing-music .stage {
+  padding-top: clamp(48px, 9vh, 88px);
+}
+
+/* 封面居中偏上，四周巨大留白（minimal 单列布局下） */
+html[data-te-preset-layout='zen-minimal'] .playing-music .cover-column {
+  transform: none;
+  gap: clamp(22px, 4.5vh, 40px);
+}
+
+html[data-te-preset-layout='zen-minimal'] .playing-music .layout--single .cover-column {
+  transform: translateY(-3vh);
+}
+
+html[data-te-preset-layout='zen-minimal'] .playing-music .cover-frame {
+  width: min(100%, clamp(200px, 44vmin, 380px));
+  background: transparent;
+  box-shadow: 0 2px 10px oklch(from var(--te-neutral-900) 0.1 0.01 h / 0.28);
+}
+
+html[data-te-preset-layout='zen-minimal'] .playing-music .track-title {
+  font-size: clamp(16px, 2.2vw, 21px);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  line-height: 1.7;
+}
+
+html[data-te-preset-layout='zen-minimal'] .playing-music .track-artist {
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+}
+
+html[data-te-preset-layout='zen-minimal'] .playing-music .track-album {
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+}
+
+/* 可视化切换按钮：低灰度，悬浮才醒来 */
+html[data-te-preset-layout='zen-minimal'] .playing-music .visualizer-toggle-button {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  opacity: 0.35;
+}
+
+html[data-te-preset-layout='zen-minimal'] .playing-music .visualizer-toggle-button:hover {
+  opacity: 1;
+  background: transparent;
+}
+
+/* 歌词：仅当前行醒目，其余极浅；行距放大，底色与描边归零 */
+html[data-te-preset-layout='zen-minimal'] .playing-music .time-chip {
+  border-color: transparent;
+  background: transparent;
+  letter-spacing: 0.12em;
+}
+
+html[data-te-preset-layout='zen-minimal'] .playing-music .lyrics-list {
+  gap: clamp(12px, 2vh, 20px);
+}
+
+html[data-te-preset-layout='zen-minimal'] .playing-music .lyric-row {
+  border-radius: 0;
+  padding-block: 8px;
+}
+
+html[data-te-preset-layout='zen-minimal'] .playing-music .lyric-row.idle,
+html[data-te-preset-layout='zen-minimal'] .playing-music .lyric-row.mid,
+html[data-te-preset-layout='zen-minimal'] .playing-music .lyric-row.near {
+  opacity: 0.28;
+}
+
+html[data-te-preset-layout='zen-minimal'] .playing-music .lyric-row.far {
+  opacity: 0.16;
+}
+
+html[data-te-preset-layout='zen-minimal'] .playing-music .lyric-row.active {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .playing-music .lyric-text {
+  line-height: 2;
+  letter-spacing: 0.03em;
+}
+
+/* ── 播放栏：消失的边界 ─────────────────────────────────────────────────── */
+
+html[data-te-preset-layout='zen-minimal'] .player-bar-shell {
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+html[data-te-preset-layout='zen-minimal'] .player-bar-shell.menu-open {
+  left: var(--te-menu-width);
+  right: 0;
+}
+
+html[data-te-preset-layout='zen-minimal'] .player-bar-shell .player-bar {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  height: 64px;
+  padding: 0 clamp(14px, 4vw, 44px) 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+
+/* 左侧：小封面、轻文字 */
+html[data-te-preset-layout='zen-minimal'] .player-bar .player-cover-slot {
+  width: 38px;
+  height: 38px;
+  border-radius: 2px;
+  background: transparent;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .player-bar .player-cover-slot .player-cover {
+  width: 38px;
+  height: 38px;
+  border-radius: 2px;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .player-bar .player-cover-slot:hover .player-cover {
+  transform: none;
+  box-shadow: none;
+  filter: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .player-bar .player-title {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+}
+
+html[data-te-preset-layout='zen-minimal'] .player-bar .player-artist {
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  color: color-mix(in oklab, var(--te-chrome-text, var(--te-neutral-900)) 55%, transparent);
+}
+
+/* 中央控制：无底色纯图标 */
+html[data-te-preset-layout='zen-minimal'] .player-bar .player-controls {
+  gap: clamp(10px, 2vw, 18px);
+}
+
+html[data-te-preset-layout='zen-minimal'] .player-bar .ctrl-btn:hover {
+  background: transparent;
+}
+
+/* 进度：一条 1px 发丝线贴窗口最底缘 */
+html[data-te-preset-layout='zen-minimal'] .player-bar .player-center {
+  position: static;
+  transform: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .player-bar .progress-area {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  gap: 0;
+}
+
+html[data-te-preset-layout='zen-minimal'] .player-bar .progress-slider-wrap {
+  height: 12px;
+}
+
+html[data-te-preset-layout='zen-minimal'] .player-bar .progress-slider {
+  height: 12px;
+}
+
+html[data-te-preset-layout='zen-minimal'] .player-bar .progress-track {
+  top: auto;
+  bottom: 0;
+  height: 1px;
+  transform: none;
+  border-radius: 0;
+  background: color-mix(in oklab, var(--te-neutral-900) 16%, transparent);
+}
+
+html[data-te-preset-layout='zen-minimal'] .player-bar .progress-fill {
+  border-radius: 0;
+  background: var(--te-primary-500);
+}
+
+/* 时间标签：静默，悬浮播放栏时浮现在两角 */
+html[data-te-preset-layout='zen-minimal'] .player-bar .time-label {
+  position: absolute;
+  bottom: 8px;
+  min-width: 0;
+  opacity: 0;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: color-mix(in oklab, var(--te-chrome-text, var(--te-neutral-900)) 55%, transparent);
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+}
+
+html[data-te-preset-layout='zen-minimal'] .player-bar .time-label:first-child {
+  left: clamp(10px, 2vw, 22px);
+}
+
+html[data-te-preset-layout='zen-minimal'] .player-bar .time-label:last-child {
+  right: clamp(10px, 2vw, 22px);
+}
+
+html[data-te-preset-layout='zen-minimal'] .player-bar:hover .time-label {
+  opacity: 1;
+}
+
+/* 右侧杂项：低灰度，悬浮播放栏时恢复 */
+html[data-te-preset-layout='zen-minimal'] .player-bar .icon-btn,
+html[data-te-preset-layout='zen-minimal'] .player-bar .mode-btn-right {
+  opacity: 0.4;
+  transition: opacity 0.25s ease;
+}
+
+html[data-te-preset-layout='zen-minimal'] .player-bar:hover .icon-btn,
+html[data-te-preset-layout='zen-minimal'] .player-bar:hover .mode-btn-right {
+  opacity: 1;
+}
+
+html[data-te-preset-layout='zen-minimal'] .player-bar .icon-btn:hover,
+html[data-te-preset-layout='zen-minimal'] .player-bar .mode-btn-right:hover {
+  background: transparent;
+}
+
+/* ── 动效：reduced 档位（本预设默认）关掉持续动画 ─────────────────────── */
+
+html[data-te-preset-layout='zen-minimal'][data-te-effects-mode='reduced'] .home-flow > section,
+html[data-te-preset-layout='zen-minimal'][data-te-effects-mode='reduced'] .home .sky-blob,
+html[data-te-preset-layout='zen-minimal'][data-te-effects-mode='reduced'] .home .now-halo,
+html[data-te-preset-layout='zen-minimal'][data-te-effects-mode='reduced'] .home .empty-ripple,
+html[data-te-preset-layout='zen-minimal'][data-te-effects-mode='reduced'] .home .now-eyebrow .eq i,
+html[data-te-preset-layout='zen-minimal'][data-te-effects-mode='reduced'] .home-view .chart-eq i {
+  animation: none;
+}

@@ -195,6 +195,45 @@ ChannelRoutingMode parseChannelRoutingMode(const std::string& mode) {
   return ChannelRoutingMode::Auto;
 }
 
+std::string pcmToDsdModeToString(PcmToDsdMode mode) {
+  switch (mode) {
+    case PcmToDsdMode::Dsd64:
+      return "dsd64";
+    case PcmToDsdMode::Dsd128:
+      return "dsd128";
+    case PcmToDsdMode::Dsd256:
+      return "dsd256";
+    case PcmToDsdMode::Off:
+    default:
+      return "off";
+  }
+}
+
+PcmToDsdMode parsePcmToDsdMode(const std::string& mode) {
+  std::string normalized = mode;
+  std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
+  if (normalized == "dsd64") return PcmToDsdMode::Dsd64;
+  if (normalized == "dsd128") return PcmToDsdMode::Dsd128;
+  if (normalized == "dsd256") return PcmToDsdMode::Dsd256;
+  return PcmToDsdMode::Off;
+}
+
+int pcmToDsdModeRateMultiplier(PcmToDsdMode mode) {
+  switch (mode) {
+    case PcmToDsdMode::Dsd64:
+      return 64;
+    case PcmToDsdMode::Dsd128:
+      return 128;
+    case PcmToDsdMode::Dsd256:
+      return 256;
+    case PcmToDsdMode::Off:
+    default:
+      return 0;
+  }
+}
+
 std::string dsdModeToString(DsdMode mode) {
   switch (mode) {
     case DsdMode::Dop:

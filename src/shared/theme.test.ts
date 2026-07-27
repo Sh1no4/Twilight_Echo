@@ -357,7 +357,7 @@ test('derived profiles retain a preset source and reset through the preset base'
   assert.equal(derived.baseThemeId, 'builtin:studio-split')
   assert.equal(derived.source?.presetId, 'builtin:studio-split')
   assert.equal(resolveThemeProfileModes(derived).player?.layout, 'split')
-  assert.equal(resolveThemeProfileTokens(derived, 'dark')['color.primary.500'], '#2dd4bf')
+  assert.equal(resolveThemeProfileTokens(derived, 'dark')['color.primary.500'], '#3ddc97')
 })
 
 test('profile history is bounded by count and UTF-8 byte budget', () => {

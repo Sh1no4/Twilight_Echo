@@ -46,7 +46,8 @@ export function buildMiniPlayerStateSnapshot(
           title: track.title,
           artist: track.artist,
           album: track.album,
-          cover: track.cover
+          cover: track.cover,
+          coverSource: track.coverSource ?? null
         }
       : null,
     isPlaying: source.isPlaying,
@@ -111,6 +112,7 @@ export function useMiniPlayerSync(options: MiniPlayerSyncOptions): void {
       () => options.currentTrack.value?.artist,
       () => options.currentTrack.value?.album,
       () => options.currentTrack.value?.cover,
+      () => options.currentTrack.value?.coverSource,
       options.isPlaying,
       options.isLoading,
       options.currentTime,

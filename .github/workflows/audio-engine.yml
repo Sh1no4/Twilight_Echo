@@ -109,14 +109,17 @@ jobs:
       - name: Test lyrics management
         run: xvfb-run -a pnpm run test:lyrics-management
 
-      - name: Test offline downloads
-        run: xvfb-run -a pnpm run test:offline-downloads
+      - name: Test radio, podcast, library watcher, and remote control
+        run: pnpm run test:radio-remote
 
       - name: Test CUE support
         run: pnpm run test:cue
 
       - name: Test local performance
         run: pnpm run test:local-perf
+
+      - name: Test themes
+        run: pnpm run test:themes
 
       - name: Test DSP graph
         run: pnpm run test:dsp-graph

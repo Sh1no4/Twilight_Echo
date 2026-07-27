@@ -13,6 +13,7 @@ import type {
   MediaProviderPlaylistSummary
 } from '../../providers/mediaProvider'
 import type { PageState } from './types'
+import { friendlyStreamingError } from './friendlyStreamingError.ts'
 
 export type SearchType = 'songs' | 'playlists' | 'artists'
 export type SearchSource = 'all' | 'local' | string
@@ -273,7 +274,7 @@ export function useStreamingSearch({
       }
     } catch (e) {
       if (snapshot.requestId === latestRequestId) {
-        searchError.value = e instanceof Error ? e.message : '搜索失败'
+        searchError.value = friendlyStreamingError(e, '搜索失败')
         searchResults.value = []
         searchPlaylistsResults.value = []
         searchArtistsResults.value = []

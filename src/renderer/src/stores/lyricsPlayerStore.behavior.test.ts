@@ -145,6 +145,10 @@ window.runLyricsPlayerRuntime = async () => {
   await management.selectSource(track.id, 'provider')
   await player.refreshCurrentLyrics()
   expect(player.currentTrack.value.lyrics === '[00:01.00]Provider lyrics', 'forced Provider did not update actual current track')
+  expect(
+    player.lyricsLoadState.value.trackId === track.id && player.lyricsLoadState.value.status === 'ready',
+    'completed provider lookup left lyrics in a loading state'
+  )
 
   await management.selectSource(track.id, 'auto')
   await player.refreshCurrentLyrics()

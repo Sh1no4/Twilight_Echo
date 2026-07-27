@@ -20,6 +20,11 @@ test('renderer budgets validate chunks and reject oversized fonts', () => {
     fs.writeFileSync(path.join(assets, 'app.js'), Buffer.alloc(BUDGETS.jsChunk))
     fs.writeFileSync(path.join(assets, 'app.css'), Buffer.alloc(BUDGETS.cssChunk))
     assert.equal(assertRendererBudgets(root).fontBytes, 0)
+    fs.mkdirSync(path.join(root, 'font', 'misans', 'full'), { recursive: true })
+    fs.writeFileSync(path.join(root, 'font', 'misans', 'full', 'MiSans-Regular.woff2'), '')
+    fs.writeFileSync(path.join(root, 'font', 'misans', 'full', 'misans-full.css'), '')
+    fs.writeFileSync(path.join(root, 'font', 'misans', 'full', 'README.md'), '')
+    assert.equal(assertRendererBudgets(root).fontBytes, 0)
     fs.writeFileSync(path.join(root, 'font.woff2'), Buffer.alloc(BUDGETS.fonts + 1))
     assert.throws(() => assertRendererBudgets(root), /fonts are/)
   } finally {

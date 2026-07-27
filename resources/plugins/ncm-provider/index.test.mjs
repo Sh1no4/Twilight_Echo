@@ -200,7 +200,7 @@ test('protocol-relative stream URLs are normalized to https', async () => {
   }
 })
 
-test('prefers a completed disk cache path and skips the network', async () => {
+test('prefers a completed disk cache path over a network playback URL', async () => {
   const cachedPath = 'D:\\Cache\\ncm-cache\\90.flac'
   let networkCalls = 0
   let registeredProvider = null
@@ -210,7 +210,10 @@ test('prefers a completed disk cache path and skips the network', async () => {
         ncm: {
           request: async () => {
             networkCalls += 1
-            throw new Error('network should not be used on cache hit')
+            return {
+              code: 200,
+              data: [{ id: 90, url: 'https://music.example/90.flac', br: 999000 }]
+            }
           },
           officialLogin: async () => 'MUSIC_U=test;',
           getCachedSong: async (songId) => (Number(songId) === 90 ? cachedPath : null),
@@ -243,8 +246,9 @@ test('prefers a completed disk cache path and skips the network', async () => {
     assert.equal(networkCalls, 0)
     assert.equal(
       await registeredProvider.getPlaybackUrl({ id: 'ncm:90' }, { force: true }),
-      null
+      'https://music.example/90.flac'
     )
+    assert.equal(networkCalls, 1)
   } finally {
     ncmProvider.deactivate()
   }
@@ -1057,6 +1061,203 @@ test('follow list uses artist sublist and returns artist identities', async () =
       }
     ])
     assert.equal(requests.length, 1)
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('playlist categories load anonymously, normalize groups, and cache the catalogue', async () => {
+  const requests = []
+  const cookies = []
+  const provider = await activateProvider(async (path, cookie) => {
+    requests.push(path)
+    cookies.push(cookie)
+    const url = parseRequest(path)
+    if (url.pathname === '/playlist/catlist') {
+      return {
+        categories: { 0: '语种', 1: '风格' },
+        sub: [
+          { name: '华语', category: 0, hot: true },
+          { name: '欧美', category: 0, hot: false },
+          { name: '摇滚', category: 1, hot: true }
+        ]
+      }
+    }
+    if (url.pathname === '/playlist/hot') {
+      return { tags: [{ name: '华语' }, { name: '流行' }] }
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  }, new Map())
+
+  try {
+    const catalogue = await provider.fetchPlaylistCategories()
+    assert.deepEqual(catalogue, {
+      hotTags: ['华语', '流行'],
+      groups: [
+        {
+          id: 0,
+          name: '语种',
+          tags: [
+            { name: '华语', hot: true },
+            { name: '欧美', hot: false }
+          ]
+        },
+        { id: 1, name: '风格', tags: [{ name: '摇滚', hot: true }] }
+      ]
+    })
+    assert.ok(cookies.every((cookie) => !cookie))
+    assert.equal(requests.length, 2)
+
+    const cached = await provider.fetchPlaylistCategories()
+    assert.deepEqual(cached, catalogue)
+    assert.equal(requests.length, 2)
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('playlist categories derive hot tags from sub items when the hot endpoint fails', async () => {
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    if (url.pathname === '/playlist/catlist') {
+      return {
+        categories: { 2: '场景' },
+        sub: [
+          { name: '学习', category: 2, hot: true },
+          { name: '夜晚', category: 2, hot: false }
+        ]
+      }
+    }
+    throw new Error('hot tags unavailable')
+  }, new Map())
+
+  try {
+    const catalogue = await provider.fetchPlaylistCategories()
+    assert.deepEqual(catalogue.hotTags, ['学习'])
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('discovery playlists pass tag paging params and normalize playlists with play counts', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    assert.equal(url.pathname, '/top/playlist')
+    // /api/playlist/list responds with the plural `playlists` key.
+    return {
+      playlists: [
+        {
+          id: 900,
+          name: '欧美新歌',
+          coverImgUrl: 'https://img.test/900.jpg',
+          trackCount: 42,
+          creator: { nickname: 'curator' },
+          playCount: 123456
+        }
+      ],
+      total: 100,
+      more: true
+    }
+  }, new Map())
+
+  try {
+    const page = await provider.fetchDiscoveryPlaylists('欧美', 'new', 30, 60)
+    const url = parseRequest(requests[0])
+    assert.equal(url.searchParams.get('cat'), '欧美')
+    assert.equal(url.searchParams.get('order'), 'new')
+    assert.equal(url.searchParams.get('limit'), '30')
+    assert.equal(url.searchParams.get('offset'), '60')
+    assert.equal(page.total, 100)
+    assert.equal(page.hasMore, true)
+    assert.equal(page.offset, 60)
+    assert.equal(page.limit, 30)
+    assert.deepEqual(page.items, [
+      {
+        id: 900,
+        name: '欧美新歌',
+        cover: 'https://img.test/900.jpg',
+        trackCount: 42,
+        creatorName: 'curator',
+        owned: undefined,
+        playCount: 123456
+      }
+    ])
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('discovery playlists fall back to hot order for invalid order values', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    return { playlists: [], total: 0, more: false }
+  }, new Map())
+
+  try {
+    await provider.fetchDiscoveryPlaylists('全部', 'invalid-order', 30, 0)
+    assert.equal(parseRequest(requests[0]).searchParams.get('order'), 'hot')
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('high-quality playlists page with a forward before cursor and surface lasttime', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    assert.equal(url.pathname, '/top/playlist/highquality')
+    const before = url.searchParams.get('before')
+    return {
+      playlists: [
+        {
+          id: before ? 902 : 901,
+          name: before ? '精品二' : '精品一',
+          coverImgUrl: null,
+          trackCount: 10,
+          updateTime: before ? 1600 : 1800
+        }
+      ],
+      total: 60,
+      more: !before,
+      lasttime: before ? 1600 : 1800
+    }
+  }, new Map())
+
+  try {
+    const first = await provider.fetchHighQualityPlaylists('全部', 30, 0)
+    assert.equal(parseRequest(requests[0]).searchParams.get('before'), null)
+    assert.equal(first.hasMore, true)
+    assert.equal(first.lasttime, 1800)
+
+    const second = await provider.fetchHighQualityPlaylists('全部', 30, first.lasttime)
+    assert.equal(parseRequest(requests[1]).searchParams.get('before'), '1800')
+    assert.equal(second.hasMore, false)
+    assert.equal(second.items[0].id, 902)
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('playlist tracks load anonymously without a login error', async () => {
+  const cookies = []
+  const provider = await activateProvider(async (path, cookie) => {
+    cookies.push(cookie)
+    const url = parseRequest(path)
+    if (url.pathname === '/playlist/track/all') {
+      return { songs: [song(1), song(2)] }
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  }, new Map())
+
+  try {
+    const tracks = await provider.fetchPlaylistTracks(123)
+    assert.equal(tracks.length, 2)
+    assert.equal(tracks[0].id, 'ncm:1')
+    assert.ok(cookies.every((cookie) => !cookie))
   } finally {
     ncmProvider.deactivate()
   }

@@ -280,7 +280,7 @@ test('specialized windows receive only their scoped preload APIs', () => {
   )
   assert.match(
     preloadSource,
-    /if \(isMiniPlayerDocument\(\)\) return \{ miniPlayer: miniPlayerWindowApi \}/
+    /if \(isMiniPlayerDocument\(\)\) \{[\s\S]*?return \{ miniPlayer: miniPlayerWindowApi, data: miniPlayerCoverDataApi \}/
   )
   assert.match(preloadSource, /window\.location\.pathname\.endsWith\('\/desktop-lyrics\.html'\)/)
   assert.match(preloadSource, /get\('window'\) === 'mini-player'/)

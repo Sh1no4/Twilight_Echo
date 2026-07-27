@@ -7,9 +7,11 @@ import {
   importAppSettingsFromBackup
 } from './settingsBackup.ts'
 import { createDefaultThemeLibraryDocument } from '../../shared/theme.ts'
+import { normalizeMotionPreference } from '../../shared/motion.ts'
 
 const currentSettings = {
   theme: 'dark',
+  motionPreference: 'system',
   proxyMode: 'off',
   proxyHost: '',
   proxyPort: 0,
@@ -21,6 +23,7 @@ function normalizeSettings(settings: any): any {
     ...currentSettings,
     ...settings,
     theme: settings.theme === 'dark' || settings.theme === 'system' ? settings.theme : 'system',
+    motionPreference: normalizeMotionPreference(settings.motionPreference),
     proxyPort: Math.min(65535, Math.max(0, Number(settings.proxyPort) || 0))
   }
 }
@@ -57,6 +60,22 @@ test('imports valid settings backup through normal settings normalization', () =
   assert.equal(imported.proxyMode, 'custom')
   assert.equal(imported.proxyPort, 65535)
   assert.equal(imported.globalShortcuts, true)
+})
+
+test('imports motion preference through settings backup normalization', () => {
+  const imported = importAppSettingsFromBackup(
+    JSON.stringify({ ...currentSettings, motionPreference: 'reduced' }),
+    currentSettings,
+    normalizeSettings
+  )
+  const invalid = importAppSettingsFromBackup(
+    JSON.stringify({ ...currentSettings, motionPreference: 'unbounded' }),
+    currentSettings,
+    normalizeSettings
+  )
+
+  assert.equal(imported.motionPreference, 'reduced')
+  assert.equal(invalid.motionPreference, 'system')
 })
 
 test('rejects invalid settings backup without producing replacement settings', () => {

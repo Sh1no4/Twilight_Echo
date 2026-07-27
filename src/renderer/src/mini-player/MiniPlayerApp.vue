@@ -16,6 +16,10 @@ import {
 } from './presentation'
 import { resolveMiniPlayerStyle } from './styles'
 import { useMiniPlayerCustomizationDraft } from './useMiniPlayerCustomizationDraft'
+import { useMotionPreference } from '../app/useMotionPreference'
+import { useCover } from '../utils/coverLoader'
+import { useSmoothedValue } from '../utils/useSmoothedValue'
+import type { MotionPreference } from '../../../shared/motion.ts'
 
 const state = ref<MiniPlayerStateSnapshot>({ ...EMPTY_MINI_PLAYER_STATE })
 const ready = ref(false)
@@ -24,6 +28,8 @@ const coverFailed = ref(false)
 const customizerOpen = ref(false)
 const viewportWidth = ref(Math.max(1, window.innerWidth))
 const viewportHeight = ref(Math.max(1, window.innerHeight))
+const motionPreference = ref<MotionPreference>('system')
+useMotionPreference(motionPreference)
 
 const customization = useMiniPlayerCustomizationDraft({
   initial: cloneMiniPlayerSettings(DEFAULT_MINI_PLAYER_SETTINGS),
@@ -35,11 +41,13 @@ const activeProfile = computed(
   () => settings.value.profiles[settings.value.activeStyleId] ?? customization.activeProfile.value
 )
 const activeStyle = computed(() => resolveMiniPlayerStyle(settings.value.activeStyleId))
-const progressPercent = computed(() =>
+const rawProgressPercent = computed(() =>
   state.value.duration > 0
     ? Math.min(100, Math.max(0, (state.value.currentTime / state.value.duration) * 100))
     : 0
 )
+// Snapshot pushes are stepped; glide between them like the main PlayerBar.
+const progressPercent = useSmoothedValue(rawProgressPercent, { tau: 160, snapThreshold: 2.5 })
 const resolvedLayout = computed(() =>
   resolveMiniPlayerLayout(
     viewportWidth.value,
@@ -73,7 +81,14 @@ const styleClasses = computed(() => [
     'is-customizing': customizerOpen.value
   }
 ])
-const hasCover = computed(() => Boolean(state.value.track?.cover) && !coverFailed.value)
+// cover:// / background:// handles and expired twilight-media grants cannot be
+// painted directly in this window — materialize / re-grant through the same
+// loader the main window uses (IPC getCover + coverSource re-grant).
+const coverSrc = useCover(
+  computed(() => state.value.track?.cover),
+  computed(() => state.value.track?.coverSource)
+)
+const hasCover = computed(() => Boolean(coverSrc.value) && !coverFailed.value)
 const backgroundSourceStyle = computed<CSSProperties>(() => {
   const background = activeProfile.value.background
   const fallback = { backgroundColor: background.fallbackColor }
@@ -85,8 +100,8 @@ const backgroundSourceStyle = computed<CSSProperties>(() => {
       backgroundImage: `linear-gradient(${background.gradientAngle}deg, ${background.gradientStart}, ${background.gradientEnd})`
     }
   }
-  if (background.kind === 'cover' && hasCover.value && state.value.track?.cover) {
-    return { ...fallback, backgroundImage: cssBackgroundUrl(state.value.track.cover) }
+  if (background.kind === 'cover' && hasCover.value && coverSrc.value) {
+    return { ...fallback, backgroundImage: cssBackgroundUrl(coverSrc.value) }
   }
   if (background.kind === 'image' && background.imageUrl) {
     return { ...fallback, backgroundImage: cssBackgroundUrl(background.imageUrl) }
@@ -249,6 +264,7 @@ async function handleKeydown(event: KeyboardEvent): Promise<void> {
 
 let removeStateListener: (() => void) | null = null
 let removeSettingsListener: (() => void) | null = null
+let removeMotionPreferenceListener: (() => void) | null = null
 
 onMounted(async () => {
   removeStateListener = window.api.miniPlayer.onState((nextState) => {
@@ -256,6 +272,9 @@ onMounted(async () => {
   })
   removeSettingsListener = window.api.miniPlayer.onSettings((nextSettings) => {
     customization.acceptConfirmed(nextSettings)
+  })
+  removeMotionPreferenceListener = window.api.miniPlayer.onMotionPreference((nextPreference) => {
+    motionPreference.value = nextPreference
   })
   window.addEventListener('keydown', handleKeydown)
   window.addEventListener('resize', updateViewportSize)
@@ -270,6 +289,7 @@ async function loadBootstrap(): Promise<void> {
     const bootstrap = await window.api.miniPlayer.getBootstrap()
     state.value = bootstrap.state
     customization.acceptConfirmed(bootstrap.settings)
+    motionPreference.value = bootstrap.motionPreference
   } catch (error) {
     console.error('[mini-player] Failed to load initial state:', error)
     bootstrapError.value = error instanceof Error ? error.message : String(error)
@@ -280,12 +300,9 @@ async function loadBootstrap(): Promise<void> {
   }
 }
 
-watch(
-  () => state.value.track?.cover,
-  () => {
-    coverFailed.value = false
-  }
-)
+watch(coverSrc, () => {
+  coverFailed.value = false
+})
 
 onBeforeUnmount(() => {
   const pendingFlush = customization.flush()
@@ -293,6 +310,7 @@ onBeforeUnmount(() => {
   void pendingFlush.catch(() => undefined)
   removeStateListener?.()
   removeSettingsListener?.()
+  removeMotionPreferenceListener?.()
   window.removeEventListener('keydown', handleKeydown)
   window.removeEventListener('resize', updateViewportSize)
 })
@@ -326,10 +344,14 @@ onBeforeUnmount(() => {
 
       <span class="mini-drag-hint" aria-hidden="true"></span>
 
-      <div v-if="resolvedVisibility.artwork" class="mini-artwork-wrap">
+      <div
+        v-if="resolvedVisibility.artwork"
+        :key="`artwork:${state.track?.id ?? 'empty'}`"
+        class="mini-artwork-wrap"
+      >
         <img
           v-if="hasCover"
-          :src="state.track?.cover || ''"
+          :src="coverSrc || ''"
           class="mini-artwork"
           alt="专辑封面"
           @error="coverFailed = true"
@@ -349,7 +371,7 @@ onBeforeUnmount(() => {
 
       <div class="mini-player-content">
         <header class="mini-player-header">
-          <div class="mini-track-meta">
+          <div :key="`meta:${state.track?.id ?? 'empty'}`" class="mini-track-meta">
             <div v-if="resolvedVisibility.album" class="mini-track-kicker">{{ trackAlbum }}</div>
             <h1 :title="trackTitle">{{ trackTitle }}</h1>
             <p :title="trackArtist">{{ trackArtist }}</p>
@@ -429,17 +451,19 @@ onBeforeUnmount(() => {
         </div>
 
         <footer class="mini-player-controls mini-no-drag">
-          <button
-            v-if="resolvedVisibility.playMode"
-            type="button"
-            class="mini-control-button mode-button"
-            :title="playModeTitle"
-            :aria-label="playModeTitle"
-            :disabled="!state.track"
-            @click="sendCommand({ type: 'cycle-play-mode' })"
-          >
-            <i :class="playModeIcon"></i>
-          </button>
+          <div class="mini-controls-side left">
+            <button
+              v-if="resolvedVisibility.playMode"
+              type="button"
+              class="mini-control-button mode-button"
+              :title="playModeTitle"
+              :aria-label="playModeTitle"
+              :disabled="!state.track"
+              @click="sendCommand({ type: 'cycle-play-mode' })"
+            >
+              <i :class="playModeIcon"></i>
+            </button>
+          </div>
 
           <div class="mini-transport">
             <button
@@ -455,6 +479,7 @@ onBeforeUnmount(() => {
             <button
               type="button"
               class="mini-play-button"
+              :class="{ 'is-playing': state.isPlaying }"
               :title="state.isPlaying ? '暂停' : '播放'"
               :aria-label="state.isPlaying ? '暂停' : '播放'"
               :disabled="!state.track || state.isLoading"
@@ -482,27 +507,29 @@ onBeforeUnmount(() => {
             </button>
           </div>
 
-          <span
-            v-if="resolvedVisibility.queuePosition"
-            class="mini-queue-position"
-            title="当前队列位置"
-          >
-            {{ queuePositionText }}
-          </span>
+          <div class="mini-controls-side right">
+            <span
+              v-if="resolvedVisibility.queuePosition"
+              class="mini-queue-position"
+              title="当前队列位置"
+            >
+              {{ queuePositionText }}
+            </span>
 
-          <label v-if="resolvedVisibility.volume" class="mini-volume" title="音量">
-            <i class="ph ph-speaker-high"></i>
-            <input
-              type="range"
-              class="mini-range mini-volume-range"
-              min="0"
-              max="1"
-              step="0.01"
-              :value="state.volume"
-              aria-label="音量"
-              @input="onVolumeInput"
-            />
-          </label>
+            <label v-if="resolvedVisibility.volume" class="mini-volume" title="音量">
+              <i class="ph ph-speaker-high"></i>
+              <input
+                type="range"
+                class="mini-range mini-volume-range"
+                min="0"
+                max="1"
+                step="0.01"
+                :value="state.volume"
+                aria-label="音量"
+                @input="onVolumeInput"
+              />
+            </label>
+          </div>
         </footer>
       </div>
 

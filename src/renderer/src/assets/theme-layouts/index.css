@@ -1,0 +1,7 @@
+/* Preset layout sheets. Each is scoped to html[data-te-preset-layout='<key>']; see README.md. */
+@import './aurora-reference.css';
+@import './obsidian-glass.css';
+@import './paper-light.css';
+@import './neon-gradient.css';
+@import './studio-split.css';
+@import './zen-minimal.css';

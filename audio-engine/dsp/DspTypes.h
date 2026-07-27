@@ -2,6 +2,7 @@
 
 #include "../core/AudioTypes.h"
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -54,7 +55,11 @@ enum class CrossfeedAlgorithm {
 enum class DspResamplerQuality {
   Native,
   High,
-  Ultra
+  Ultra,
+  // SoX-quality tiers use the libswresample soxr engine when the linked FFmpeg
+  // provides it; otherwise they gracefully fall back to the Ultra swr settings.
+  SoxrHq,
+  SoxrVhq
 };
 
 enum class DspDitherMode {
@@ -63,6 +68,32 @@ enum class DspDitherMode {
   HighpassTpdf,
   NoiseShaped
 };
+
+/**
+ * Process-wide runtime probe result for the libswresample soxr engine.
+ * The decode-side resampler reports the outcome of its first soxr swr_init
+ * attempt; status surfaces (DspChain graph status) read it to report an honest
+ * "soxr requested but unavailable" fallback. Header-inline so every test
+ * binary links it without pulling in the FFmpeg decoder translation unit.
+ */
+enum class SoxrRuntimeState {
+  Unknown = 0,
+  Available = 1,
+  Unavailable = 2
+};
+
+inline std::atomic<int>& soxrRuntimeStateStorage() {
+  static std::atomic<int> state{0};
+  return state;
+}
+
+inline void reportSoxrRuntimeAvailability(bool available) {
+  soxrRuntimeStateStorage().store(available ? 1 : 2, std::memory_order_relaxed);
+}
+
+inline SoxrRuntimeState soxrRuntimeAvailability() {
+  return static_cast<SoxrRuntimeState>(soxrRuntimeStateStorage().load(std::memory_order_relaxed));
+}
 
 struct DspEqBand {
   double frequency = 1000.0;

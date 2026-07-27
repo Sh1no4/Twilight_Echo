@@ -1,0 +1,1351 @@
+/* Layout identity for builtin:studio-split. All rules scoped to html[data-te-preset-layout='studio-split']. */
+
+/* ============================================================================
+   STUDIO SPLIT — "DAW Workstation"
+   Every surface becomes a bordered pane with a small-caps header strip.
+   Panes sit on a 1px gutter grid (rack feel). Navigation is a device rack
+   with square status lamps. Home pages are workspace pane grids with
+   segmented level meters. The playing page is a dual-monitor editor with a
+   divider beam and piano-roll lyric grid. The player bar is a transport
+   strip with a ruled timeline and a fader-style volume. Tokens only.
+   ========================================================================== */
+
+html[data-te-preset-layout='studio-split'] {
+  --ss-line: var(--te-card-border);
+  --ss-pane: var(--te-card-bg);
+  --ss-head: var(--te-subtle-bg);
+  --ss-accent: var(--te-primary-500);
+  --ss-meta: var(--te-text-meta, var(--te-neutral-500));
+  --ss-lamp-off: color-mix(in srgb, var(--te-neutral-500) 38%, transparent);
+}
+
+/* ── App shell: flat matte stage, no floating chrome ─────────────────────── */
+
+html[data-te-preset-layout='studio-split'] body,
+html[data-te-preset-layout='studio-split'] body .main-content {
+  background: var(--te-app-bg);
+}
+
+/* ── Side navigation: device rack with status lamps ──────────────────────── */
+
+html[data-te-preset-layout='studio-split'] body .side-menu {
+  border-radius: 0;
+  border-right: 1px solid var(--te-navigation-border);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .side-menu .menu-items {
+  padding: 12px 10px;
+}
+
+/* Rack group: 1px gutter grid between device slots */
+html[data-te-preset-layout='studio-split'] body .side-menu .menu-nav,
+html[data-te-preset-layout='studio-split'] body .side-menu .menu-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border: 1px solid var(--te-navigation-border);
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--te-navigation-border);
+}
+
+html[data-te-preset-layout='studio-split'] body .side-menu .menu-bottom {
+  margin-top: auto;
+  padding-top: 0;
+}
+
+html[data-te-preset-layout='studio-split'] body .side-menu .menu-nav::before,
+html[data-te-preset-layout='studio-split'] body .side-menu .menu-bottom::before {
+  display: block;
+  padding: 5px 10px;
+  background: color-mix(in srgb, var(--te-navigation-bg) 88%, var(--te-navigation-border));
+  color: var(--te-navigation-icon);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+html[data-te-preset-layout='studio-split'] body .side-menu .menu-nav::before {
+  content: 'RACK 01 · LIBRARY';
+}
+
+html[data-te-preset-layout='studio-split'] body .side-menu .menu-bottom::before {
+  content: 'I/O · SOURCES';
+}
+
+html[data-te-preset-layout='studio-split'] body .side-menu .menu-nav .menu-item,
+html[data-te-preset-layout='studio-split'] body .side-menu .menu-bottom .menu-item {
+  width: 100%;
+  height: 34px;
+  margin-left: 0;
+  padding: 0 10px 0 24px;
+  gap: 9px;
+  border-radius: 0;
+  background: var(--te-navigation-bg);
+  animation: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .side-menu .menu-item:hover {
+  transform: none;
+  background: var(--te-navigation-hover);
+}
+
+html[data-te-preset-layout='studio-split'] body .side-menu .menu-item:hover .item-icon {
+  transform: none;
+}
+
+/* Status lamp: small square LED replaces the rounded indicator bar */
+html[data-te-preset-layout='studio-split'] body .side-menu .menu-item::before {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  bottom: auto;
+  width: 6px;
+  height: 6px;
+  transform: translateY(-50%);
+  border-radius: 1px;
+  background: var(--ss-lamp-off);
+  box-shadow: none;
+  opacity: 1;
+  animation: none;
+}
+
+/* Geometry repeated: the component's own .active::before (same class count,
+   later injection) would otherwise restore the original bar geometry. */
+html[data-te-preset-layout='studio-split'] body .side-menu .menu-item.active::before {
+  left: 9px;
+  top: 50%;
+  bottom: auto;
+  width: 6px;
+  height: 6px;
+  transform: translateY(-50%);
+  border-radius: 1px;
+  opacity: 1;
+  background: var(--te-navigation-indicator);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--te-navigation-indicator) 70%, transparent);
+}
+
+html[data-te-preset-layout='studio-split'] body .side-menu .item-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+html[data-te-preset-layout='studio-split'] body .side-menu .menu-separator {
+  display: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .side-menu .scanning-text {
+  background: var(--te-navigation-bg);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+/* ── Local dashboard: workstation pane grid ──────────────────────────────── */
+
+/* Remap the component's soft-glass palette vars (--hm-*) onto rack tokens:
+   flat matte panes, no shadows, square radii, token accent. Both tones
+   resolve automatically. */
+html[data-te-preset-layout='studio-split'] body .home.dashboard-wrapper {
+  --hm-text: var(--te-neutral-900);
+  --hm-muted: var(--te-neutral-500);
+  --hm-faint: color-mix(in srgb, var(--te-neutral-500) 72%, transparent);
+  --hm-surface: var(--ss-pane);
+  --hm-surface-strong: var(--ss-pane);
+  --hm-line: var(--ss-line);
+  --hm-inset: color-mix(in srgb, var(--te-neutral-900) 7%, transparent);
+  --hm-inset-soft: color-mix(in srgb, var(--te-neutral-900) 4%, transparent);
+  --hm-accent: var(--ss-accent);
+  --hm-accent-2: var(--te-primary-400);
+  --hm-tint: color-mix(in srgb, var(--ss-accent) 12%, transparent);
+  --hm-tint-strong: color-mix(in srgb, var(--ss-accent) 26%, transparent);
+  --hm-tint-heavy: color-mix(in srgb, var(--ss-accent) 45%, transparent);
+  --hm-on-accent: var(--ss-pane);
+  --hm-shadow: none;
+  --hm-shadow-lift: none;
+  --hm-shadow-soft: none;
+  --hm-scrim: color-mix(in srgb, var(--te-card-bg) 82%, transparent);
+  --hm-badge: color-mix(in srgb, var(--te-neutral-900) 72%, transparent);
+  --hm-danger: var(--te-favorite-500, var(--te-warning-500));
+  --hm-danger-soft: color-mix(
+    in srgb,
+    var(--te-favorite-500, var(--te-warning-500)) 12%,
+    transparent
+  );
+  --hm-cal-l1: color-mix(in srgb, var(--ss-accent) 16%, transparent);
+  --hm-cal-l2: color-mix(in srgb, var(--ss-accent) 34%, transparent);
+  --hm-cal-l3: color-mix(in srgb, var(--ss-accent) 58%, transparent);
+  --hm-cal-l4: color-mix(in srgb, var(--ss-accent) 85%, transparent);
+  --hm-radius-lg: 4px;
+  --hm-radius-md: 3px;
+  --hm-radius-sm: 2px;
+  --hm-display: var(--te-font-sans);
+}
+
+html[data-te-preset-layout='studio-split'] body .home .home-sky {
+  display: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .home-inner {
+  max-width: none;
+  gap: 12px;
+  padding: calc(32px + 14px) 14px 130px;
+  counter-reset: ss-sec;
+}
+
+/* Header → project toolbar pane with a header strip and rack shuffle key */
+html[data-te-preset-layout='studio-split'] body .home .hd {
+  position: relative;
+  align-items: flex-end;
+  gap: 20px;
+  padding: calc(12px + 26px) 14px 12px;
+  border: 1px solid var(--ss-line);
+  border-radius: 4px;
+  background: var(--ss-pane);
+  overflow: hidden;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .hd::before {
+  content: 'SESSION · LOCAL LIBRARY';
+  position: absolute;
+  inset: 0 0 auto 0;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--ss-line);
+  background: var(--ss-head);
+  color: var(--ss-meta);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .hd .hd-chip {
+  padding: 3px 9px;
+  border-radius: 2px;
+  backdrop-filter: none;
+  box-shadow: none;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .hd .hd-greeting {
+  font-size: clamp(18px, 2.4vw, 24px);
+  letter-spacing: 0.02em;
+  line-height: 1.25;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .hd .hd-mood {
+  font-size: 12px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .hd .hd-shuffle {
+  padding: 8px 14px 8px 8px;
+  border-radius: 3px;
+  background: var(--ss-head);
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .hd .hd-shuffle:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .hd .hd-shuffle-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 2px;
+  box-shadow: none;
+}
+
+/* Stat tiles → channel strips with segmented level meters */
+html[data-te-preset-layout='studio-split'] body .home .stat-row {
+  gap: 1px;
+  border: 1px solid var(--ss-line);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--ss-line);
+}
+
+html[data-te-preset-layout='studio-split'] body .home .stat-row .stat-tile {
+  position: relative;
+  padding: 12px 14px 22px;
+  border: 0;
+  border-radius: 0;
+  background: var(--ss-pane);
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .stat-row .stat-tile:not(.is-static):hover {
+  transform: none;
+  box-shadow: none;
+  background: var(--ss-head);
+}
+
+html[data-te-preset-layout='studio-split'] body .home .stat-tile .stat-copy strong {
+  font-variant-numeric: tabular-nums;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .stat-tile .stat-icon {
+  border-radius: 2px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .stat-row .stat-tile::after {
+  content: '';
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 9px;
+  height: 4px;
+  border-radius: 1px;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 6px, var(--ss-pane) 6px 8px),
+    linear-gradient(
+      90deg,
+      var(--ss-accent) 0%,
+      var(--te-primary-400) 55%,
+      color-mix(in srgb, var(--te-primary-400) 40%, transparent) 100%
+    );
+  pointer-events: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .stat-row .stat-tile.is-static::after {
+  opacity: 0.45;
+}
+
+/* Hero → MASTER pane: flat cover, no halo prop, header strip via ::after
+   (replaces the component's scrim overlay, which the hidden backdrop no
+   longer needs). */
+html[data-te-preset-layout='studio-split'] body .home .now-card {
+  border-radius: 4px;
+  border: 1px solid var(--ss-line);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .now-card .feature-backdrop {
+  display: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .now-card::after {
+  content: 'MASTER BUS · NOW PLAYING';
+  inset: 0 0 auto 0;
+  z-index: 3;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--ss-line);
+  background: var(--ss-head);
+  color: var(--ss-meta);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .now-card .now-layout {
+  padding: calc(18px + 26px) 20px 20px;
+  gap: clamp(18px, 2.6vw, 40px);
+}
+
+html[data-te-preset-layout='studio-split'] body .home .now-art {
+  width: clamp(140px, 17vw, 210px);
+}
+
+html[data-te-preset-layout='studio-split'] body .home .now-art .now-halo {
+  display: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .now-art .now-cover {
+  border-radius: 2px;
+  border: 1px solid var(--ss-line);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .now-info .now-title {
+  font-size: clamp(20px, 2.4vw, 28px);
+  letter-spacing: 0.01em;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .now-info .now-eyebrow {
+  letter-spacing: 0.3em;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .now-chips .now-chip {
+  border-radius: 2px;
+}
+
+/* Ruled timeline in the hero */
+html[data-te-preset-layout='studio-split'] body .home .now-progress .now-rail {
+  height: 18px;
+  padding: 4px 0;
+  border-radius: 0;
+  background-image:
+    repeating-linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--te-neutral-500) 32%, transparent) 0 1px,
+      transparent 1px 28px
+    ),
+    linear-gradient(var(--ss-head), var(--ss-head));
+  background-size:
+    100% 10px,
+    100% 10px;
+  background-position:
+    0 center,
+    0 center;
+  background-repeat: no-repeat;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .now-rail span {
+  height: 10px;
+  border-radius: 0;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .now-rail span::after {
+  width: 4px;
+  height: 14px;
+  right: -2px;
+  border-radius: 1px;
+  transform: translateY(-50%) scale(1);
+}
+
+/* Transport cluster: seamlessly joined square keys */
+html[data-te-preset-layout='studio-split'] body .home .now-actions {
+  gap: 10px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .now-actions .round-btn {
+  width: 42px;
+  height: 30px;
+  margin-left: -1px;
+  border-radius: 0;
+  border: 1px solid var(--ss-line);
+  background: var(--ss-head);
+  backdrop-filter: none;
+  box-shadow: none;
+  font-size: 14px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .now-actions .round-btn:first-child {
+  margin-left: 0;
+  border-radius: 3px 0 0 3px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .now-actions .round-btn:hover {
+  transform: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .now-actions .round-btn.round-play {
+  width: 52px;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--ss-accent) 60%, var(--ss-line));
+  border-radius: 0;
+  background: var(--ss-accent);
+  color: var(--ss-pane);
+  font-size: 15px;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .now-actions .round-btn + .pill-ghost,
+html[data-te-preset-layout='studio-split'] body .home .now-actions .pill-primary,
+html[data-te-preset-layout='studio-split'] body .home .now-actions .pill-ghost {
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 3px;
+  font-size: 12px;
+  box-shadow: none;
+}
+
+/* Signal card → patch-bay pane */
+html[data-te-preset-layout='studio-split'] body .home .signal-card {
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .signal-card:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .signal-card .signal-icon {
+  border-radius: 2px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .signal-card .route-stage {
+  border-radius: 2px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .signal-card .route-stage-icon {
+  border-radius: 2px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .signal-card .dsp-state {
+  border-radius: 2px;
+}
+
+/* Content sections → framed panes with header bars and slot counters */
+html[data-te-preset-layout='studio-split'] body .home .sec {
+  gap: 0;
+  margin-top: 0;
+  border: 1px solid var(--ss-line);
+  border-radius: 4px;
+  background: var(--ss-pane);
+  overflow: hidden;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .sec .sec-head {
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--ss-line);
+  background: var(--ss-head);
+}
+
+html[data-te-preset-layout='studio-split'] body .home .sec .sec-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 2px;
+  font-size: 13px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .sec-copy h3 {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+/* Device-slot counter in place of the removed section numbers */
+html[data-te-preset-layout='studio-split'] body .home .sec-copy h3::before {
+  counter-increment: ss-sec;
+  content: 'CH ' counter(ss-sec, decimal-leading-zero) ' · ';
+  color: var(--ss-accent);
+  letter-spacing: 0.1em;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .sec-copy p {
+  display: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .sec-head .sec-link {
+  padding: 4px 9px;
+  border: 1px solid var(--ss-line);
+  border-radius: 3px;
+  background: var(--ss-pane);
+  backdrop-filter: none;
+  font-size: 11px;
+}
+
+/* Grids: dense, small square covers, minimal radius */
+html[data-te-preset-layout='studio-split'] body .home .sec .recent-grid {
+  padding: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(min(122px, 100%), 1fr));
+  gap: 10px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .sec .album-grid {
+  padding: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(min(118px, 100%), 1fr));
+  gap: 10px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home :is(.track-cover, .album-art) {
+  border-radius: 2px;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split']
+  body
+  .home
+  :is(.track-card, .album-tile):hover
+  :is(.track-cover, .album-art) {
+  transform: none;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home :is(.track-play, .album-play) {
+  width: 30px;
+  height: 30px;
+  border-radius: 2px;
+  box-shadow: none;
+  transform: none;
+  font-size: 12px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .format-badge {
+  border-radius: 1px;
+}
+
+/* Footprint: chart + calendar become sub-panes inside the section pane */
+html[data-te-preset-layout='studio-split'] body .home .sec .footprint-grid {
+  padding: 14px;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1.6fr) minmax(min(280px, 100%), 1fr);
+}
+
+html[data-te-preset-layout='studio-split'] body .home :is(.chart-card, .cal-card) {
+  border-radius: 3px;
+  border: 1px solid var(--ss-line);
+  padding: 0 12px 12px;
+  box-shadow: none;
+  backdrop-filter: none;
+  overflow: hidden;
+}
+
+html[data-te-preset-layout='studio-split'] body .home :is(.chart-card, .cal-card) .card-head {
+  margin: 0 -12px 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--ss-line);
+  background: var(--ss-head);
+}
+
+html[data-te-preset-layout='studio-split'] body .home .chart-champion .champion-badge {
+  border-radius: 2px;
+  font-size: 8.5px;
+  letter-spacing: 0.14em;
+  background: var(--ss-accent);
+  color: var(--ss-pane);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .chart-champion .champion-cover {
+  width: 64px;
+  height: 64px;
+  border-radius: 2px;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .chart-rows .chart-row {
+  border-radius: 2px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .chart-row .row-cover {
+  border-radius: 1px;
+}
+
+/* Play-count bars become segmented meters */
+html[data-te-preset-layout='studio-split'] body .home .chart-row .row-bar {
+  height: 4px;
+  border-radius: 0;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .chart-row .row-bar-fill {
+  border-radius: 0;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 5px, var(--ss-pane) 5px 6px),
+    linear-gradient(90deg, var(--te-primary-400), var(--ss-accent));
+}
+
+html[data-te-preset-layout='studio-split'] body .home .cal-grid .cal-cell {
+  border-radius: 1px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .cal-nav .cal-nav-btn {
+  border-radius: 2px;
+}
+
+/* Empty library: keep the pane discipline, no ripple prop */
+html[data-te-preset-layout='studio-split'] body .home .empty-card {
+  border: 1px solid var(--ss-line);
+  border-radius: 4px;
+  background: var(--ss-pane);
+  backdrop-filter: none;
+  box-shadow: none;
+  padding: 40px 20px 48px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .empty-card .empty-bubble {
+  border-radius: 3px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .empty-card .empty-ripple {
+  display: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home .empty-card .empty-cta {
+  border-radius: 3px;
+}
+
+/* ── Streaming shell + home: mixer panes ─────────────────────────────────── */
+
+html[data-te-preset-layout='studio-split'] body .streaming-sidebar {
+  border-right: 1px solid var(--ss-line);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .streaming-sidebar .streaming-nav {
+  gap: 1px;
+  border: 1px solid var(--ss-line);
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--ss-line);
+}
+
+html[data-te-preset-layout='studio-split'] body .streaming-sidebar .streaming-menu-item {
+  height: 34px;
+  padding: 0 10px 0 24px;
+  border-radius: 0;
+  background: var(--ss-pane);
+  font-size: 12px;
+}
+
+html[data-te-preset-layout='studio-split'] body .streaming-sidebar .streaming-menu-item::before {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  bottom: auto;
+  width: 6px;
+  height: 6px;
+  transform: translateY(-50%);
+  border-radius: 1px;
+  background: var(--ss-lamp-off);
+}
+
+html[data-te-preset-layout='studio-split']
+  body
+  .streaming-sidebar
+  .streaming-menu-item.active::before {
+  left: 9px;
+  top: 50%;
+  bottom: auto;
+  width: 6px;
+  height: 6px;
+  transform: translateY(-50%);
+  border-radius: 1px;
+  background: var(--ss-accent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--ss-accent) 70%, transparent);
+}
+
+html[data-te-preset-layout='studio-split'] body .streaming-content-header {
+  border-bottom: 1px solid var(--ss-line);
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view {
+  --home-radius-lg: 4px;
+  --home-radius-md: 3px;
+  --home-shadow: none;
+  --home-shadow-lift: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .home-flow {
+  gap: 12px;
+}
+
+/* Hero → DAILY MIX bus pane: matte, header strip, no ambient blur art */
+html[data-te-preset-layout='studio-split'] body .home-view .hero {
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .hero .hero-ambient {
+  display: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .hero::after {
+  content: 'DAILY MIX · BUS A';
+  position: absolute;
+  z-index: 2;
+  inset: 0 0 auto 0;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--ss-line);
+  background: var(--ss-head);
+  color: var(--ss-meta);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .hero .hero-inner {
+  min-height: clamp(220px, 24vw, 280px);
+  padding-top: 26px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .hero .hero-title {
+  font-size: clamp(26px, 3.4vw, 40px);
+  font-weight: 700;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .hero .hero-kicker-day {
+  border-radius: 3px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .hero :is(.hero-play, .hero-open) {
+  height: 34px;
+  padding: 0 16px;
+  border-radius: 3px;
+  font-size: 12px;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .hero .hero-collage-card {
+  border-radius: 2px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .duo .duo-card {
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .duo .duo-stack-cover {
+  border-radius: 2px;
+}
+
+/* Chart + shelf sections become framed panes with header bars */
+html[data-te-preset-layout='studio-split'] body .home-view :is(.chart, .shelf) {
+  border: 1px solid var(--ss-line);
+  border-radius: 4px;
+  background: var(--ss-pane);
+  padding: 0 14px 14px;
+  overflow: hidden;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view :is(.chart, .shelf) .section-head {
+  align-items: center;
+  margin: 0 -14px 12px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--ss-line);
+  background: var(--ss-head);
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .section-head-copy h3 {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .section-head-copy p {
+  display: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .section-head .section-more {
+  height: 26px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .chart-grid .chart-row {
+  border-radius: 2px;
+  padding: 6px 8px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .chart-row .chart-index {
+  font-variant-numeric: tabular-nums;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .chart-row .chart-cover {
+  border-radius: 2px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .shelf-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(128px, 100%), 1fr));
+  gap: 10px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .shelf-tile .shelf-cover {
+  border-radius: 2px;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split']
+  body
+  .home-view
+  .shelf-tile
+  :is(.shelf-count, .shelf-open) {
+  border-radius: 2px;
+}
+
+/* Signed-out invite + skeleton keep the pane discipline */
+html[data-te-preset-layout='studio-split'] body .home-view .hero-invite {
+  border: 1px solid var(--ss-line);
+  border-radius: 4px;
+  background: var(--ss-pane);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .hero-invite .invite-orb {
+  display: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view :is(.invite-cta, .home-error-retry) {
+  border-radius: 3px;
+}
+
+html[data-te-preset-layout='studio-split'] body .home-view .home-skeleton .sk-shimmer {
+  border-radius: 2px;
+}
+
+/* ── Playing page: dual-monitor editor with a center divider beam ────────── */
+
+html[data-te-preset-layout='studio-split'] body .main-content .playing-music .stage {
+  width: 100%;
+  max-width: none;
+  padding: 64px 22px 20px;
+}
+
+html[data-te-preset-layout='studio-split'] body .main-content .playing-music .layout {
+  grid-template-columns: minmax(260px, 0.85fr) minmax(0, 1.45fr);
+  gap: 0;
+}
+
+/* Left pane: SOURCE monitor with header rule */
+html[data-te-preset-layout='studio-split'] body .main-content .playing-music .cover-column {
+  width: auto;
+  max-width: none;
+  align-self: stretch;
+  justify-self: stretch;
+  justify-content: center;
+  transform: none;
+  padding: 14px clamp(18px, 3vw, 40px) 14px 6px;
+}
+
+html[data-te-preset-layout='studio-split'] body .main-content .playing-music .cover-column::before {
+  content: 'A · SOURCE';
+  display: block;
+  width: 100%;
+  padding-bottom: 8px;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  color: color-mix(in srgb, currentColor 62%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+}
+
+html[data-te-preset-layout='studio-split'] body .main-content .playing-music .cover-frame {
+  width: min(100%, 380px);
+  margin-inline: 0;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .main-content .playing-music .track-title {
+  font-size: clamp(20px, 2.2vw, 26px);
+  letter-spacing: 0.01em;
+}
+
+/* Right pane: LYRIC monitor behind the divider beam */
+html[data-te-preset-layout='studio-split'] body .main-content .playing-music .lyrics-column {
+  position: relative;
+  padding-left: clamp(20px, 3vw, 44px);
+  border-left: 1px solid color-mix(in srgb, currentColor 24%, transparent);
+}
+
+html[data-te-preset-layout='studio-split']
+  body
+  .main-content
+  .playing-music
+  .lyrics-column::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  width: 9px;
+  background:
+    linear-gradient(
+      to right,
+      transparent 0 3px,
+      color-mix(in srgb, currentColor 14%, transparent) 3px 6px,
+      transparent 6px
+    ),
+    repeating-linear-gradient(
+      to bottom,
+      color-mix(in srgb, currentColor 26%, transparent) 0 2px,
+      transparent 2px 26px
+    );
+  pointer-events: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .main-content .playing-music .lyrics-head {
+  justify-content: space-between;
+  padding-bottom: 10px;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+}
+
+html[data-te-preset-layout='studio-split'] body .main-content .playing-music .lyrics-head::before {
+  content: 'B · LYRIC MONITOR';
+  align-self: center;
+  color: color-mix(in srgb, currentColor 62%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+}
+
+html[data-te-preset-layout='studio-split'] body .main-content .playing-music .time-chip {
+  border-radius: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Lyrics list: piano-roll grid — faint ruled lines, left-aligned clip rows */
+html[data-te-preset-layout='studio-split'] body .main-content .playing-music .lyrics-list {
+  max-width: none;
+  align-items: stretch;
+  gap: 2px;
+  padding: 9vh 6px 16vh 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0 43px,
+    color-mix(in srgb, currentColor 7%, transparent) 43px 44px
+  );
+}
+
+html[data-te-preset-layout='studio-split'] body .main-content .playing-music .lyric-row {
+  width: 100%;
+  align-items: flex-start;
+  text-align: left;
+  padding: 10px 14px 10px 16px;
+  border-radius: 2px;
+  border-left: 2px solid transparent;
+}
+
+html[data-te-preset-layout='studio-split'] body .main-content .playing-music .lyric-row.active {
+  transform: none;
+  border-left-color: var(--accent-color, var(--ss-accent));
+  background: color-mix(in srgb, var(--accent-color, var(--ss-accent)) 10%, transparent);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split']
+  body
+  .main-content
+  .playing-music
+  .lyrics-scroll
+  :is(.lyric-text, .lyric-translation, .lyric-romanization) {
+  text-align: left;
+}
+
+/* Narrow window: stack panes vertically, beam becomes a horizontal rule */
+@media (max-width: 1120px) {
+  html[data-te-preset-layout='studio-split'] body .main-content .playing-music .layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  html[data-te-preset-layout='studio-split'] body .main-content .playing-music .cover-column {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    padding: 8px 0;
+  }
+
+  html[data-te-preset-layout='studio-split'] body .main-content .playing-music .cover-frame {
+    width: min(100%, 168px);
+  }
+
+  html[data-te-preset-layout='studio-split'] body .main-content .playing-music .lyrics-column {
+    padding-left: 0;
+    padding-top: 14px;
+    border-left: 0;
+    border-top: 1px solid color-mix(in srgb, currentColor 24%, transparent);
+  }
+
+  html[data-te-preset-layout='studio-split']
+    body
+    .main-content
+    .playing-music
+    .lyrics-column::before {
+    display: none;
+  }
+}
+
+/* ── Player bar: transport strip ─────────────────────────────────────────── */
+
+html[data-te-preset-layout='studio-split'] body .player-bar-shell {
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+html[data-te-preset-layout='studio-split'] body .player-bar-shell.menu-open {
+  left: var(--te-menu-width);
+  right: 0;
+}
+
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .player-bar {
+  width: 100%;
+  max-width: none;
+  height: 78px;
+  margin: 0;
+  padding: 0 clamp(10px, 2vw, 22px);
+  column-gap: clamp(12px, 2vw, 24px);
+  grid-template-columns: minmax(0, 300px) minmax(0, 1fr) minmax(0, 300px);
+  border: 0;
+  border-top: 1px solid var(--ss-line);
+  border-radius: 0;
+  background: var(--te-player-bg, var(--ss-pane));
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .player-bar.player-bar-glass {
+  background: color-mix(in srgb, var(--te-neutral-900) 8%, var(--te-player-bg, var(--ss-pane)));
+}
+
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .player-cover-slot {
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .player-title {
+  font-size: 12px;
+  letter-spacing: 0.03em;
+}
+
+/* Transport cluster: seamlessly joined square buttons */
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .player-bar .player-controls {
+  gap: 0;
+}
+
+html[data-te-preset-layout='studio-split']
+  body
+  .player-bar-shell
+  .player-bar
+  .player-controls
+  .ctrl-btn {
+  width: 42px;
+  height: 30px;
+  margin-left: -1px;
+  padding: 0;
+  border: 1px solid var(--ss-line);
+  border-radius: 0;
+  background: var(--ss-head);
+}
+
+html[data-te-preset-layout='studio-split']
+  body
+  .player-bar-shell
+  .player-bar
+  .player-controls
+  .ctrl-btn:first-child {
+  margin-left: 0;
+  border-radius: 3px 0 0 3px;
+}
+
+html[data-te-preset-layout='studio-split']
+  body
+  .player-bar-shell
+  .player-bar
+  .player-controls
+  .ctrl-btn:last-child {
+  border-radius: 0 3px 3px 0;
+}
+
+html[data-te-preset-layout='studio-split']
+  body
+  .player-bar-shell
+  .player-bar
+  .player-controls
+  .ctrl-btn:hover {
+  background: var(--te-hover-bg);
+}
+
+html[data-te-preset-layout='studio-split']
+  body
+  .player-bar-shell
+  .player-bar
+  .player-controls
+  .btn-play {
+  width: 54px;
+  height: 30px;
+  border-color: color-mix(in srgb, var(--play-button-color, var(--ss-accent)) 60%, var(--ss-line));
+  background: var(--play-button-color, var(--accent-color, var(--ss-accent)));
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .player-bar .ctrl-btn:active {
+  transform: none;
+}
+
+/* Timeline: taller ruled track with tick marks, boxed timecode */
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .player-bar .progress-area {
+  gap: 12px;
+}
+
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .player-bar .time-label {
+  min-width: 46px;
+  padding: 2px 5px;
+  border: 1px solid var(--ss-line);
+  border-radius: 2px;
+  background: var(--ss-head);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+html[data-te-preset-layout='studio-split']
+  body
+  .player-bar-shell
+  .player-bar
+  .progress-slider-wrap {
+  height: 28px;
+}
+
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .player-bar .progress-track {
+  height: 14px;
+  border: 1px solid var(--ss-line);
+  border-radius: 2px;
+  background: color-mix(in srgb, currentColor 7%, transparent);
+}
+
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .player-bar .progress-fill {
+  border-radius: 0;
+  background: var(--te-player-progress-fill, var(--ss-accent));
+}
+
+/* Ruler ticks laid over the timeline */
+html[data-te-preset-layout='studio-split']
+  body
+  .player-bar-shell
+  .player-bar
+  .progress-slider-wrap::after {
+  content: '';
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  top: 50%;
+  height: 14px;
+  transform: translateY(-50%);
+  background:
+    repeating-linear-gradient(
+      90deg,
+      color-mix(in srgb, currentColor 22%, transparent) 0 1px,
+      transparent 1px 56px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      color-mix(in srgb, currentColor 12%, transparent) 0 1px,
+      transparent 1px 14px
+    );
+  background-size:
+    100% 100%,
+    100% 42%;
+  background-repeat: no-repeat;
+  pointer-events: none;
+  z-index: 1;
+}
+
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .player-bar .ab-loop-range {
+  height: 14px;
+  border-radius: 0;
+}
+
+/* Right cluster: flat square utility keys */
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .player-bar .icon-btn,
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .player-bar .mode-btn-right {
+  border-radius: 3px;
+}
+
+/* Volume drawer: channel fader with side tick scale */
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .volume-drawer {
+  border-radius: 3px;
+  border-color: var(--ss-line);
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .volume-drawer-slider-wrap {
+  position: relative;
+  width: 36px;
+}
+
+html[data-te-preset-layout='studio-split']
+  body
+  .player-bar-shell
+  .volume-drawer-slider-wrap::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  right: 1px;
+  width: 6px;
+  background: repeating-linear-gradient(
+    to bottom,
+    color-mix(in srgb, currentColor 30%, transparent) 0 1px,
+    transparent 1px 11px
+  );
+  pointer-events: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .volume-drawer-val {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Playlist drawer: cue list pane */
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .playlist-panel {
+  border: 1px solid var(--ss-line);
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .playlist-header {
+  border-bottom: 1px solid var(--ss-line);
+  background: var(--ss-head);
+}
+
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .playlist-eyebrow {
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+}
+
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .playlist-cover {
+  border-radius: 2px;
+}
+
+html[data-te-preset-layout='studio-split'] body .player-bar-shell .playlist-tool-btn {
+  border-radius: 3px;
+}
+
+/* ── Secondary surfaces: shared pane discipline ──────────────────────────── */
+
+html[data-te-preset-layout='studio-split'] body .song-list .song-list-header {
+  border-bottom: 1px solid var(--ss-line);
+}
+
+html[data-te-preset-layout='studio-split'] body .song-list .song-list-title {
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 15px;
+}
+
+html[data-te-preset-layout='studio-split'] body :is(.home, .home-view, .song-list) button {
+  transition-duration: 0.12s;
+}
+
+/* ── Reduced effects: no persistent motion, no glow, flat lamps ──────────── */
+
+html[data-te-preset-layout='studio-split'][data-te-effects-mode='reduced']
+  body
+  .side-menu
+  .menu-item.active::before,
+html[data-te-preset-layout='studio-split'][data-te-effects-mode='reduced']
+  body
+  .streaming-sidebar
+  .streaming-menu-item.active::before {
+  box-shadow: none;
+}
+
+/* Persistent loops that survive this layout (halo / ripple / sky props are
+   already display:none above) all stop in reduced mode. */
+html[data-te-preset-layout='studio-split'][data-te-effects-mode='reduced']
+  body
+  .home-view
+  :is(.home-flow > section, .hero-collage-card, .sk-shimmer),
+html[data-te-preset-layout='studio-split'][data-te-effects-mode='reduced']
+  body
+  .home
+  :is(.now-eyebrow .eq i, .dsp-state.live .dsp-state-dot, .dialog-live-state.live i) {
+  animation: none;
+}

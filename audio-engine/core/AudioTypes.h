@@ -49,10 +49,21 @@ enum class ChannelRoutingMode {
   MonoToMultichannel
 };
 
+// PCM -> DSD sigma-delta upconversion (output stage). Off keeps PCM sources on
+// the regular float/typed PCM path; DsdN modulates the decoded float stream to
+// DSD64/128/256 and delivers it through the existing native-DSD / DoP path.
+enum class PcmToDsdMode {
+  Off,
+  Dsd64,
+  Dsd128,
+  Dsd256
+};
+
 struct OutputConfig {
   uint32_t preferredBufferSize = 0;
   ChannelRoutingMode routingMode = ChannelRoutingMode::Auto;
   bool wasapiExclusivePushMode = false;
+  PcmToDsdMode pcmToDsdMode = PcmToDsdMode::Off;
   // 上混参数（5.1/7.1 声道扩展），默认值对应标准 audiophile 配置
   float upmixCenterGain = 0.7071f;     // -3dB
   float upmixLfeGain = 0.5f;           // -6dB
@@ -249,6 +260,10 @@ struct PerfectResult {
 
 std::string channelRoutingModeToString(ChannelRoutingMode mode);
 ChannelRoutingMode parseChannelRoutingMode(const std::string& mode);
+std::string pcmToDsdModeToString(PcmToDsdMode mode);
+PcmToDsdMode parsePcmToDsdMode(const std::string& mode);
+/** DSD rate multiplier (64/128/256) for a PCM->DSD mode; 0 when Off. */
+int pcmToDsdModeRateMultiplier(PcmToDsdMode mode);
 std::string dsdModeToString(DsdMode mode);
 std::string sampleFormatToString(AudioSampleFormat format);
 size_t audioSampleFormatBytes(AudioSampleFormat format);

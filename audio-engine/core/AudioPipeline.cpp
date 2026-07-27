@@ -169,6 +169,13 @@ DspOutputStageRequest outputStageRequestFromGraphJson(const std::string& json) {
       request.resamplerQuality = DspResamplerQuality::High;
     } else if (quality == "ultra") {
       request.resamplerQuality = DspResamplerQuality::Ultra;
+    } else if (quality == "soxrHq") {
+      request.resamplerQuality = DspResamplerQuality::SoxrHq;
+    } else if (quality == "soxrVhq") {
+      request.resamplerQuality = DspResamplerQuality::SoxrVhq;
+    } else if (quality.rfind("soxr", 0) == 0) {
+      // Unknown soxr-family value: honor the quality intent with Ultra swr.
+      request.resamplerQuality = DspResamplerQuality::Ultra;
     }
   }
   request.dsdPcmFallbackApplied = json_utils::fieldBool(json, "dsdPcmFallbackApplied").value_or(false);
@@ -544,6 +551,12 @@ struct AudioPipeline::DecodeStream {
   void setResamplerQuality(DspResamplerQuality quality) {
     if (!decoder) return;
     switch (quality) {
+      case DspResamplerQuality::SoxrVhq:
+        decoder->setResamplerQuality(FFmpegDecoder::ResamplerQuality::SoxrVhq);
+        break;
+      case DspResamplerQuality::SoxrHq:
+        decoder->setResamplerQuality(FFmpegDecoder::ResamplerQuality::SoxrHq);
+        break;
       case DspResamplerQuality::Ultra:
         decoder->setResamplerQuality(FFmpegDecoder::ResamplerQuality::Ultra);
         break;
@@ -1507,6 +1520,7 @@ TAE_Result AudioPipeline::playInternal(
     }
   }
 
+  bool pcmToDsdPath = false;
   if (!active) {
     active = makeDecodeStream();
     if (!active->openSource(item, error)) {
@@ -1546,16 +1560,78 @@ TAE_Result AudioPipeline::playInternal(
       default:
         break;
     }
-    if (!output->open(deviceId, requestedPcmFormat, error)) {
-      return TAE_RESULT_BACKEND_UNAVAILABLE;
+
+    const int pcmToDsdMultiplier =
+        !active->stream.isDsd ? pcmToDsdModeRateMultiplier(outputConfig.pcmToDsdMode) : 0;
+    const bool wantPcmToDsd = pcmToDsdMultiplier > 0 && requestedPcmFormat.sampleRate > 0 &&
+                             requestedPcmFormat.channelCount > 0;
+    if (wantPcmToDsd) {
+      const int baseRate = (requestedPcmFormat.sampleRate % 48000 == 0) ? 48000 : 44100;
+      const int dsdSampleRate = baseRate * pcmToDsdMultiplier;
+      AudioFormat requestedNativeDsd;
+      requestedNativeDsd.sampleRate = dsdSampleRate;
+      requestedNativeDsd.channelCount = requestedPcmFormat.channelCount;
+      requestedNativeDsd.bitDepth = 1;
+      requestedNativeDsd.sampleFormat = AudioSampleFormat::DsdInt8Msb1;
+
+      std::string pcmToDsdError;
+      bool opened = false;
+      if (backendCanAttemptNativeDsd(backendId) &&
+          output->open(deviceId, requestedNativeDsd, &pcmToDsdError)) {
+        outputFormat = output->outputFormat();
+        const NativeDsdRuntimeFacts nativeFacts = output->nativeDsdRuntimeFacts();
+        if (nativeDsdOutputMatchesRequested(outputFormat, requestedNativeDsd, nativeFacts) &&
+            !nativeDsdRuntimeFactsRequirePcmFallback(nativeFacts)) {
+          opened = true;
+          nativeDsdPath = true;
+          pcmToDsdPath = true;
+        } else {
+          output->close();
+        }
+      }
+      if (!opened) {
+        const auto dopCarrier =
+            dopCarrierFormatForDsd(pcmToDsdMultiplier, dsdSampleRate, requestedPcmFormat.channelCount);
+        if (dopCarrier.has_value() && backendCanAttemptDop(backendId)) {
+          AudioFormat requestedDop = *dopCarrier;
+          requestedDop.sampleFormat = AudioSampleFormat::Int24Interleaved;
+          if (output->open(deviceId, requestedDop, &pcmToDsdError)) {
+            outputFormat = output->outputFormat();
+            if (formatCanCarryDop(
+                    outputFormat, pcmToDsdMultiplier, dsdSampleRate, requestedPcmFormat.channelCount)) {
+              opened = true;
+              dopPath = true;
+              pcmToDsdPath = true;
+            } else {
+              output->close();
+            }
+          }
+        }
+      }
+      if (!opened) {
+        // Fall through to ordinary PCM open when the device cannot take DSD/DoP.
+        pcmToDsdPath = false;
+        nativeDsdPath = false;
+        dopPath = false;
+      }
     }
 
-    outputFormat = output->outputFormat();
+    if (!pcmToDsdPath) {
+      if (!output->open(deviceId, requestedPcmFormat, error)) {
+        return TAE_RESULT_BACKEND_UNAVAILABLE;
+      }
+      outputFormat = output->outputFormat();
+    }
+
     const bool canUseTypedPassthrough =
-        !active->stream.isDsd && !processingRequiresPcm && backendCanTypedPassthrough(backendId) &&
-        formatCanTypedPassthrough(active->stream.sourceFormat) &&
+        !pcmToDsdPath && !active->stream.isDsd && !processingRequiresPcm &&
+        backendCanTypedPassthrough(backendId) && formatCanTypedPassthrough(active->stream.sourceFormat) &&
         pcmFormatsExactMatch(active->stream.sourceFormat, outputFormat);
-    AudioFormat decodeFormat = outputFormat;
+    AudioFormat decodeFormat = pcmToDsdPath ? requestedPcmFormat : outputFormat;
+    if (pcmToDsdPath) {
+      decodeFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
+      decodeFormat.bitDepth = 32;
+    }
     if (outputConfig.routingMode != ChannelRoutingMode::Auto) {
       decodeFormat.channelCount = std::max(1, active->stream.sourceFormat.channelCount);
     }
@@ -1567,7 +1643,39 @@ TAE_Result AudioPipeline::playInternal(
       return TAE_RESULT_INTERNAL_ERROR;
     }
 
-    if (active->stream.isDsd) {
+    if (pcmToDsdPath) {
+      PcmToDsdModulatorConfig modulatorConfig;
+      modulatorConfig.inputSampleRate = decodeFormat.sampleRate;
+      modulatorConfig.channelCount = decodeFormat.channelCount;
+      modulatorConfig.targetDsdRate = pcmToDsdMultiplier;
+      modulatorConfig.bitOrder = DsdBitOrder::MsbFirst;
+      std::string modulatorError;
+      if (!pcmToDsdModulator_.configure(modulatorConfig, &modulatorError)) {
+        if (error) *error = modulatorError.empty() ? "PCM to DSD modulator configure failed" : modulatorError;
+        output->close();
+        return TAE_RESULT_INTERNAL_ERROR;
+      }
+      if (dopPath) {
+        DopPackerConfig dopConfig;
+        dopConfig.channelCount = decodeFormat.channelCount;
+        dopConfig.dsdRate = pcmToDsdMultiplier;
+        dopConfig.sourceSampleRate = pcmToDsdModulator_.dsdSampleRate();
+        dopConfig.bitOrder = DsdBitOrder::MsbFirst;
+        // process() writes per-channel planar bytes matching DSF planar blocks.
+        dopConfig.packing = DsdPacking::DsfPlanarBlocks;
+        dopConfig.outputFormat = outputFormat.sampleFormat;
+        if (!pcmToDsdDopPacker_.configure(dopConfig, error)) {
+          output->close();
+          return TAE_RESULT_INTERNAL_ERROR;
+        }
+      }
+      active->stream.dsdMode = nativeDsdPath ? DsdMode::Native : DsdMode::Dop;
+      active->stream.isDsd = true;
+      active->stream.dsdRate = pcmToDsdMultiplier;
+      active->stream.decodedFormat = decodeFormat;
+    }
+
+    if (active->stream.isDsd && !pcmToDsdPath) {
       active->stream.dsdMode = DsdMode::Pcm;
       dopAttemptError = determineDsdPcmFallbackReason(
           requestedDspConfig,
@@ -1630,14 +1738,20 @@ TAE_Result AudioPipeline::playInternal(
     preloadStream_.reset();
     stream_ = activeStream_->stream;
     outputFormat_ = outputFormat;
-    decodeFormat_ = outputFormat;
-    if (outputConfig.routingMode != ChannelRoutingMode::Auto) {
+    decodeFormat_ = activeStream_->bufferFormat().sampleRate > 0 ? activeStream_->bufferFormat() : outputFormat;
+    if (pcmToDsdPath) {
+      // Modulator consumes float decode frames; keep DSP/decode on PCM rate/layout.
+      decodeFormat_ = activeStream_->stream.decodedFormat.sampleRate > 0
+                          ? activeStream_->stream.decodedFormat
+                          : activeStream_->bufferFormat();
+    }
+    if (outputConfig.routingMode != ChannelRoutingMode::Auto && !pcmToDsdPath) {
       decodeFormat_.channelCount = std::max(1, stream_.sourceFormat.channelCount);
     }
     // Allocate routing state before the callback starts. Runtime route changes
     // are delivered through the SPSC queue and do not resize these buffers.
     channelRouter_.setUpmixConfig(upmixConfigFromOutputConfig(outputConfig));
-    channelRouter_.prepareForRealtime(outputFormat_.sampleRate, 1000.0f);
+    channelRouter_.prepareForRealtime(std::max(1, decodeFormat_.sampleRate), 1000.0f);
     channelRouter_.reset();
     currentItem_ = item;
     backendId_ = backendId == "wasapi-shared" ? "wasapi" : backendId;
@@ -1647,7 +1761,8 @@ TAE_Result AudioPipeline::playInternal(
     outputInfo_.backend = backendId_;
     outputInfo_.deviceName = deviceName_;
     dsdFallbackReason_ =
-        (!dopAttemptError.empty() && activeStream_->stream.isDsd && activeStream_->stream.dsdMode == DsdMode::Pcm)
+        (!dopAttemptError.empty() && activeStream_->stream.isDsd && activeStream_->stream.dsdMode == DsdMode::Pcm &&
+         !pcmToDsdPath)
             ? dopAttemptError
             : "";
     if (!dsdFallbackReason_.empty()) {
@@ -1675,16 +1790,31 @@ TAE_Result AudioPipeline::playInternal(
     dspStatus_ = dspChain_->status();
     dspActive_ = dspStatus_.dspActive || std::abs(requestedPlaybackVolume - 1.0) > 0.0001 ||
                  std::abs(loadAtomicDouble(requestedPlaybackRateBits_) - 1.0) > 0.0001;
-    spectrum_.prepare(outputFormat_, visualizationFftResolutionForConfig(dspConfig_.fftResolution));
+    spectrum_.prepare(decodeFormat_, visualizationFftResolutionForConfig(dspConfig_.fftResolution));
     spectrum_.setEnabled(dspConfig_.fftEnabled);
-    gaplessEnabled_ = gaplessEnabled && !dopPath && !nativeDsdPath && !activeStream_->typedPassthrough;
+    gaplessEnabled_ =
+        gaplessEnabled && !dopPath && !nativeDsdPath && !pcmToDsdPath && !activeStream_->typedPassthrough;
     dopPathActive_ = dopPath;
     nativeDsdPathActive_ = nativeDsdPath;
-    typedPassthroughActive_ = !dopPath && activeStream_->typedPassthrough;
+    pcmToDsdPathActive_ = pcmToDsdPath;
+    typedPassthroughActive_ = pcmToDsdPath || (!dopPath && activeStream_->typedPassthrough);
     activeUsesPreloadDspChain_ = false;
     const size_t maxRenderFrames = outputInfo_.bufferSizeFrames > 0
                                        ? static_cast<size_t>(outputInfo_.bufferSizeFrames)
-                                       : static_cast<size_t>(std::max(1, outputFormat_.sampleRate / 100));
+                                       : static_cast<size_t>(std::max(1, std::max(1, decodeFormat_.sampleRate) / 100));
+    if (pcmToDsdPathActive_) {
+      const size_t channels = static_cast<size_t>(std::max(1, decodeFormat_.channelCount));
+      pcmToDsdFloatScratch_.assign(maxRenderFrames * channels, 0.0f);
+      const size_t bytesPerChannel = pcmToDsdModulator_.outputBytesPerChannel(maxRenderFrames);
+      pcmToDsdPlanarBytes_.assign(bytesPerChannel * channels, 0);
+      pcmToDsdChannelPtrs_.resize(channels);
+      for (size_t channel = 0; channel < channels; ++channel) {
+        pcmToDsdChannelPtrs_[channel] = pcmToDsdPlanarBytes_.data() + channel * bytesPerChannel;
+      }
+      pcmToDsdInterleavedBytes_.clear();
+      pcmToDsdModulator_.reset();
+      if (dopPathActive_) pcmToDsdDopPacker_.reset();
+    }
     prepareRenderScratchLocked(maxRenderFrames);
     if (activeStream_) activeStream_->prepareFloatReadScratch(maxRenderFrames);
     if (preloadStream_) preloadStream_->prepareFloatReadScratch(maxRenderFrames);
@@ -1714,6 +1844,7 @@ TAE_Result AudioPipeline::playInternal(
     renderGaplessEnabled_.store(gaplessEnabled_, std::memory_order_release);
     renderDopPathActive_.store(dopPathActive_, std::memory_order_release);
     renderNativeDsdPathActive_.store(nativeDsdPathActive_, std::memory_order_release);
+    renderPcmToDsdPathActive_.store(pcmToDsdPathActive_, std::memory_order_release);
     renderTypedPassthroughActive_.store(typedPassthroughActive_, std::memory_order_release);
     renderActiveUsesPreloadDspChain_.store(false, std::memory_order_release);
     renderPromotionPending_.store(false, std::memory_order_release);
@@ -1734,7 +1865,7 @@ TAE_Result AudioPipeline::playInternal(
                                    : static_cast<size_t>(std::max(1, outputFormat_.sampleRate / 100));
   active->start();
   active->waitForPreroll(prerollFrames, std::chrono::milliseconds(500));
-  if (gaplessEnabled && !dopPath && !nativeDsdPath && !active->typedPassthrough) {
+  if (gaplessEnabled && !dopPath && !nativeDsdPath && !pcmToDsdPath && !active->typedPassthrough) {
     std::string preloadError;
     preloadNext(upcomingItem, &preloadError);
   }
@@ -1932,6 +2063,7 @@ TAE_Result AudioPipeline::stop() {
     renderGaplessEnabled_.store(true, std::memory_order_release);
     renderDopPathActive_.store(false, std::memory_order_release);
     renderNativeDsdPathActive_.store(false, std::memory_order_release);
+    renderPcmToDsdPathActive_.store(false, std::memory_order_release);
     renderTypedPassthroughActive_.store(false, std::memory_order_release);
     renderActiveUsesPreloadDspChain_.store(false, std::memory_order_release);
     renderPromotionPending_.store(false, std::memory_order_release);
@@ -1956,7 +2088,12 @@ TAE_Result AudioPipeline::stop() {
     gaplessEnabled_ = true;
     dopPathActive_ = false;
     nativeDsdPathActive_ = false;
+    pcmToDsdPathActive_ = false;
     typedPassthroughActive_ = false;
+    pcmToDsdFloatScratch_.clear();
+    pcmToDsdPlanarBytes_.clear();
+    pcmToDsdInterleavedBytes_.clear();
+    pcmToDsdChannelPtrs_.clear();
     activeUsesPreloadDspChain_ = false;
     crossfadeMixActive_ = false;
     crossfadeFramesProcessed_ = 0;
@@ -3538,12 +3675,126 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
   const AudioFormat outputFormat = renderOutputFormat_;
   const bool typedPassthroughActive = renderTypedPassthroughActive_.load(std::memory_order_acquire);
   const bool nativeDsdPathActive = renderNativeDsdPathActive_.load(std::memory_order_acquire);
+  const bool pcmToDsdPathActive = renderPcmToDsdPathActive_.load(std::memory_order_acquire);
+  const bool dopPathActive = renderDopPathActive_.load(std::memory_order_acquire);
 
   if (state != PipelineState::Playing || !active) {
     if (typedPassthroughActive && output.byteSize > 0) std::memset(output.data, 0, output.byteSize);
     spectrum_.tryResetCapture();
     recordPerformance();
     return typedPassthroughActive ? output.frames : 0;
+  }
+
+  if (pcmToDsdPathActive && pcmToDsdModulator_.configured()) {
+    const AudioFormat decodeFormat = renderDecodeFormat_;
+    const int channels = std::max(1, decodeFormat.channelCount);
+    const int upsampleRatio = std::max(1, pcmToDsdModulator_.upsampleRatio());
+    size_t pcmFramesWanted = 0;
+    if (isDsdSampleFormat(output.format.sampleFormat)) {
+      // Backend frame unit is one DSD byte (8 bits) per channel.
+      pcmFramesWanted = (output.frames * 8) / static_cast<size_t>(upsampleRatio);
+    } else {
+      // DoP carrier: each sample packs 16 DSD bits → 2 DSD bytes.
+      pcmFramesWanted = (output.frames * 16) / static_cast<size_t>(upsampleRatio);
+    }
+    if (pcmFramesWanted == 0) {
+      if (output.byteSize > 0) std::memset(output.data, 0, output.byteSize);
+      recordPerformance();
+      return 0;
+    }
+    const size_t scratchCapacity =
+        pcmToDsdFloatScratch_.size() / static_cast<size_t>(std::max(1, channels));
+    pcmFramesWanted = std::min(pcmFramesWanted, scratchCapacity);
+    if (pcmFramesWanted == 0 || pcmToDsdChannelPtrs_.size() < static_cast<size_t>(channels)) {
+      if (output.byteSize > 0) std::memset(output.data, 0, output.byteSize);
+      recordPerformance();
+      return 0;
+    }
+
+    float* floatScratch = pcmToDsdFloatScratch_.data();
+    size_t filled = 0;
+    while (filled < pcmFramesWanted) {
+      const size_t want = pcmFramesWanted - filled;
+      float* segment = floatScratch + filled * static_cast<size_t>(channels);
+      size_t read = active->readFloat(segment, want);
+      if (read > 0) {
+        DspChain* activeDsp = renderActiveDspGraph_.load(std::memory_order_acquire);
+        if (activeDsp) activeDsp->process(segment, read);
+        const double volume = loadAtomicDouble(appliedVolumeBits_, std::memory_order_acquire);
+        if (std::abs(volume - 1.0) > kUnityVolumeEpsilon) {
+          for (size_t i = 0; i < read * static_cast<size_t>(channels); ++i) {
+            segment[i] = static_cast<float>(static_cast<double>(segment[i]) * volume);
+          }
+        }
+        filled += read;
+      }
+      if (read < want) break;
+    }
+
+    if (filled == 0) {
+      if (output.byteSize > 0) std::memset(output.data, 0, output.byteSize);
+      if (active->drained()) {
+        ended_ = true;
+        renderState_.store(PipelineState::Stopped, std::memory_order_release);
+      }
+      spectrum_.tryResetCapture();
+      recordPerformance();
+      return active->drained() ? output.frames : 0;
+    }
+
+    spectrum_.capture(floatScratch, filled, channels);
+    const size_t bytesPerChannel = pcmToDsdModulator_.outputBytesPerChannel(filled);
+    const size_t written = pcmToDsdModulator_.process(
+        floatScratch, filled, pcmToDsdChannelPtrs_.data(), bytesPerChannel);
+    if (written == 0) {
+      if (output.byteSize > 0) std::memset(output.data, 0, output.byteSize);
+      recordPerformance();
+      return 0;
+    }
+
+    renderedFrames_ += filled;
+    if (isDsdSampleFormat(output.format.sampleFormat)) {
+      DsdStreamInfo info;
+      info.channelCount = channels;
+      info.bitOrder = DsdBitOrder::MsbFirst;
+      info.packing = DsdPacking::DsfPlanarBlocks;
+      info.dsdSampleRate = pcmToDsdModulator_.dsdSampleRate();
+      info.dsdRate = pcmToDsdModulator_.config().targetDsdRate;
+      const size_t planarBytes = written * static_cast<size_t>(channels);
+      const size_t framesOut = dsdBytesToInterleaved(
+          pcmToDsdPlanarBytes_.data(),
+          planarBytes,
+          info,
+          output.format.sampleFormat,
+          &pcmToDsdInterleavedBytes_);
+      const size_t copyFrames = std::min(framesOut, output.frames);
+      const size_t copyBytes = copyFrames * static_cast<size_t>(channels);
+      if (copyBytes > 0) {
+        std::memcpy(output.data, pcmToDsdInterleavedBytes_.data(), std::min(copyBytes, output.byteSize));
+      }
+      if (copyBytes < output.byteSize) {
+        std::memset(output.data + copyBytes, 0, output.byteSize - copyBytes);
+      }
+      recordPerformance();
+      return output.frames;
+    }
+
+    // DoP carrier packing from planar MSB-first DSD bytes.
+    const size_t planarBytes = written * static_cast<size_t>(channels);
+    const size_t carrierFrames =
+        pcmToDsdDopPacker_.pack(pcmToDsdPlanarBytes_.data(), planarBytes, &pcmToDsdInterleavedBytes_);
+    const size_t copyFrames = std::min(carrierFrames, output.frames);
+    const size_t bytesPerFrame = audioFormatBytesPerFrame(output.format);
+    const size_t copyBytes = copyFrames * bytesPerFrame;
+    if (copyBytes > 0) {
+      std::memcpy(output.data, pcmToDsdInterleavedBytes_.data(), std::min(copyBytes, output.byteSize));
+    }
+    if (copyBytes < output.byteSize) {
+      std::memset(output.data + copyBytes, 0, output.byteSize - copyBytes);
+    }
+    (void)dopPathActive;
+    recordPerformance();
+    return output.frames;
   }
 
   const bool outputMatches =

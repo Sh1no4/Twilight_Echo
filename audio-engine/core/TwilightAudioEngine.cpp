@@ -571,6 +571,7 @@ OutputConfig parseOutputConfigJson(const std::string& json) {
   config.preferredBufferSize = parseUintField(json, "preferredBufferSize", 0);
   config.routingMode = parseChannelRoutingMode(parseStringField(json, "routingMode", "auto"));
   config.wasapiExclusivePushMode = parseBoolField(json, "wasapiExclusivePushMode", false);
+  config.pcmToDsdMode = parsePcmToDsdMode(parseStringField(json, "pcmToDsdMode", "off"));
   // 上混参数（可选，缺省走 OutputConfig 默认值）
   config.upmixCenterGain = parseFloatField(json, "upmixCenterGain", config.upmixCenterGain);
   config.upmixLfeGain = parseFloatField(json, "upmixLfeGain", config.upmixLfeGain);

@@ -5,6 +5,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import MiniPlayerSettingsSection from './settings-page/MiniPlayerSettingsSection.vue'
 import AboutSettingsSection from './settings-page/AboutSettingsSection.vue'
 import ShortcutsSettingsSection from './settings-page/ShortcutsSettingsSection.vue'
+import EditableRangeValue from './EditableRangeValue.vue'
+import AnimatedInput from './AnimatedInput.vue'
 import {
   type SectionKey,
   type BooleanSettingKey,
@@ -15,6 +17,7 @@ import {
   startupHomePageOptions,
   bufferSizeOptions,
   routingModeOptions,
+  pcmToDsdModeOptions,
   replayGainOptions,
   dsdOutputModeOptions,
   sacdProgramModeOptions,
@@ -22,6 +25,7 @@ import {
   accentColorOptions,
   fontFamilyOptions,
   uiDensityOptions,
+  motionPreferenceOptions,
   appBackgroundPageOptions,
   lyricAlignOptions,
   streamingAudioCachePolicyOptions,
@@ -61,9 +65,11 @@ import type {
   DesktopLyricsSettings,
   DsdOutputMode,
   LyricAlign,
+  MotionPreference,
   MusicCachePolicySettings,
   NcmPlaybackQuality,
   OutputConfig,
+  PcmToDsdMode,
   PlayerShortcutStatus,
   PlaybackResumeMode,
   StartupHomePage,
@@ -75,6 +81,7 @@ import type {
   WindowTransparencyEffectSettings
 } from '../types/settings'
 import type { LibraryWatcherStatusSnapshot } from '../../../shared/localLibraryScan.ts'
+import type { Vst3CatalogState } from '../../../shared/dspGraph.ts'
 
 const props = defineProps<{
   initialSection?: SectionKey
@@ -85,6 +92,7 @@ const emit = defineEmits<{
   openEqualizer: []
   openDspRack: []
   openThemeStudio: []
+  reopenOnboarding: []
 }>()
 
 const updateCheckState = ref<'idle' | 'checking' | 'up-to-date' | 'available' | 'error'>('idle')
@@ -669,17 +677,14 @@ watch(
 )
 
 const { pushNotice } = useAppNoticeStore()
-watch(
-  lastSettingsError,
-  (error) => {
-    if (!error) return
-    settingsError.value = error
-    pushNotice({
-      kind: 'error',
-      message: `设置保存失败：${error}`
-    })
-  }
-)
+watch(lastSettingsError, (error) => {
+  if (!error) return
+  settingsError.value = error
+  pushNotice({
+    kind: 'error',
+    message: `设置保存失败：${error}`
+  })
+})
 
 async function toggleRemoteControl(): Promise<void> {
   remoteBusy.value = true
@@ -770,6 +775,7 @@ function resetSettingsGroup(group: 'appearance' | 'playback' | 'desktopLyrics'):
       await themeStore.setActive({ kind: 'builtin', id: 'builtin:twilight-echo-default' })
       await updateSettings({
         theme: 'system',
+        motionPreference: 'system',
         blurEffect: true,
         useCoverTheme: true,
         lyricFontSize: 18,
@@ -793,7 +799,8 @@ function resetSettingsGroup(group: 'appearance' | 'playback' | 'desktopLyrics'):
       audioOutputConfig: {
         preferredBufferSize: 0,
         routingMode: 'auto',
-        wasapiExclusivePushMode: false
+        wasapiExclusivePushMode: false,
+        pcmToDsdMode: 'off'
       }
     }).then(() => {
       settingsNotice.value = '播放设置已恢复默认'
@@ -851,6 +858,11 @@ function updateDl<K extends keyof DesktopLyricsSettings>(
 function setTheme(theme: AppTheme): void {
   if (settings.value.theme === theme) return
   void updateSettings({ theme })
+}
+
+function setMotionPreference(event: Event): void {
+  const motionPreference = (event.target as HTMLSelectElement).value as MotionPreference
+  void updateSettings({ motionPreference })
 }
 
 function setPlaybackResumeMode(playbackResumeMode: PlaybackResumeMode): void {
@@ -911,6 +923,13 @@ function setRoutingMode(event: Event): void {
   void setAudioOutputConfig({ routingMode: target.value as ChannelRoutingMode })
 }
 
+function setPcmToDsdMode(event: Event): void {
+  if (audioOutputConfigApplyStatus.value.state === 'pending') return
+  const value = (event.target as HTMLSelectElement).value as PcmToDsdMode
+  if ((audioOutputConfig.value.pcmToDsdMode ?? 'off') === value) return
+  void setAudioOutputConfig({ pcmToDsdMode: value })
+}
+
 function setUpmixParam(field: keyof OutputConfig, event: Event): void {
   const value = Number((event.target as HTMLInputElement).value)
   void setAudioOutputConfig({ [field]: value } as Partial<OutputConfig>)
@@ -947,6 +966,10 @@ function toggleReplayGainClip(): void {
 
 function setCrossfeedFromInput(event: Event): void {
   const value = Number((event.target as HTMLInputElement).value)
+  setCrossfeedPercent(value)
+}
+
+function setCrossfeedPercent(value: number): void {
   void setCrossfeedStrength(value)
 }
 
@@ -1166,15 +1189,19 @@ function setLyricAlign(event: Event): void {
 }
 
 function setLyricDimOpacity(event: Event): void {
-  void updateSettings({
-    lyricDimOpacity: Number((event.target as HTMLInputElement).value)
-  })
+  setLyricDimOpacityValue(Number((event.target as HTMLInputElement).value))
+}
+
+function setLyricDimOpacityValue(lyricDimOpacity: number): void {
+  void updateSettings({ lyricDimOpacity })
 }
 
 function setLyricFontSize(event: Event): void {
-  void updateSettings({
-    lyricFontSize: Number((event.target as HTMLInputElement).value)
-  })
+  setLyricFontSizeValue(Number((event.target as HTMLInputElement).value))
+}
+
+function setLyricFontSizeValue(lyricFontSize: number): void {
+  void updateSettings({ lyricFontSize })
 }
 
 const cardAppearanceTab = ref<'light' | 'dark'>('light')
@@ -1353,7 +1380,11 @@ function ensureUpdateProgressListener(): void {
   stopUpdateProgressListener =
     window.api.app.onUpdateProgress?.((progress) => {
       updateProgress.value = progress
-      if (progress.phase === 'downloading' || progress.phase === 'resolving' || progress.phase === 'verifying') {
+      if (
+        progress.phase === 'downloading' ||
+        progress.phase === 'resolving' ||
+        progress.phase === 'verifying'
+      ) {
         updateActionState.value = 'downloading'
       } else if (progress.phase === 'ready') {
         updateActionState.value = 'ready'
@@ -1388,6 +1419,9 @@ async function checkForUpdates(): Promise<void> {
     } else if (result.error === 'no-asset') {
       updateCheckState.value = 'available'
       updateError.value = '发现新版本，但 Release 中未找到 Windows 安装包'
+    } else if (result.error === 'no-checksum') {
+      updateCheckState.value = 'error'
+      updateError.value = '发现新版本，但 Release 未提供安装包 SHA-256 校验和，已拒绝下载'
     } else if (result.hasUpdate) {
       updateCheckState.value = 'available'
     } else {
@@ -1555,6 +1589,118 @@ function openDspRackFromDsp(): void {
   emit('openDspRack')
 }
 
+// VST3 宿主设置（目录状态持久化在主进程 Vst3CatalogService，不新增设置字段）
+const vst3Catalog = ref<Vst3CatalogState | null>(null)
+const vst3Busy = ref(false)
+const vst3Scanning = ref(false)
+const vst3Error = ref('')
+
+const vst3Enabled = computed(() => vst3Catalog.value?.enabled === true)
+const vst3SearchPaths = computed(() => vst3Catalog.value?.searchPaths ?? [])
+const vst3Helpers = computed(() => vst3Catalog.value?.helpers ?? null)
+const vst3HelpersReady = computed(() => {
+  if (!vst3Helpers.value) return true
+  return (
+    vst3Helpers.value.platformSupported &&
+    vst3Helpers.value.scannerPresent &&
+    vst3Helpers.value.hostPresent
+  )
+})
+const vst3PlatformSupported = computed(() => vst3Helpers.value?.platformSupported !== false)
+const vst3HelpersNotice = computed(() => {
+  if (!vst3Catalog.value || vst3HelpersReady.value || !vst3Helpers.value) return ''
+  if (!vst3Helpers.value.platformSupported) return 'VST3 仅在 Windows x64 构建中提供。'
+  if (!vst3Helpers.value.scannerPresent || !vst3Helpers.value.hostPresent) {
+    return '本构建未包含 VST3 扫描/宿主组件。开发环境请执行 pnpm run stage:vst3-msvc，或安装完整 Windows 签名包。'
+  }
+  return ''
+})
+const vst3ScanSummary = computed(() => {
+  const catalog = vst3Catalog.value
+  if (!catalog) return '尚未读取 VST3 目录状态'
+  const total = catalog.entries.length
+  if (total === 0) return '尚未发现任何 VST3 模块'
+  const available = catalog.entries.filter((entry) => entry.status === 'available').length
+  const quarantined = catalog.entries.filter((entry) => entry.status === 'quarantined').length
+  const parts = [`共 ${total} 个模块`, `${available} 个可用`]
+  if (quarantined > 0) parts.push(`${quarantined} 个已隔离`)
+  return parts.join(' · ')
+})
+
+function vst3ErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message ? error.message : 'VST3 操作失败'
+}
+
+async function refreshVst3Catalog(): Promise<void> {
+  if (!window.api?.audioEngine?.getVst3Catalog) return
+  try {
+    vst3Catalog.value = await window.api.audioEngine.getVst3Catalog()
+    vst3Error.value = ''
+  } catch (error) {
+    vst3Error.value = vst3ErrorMessage(error)
+  }
+}
+
+async function toggleVst3Enabled(): Promise<void> {
+  if (vst3Busy.value || !vst3Catalog.value || !vst3PlatformSupported.value) return
+  vst3Busy.value = true
+  try {
+    vst3Catalog.value = await window.api.audioEngine.setVst3Enabled(!vst3Catalog.value.enabled)
+    vst3Error.value = ''
+  } catch (error) {
+    vst3Error.value = vst3ErrorMessage(error)
+  } finally {
+    vst3Busy.value = false
+  }
+}
+
+async function addVst3SearchPath(): Promise<void> {
+  if (vst3Busy.value || !vst3Catalog.value) return
+  vst3Busy.value = true
+  try {
+    const selected = await window.api.audioEngine.selectVst3SearchPath()
+    if (selected && !vst3SearchPaths.value.includes(selected)) {
+      vst3Catalog.value = await window.api.audioEngine.setVst3SearchPaths([
+        ...vst3SearchPaths.value,
+        selected
+      ])
+    }
+    vst3Error.value = ''
+  } catch (error) {
+    vst3Error.value = vst3ErrorMessage(error)
+  } finally {
+    vst3Busy.value = false
+  }
+}
+
+async function removeVst3SearchPath(path: string): Promise<void> {
+  if (vst3Busy.value || !vst3Catalog.value) return
+  vst3Busy.value = true
+  try {
+    vst3Catalog.value = await window.api.audioEngine.setVst3SearchPaths(
+      vst3SearchPaths.value.filter((candidate) => candidate !== path)
+    )
+    vst3Error.value = ''
+  } catch (error) {
+    vst3Error.value = vst3ErrorMessage(error)
+  } finally {
+    vst3Busy.value = false
+  }
+}
+
+async function rescanVst3Plugins(): Promise<void> {
+  if (vst3Scanning.value || !vst3Enabled.value) return
+  vst3Scanning.value = true
+  try {
+    vst3Catalog.value = await window.api.audioEngine.scanVst3Plugins()
+    vst3Error.value = ''
+  } catch (error) {
+    vst3Error.value = vst3ErrorMessage(error)
+  } finally {
+    vst3Scanning.value = false
+  }
+}
+
 function scrollToSection(section: SectionKey): void {
   activeSection.value = section
   document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -1600,6 +1746,7 @@ onMounted(async () => {
     refreshLoudnessAnalysisCacheSize()
   ])
   await refreshShortcutStatuses()
+  await refreshVst3Catalog()
   await refreshRemoteStatus()
   await refreshDiscordStatus()
   await syncExtensions()
@@ -1668,9 +1815,10 @@ onBeforeUnmount(() => {
         <section class="settings-command-bar glass-card">
           <div class="settings-search-box">
             <i class="pi pi-search"></i>
-            <input
+            <AnimatedInput
               v-model="settingsSearchQuery"
               type="search"
+              class="settings-search-input"
               placeholder="搜索设置"
               aria-label="搜索设置"
             />
@@ -1731,7 +1879,16 @@ onBeforeUnmount(() => {
                 <div class="folder-list">
                   <div v-for="folder in settings.libraryFolders" :key="folder" class="folder-chip">
                     <span>{{ folder }}</span>
-                    <i class="pi pi-times" @click="removeLibraryFolder(folder)"></i>
+                    <i
+                      class="pi pi-times"
+                      data-te-interactive
+                      role="button"
+                      tabindex="0"
+                      :aria-label="`移除文件夹 ${folder}`"
+                      @click="removeLibraryFolder(folder)"
+                      @keydown.enter.prevent="removeLibraryFolder(folder)"
+                      @keydown.space.prevent="removeLibraryFolder(folder)"
+                    ></i>
                   </div>
                   <div v-if="settings.libraryFolders.length === 0" class="folder-empty-hint">
                     暂未添加任何文件夹
@@ -2065,6 +2222,17 @@ onBeforeUnmount(() => {
                   <option value="quit">退出应用</option>
                 </select>
               </div>
+              <hr />
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>欢迎向导</strong>
+                  <span>重新走一遍首次使用引导：外观、听歌偏好、曲库与声音设置。</span>
+                </div>
+                <button type="button" class="soft-button" @click="emit('reopenOnboarding')">
+                  <i class="ph ph-sparkle"></i>
+                  重新打开
+                </button>
+              </div>
             </div>
           </div>
 
@@ -2300,7 +2468,8 @@ onBeforeUnmount(() => {
               </button>
             </div>
             <p class="device-capability-note">
-              列表为设备能力声明；是否 Native DSD / DoP 以播放时 HiFi 状态为准（筛选≠当前输出模式）。
+              列表为设备能力声明；是否 Native DSD / DoP 以播放时 HiFi
+              状态为准（筛选≠当前输出模式）。
             </p>
           </div>
 
@@ -2549,7 +2718,28 @@ onBeforeUnmount(() => {
                     </option>
                   </select>
                 </label>
+                <label>
+                  <span>PCM → DSD</span>
+                  <select
+                    class="preview-select"
+                    :value="audioOutputConfig.pcmToDsdMode ?? 'off'"
+                    :disabled="audioOutputConfigApplyStatus.state === 'pending'"
+                    @change="setPcmToDsdMode"
+                  >
+                    <option
+                      v-for="option in pcmToDsdModeOptions"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select>
+                </label>
               </div>
+              <p class="setting-hint">
+                PCM → DSD 在解码/DSP 之后将 PCM 调制为 DSD，经 Native DSD 或 DoP 输出；源文件已是
+                DSD 时不受影响。
+              </p>
               <div v-if="isUpmixActive" class="advanced-grid">
                 <label>
                   <span>Center Gain</span>
@@ -2657,7 +2847,18 @@ onBeforeUnmount(() => {
               <span class="signal-node-name">SOURCE</span>
             </div>
             <div class="signal-line" :class="{ active: eqChainActive }"></div>
-            <div class="signal-node" :class="{ active: eqChainActive }" @click="toggleEqFromDsp">
+            <div
+              class="signal-node"
+              data-te-interactive
+              role="switch"
+              tabindex="0"
+              aria-label="均衡器"
+              :aria-checked="eqChainActive"
+              :class="{ active: eqChainActive }"
+              @click="toggleEqFromDsp"
+              @keydown.enter.prevent="toggleEqFromDsp"
+              @keydown.space.prevent="toggleEqFromDsp"
+            >
               <div class="signal-node-circle" :class="{ active: eqChainActive }">
                 <i class="pi pi-sliders-h"></i>
               </div>
@@ -2667,8 +2868,15 @@ onBeforeUnmount(() => {
             <div class="signal-line" :class="{ active: crossfeedChainActive }"></div>
             <div
               class="signal-node"
+              data-te-interactive
+              role="switch"
+              tabindex="0"
+              aria-label="Crossfeed"
+              :aria-checked="crossfeedChainActive"
               :class="{ active: crossfeedChainActive }"
               @click="toggleCrossfeedFromDsp"
+              @keydown.enter.prevent="toggleCrossfeedFromDsp"
+              @keydown.space.prevent="toggleCrossfeedFromDsp"
             >
               <div class="signal-node-circle" :class="{ active: crossfeedChainActive }">
                 <i class="pi pi-arrows-h"></i>
@@ -2681,8 +2889,15 @@ onBeforeUnmount(() => {
             <div class="signal-line" :class="{ active: convolverChainActive }"></div>
             <div
               class="signal-node"
+              data-te-interactive
+              role="switch"
+              tabindex="0"
+              aria-label="卷积混响"
+              :aria-checked="convolverChainActive"
               :class="{ active: convolverChainActive }"
               @click="toggleConvolver"
+              @keydown.enter.prevent="toggleConvolver"
+              @keydown.space.prevent="toggleConvolver"
             >
               <div class="signal-node-circle" :class="{ active: convolverChainActive }">
                 <i class="pi pi-microchip"></i>
@@ -2887,7 +3102,14 @@ onBeforeUnmount(() => {
                       :value="crossfeedPercent"
                       @input="setCrossfeedFromInput"
                     />
-                    <span class="crossfeed-percent">{{ crossfeedPercent }}%</span>
+                    <EditableRangeValue
+                      :value="crossfeedPercent"
+                      :min="0"
+                      :max="100"
+                      suffix="%"
+                      aria-label="编辑耳机交叉馈电强度"
+                      @change="setCrossfeedPercent"
+                    />
                     <span
                       class="toggle-switch"
                       :class="{
@@ -3040,6 +3262,84 @@ onBeforeUnmount(() => {
                 </div>
               </div>
             </div>
+          </div>
+
+          <div class="dsp-module-card vst3-settings-card" data-testid="settings-vst3-card">
+            <h3>VST3 插件 (VST3 Host)</h3>
+            <div class="mini-setting">
+              <div>
+                <strong>启用 VST3 宿主</strong>
+                <span>允许在 DSP Rack 中加载扫描到的 VST3 效果插件。仅 Windows x64 可用。</span>
+              </div>
+              <span
+                class="toggle-switch"
+                :class="{
+                  active: vst3Enabled,
+                  inactive: !vst3Enabled,
+                  disabled: !vst3Catalog || !vst3PlatformSupported || vst3Busy
+                }"
+                role="switch"
+                data-testid="settings-vst3-toggle"
+                :aria-checked="vst3Enabled"
+                :aria-disabled="!vst3Catalog || !vst3PlatformSupported || vst3Busy"
+                @click="toggleVst3Enabled"
+              ></span>
+            </div>
+            <p v-if="vst3HelpersNotice" class="setting-hint" data-testid="settings-vst3-helpers">
+              {{ vst3HelpersNotice }}
+            </p>
+            <div class="mini-setting top-align">
+              <div>
+                <strong>搜索目录</strong>
+                <span>扫描 VST3 模块的目录列表。修改后需重新扫描才会生效。</span>
+              </div>
+              <div class="folder-list" data-testid="settings-vst3-paths">
+                <div v-for="path in vst3SearchPaths" :key="path" class="folder-chip">
+                  <span :title="path">{{ path }}</span>
+                  <i
+                    class="pi pi-times"
+                    data-te-interactive
+                    role="button"
+                    tabindex="0"
+                    :aria-label="`移除 VST3 搜索目录 ${path}`"
+                    @click="removeVst3SearchPath(path)"
+                    @keydown.enter.prevent="removeVst3SearchPath(path)"
+                    @keydown.space.prevent="removeVst3SearchPath(path)"
+                  ></i>
+                </div>
+                <div v-if="vst3SearchPaths.length === 0" class="folder-empty-hint">
+                  暂未配置任何搜索目录
+                </div>
+                <button
+                  type="button"
+                  class="dashed-button"
+                  :disabled="!vst3Catalog || vst3Busy"
+                  @click="addVst3SearchPath"
+                >
+                  <i class="pi pi-plus"></i>
+                  添加目录
+                </button>
+              </div>
+            </div>
+            <div class="mini-setting">
+              <div>
+                <strong>插件目录状态</strong>
+                <span data-testid="settings-vst3-summary">{{ vst3ScanSummary }}</span>
+              </div>
+              <button
+                class="soft-button compact"
+                type="button"
+                data-testid="settings-vst3-rescan"
+                :disabled="!vst3Enabled || vst3Scanning || !vst3HelpersReady"
+                @click="rescanVst3Plugins"
+              >
+                <i class="pi pi-refresh" :class="{ 'pi-spin': vst3Scanning }"></i>
+                {{ vst3Scanning ? '扫描中…' : '重新扫描' }}
+              </button>
+            </div>
+            <p v-if="vst3Error" class="setting-hint" data-testid="settings-vst3-error">
+              {{ vst3Error }}
+            </p>
           </div>
         </section>
 
@@ -3263,7 +3563,14 @@ onBeforeUnmount(() => {
                       updateTp('surfaceOpacity', Number(($event.target as HTMLInputElement).value))
                     "
                   />
-                  <span>{{ settings.windowTransparencyEffect.surfaceOpacity }}%</span>
+                  <EditableRangeValue
+                    :value="settings.windowTransparencyEffect.surfaceOpacity"
+                    :min="0"
+                    :max="100"
+                    suffix="%"
+                    aria-label="编辑表面不透明度"
+                    @change="updateTp('surfaceOpacity', $event)"
+                  />
                 </div>
               </div>
               <div class="setting-item">
@@ -3282,7 +3589,14 @@ onBeforeUnmount(() => {
                       updateTp('surfaceBlur', Number(($event.target as HTMLInputElement).value))
                     "
                   />
-                  <span>{{ settings.windowTransparencyEffect.surfaceBlur }}px</span>
+                  <EditableRangeValue
+                    :value="settings.windowTransparencyEffect.surfaceBlur"
+                    :min="0"
+                    :max="60"
+                    suffix="px"
+                    aria-label="编辑表面模糊度"
+                    @change="updateTp('surfaceBlur', $event)"
+                  />
                 </div>
               </div>
               <hr />
@@ -3302,7 +3616,14 @@ onBeforeUnmount(() => {
                       updateTp('cardOpacity', Number(($event.target as HTMLInputElement).value))
                     "
                   />
-                  <span>{{ settings.windowTransparencyEffect.cardOpacity }}%</span>
+                  <EditableRangeValue
+                    :value="settings.windowTransparencyEffect.cardOpacity"
+                    :min="0"
+                    :max="100"
+                    suffix="%"
+                    aria-label="编辑卡片不透明度"
+                    @change="updateTp('cardOpacity', $event)"
+                  />
                 </div>
               </div>
               <div class="setting-item">
@@ -3319,7 +3640,14 @@ onBeforeUnmount(() => {
                     :value="settings.windowTransparencyEffect.cardBlur"
                     @input="updateTp('cardBlur', Number(($event.target as HTMLInputElement).value))"
                   />
-                  <span>{{ settings.windowTransparencyEffect.cardBlur }}px</span>
+                  <EditableRangeValue
+                    :value="settings.windowTransparencyEffect.cardBlur"
+                    :min="0"
+                    :max="60"
+                    suffix="px"
+                    aria-label="编辑卡片模糊度"
+                    @change="updateTp('cardBlur', $event)"
+                  />
                 </div>
               </div>
             </template>
@@ -3336,9 +3664,7 @@ onBeforeUnmount(() => {
             <div class="setting-item">
               <div class="setting-copy">
                 <strong>主题工作室 · Beta</strong>
-                <span
-                  >深度主题编辑（Beta）。P7 收口前以契约测试为准，完整像素证据包仍待入库。</span
-                >
+                <span>深度主题编辑（Beta）。P7 收口前以契约测试为准，完整像素证据包仍待入库。</span>
               </div>
               <button type="button" class="primary-button" @click="emit('openThemeStudio')">
                 <i class="ph ph-swatches"></i>
@@ -3363,6 +3689,26 @@ onBeforeUnmount(() => {
                   {{ option.label }}
                 </button>
               </div>
+            </div>
+            <hr />
+            <div class="setting-item">
+              <div class="setting-copy">
+                <strong>界面动效</strong>
+                <span>完整模式提供更强的操作反馈；减少或关闭模式可降低视觉移动。</span>
+              </div>
+              <select
+                class="preview-select wide"
+                :value="settings.motionPreference"
+                @change="setMotionPreference"
+              >
+                <option
+                  v-for="option in motionPreferenceOptions"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
             </div>
             <hr />
             <div class="setting-item">
@@ -3397,9 +3743,16 @@ onBeforeUnmount(() => {
                   v-for="option in accentColorOptions"
                   :key="option.value"
                   class="swatch"
+                  data-te-interactive
+                  role="button"
+                  tabindex="0"
+                  :aria-label="option.label"
+                  :aria-pressed="settings.lightAccentColor === option.value"
                   :class="[option.class, { active: settings.lightAccentColor === option.value }]"
                   :title="option.label"
                   @click="setAccentColor('light', option.value)"
+                  @keydown.enter.prevent="setAccentColor('light', option.value)"
+                  @keydown.space.prevent="setAccentColor('light', option.value)"
                 >
                   <i v-if="settings.lightAccentColor === option.value" class="pi pi-check"></i>
                 </span>
@@ -3416,9 +3769,16 @@ onBeforeUnmount(() => {
                   v-for="option in accentColorOptions"
                   :key="option.value"
                   class="swatch"
+                  data-te-interactive
+                  role="button"
+                  tabindex="0"
+                  :aria-label="option.label"
+                  :aria-pressed="settings.darkAccentColor === option.value"
                   :class="[option.class, { active: settings.darkAccentColor === option.value }]"
                   :title="option.label"
                   @click="setAccentColor('dark', option.value)"
+                  @keydown.enter.prevent="setAccentColor('dark', option.value)"
+                  @keydown.space.prevent="setAccentColor('dark', option.value)"
                 >
                   <i v-if="settings.darkAccentColor === option.value" class="pi pi-check"></i>
                 </span>
@@ -3772,7 +4132,14 @@ onBeforeUnmount(() => {
                     :value="settings.lyricFontSize"
                     @input="setLyricFontSize"
                   />
-                  <span>{{ settings.lyricFontSize }}px</span>
+                  <EditableRangeValue
+                    :value="settings.lyricFontSize"
+                    :min="14"
+                    :max="28"
+                    suffix="px"
+                    aria-label="编辑歌词字号"
+                    @change="setLyricFontSizeValue"
+                  />
                 </div>
                 <div class="range-pill">
                   <span>未播放暗度</span>
@@ -3783,6 +4150,14 @@ onBeforeUnmount(() => {
                     max="100"
                     :value="settings.lyricDimOpacity"
                     @input="setLyricDimOpacity"
+                  />
+                  <EditableRangeValue
+                    :value="settings.lyricDimOpacity"
+                    :min="10"
+                    :max="100"
+                    suffix="%"
+                    aria-label="编辑未播放歌词暗度"
+                    @change="setLyricDimOpacityValue"
                   />
                 </div>
               </div>
@@ -3864,7 +4239,14 @@ onBeforeUnmount(() => {
                         )
                       "
                     />
-                    <span>{{ settings.cardAppearance[cardAppearanceTab].blurRadius }}px</span>
+                    <EditableRangeValue
+                      :value="settings.cardAppearance[cardAppearanceTab].blurRadius"
+                      :min="0"
+                      :max="40"
+                      suffix="px"
+                      aria-label="编辑卡片模糊强度"
+                      @change="setCardField('blurRadius', $event)"
+                    />
                   </div>
                 </div>
                 <hr />
@@ -3888,7 +4270,14 @@ onBeforeUnmount(() => {
                         )
                       "
                     />
-                    <span>{{ settings.cardAppearance[cardAppearanceTab].blurSaturation }}%</span>
+                    <EditableRangeValue
+                      :value="settings.cardAppearance[cardAppearanceTab].blurSaturation"
+                      :min="80"
+                      :max="180"
+                      suffix="%"
+                      aria-label="编辑卡片模糊饱和度"
+                      @change="setCardField('blurSaturation', $event)"
+                    />
                   </div>
                 </div>
                 <hr />
@@ -3921,9 +4310,14 @@ onBeforeUnmount(() => {
                           )
                         "
                       />
-                      <span
-                        >{{ settings.cardAppearance[cardAppearanceTab].backgroundOpacity }}%</span
-                      >
+                      <EditableRangeValue
+                        :value="settings.cardAppearance[cardAppearanceTab].backgroundOpacity"
+                        :min="0"
+                        :max="100"
+                        suffix="%"
+                        aria-label="编辑卡片背景不透明度"
+                        @change="setCardField('backgroundOpacity', $event)"
+                      />
                     </div>
                   </div>
                 </div>
@@ -3957,7 +4351,14 @@ onBeforeUnmount(() => {
                           )
                         "
                       />
-                      <span>{{ settings.cardAppearance[cardAppearanceTab].borderOpacity }}%</span>
+                      <EditableRangeValue
+                        :value="settings.cardAppearance[cardAppearanceTab].borderOpacity"
+                        :min="0"
+                        :max="100"
+                        suffix="%"
+                        aria-label="编辑卡片边框透明度"
+                        @change="setCardField('borderOpacity', $event)"
+                      />
                     </div>
                     <div class="range-pill">
                       <span>宽度</span>
@@ -3975,7 +4376,15 @@ onBeforeUnmount(() => {
                           )
                         "
                       />
-                      <span>{{ settings.cardAppearance[cardAppearanceTab].borderWidth }}px</span>
+                      <EditableRangeValue
+                        :value="settings.cardAppearance[cardAppearanceTab].borderWidth"
+                        :min="0"
+                        :max="3"
+                        :step="0.5"
+                        suffix="px"
+                        aria-label="编辑卡片边框宽度"
+                        @change="setCardField('borderWidth', $event)"
+                      />
                     </div>
                   </div>
                 </div>
@@ -4000,7 +4409,14 @@ onBeforeUnmount(() => {
                         )
                       "
                     />
-                    <span>{{ settings.cardAppearance[cardAppearanceTab].borderRadius }}px</span>
+                    <EditableRangeValue
+                      :value="settings.cardAppearance[cardAppearanceTab].borderRadius"
+                      :min="0"
+                      :max="24"
+                      suffix="px"
+                      aria-label="编辑卡片圆角半径"
+                      @change="setCardField('borderRadius', $event)"
+                    />
                   </div>
                 </div>
                 <hr />
@@ -4100,9 +4516,14 @@ onBeforeUnmount(() => {
                           )
                         "
                       />
-                      <span
-                        >{{ settings.cardAppearance.background[cardAppearanceTab].blur }}px</span
-                      >
+                      <EditableRangeValue
+                        :value="settings.cardAppearance.background[cardAppearanceTab].blur"
+                        :min="0"
+                        :max="30"
+                        suffix="px"
+                        aria-label="编辑背景模糊度"
+                        @change="setBgEffectField('blur', $event)"
+                      />
                     </div>
                   </div>
                   <hr />
@@ -4126,11 +4547,14 @@ onBeforeUnmount(() => {
                           )
                         "
                       />
-                      <span
-                        >{{
-                          settings.cardAppearance.background[cardAppearanceTab].brightness
-                        }}%</span
-                      >
+                      <EditableRangeValue
+                        :value="settings.cardAppearance.background[cardAppearanceTab].brightness"
+                        :min="50"
+                        :max="120"
+                        suffix="%"
+                        aria-label="编辑背景亮度"
+                        @change="setBgEffectField('brightness', $event)"
+                      />
                     </div>
                   </div>
                   <hr />
@@ -4151,7 +4575,14 @@ onBeforeUnmount(() => {
                           setBgEffectField('dim', Number(($event.target as HTMLInputElement).value))
                         "
                       />
-                      <span>{{ settings.cardAppearance.background[cardAppearanceTab].dim }}%</span>
+                      <EditableRangeValue
+                        :value="settings.cardAppearance.background[cardAppearanceTab].dim"
+                        :min="0"
+                        :max="80"
+                        suffix="%"
+                        aria-label="编辑背景暗化遮罩"
+                        @change="setBgEffectField('dim', $event)"
+                      />
                     </div>
                   </div>
                 </div>
@@ -4198,7 +4629,14 @@ onBeforeUnmount(() => {
                   :value="settings.desktopLyrics.fontSize"
                   @input="updateDl('fontSize', Number(($event.target as HTMLInputElement).value))"
                 />
-                <span>{{ settings.desktopLyrics.fontSize }}px</span>
+                <EditableRangeValue
+                  :value="settings.desktopLyrics.fontSize"
+                  :min="12"
+                  :max="80"
+                  suffix="px"
+                  aria-label="编辑桌面歌词字号"
+                  @change="updateDl('fontSize', $event)"
+                />
               </div>
             </div>
             <hr />
@@ -4239,7 +4677,14 @@ onBeforeUnmount(() => {
                     updateDl('lineSpacing', Number(($event.target as HTMLInputElement).value))
                   "
                 />
-                <span>{{ settings.desktopLyrics.lineSpacing.toFixed(1) }}</span>
+                <EditableRangeValue
+                  :value="settings.desktopLyrics.lineSpacing"
+                  :min="1"
+                  :max="3"
+                  :step="0.1"
+                  aria-label="编辑桌面歌词行间距"
+                  @change="updateDl('lineSpacing', $event)"
+                />
               </div>
             </div>
             <hr />
@@ -4257,7 +4702,14 @@ onBeforeUnmount(() => {
                   :value="settings.desktopLyrics.maxLines"
                   @input="updateDl('maxLines', Number(($event.target as HTMLInputElement).value))"
                 />
-                <span>{{ settings.desktopLyrics.maxLines }} 行</span>
+                <EditableRangeValue
+                  :value="settings.desktopLyrics.maxLines"
+                  :min="1"
+                  :max="5"
+                  suffix="行"
+                  aria-label="编辑桌面歌词最大显示行数"
+                  @change="updateDl('maxLines', $event)"
+                />
               </div>
             </div>
             <hr />
@@ -4276,7 +4728,14 @@ onBeforeUnmount(() => {
                   :value="settings.desktopLyrics.lineOffset ?? 48"
                   @input="updateDl('lineOffset', Number(($event.target as HTMLInputElement).value))"
                 />
-                <span>{{ settings.desktopLyrics.lineOffset ?? 48 }}px</span>
+                <EditableRangeValue
+                  :value="settings.desktopLyrics.lineOffset ?? 48"
+                  :min="-200"
+                  :max="200"
+                  suffix="px"
+                  aria-label="编辑桌面歌词行水平偏移"
+                  @change="updateDl('lineOffset', $event)"
+                />
               </div>
             </div>
             <hr />
@@ -4333,7 +4792,14 @@ onBeforeUnmount(() => {
                   :value="settings.desktopLyrics.bgOpacity"
                   @input="updateDl('bgOpacity', Number(($event.target as HTMLInputElement).value))"
                 />
-                <span>{{ settings.desktopLyrics.bgOpacity }}%</span>
+                <EditableRangeValue
+                  :value="settings.desktopLyrics.bgOpacity"
+                  :min="0"
+                  :max="100"
+                  suffix="%"
+                  aria-label="编辑桌面歌词背景透明度"
+                  @change="updateDl('bgOpacity', $event)"
+                />
               </div>
             </div>
             <hr />
@@ -4368,7 +4834,14 @@ onBeforeUnmount(() => {
                   :value="settings.desktopLyrics.shadowBlur"
                   @input="updateDl('shadowBlur', Number(($event.target as HTMLInputElement).value))"
                 />
-                <span>{{ settings.desktopLyrics.shadowBlur }}px</span>
+                <EditableRangeValue
+                  :value="settings.desktopLyrics.shadowBlur"
+                  :min="0"
+                  :max="30"
+                  suffix="px"
+                  aria-label="编辑桌面歌词阴影模糊度"
+                  @change="updateDl('shadowBlur', $event)"
+                />
               </div>
             </div>
             <hr v-if="settings.desktopLyrics.shadow" />
@@ -4419,7 +4892,15 @@ onBeforeUnmount(() => {
                     updateDl('windowWidth', Number(($event.target as HTMLInputElement).value))
                   "
                 />
-                <span>{{ settings.desktopLyrics.windowWidth }}px</span>
+                <EditableRangeValue
+                  :value="settings.desktopLyrics.windowWidth"
+                  :min="200"
+                  :max="3000"
+                  :step="10"
+                  suffix="px"
+                  aria-label="编辑桌面歌词窗口宽度"
+                  @change="updateDl('windowWidth', $event)"
+                />
               </div>
             </div>
             <hr />
@@ -4440,7 +4921,15 @@ onBeforeUnmount(() => {
                     updateDl('windowHeight', Number(($event.target as HTMLInputElement).value))
                   "
                 />
-                <span>{{ settings.desktopLyrics.windowHeight }}px</span>
+                <EditableRangeValue
+                  :value="settings.desktopLyrics.windowHeight"
+                  :min="60"
+                  :max="800"
+                  :step="10"
+                  suffix="px"
+                  aria-label="编辑桌面歌词窗口高度"
+                  @change="updateDl('windowHeight', $event)"
+                />
               </div>
             </div>
             <hr />
@@ -4646,7 +5135,7 @@ html[data-theme='dark'] .settings-preview-page .background-options button,
 html[data-theme='dark'] .settings-preview-page .background-accordion-trigger,
 html[data-theme='dark'] .settings-preview-page .background-kind-toggle button,
 html[data-theme='dark'] .settings-preview-page .page-background-header,
-html[data-theme='dark'] .settings-preview-page .settings-search-box input {
+html[data-theme='dark'] .settings-preview-page .settings-search-box .settings-search-input {
   color: rgba(148, 163, 184, 0.88);
 }
 

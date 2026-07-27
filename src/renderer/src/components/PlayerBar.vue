@@ -4,12 +4,12 @@ import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useMusicStore } from '../stores/useMusicStore'
 import { usePlaybackBookmarks } from '../stores/playbackBookmarks'
+import { useLyricsManagement } from '../stores/lyricsManagement'
 import type { PlaybackBookmark } from '../../../shared/playbackBookmarks.ts'
 import { useExtensionRegistry } from '../extensions/registry'
 import { useMediaProviders } from '../providers'
-import { syncPluginProviders } from '../providers'
 import { normalizeAccentColor } from '../utils/colorExtractor'
-import { resolveLyricsWithSources } from '../utils/lyricSourceResolution'
+import { useSmoothedValue } from '../utils/useSmoothedValue'
 import { HIFI_STATUS_COPY } from '../../../shared/audioProcessingOptions.ts'
 import CoverImg from './CoverImg.vue'
 import HiFiSidebar from './player-bar/HiFiSidebar.vue'
@@ -22,12 +22,14 @@ import sequentialIcon from '../assets/icons/sequential-playback.svg'
 import shuffleIcon from '../assets/icons/shuffle.svg'
 import { useFavoriteButton } from './player-bar/useFavoriteButton'
 import { useFloatingPanels } from './player-bar/useFloatingPanels'
+import { useEscapeToClose } from '../app/useDismissLayer.ts'
 import { usePlaybackQueueVirtualScroll } from './player-bar/usePlaybackQueueVirtualScroll'
 import { usePlaybackQueueDrawerActions } from './player-bar/usePlaybackQueueDrawerActions'
 import type {
   AudioOutputId,
   ChannelRoutingMode,
   DsdOutputMode,
+  PcmToDsdMode,
   VolumeNormalizationMode
 } from '../types/settings'
 
@@ -80,6 +82,7 @@ const {
   abLoopB,
   toggleAbLoopAtCurrentTime,
   clearAbLoop,
+  refreshCurrentLyrics,
   resumeOffer,
   acceptResumeOffer,
   dismissResumeOffer,
@@ -144,6 +147,7 @@ const playerBarButtons = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'playerBarButton')
 )
 const { settings } = useSettingsStore()
+const lyricsManagement = useLyricsManagement()
 const desktopLyricsOn = ref(settings.value.desktopLyrics.enabled)
 const miniPlayerOpening = ref(false)
 const lyricsReloading = ref(false)
@@ -237,9 +241,16 @@ const progressPercent = computed(() => {
   return Math.min(100, Math.max(0, ratio * 100))
 })
 
+// Playback ticks arrive stepped (~4/s); chase them so the fill glides between
+// ticks. Jumps over 2.5% (seek / track switch) snap instead of gliding.
+const smoothedProgressPercent = useSmoothedValue(progressPercent, {
+  tau: 160,
+  snapThreshold: 2.5
+})
+
 const progressFillStyle = computed(() => ({
   // Match LocalDashboard hero progress: real width % repaints reliably in Chromium.
-  width: `${Math.min(100, Math.max(0, progressPercent.value))}%`
+  width: `${Math.min(100, Math.max(0, smoothedProgressPercent.value))}%`
 }))
 
 const abLoopTitle = computed(() => {
@@ -469,11 +480,10 @@ const {
   visibleItems: visibleQueueItems,
   totalHeight: queueVirtualHeight,
   translateY: queueVirtualTranslateY,
-  onScroll: onQueueScroll
+  onScroll: onQueueScroll,
+  scrollToCurrent: scrollQueueToCurrent
 } = usePlaybackQueueVirtualScroll(queue, queueIndex, playlistOpen)
 
-const queuePlaylistName = ref('Current Queue')
-const queueDrawerNotice = ref('')
 const {
   draggedEntryId,
   getEntryIndex,
@@ -481,7 +491,6 @@ const {
   addToTail: addQueueEntryToTail,
   remove: removeQueueEntry,
   clear: clearPlaybackQueue,
-  saveAsPlaylist,
   onDragStart: onQueueDragStart,
   onDragOver: onQueueDragOver,
   onDrop: onQueueDrop,
@@ -508,19 +517,30 @@ function playQueueEntry(queueEntryId: string): void {
   if (index !== -1) playTrackAt(index)
 }
 
-function savePlaybackQueue(): void {
-  const playlistId = saveAsPlaylist(queuePlaylistName.value)
-  queueDrawerNotice.value = playlistId ? '队列已保存' : '请输入歌单名称'
-}
-
-function clearPlaybackQueueFromDrawer(): void {
-  clearPlaybackQueue()
-  queueDrawerNotice.value = '队列已清空'
-}
+const queueSummaryText = computed(() => {
+  const total = queue.value.length
+  if (total === 0) return '暂无歌曲，从曲库或流媒体加入几首吧'
+  let totalSeconds = 0
+  for (const track of queue.value) {
+    if (Number.isFinite(track.duration) && track.duration > 0) totalSeconds += track.duration
+  }
+  const position =
+    queueIndex.value >= 0 && queueIndex.value < total ? `正在播放第 ${queueIndex.value + 1} 首` : ''
+  const minutes = Math.round(totalSeconds / 60)
+  const durationText =
+    minutes < 1
+      ? ''
+      : minutes < 60
+        ? `${minutes} 分钟`
+        : `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分钟`
+  return [position, durationText ? `共 ${durationText}` : ''].filter(Boolean).join(' · ')
+})
 
 function dismissAllFloatingPanels(): void {
   dismissFloatingPanels()
 }
+
+useEscapeToClose(floatingPanelOpen, dismissAllFloatingPanels)
 
 const {
   favoriteButtonVisible,
@@ -914,6 +934,10 @@ function onSetRoutingMode(mode: ChannelRoutingMode): void {
   void setAudioOutputConfig({ routingMode: mode })
 }
 
+function onSetPcmToDsdMode(mode: PcmToDsdMode): void {
+  void setAudioOutputConfig({ pcmToDsdMode: mode })
+}
+
 function onSetDsdOutputMode(mode: DsdOutputMode): void {
   void setAudioProcessing({ dsdOutputMode: mode })
 }
@@ -935,51 +959,9 @@ async function onReloadLyrics(prefer: 'auto' | 'local' | 'provider'): Promise<vo
   if (!track || lyricsReloading.value) return
   lyricsReloading.value = true
   try {
-    const source =
-      track.source ||
-      (/^[a-zA-Z]:[\\/]/.test(track.id) || /^[\\/]/.test(track.id)
-        ? 'local'
-        : track.id.includes(':')
-          ? track.id.slice(0, track.id.indexOf(':'))
-          : 'local')
-    const canLoadLocal =
-      (prefer === 'auto' || prefer === 'local') &&
-      source === 'local' &&
-      !!track.dir &&
-      !!track.fileName
-    const canLoadProvider = prefer === 'auto' || prefer === 'provider'
-
-    const resolved = await resolveLyricsWithSources({
-      track:
-        prefer === 'provider' || prefer === 'local'
-          ? {
-              ...track,
-              lyrics: null,
-              translatedLyrics: null,
-              lyricsSource: null,
-              translatedLyricsSource: null
-            }
-          : track,
-      loadLocalLyrics: canLoadLocal
-        ? () =>
-            window.api.data.getLyrics(track.dir!, track.fileName, track.filePath).catch(() => null)
-        : undefined,
-      loadProviderLyrics: canLoadProvider
-        ? async () => {
-            await syncPluginProviders()
-            return mediaProviders.resolveLyrics(track)
-          }
-        : undefined
-    })
-
+    await lyricsManagement.selectSource(track.id, prefer)
     if (currentTrack.value?.id !== track.id) return
-    currentTrack.value = {
-      ...currentTrack.value,
-      lyrics: resolved.lyrics ?? '',
-      translatedLyrics: resolved.translatedLyrics ?? currentTrack.value.translatedLyrics ?? null,
-      lyricsSource: resolved.lyricsSource,
-      translatedLyricsSource: resolved.translatedLyricsSource
-    }
+    await refreshCurrentLyrics()
   } catch (error) {
     console.error('[hifi] Failed to reload lyrics:', error)
   } finally {
@@ -1013,40 +995,44 @@ onMounted(() => {
       <div v-if="playlistOpen" class="playlist-panel" :class="{ 'panel-glass': glass }">
         <div class="playlist-header">
           <div class="playlist-heading">
-            <span class="playlist-heading-icon">
-              <i class="pi pi-list"></i>
-            </span>
-            <div>
+            <span class="playlist-eyebrow">Play Queue</span>
+            <div class="playlist-heading-row">
               <span class="playlist-heading-title">播放列表</span>
-              <span class="playlist-heading-subtitle">当前队列</span>
+              <span class="playlist-count">{{ queue.length }} 首</span>
             </div>
+            <span class="playlist-heading-subtitle">{{ queueSummaryText }}</span>
           </div>
-          <span class="playlist-count">{{ queue.length }} 首</span>
+          <div class="playlist-tools" aria-label="队列操作">
+            <button
+              class="playlist-tool-btn"
+              type="button"
+              title="定位到正在播放"
+              aria-label="定位到正在播放"
+              :disabled="queue.length === 0"
+              @click="scrollQueueToCurrent"
+            >
+              <i class="pi pi-map-marker" aria-hidden="true"></i>
+              <span>定位</span>
+            </button>
+            <button
+              class="playlist-tool-btn playlist-tool-danger"
+              type="button"
+              title="清空播放队列"
+              aria-label="清空播放队列"
+              :disabled="queue.length === 0"
+              @click="clearPlaybackQueue"
+            >
+              <i class="pi pi-trash" aria-hidden="true"></i>
+              <span>清空</span>
+            </button>
+          </div>
         </div>
-        <div class="playlist-actions" aria-label="队列操作">
-          <label class="playlist-save-label">
-            <span class="sr-only">歌单名称</span>
-            <input
-              v-model="queuePlaylistName"
-              type="text"
-              maxlength="120"
-              placeholder="歌单名称"
-            />
-          </label>
-          <button class="playlist-action-btn" type="button" @click="savePlaybackQueue">
-            <i class="pi pi-save" aria-hidden="true"></i>
-            <span>保存队列</span>
-          </button>
-          <button
-            class="playlist-action-btn playlist-clear-btn"
-            type="button"
-            :disabled="queue.length === 0"
-            @click="clearPlaybackQueueFromDrawer"
-          >
-            <i class="pi pi-trash" aria-hidden="true"></i>
-            <span>清空</span>
-          </button>
-          <span class="playlist-action-notice" role="status">{{ queueDrawerNotice }}</span>
+        <div v-if="queue.length === 0" class="playlist-empty">
+          <span class="playlist-empty-icon" aria-hidden="true">
+            <i class="pi pi-inbox"></i>
+          </span>
+          <span class="playlist-empty-title">队列还是空的</span>
+          <span class="playlist-empty-hint">播放任意歌曲后，会在这里排队等候</span>
         </div>
         <div :ref="setPlaylistListRef" class="playlist-list" @scroll.passive="onQueueScroll">
           <div class="playlist-virtual-spacer" :style="{ height: `${queueVirtualHeight}px` }">
@@ -1058,6 +1044,7 @@ onMounted(() => {
                 v-for="item in visibleQueueItems"
                 :key="item.queueEntryId"
                 class="playlist-item"
+                data-te-interactive
                 :class="{
                   active: item.index === queueIndex,
                   dragging: draggedEntryId === item.queueEntryId
@@ -1086,8 +1073,15 @@ onMounted(() => {
                   <i class="pi pi-bars" aria-hidden="true"></i>
                 </button>
                 <span class="playlist-index">
-                  <i v-if="item.index === queueIndex" class="pi pi-volume-up playing-dot"></i>
-                  <span v-else>{{ item.index + 1 }}</span>
+                  <span
+                    v-if="item.index === queueIndex"
+                    class="playing-bars"
+                    :class="{ paused: !isPlaying }"
+                    aria-hidden="true"
+                  >
+                    <i></i><i></i><i></i>
+                  </span>
+                  <span v-else class="playlist-index-num">{{ item.index + 1 }}</span>
                 </span>
                 <CoverImg
                   v-if="item.cover"
@@ -1097,7 +1091,7 @@ onMounted(() => {
                   alt=""
                 />
                 <div v-else class="playlist-cover-placeholder">
-                  <i class="pi pi-wave-pulse" style="font-size: 12px; color: #bbb"></i>
+                  <i class="pi pi-wave-pulse" aria-hidden="true"></i>
                 </div>
                 <div class="playlist-info">
                   <div class="playlist-title">{{ item.title }}</div>
@@ -1122,6 +1116,7 @@ onMounted(() => {
                   </button>
                   <button
                     type="button"
+                    class="row-action-danger"
                     title="从队列移除"
                     :aria-label="`从队列移除 ${item.title}`"
                     @click="removeQueueEntry(item.queueEntryId)"
@@ -1150,6 +1145,7 @@ onMounted(() => {
         <div
           ref="coverRef"
           class="player-cover-slot player-artwork-slot"
+          data-te-interactive
           title="打开播放页面"
           @click="onCoverClick"
         >
@@ -1222,7 +1218,12 @@ onMounted(() => {
           <button class="ctrl-btn previous-button" aria-label="上一首" @click="prev">
             <img :src="previousTrackIcon" alt="上一首" />
           </button>
-          <button class="ctrl-btn btn-play" aria-label="播放/暂停" @click="togglePlay">
+          <button
+            class="ctrl-btn btn-play"
+            :class="{ 'is-playing': isPlaying }"
+            aria-label="播放/暂停"
+            @click="togglePlay"
+          >
             <img :src="isPlaying ? pauseIcon : playIcon" :alt="isPlaying ? '暂停' : '播放'" />
           </button>
           <button class="ctrl-btn next-button" aria-label="下一首" @click="next">
@@ -1468,6 +1469,7 @@ onMounted(() => {
           @set-replay-gain-preamp="onSetReplayGainPreamp"
           @set-preferred-buffer-size="onSetPreferredBufferSize"
           @set-routing-mode="onSetRoutingMode"
+          @set-pcm-to-dsd-mode="onSetPcmToDsdMode"
           @set-dsd-output-mode="onSetDsdOutputMode"
           @set-output-stage="setOutputStage"
           @set-stereo-image="setStereoImage"

@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { Track } from '../../types/music'
 import CoverImg from '../CoverImg.vue'
+import { useProgressiveList } from './useProgressiveList.ts'
 
 export type DetailStageKind =
   | 'liked'
@@ -142,6 +143,12 @@ const emptyMessage = computed(() => {
       return '这里还没有可播放的曲目'
   }
 })
+
+const {
+  visibleItems: visibleTracks,
+  hasMoreToRender,
+  sentinelRef
+} = useProgressiveList(() => props.tracks)
 
 function onRowActivate(track: Track, index: number, event: MouseEvent): void {
   if (event.detail > 1) return
@@ -328,9 +335,10 @@ function shuffleAndPlay(): void {
 
       <ul class="stage-rows" role="list">
         <li
-          v-for="(track, index) in tracks"
+          v-for="(track, index) in visibleTracks"
           :key="track.id"
           class="stage-row"
+          data-te-interactive
           :class="{
             playing: currentTrackId === track.id,
             selected: isSelected(track.id)
@@ -348,9 +356,7 @@ function shuffleAndPlay(): void {
               title="正在播放"
               @click="onPlayRow(track, index, $event)"
             >
-              <span class="eq-bars" aria-hidden="true">
-                <i></i><i></i><i></i>
-              </span>
+              <span class="eq-bars" aria-hidden="true"> <i></i><i></i><i></i> </span>
             </button>
             <button
               v-else
@@ -393,10 +399,7 @@ function shuffleAndPlay(): void {
               :title="isTrackLiked(track.ncmSongId) ? '取消喜欢' : '喜欢'"
               @click="onLike(track, $event)"
             >
-              <i
-                v-if="isLiking(track.ncmSongId)"
-                class="pi pi-spin pi-spinner"
-              ></i>
+              <i v-if="isLiking(track.ncmSongId)" class="pi pi-spin pi-spinner"></i>
               <i
                 v-else
                 :class="isTrackLiked(track.ncmSongId) ? 'pi pi-heart-fill' : 'pi pi-heart'"
@@ -412,6 +415,13 @@ function shuffleAndPlay(): void {
             {{ formatTime(track.duration) }}
           </div>
         </li>
+        <li
+          v-if="hasMoreToRender"
+          :ref="sentinelRef"
+          class="stage-rows-sentinel"
+          role="presentation"
+          aria-hidden="true"
+        ></li>
       </ul>
 
       <div v-if="likedFooter" class="stage-footer">
@@ -428,9 +438,7 @@ function shuffleAndPlay(): void {
           <i class="pi pi-refresh"></i>
           <span>继续加载</span>
         </button>
-        <span v-else-if="likedFooter.hasMore" class="stage-footer-msg">
-          继续向下滚动加载更多
-        </span>
+        <span v-else-if="likedFooter.hasMore" class="stage-footer-msg"> 继续向下滚动加载更多 </span>
         <span
           v-else-if="likedFooter.total != null && (likedFooter.loaded ?? 0) > 0"
           class="stage-footer-msg"

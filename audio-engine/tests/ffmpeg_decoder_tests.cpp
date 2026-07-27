@@ -1,5 +1,6 @@
 #include "../decoder/FFmpegDecoder.h"
 #include "../decoder/FFmpegDecoderUtils.h"
+#include "../dsp/DspTypes.h"
 #include "AudioFixtureLibrary.h"
 
 #include <cassert>
@@ -173,6 +174,71 @@ void assertDecoderOpensUtf8Path() {
   std::filesystem::remove(unicodeDir, fsError);
 }
 
+#if defined(TAE_HAS_FFMPEG)
+void assertDecoderResamplesWithQualityTier(
+    FFmpegDecoder::ResamplerQuality quality,
+    const char* fixtureName) {
+  const auto fixture = writePcmWavFixture({fixtureName, 44100, 2, 16, 32, false});
+  FFmpegDecoder decoder;
+  decoder.setResamplerQuality(quality);
+  std::string error;
+  assert(decoder.open(fixture.string(), &error));
+
+  AudioFormat target = decoder.streamInfo().sourceFormat;
+  target.sampleRate = 96000;
+  target.bitDepth = 32;
+  target.sampleFormat = AudioSampleFormat::Float32Interleaved;
+  // Every tier — including the SoX tiers on FFmpeg builds without libsoxr —
+  // must initialize a working resampler (graceful fallback, never a failure).
+  assert(decoder.setOutputFormat(target, &error));
+
+  std::vector<float> frames(1024 * 2, 0.0f);
+  const size_t decoded = decoder.readFrames(frames.data(), 1024, &error);
+  assert(decoded > 0);
+  bool nonZero = false;
+  for (size_t i = 0; i < decoded * 2; ++i) {
+    if (frames[i] != 0.0f) {
+      nonZero = true;
+      break;
+    }
+  }
+  assert(nonZero);
+  decoder.close();
+}
+
+void assertDecoderSoxrTiersProbeAndFallBackGracefully() {
+  // Force re-probing so this test exercises the runtime detection path even
+  // if another test already touched the resampler.
+  soxrRuntimeStateStorage().store(0);
+  assert(soxrRuntimeAvailability() == SoxrRuntimeState::Unknown);
+
+  assertDecoderResamplesWithQualityTier(
+      FFmpegDecoder::ResamplerQuality::SoxrHq, "twilight-decoder-soxr-hq.wav");
+  // The probe must have produced a definitive answer either way.
+  const SoxrRuntimeState afterHq = soxrRuntimeAvailability();
+  assert(afterHq != SoxrRuntimeState::Unknown);
+
+  assertDecoderResamplesWithQualityTier(
+      FFmpegDecoder::ResamplerQuality::SoxrVhq, "twilight-decoder-soxr-vhq.wav");
+  assert(soxrRuntimeAvailability() == afterHq);
+
+  // Once soxr is known-unavailable, the decoder must skip re-probing and go
+  // straight to the Ultra swr fallback; the classic tiers stay untouched.
+  soxrRuntimeStateStorage().store(2);
+  assertDecoderResamplesWithQualityTier(
+      FFmpegDecoder::ResamplerQuality::SoxrVhq, "twilight-decoder-soxr-fallback.wav");
+  assert(soxrRuntimeAvailability() == SoxrRuntimeState::Unavailable);
+
+  assertDecoderResamplesWithQualityTier(
+      FFmpegDecoder::ResamplerQuality::Ultra, "twilight-decoder-swr-ultra.wav");
+  assertDecoderResamplesWithQualityTier(
+      FFmpegDecoder::ResamplerQuality::Native, "twilight-decoder-swr-native.wav");
+
+  // Leave the probe state clean for other suites in this process.
+  soxrRuntimeStateStorage().store(0);
+}
+#endif
+
 void assertDecoderOpensExternalFixturesWhenProvided() {
   const auto fixtures = findExternalAudioFixtures();
   if (fixtures.empty()) return;
@@ -207,6 +273,7 @@ int main() {
   assertDecoderReportsPcm("twilight-fixture-s24.wav", 24);
   assertDecoderReportsPcm("twilight-fixture-s32.wav", 32);
   assertDecoderReportsDsdFallbackWhenSupported();
+  assertDecoderSoxrTiersProbeAndFallBackGracefully();
   assertDecoderOpensUtf8Path();
   assertDecoderOpensExternalFixturesWhenProvided();
 #endif

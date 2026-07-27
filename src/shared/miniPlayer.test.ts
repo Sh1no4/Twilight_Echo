@@ -181,6 +181,7 @@ test('mini player state normalization keeps only the renderer snapshot contract'
       artist: 'Twilight Echo',
       album: 'Afterglow',
       cover: 'cover://abc.jpg',
+      coverSource: 'https://p1.music.126.net/cover.jpg',
       filePath: 'D:/private/song.flac'
     },
     isPlaying: true,
@@ -195,9 +196,41 @@ test('mini player state normalization keeps only the renderer snapshot contract'
 
   assert.equal(state.track?.title, 'Night Drive')
   assert.equal('filePath' in (state.track as object), false)
+  assert.equal(state.track?.cover, 'cover://abc.jpg')
+  assert.equal(state.track?.coverSource, 'https://p1.music.126.net/cover.jpg')
   assert.equal(state.currentTime, 100)
   assert.equal(state.volume, 1)
   assert.equal(state.queueIndex, 2)
+})
+
+test('mini player track snapshot keeps large data: covers intact and drops unsafe cover sources', () => {
+  const dataCover = `data:image/jpeg;base64,${'a'.repeat(200_000)}`
+  const embedded = normalizeMiniPlayerStateSnapshot({
+    track: { id: 'local:embedded', title: 'Embedded', cover: dataCover }
+  })
+  // A truncated data: URL is corrupt — the full payload must survive.
+  assert.equal(embedded.track?.cover, dataCover)
+  assert.equal(embedded.track?.coverSource, null)
+
+  const oversized = normalizeMiniPlayerStateSnapshot({
+    track: {
+      id: 'local:huge',
+      title: 'Huge',
+      cover: `data:image/jpeg;base64,${'a'.repeat(4_500_000)}`
+    }
+  })
+  assert.equal(oversized.track?.cover, null)
+
+  const unsafeSource = normalizeMiniPlayerStateSnapshot({
+    track: {
+      id: 'ncm:1',
+      title: 'Remote',
+      cover: 'twilight-media://image/token',
+      coverSource: 'file:///C:/private/cover.jpg'
+    }
+  })
+  assert.equal(unsafeSource.track?.cover, 'twilight-media://image/token')
+  assert.equal(unsafeSource.track?.coverSource, null)
 })
 
 test('mini player commands reject invalid payloads and clamp numeric controls', () => {

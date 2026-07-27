@@ -20,6 +20,39 @@ export interface NcmPlaylistSummary {
   creatorName?: string
   /** True when the signed-in user owns (created) the playlist. */
   owned?: boolean
+  /** Play count surfaced by discovery endpoints (top/highquality playlists). */
+  playCount?: number
+}
+
+export interface NcmPlaylistCategoryTag {
+  name: string
+  hot: boolean
+}
+
+export interface NcmPlaylistCategoryGroup {
+  id: number
+  name: string
+  tags: NcmPlaylistCategoryTag[]
+}
+
+export interface NcmPlaylistCatalogue {
+  hotTags: string[]
+  groups: NcmPlaylistCategoryGroup[]
+}
+
+export interface NcmDiscoveryPlaylistPage {
+  items: NcmPlaylistSummary[]
+  total: number
+  hasMore: boolean
+  offset: number
+  limit: number
+}
+
+export interface NcmHighQualityPlaylistPage {
+  items: NcmPlaylistSummary[]
+  total: number
+  hasMore: boolean
+  lasttime: number
 }
 
 export interface NcmAlbumSummary {
@@ -99,6 +132,18 @@ export interface NcmStore {
   getSongStreamUrl: (songId: number, force?: boolean) => Promise<string | null>
   fetchRecommendSongs: () => Promise<Track[]>
   fetchRecommendPlaylists: () => Promise<NcmPlaylistSummary[]>
+  fetchPlaylistCategories: () => Promise<NcmPlaylistCatalogue>
+  fetchDiscoveryPlaylists: (
+    cat?: string,
+    order?: 'hot' | 'new',
+    limit?: number,
+    offset?: number
+  ) => Promise<NcmDiscoveryPlaylistPage>
+  fetchHighQualityPlaylists: (
+    cat?: string,
+    limit?: number,
+    before?: number
+  ) => Promise<NcmHighQualityPlaylistPage>
   fetchPersonalFm: () => Promise<Track[]>
   fetchPrivateContent: () => Promise<Track[]>
   fetchLyric: (songId: number) => Promise<{
@@ -339,6 +384,36 @@ export function useNcmStore(): NcmStore {
     return callNcmProvider<NcmPlaylistSummary[]>('fetchRecommendPlaylists')
   }
 
+  async function fetchPlaylistCategories(): Promise<NcmPlaylistCatalogue> {
+    return callNcmProvider<NcmPlaylistCatalogue>('fetchPlaylistCategories')
+  }
+
+  async function fetchDiscoveryPlaylists(
+    cat = '全部',
+    order: 'hot' | 'new' = 'hot',
+    limit = 30,
+    offset = 0
+  ): Promise<NcmDiscoveryPlaylistPage> {
+    return callNcmProvider<NcmDiscoveryPlaylistPage>('fetchDiscoveryPlaylists', [
+      cat,
+      order,
+      limit,
+      offset
+    ])
+  }
+
+  async function fetchHighQualityPlaylists(
+    cat = '全部',
+    limit = 30,
+    before = 0
+  ): Promise<NcmHighQualityPlaylistPage> {
+    return callNcmProvider<NcmHighQualityPlaylistPage>('fetchHighQualityPlaylists', [
+      cat,
+      limit,
+      before
+    ])
+  }
+
   async function fetchPersonalFm(): Promise<Track[]> {
     return callNcmProvider<Track[]>('fetchPersonalFm')
   }
@@ -550,6 +625,9 @@ export function useNcmStore(): NcmStore {
     getSongStreamUrl,
     fetchRecommendSongs,
     fetchRecommendPlaylists,
+    fetchPlaylistCategories,
+    fetchDiscoveryPlaylists,
+    fetchHighQualityPlaylists,
     fetchPersonalFm,
     fetchPrivateContent,
     fetchLyric,

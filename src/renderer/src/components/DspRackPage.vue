@@ -13,10 +13,15 @@ import type {
   DspGraphNode,
   DspGraphStatus,
   DspNodeType,
+  DspResamplerQuality,
   DspScene,
   DspSceneState,
   Vst3CatalogState
 } from '../../../shared/dspGraph.ts'
+import {
+  channelMatrixPresetMatrix,
+  channelMatrixPresetsForLayout
+} from '@renderer/utils/channelMatrixPresets'
 
 const emit = defineEmits<{ back: [] }>()
 
@@ -444,6 +449,13 @@ function setMatrixValue(
 
 function resetMatrix(node: DspGraphNode): void {
   node.params.matrix = identityMatrix(matrixChannelCount(node))
+}
+
+function applyMatrixPreset(node: DspGraphNode, event: Event): void {
+  const select = event.target as HTMLSelectElement
+  const matrix = channelMatrixPresetMatrix(select.value, layoutForNode(node))
+  if (matrix) node.params.matrix = matrix
+  select.value = ''
 }
 
 function channelStripRows(node: DspGraphNode): Array<Record<string, unknown>> {
@@ -934,9 +946,11 @@ function setOutputTarget(value: string): void {
 
 function setOutputQuality(value: string): void {
   const scene = selectedScene.value
-  if (!scene || !['native', 'high', 'ultra'].includes(value)) return
-  scene.graph.outputStage.resamplerQuality = value as 'native' | 'high' | 'ultra'
+  if (!scene || !['native', 'high', 'ultra', 'soxrHq', 'soxrVhq'].includes(value)) return
+  scene.graph.outputStage.resamplerQuality = value as DspResamplerQuality
 }
+
+const soxrFallbackActive = computed(() => status.value?.outputStage?.resamplerFallback === true)
 
 function setOutputDither(value: string): void {
   const scene = selectedScene.value
@@ -1155,6 +1169,12 @@ onBeforeUnmount(() => {
                 <option value="native">Native</option>
                 <option value="high">High</option>
                 <option value="ultra">Ultra</option>
+                <option value="soxrHq">
+                  SoX HQ{{ soxrFallbackActive ? '（不可用，回退 Ultra）' : '' }}
+                </option>
+                <option value="soxrVhq">
+                  SoX VHQ (最高){{ soxrFallbackActive ? '（不可用，回退 Ultra）' : '' }}
+                </option>
               </select>
             </label>
             <label
@@ -1181,6 +1201,7 @@ onBeforeUnmount(() => {
               :key="node.id"
               draggable="true"
               class="graph-node"
+              data-te-interactive
               :class="{ selected: node.id === selectedNode?.id, bypassed: !node.enabled }"
               @dragstart="draggedNodeId = node.id"
               @dragover.prevent
@@ -1426,6 +1447,22 @@ onBeforeUnmount(() => {
                   <i class="pi pi-refresh"></i>
                 </button>
               </div>
+              <label
+                >Preset<select
+                  value=""
+                  aria-label="Apply matrix preset"
+                  @change="applyMatrixPreset(selectedNode, $event)"
+                >
+                  <option value="" disabled>Apply preset…</option>
+                  <option
+                    v-for="preset in channelMatrixPresetsForLayout(layoutForNode(selectedNode))"
+                    :key="preset.id"
+                    :value="preset.id"
+                  >
+                    {{ preset.label }}
+                  </option>
+                </select></label
+              >
               <div
                 class="matrix-grid"
                 :style="{
@@ -2625,7 +2662,12 @@ onBeforeUnmount(() => {
               <div>
                 <dt>SRC / dither</dt>
                 <dd>
-                  {{ status?.outputStage?.resamplerQuality ?? '-' }} /
+                  {{ status?.outputStage?.resamplerQuality ?? '-' }}
+                  <template v-if="status?.outputStage?.resamplerEngine"
+                    >({{ status.outputStage.resamplerEngine
+                    }}{{ soxrFallbackActive ? ' 回退' : '' }})</template
+                  >
+                  /
                   {{ status?.outputStage?.dither ?? '-' }}
                 </dd>
               </div>
@@ -2804,7 +2846,10 @@ h3 {
   border-radius: 12px;
   cursor: pointer;
   text-align: left;
-  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 .scene-row:hover {
   background: var(--te-settings-nav-hover, rgba(15, 23, 42, 0.04));
@@ -3441,7 +3486,9 @@ button:disabled {
   accent-color: var(--te-primary-500);
 }
 
-:global(html[data-te-equalizer-slider] .dsp-rack-page input[type='range']::-webkit-slider-runnable-track) {
+:global(
+  html[data-te-equalizer-slider] .dsp-rack-page input[type='range']::-webkit-slider-runnable-track
+) {
   border-radius: 999px;
   background: var(--te-equalizer-slider-track);
 }
@@ -3454,7 +3501,9 @@ button:disabled {
   background: var(--te-equalizer-slider-thumb);
 }
 
-:global(html[data-te-equalizer-slider='solid'] .dsp-rack-page input[type='range']::-webkit-slider-thumb) {
+:global(
+  html[data-te-equalizer-slider='solid'] .dsp-rack-page input[type='range']::-webkit-slider-thumb
+) {
   border: 0;
   background: var(--te-primary-500);
 }
