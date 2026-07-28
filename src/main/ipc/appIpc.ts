@@ -4,6 +4,7 @@ import { relaunchApplication } from '../audio/state.ts'
 import { resolvePlaybackSessionSave } from '../app/window.ts'
 import type { RendererClosePersistenceOutcome } from '../../shared/closePersistence.ts'
 import { normalizeIpcString } from '../security/ipcValidation.ts'
+import { consumePendingTrayNavigation } from '../integrations/trayPlayer.ts'
 import {
   cancelAppUpdateDownload,
   checkForAppUpdate,
@@ -34,6 +35,10 @@ function normalizeRendererClosePersistenceOutcome(value: unknown): RendererClose
 }
 
 export function registerAppIpc(ipcMain: IpcMain): void {
+  ipcMain.handle('app:consumePendingNavigation', (event) => {
+    assertTrustedIpcSender(event, 'app IPC')
+    return consumePendingTrayNavigation()
+  })
   ipcMain.handle('app:relaunch', (event) => {
     assertTrustedIpcSender(event, 'app IPC')
     setTimeout(() => {

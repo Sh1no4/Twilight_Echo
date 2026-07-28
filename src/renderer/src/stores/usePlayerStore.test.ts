@@ -134,7 +134,10 @@ test('desktop lyrics window is destroyed on quit so the process can exit', () =>
 
   assert.match(desktopLyricsSource, /export function destroyDesktopLyrics\(\): void/)
   assert.match(desktopLyricsSource, /win\.destroy\(\)/)
-  assert.match(desktopLyricsSource, /export function hideDesktopLyrics\(\): void \{\s*destroyDesktopLyrics\(\)/)
+  assert.match(
+    desktopLyricsSource,
+    /export function hideDesktopLyrics\(\): void \{\s*destroyDesktopLyrics\(\)/
+  )
   assert.match(lifecycleSource, /destroyDesktopLyrics/)
   assert.match(lifecycleSource, /app\.on\('before-quit'[\s\S]*destroyDesktopLyrics\(\)/)
   assert.match(lifecycleSource, /app\.on\('will-quit'[\s\S]*destroyDesktopLyrics\(\)/)
@@ -776,13 +779,13 @@ test('local dashboard playback keeps a multi-track queue for next and previous c
   )
 })
 
-test('local dashboard uses a single-line masthead heading without English section kickers', () => {
+test('local dashboard keeps the restored editorial masthead in Chinese', () => {
   const source = readFileSync(new URL('../components/LocalDashboard.vue', import.meta.url), 'utf8')
 
-  assert.doesNotMatch(source, /class="masthead-kicker"/)
-  assert.doesNotMatch(source, /class="masthead-subtitle"/)
-  assert.doesNotMatch(source, /class="section-kicker"/)
-  assert.match(source, /class="greeting"/)
+  assert.match(source, /class="masthead-kicker"/)
+  assert.match(source, /class="masthead-title"/)
+  assert.match(source, /class="masthead-sub"/)
+  assert.match(source, /本地音乐库/)
   assert.doesNotMatch(source, /Good (morning|afternoon|evening)/i)
 })
 

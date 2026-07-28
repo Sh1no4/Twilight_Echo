@@ -107,6 +107,17 @@ const togglePluginPage = navigation.createTogglePluginHandler()
 const coverOrigin = ref({ x: 48, y: window.innerHeight - 36, w: 48, h: 48 })
 const streamingInitialTab = ref<StreamingInitialTab | null>(null)
 const showOnboarding = ref(false)
+
+function applyExternalNavigation(target: 'local' | 'streaming'): void {
+  showOnboarding.value = false
+  streamingInitialTab.value = target === 'streaming' ? 'home' : null
+  if (target === 'streaming') {
+    enterStreamingMode()
+  } else {
+    returnToLocalMode()
+    onSelectView('dashboard', null)
+  }
+}
 const titleMenuOpen = computed(() =>
   showPluginPage.value ? false : showStreamingPage.value ? streamingMenuOpen.value : menuOpen.value
 )
@@ -322,6 +333,7 @@ const {
 } = useSideMenuClearance({ showLocalSidebar, hasPlayerBar, menuOpen })
 
 let removePlaybackSessionSaveListener: (() => void) | null = null
+let removeAppNavigationListener: (() => void) | null = null
 let removeLibraryChangedListener: (() => void) | null = null
 let removeCoversMissingListener: (() => void) | null = null
 let removeLibraryScanProgressListener: (() => void) | null = null
@@ -372,17 +384,27 @@ onMounted(async () => {
   setupPluginThemeRuntime()
   setupListeningStatsTracking({ currentTrack, isPlaying, currentTime, duration })
   const loadedSettings = await loadSettings()
+  removeAppNavigationListener = window.api.app.onNavigate((target) => {
+    applyExternalNavigation(target)
+    void window.api.app.consumePendingNavigation()
+  })
+  const pendingNavigation = await window.api.app.consumePendingNavigation()
+  if (pendingNavigation) applyExternalNavigation(pendingNavigation)
 
   // First-run welcome wizard. The empty-library guard keeps existing users
   // who upgraded from a build without the flag from ever seeing it.
   const needsOnboarding =
-    !loadedSettings.onboardingCompleted && loadedSettings.libraryFolders.length === 0
+    !pendingNavigation &&
+    !loadedSettings.onboardingCompleted &&
+    loadedSettings.libraryFolders.length === 0
   if (needsOnboarding) {
     showOnboarding.value = true
-  } else if (loadedSettings.startupHomePage === 'streaming') {
-    // Enter streaming mode immediately if configured — must not block on
-    // library/login/extensions which can take 30s+ (provider timeouts).
-    enterStreamingMode()
+  } else if (!pendingNavigation) {
+    if (loadedSettings.startupHomePage === 'streaming') {
+      // Enter streaming mode immediately if configured — must not block on
+      // library/login/extensions which can take 30s+ (provider timeouts).
+      enterStreamingMode()
+    }
   }
 
   // Restore the session before loading the potentially large music library.
@@ -535,6 +557,8 @@ onBeforeUnmount(() => {
   playbackSessionPersistence.stop()
   removePlaybackSessionSaveListener?.()
   removePlaybackSessionSaveListener = null
+  removeAppNavigationListener?.()
+  removeAppNavigationListener = null
   removeLibraryChangedListener?.()
   removeLibraryChangedListener = null
   removeLibraryScanProgressListener?.()

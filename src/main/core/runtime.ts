@@ -15,6 +15,7 @@ import type { DspAssetLibrary } from '../dsp/dspAssetLibrary.ts'
 import type { Vst3CatalogService } from '../dsp/vst3Catalog.ts'
 import type DiscordRPC from 'discord-rpc'
 import type { MiniPlayerStateSnapshot } from '../../shared/miniPlayer'
+import type { TrayNavigationTarget } from '../../shared/trayPlayer.ts'
 
 export interface DiscordActivityData {
   title: string
@@ -41,6 +42,8 @@ export const runtime = {
   loudnessAnalysisManager: null as LoudnessAnalysisManager | null,
   mainWindow: null as BrowserWindow | null,
   miniPlayerWindow: null as BrowserWindow | null,
+  trayPlayerWindow: null as BrowserWindow | null,
+  pendingTrayNavigation: null as TrayNavigationTarget | null,
   latestMiniPlayerState: null as MiniPlayerStateSnapshot | null,
   desktopLyricsWindow: null as BrowserWindow | null,
   latestDesktopLyricsTrack: null as DesktopLyricsTrackPayload | null,

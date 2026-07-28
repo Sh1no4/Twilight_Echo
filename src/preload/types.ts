@@ -105,6 +105,7 @@ export type {
   MiniPlayerSettingsPatch,
   MiniPlayerStateSnapshot
 } from '../shared/miniPlayer.ts'
+export type { TrayNavigationTarget, TrayPlayerBootstrap } from '../shared/trayPlayer.ts'
 
 export type AudioEngineSimpleCallback = () => void
 export type AudioEngineErrorCallback = (message: string) => void

@@ -15,10 +15,10 @@ test('finishing or skipping the wizard always persists the completion flag', () 
   assert.match(wizard, /class="onb-btn-ghost" @click="finish">\s*\n\s*跳过引导/)
 })
 
-test('app gates the wizard on the completion flag plus an empty library', () => {
+test('app gates the wizard on the completion flag plus an empty library unless tray navigation wins', () => {
   assert.match(
     app,
-    /!loadedSettings\.onboardingCompleted && loadedSettings\.libraryFolders\.length === 0/
+    /!pendingNavigation &&\s*!loadedSettings\.onboardingCompleted &&\s*loadedSettings\.libraryFolders\.length === 0/
   )
   assert.match(app, /<OnboardingWizard v-if="showOnboarding" @finish="handleOnboardingFinish" \/>/)
   assert.match(app, /await updateSettings\(result\.patch\)/)

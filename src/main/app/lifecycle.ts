@@ -25,6 +25,7 @@ import {
   setupDesktopLyricsIpc
 } from '../integrations/desktopLyrics'
 import { restoreMainWindowFromMiniPlayer, setupMiniPlayerIpc } from '../integrations/miniPlayer'
+import { setupTrayPlayerIpc } from '../integrations/trayPlayer'
 import { setupNcmIpc, setupNcmApi } from '../ncm/api'
 import { setupAudioEngineIpc } from '../audio/engineIpc'
 import { AudioAnalysisServiceClient } from '../audioAnalysisServiceClient.ts'
@@ -283,6 +284,7 @@ export function startApp(): void {
       setupThemeIpc()
       setupDesktopLyricsIpc()
       setupMiniPlayerIpc()
+      setupTrayPlayerIpc()
 
       if (runtime.appSettings.desktopLyrics.enabled) {
         showDesktopLyrics()

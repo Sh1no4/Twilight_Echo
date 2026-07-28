@@ -395,6 +395,14 @@ export function setupMiniPlayerIpc(): void {
     const state = normalizeMiniPlayerStateSnapshot(rawState)
     runtime.latestMiniPlayerState = state
     sendMiniPlayerState(state)
+    const trayPlayerWindow = runtime.trayPlayerWindow
+    if (
+      trayPlayerWindow &&
+      !trayPlayerWindow.isDestroyed() &&
+      !trayPlayerWindow.webContents.isDestroyed()
+    ) {
+      trayPlayerWindow.webContents.send('trayPlayer:state', state)
+    }
   })
 
   ipcMain.handle('miniPlayer:getBootstrap', (event): MiniPlayerBootstrap => {

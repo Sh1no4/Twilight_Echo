@@ -9,7 +9,6 @@ import type { PlaybackBookmark } from '../../../shared/playbackBookmarks.ts'
 import { useExtensionRegistry } from '../extensions/registry'
 import { useMediaProviders } from '../providers'
 import { normalizeAccentColor } from '../utils/colorExtractor'
-import { useSmoothedValue } from '../utils/useSmoothedValue'
 import { HIFI_STATUS_COPY } from '../../../shared/audioProcessingOptions.ts'
 import CoverImg from './CoverImg.vue'
 import HiFiSidebar from './player-bar/HiFiSidebar.vue'
@@ -241,16 +240,10 @@ const progressPercent = computed(() => {
   return Math.min(100, Math.max(0, ratio * 100))
 })
 
-// Playback ticks arrive stepped (~4/s); chase them so the fill glides between
-// ticks. Jumps over 2.5% (seek / track switch) snap instead of gliding.
-const smoothedProgressPercent = useSmoothedValue(progressPercent, {
-  tau: 160,
-  snapThreshold: 2.5
-})
-
 const progressFillStyle = computed(() => ({
-  // Match LocalDashboard hero progress: real width % repaints reliably in Chromium.
-  width: `${Math.min(100, Math.max(0, smoothedProgressPercent.value))}%`
+  // Keep the playbar on the same reactive clock as LocalDashboard. The player
+  // store already publishes interpolated currentTime samples between engine ticks.
+  width: `${progressPercent.value}%`
 }))
 
 const abLoopTitle = computed(() => {

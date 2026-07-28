@@ -74,6 +74,8 @@ import type {
   MiniPlayerSettings,
   MiniPlayerSettingsPatch,
   MiniPlayerStateSnapshot,
+  TrayNavigationTarget,
+  TrayPlayerBootstrap,
   MotionPreference,
   DspAsset,
   DspAssetKind,
@@ -145,6 +147,8 @@ const miniPlayerStateCallbacks = new Set<(state: MiniPlayerStateSnapshot) => voi
 const miniPlayerSettingsCallbacks = new Set<(settings: MiniPlayerSettings) => void>()
 const miniPlayerMotionPreferenceCallbacks = new Set<(preference: MotionPreference) => void>()
 const miniPlayerCommandCallbacks = new Set<(command: MiniPlayerCommand) => void>()
+const trayPlayerStateCallbacks = new Set<(state: MiniPlayerStateSnapshot) => void>()
+const appNavigationCallbacks = new Set<(target: TrayNavigationTarget) => void>()
 const savePlaybackSessionCallbacks = new Set<() => Promise<void> | void>()
 const pluginChangedCallbacks = new Set<() => void>()
 const themeChangedCallbacks = new Set<(snapshot: ThemeLibrarySnapshot) => void>()
@@ -318,6 +322,15 @@ ipcRenderer.on('miniPlayer:command', (_event, command: MiniPlayerCommand) => {
   for (const cb of miniPlayerCommandCallbacks) cb(command)
 })
 
+ipcRenderer.on('trayPlayer:state', (_event, state: MiniPlayerStateSnapshot) => {
+  for (const cb of trayPlayerStateCallbacks) cb(state)
+})
+
+ipcRenderer.on('app:navigate', (_event, target: TrayNavigationTarget) => {
+  if (target !== 'local' && target !== 'streaming') return
+  for (const cb of appNavigationCallbacks) cb(target)
+})
+
 ipcRenderer.on('app:save-playback-session', async (_event, requestId: string) => {
   const outcome = await collectClosePersistenceOutcome(savePlaybackSessionCallbacks)
   try {
@@ -367,6 +380,23 @@ const miniPlayerHostApi = {
   onCommand: (cb: (command: MiniPlayerCommand) => void): (() => void) => {
     miniPlayerCommandCallbacks.add(cb)
     return () => miniPlayerCommandCallbacks.delete(cb)
+  }
+}
+
+const trayPlayerWindowApi = {
+  getBootstrap: (): Promise<TrayPlayerBootstrap> => ipcRenderer.invoke('trayPlayer:getBootstrap'),
+  command: (command: MiniPlayerCommand): void => {
+    ipcRenderer.send('trayPlayer:command', command)
+  },
+  navigate: (target: TrayNavigationTarget): void => {
+    ipcRenderer.send('trayPlayer:navigate', target)
+  },
+  hide: (): void => {
+    ipcRenderer.send('trayPlayer:hide')
+  },
+  onState: (cb: (state: MiniPlayerStateSnapshot) => void): (() => void) => {
+    trayPlayerStateCallbacks.add(cb)
+    return () => trayPlayerStateCallbacks.delete(cb)
   }
 }
 
@@ -738,6 +768,8 @@ const api = {
     getStatus: (): Promise<OpraCatalogStatus> => ipcRenderer.invoke('opra:getStatus')
   },
   app: {
+    consumePendingNavigation: (): Promise<TrayNavigationTarget | null> =>
+      ipcRenderer.invoke('app:consumePendingNavigation'),
     relaunch: (): Promise<void> => ipcRenderer.invoke('app:relaunch'),
     checkForUpdates: (): Promise<import('../shared/appUpdate').AppUpdateCheckResult> =>
       ipcRenderer.invoke('app:checkForUpdates'),
@@ -761,6 +793,10 @@ const api = {
     onSavePlaybackSession: (cb: () => Promise<void> | void): (() => void) => {
       savePlaybackSessionCallbacks.add(cb)
       return () => savePlaybackSessionCallbacks.delete(cb)
+    },
+    onNavigate: (cb: (target: TrayNavigationTarget) => void): (() => void) => {
+      appNavigationCallbacks.add(cb)
+      return () => appNavigationCallbacks.delete(cb)
     }
   },
   ncm: {
@@ -1147,7 +1183,8 @@ const api = {
       ipcRenderer.send('desktopLyrics:requestClose')
     }
   },
-  miniPlayer: miniPlayerHostApi
+  miniPlayer: miniPlayerHostApi,
+  trayPlayer: trayPlayerWindowApi
 }
 
 // Cover display in the mini player window goes through the shared coverLoader,
@@ -1174,11 +1211,13 @@ if (process.contextIsolated) {
 function exposedApiForDocument():
   | typeof api
   | { desktopLyrics: typeof api.desktopLyrics }
-  | { miniPlayer: typeof miniPlayerWindowApi; data: typeof miniPlayerCoverDataApi } {
+  | { miniPlayer: typeof miniPlayerWindowApi; data: typeof miniPlayerCoverDataApi }
+  | { trayPlayer: typeof trayPlayerWindowApi } {
   if (isDesktopLyricsDocument()) return { desktopLyrics: api.desktopLyrics }
   if (isMiniPlayerDocument()) {
     return { miniPlayer: miniPlayerWindowApi, data: miniPlayerCoverDataApi }
   }
+  if (isTrayPlayerDocument()) return { trayPlayer: trayPlayerWindowApi }
   return api
 }
 
@@ -1193,6 +1232,14 @@ function isDesktopLyricsDocument(): boolean {
 function isMiniPlayerDocument(): boolean {
   try {
     return new URLSearchParams(window.location.search).get('window') === 'mini-player'
+  } catch {
+    return false
+  }
+}
+
+function isTrayPlayerDocument(): boolean {
+  try {
+    return new URLSearchParams(window.location.search).get('window') === 'tray-player'
   } catch {
     return false
   }

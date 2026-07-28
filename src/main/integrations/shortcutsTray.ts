@@ -8,6 +8,12 @@ import { getAppIconPath } from '../app/window'
 import { applyDiscordRpcSetting } from './discord'
 import { applyLibraryWatchers } from '../library/watcher'
 import { hideMiniPlayerWindow, restoreMainWindowFromMiniPlayer } from './miniPlayer'
+import {
+  destroyTrayPlayerWindow,
+  hideTrayPlayerWindow,
+  openMainWindowAt,
+  toggleTrayPlayerWindow
+} from './trayPlayer'
 
 let playerShortcutStatuses: PlayerShortcutStatus[] = buildPlayerShortcutStatuses(
   PLAYER_SHORTCUTS,
@@ -77,8 +83,21 @@ export function createTray(): void {
   runtime.tray.setContextMenu(
     Menu.buildFromTemplate([
       {
+        label: '播放控制',
+        click: () => toggleTrayPlayerWindow()
+      },
+      {
+        label: '打开本地主页',
+        click: () => openMainWindowAt('local')
+      },
+      {
+        label: '打开流媒体页',
+        click: () => openMainWindowAt('streaming')
+      },
+      {
         label: '显示 Twilight Echo',
         click: () => {
+          hideTrayPlayerWindow()
           restoreMainWindowFromMiniPlayer()
         }
       },
@@ -87,6 +106,7 @@ export function createTray(): void {
         click: () => {
           runtime.mainWindow?.hide()
           hideMiniPlayerWindow()
+          hideTrayPlayerWindow()
         }
       },
       { type: 'separator' },
@@ -112,22 +132,25 @@ export function createTray(): void {
       }
     ])
   )
+  runtime.tray.on('click', () => {
+    toggleTrayPlayerWindow()
+  })
   runtime.tray.on('double-click', () => {
+    hideTrayPlayerWindow()
     restoreMainWindowFromMiniPlayer()
   })
 }
 
 export function destroyTray(): void {
+  destroyTrayPlayerWindow()
   runtime.tray?.destroy()
   runtime.tray = null
 }
 
 export function syncTrayState(): void {
-  if (runtime.appSettings.closeToTray) {
-    createTray()
-  } else {
-    destroyTray()
-  }
+  // The tray is a first-class playback surface while the app is running.
+  // closeToTray only controls what the window close button does.
+  createTray()
 }
 
 export function applyRuntimeSettings(): void {

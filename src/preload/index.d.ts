@@ -563,6 +563,12 @@ interface MiniPlayerBootstrap {
   motionPreference: MotionPreference
 }
 
+type TrayNavigationTarget = 'local' | 'streaming'
+
+interface TrayPlayerBootstrap {
+  state: MiniPlayerStateSnapshot
+}
+
 interface MusicCachePolicySettings {
   cover: boolean
   lyrics: boolean
@@ -1455,6 +1461,7 @@ interface WindowAPI {
   }
   opra: OpraAPI
   app: {
+    consumePendingNavigation: () => Promise<TrayNavigationTarget | null>
     relaunch: () => Promise<void>
     checkForUpdates: () => Promise<import('../shared/appUpdate').AppUpdateCheckResult>
     downloadUpdate: () => Promise<import('../shared/appUpdate').AppUpdateDownloadResult>
@@ -1468,6 +1475,7 @@ interface WindowAPI {
      * process keeps the window open and offers the user a retry path.
      */
     onSavePlaybackSession: (cb: () => Promise<void> | void) => () => void
+    onNavigate: (cb: (target: TrayNavigationTarget) => void) => () => void
   }
   ncm: {
     getPort: () => Promise<number>
@@ -1750,6 +1758,13 @@ interface WindowAPI {
     onSettings: (cb: (settings: MiniPlayerSettings) => void) => () => void
     onMotionPreference: (cb: (preference: MotionPreference) => void) => () => void
     onCommand: (cb: (command: MiniPlayerCommand) => void) => () => void
+  }
+  trayPlayer: {
+    getBootstrap: () => Promise<TrayPlayerBootstrap>
+    command: (command: MiniPlayerCommand) => void
+    navigate: (target: TrayNavigationTarget) => void
+    hide: () => void
+    onState: (cb: (state: MiniPlayerStateSnapshot) => void) => () => void
   }
 }
 

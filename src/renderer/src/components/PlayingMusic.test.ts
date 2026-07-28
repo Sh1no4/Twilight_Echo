@@ -102,6 +102,13 @@ test('player bar remounts the progress control for every queue entry', () => {
   )
 })
 
+test('player bar progress follows the player store clock without a second animation loop', () => {
+  const source = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
+
+  assert.match(source, /width: `\$\{progressPercent\.value\}%`/)
+  assert.doesNotMatch(source, /useSmoothedValue\(progressPercent/)
+})
+
 test('visualizer mode uses a full viewport stage without changing the regular stage cap', () => {
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
 
