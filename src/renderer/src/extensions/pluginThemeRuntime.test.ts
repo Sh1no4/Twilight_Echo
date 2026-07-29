@@ -43,3 +43,31 @@ test('plugin theme runtime maps normalized API v2 modes to host attributes', () 
   assert.equal(attributes['data-te-visible-player-duration'], 'false')
   assert.equal(contract.usesStructuredModes, true)
 })
+
+test('plugin theme runtime exposes API v3 shell layouts without granting script access', () => {
+  const contract = resolvePluginThemeRuntimeContract(
+    {
+      structured: {
+        schemaVersion: 3,
+        variants: {},
+        layout: {
+          desktop: {
+            columns: ['standard', 'fill'],
+            rows: ['auto', 'fill', 'auto'],
+            areas: [
+              ['titleBar', 'titleBar'],
+              ['navigation', 'content'],
+              ['navigation', 'playerBar']
+            ]
+          },
+          navigation: 'persistent'
+        }
+      }
+    },
+    'dark'
+  )
+
+  assert.equal(contract.layout?.navigation, 'persistent')
+  assert.deepEqual(contract.layout?.desktop.columns, ['standard', 'fill'])
+  assert.equal(contract.usesStructuredModes, true)
+})

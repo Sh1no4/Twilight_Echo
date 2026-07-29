@@ -50,6 +50,7 @@ export const runtime = {
   latestDesktopLyricsTime: 0,
   ncmServer: null as import('http').Server | null,
   tray: null as Tray | null,
+  refreshTrayMenu: null as (() => void) | null,
   forceQuit: false,
   closingAfterPlaybackSessionSave: false,
   savingPlaybackSessionBeforeClose: false,

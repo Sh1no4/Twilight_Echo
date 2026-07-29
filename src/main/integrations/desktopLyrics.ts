@@ -26,11 +26,20 @@ function persistDesktopLyricsPosition(win: BrowserWindow): void {
 function sendDesktopLyricsSnapshot(): void {
   if (!runtime.desktopLyricsWindow || runtime.desktopLyricsWindow.isDestroyed()) return
 
-  runtime.desktopLyricsWindow.webContents.send('desktopLyrics:initSettings', runtime.appSettings.desktopLyrics)
+  runtime.desktopLyricsWindow.webContents.send(
+    'desktopLyrics:initSettings',
+    runtime.appSettings.desktopLyrics
+  )
   if (runtime.latestDesktopLyricsTrack) {
-    runtime.desktopLyricsWindow.webContents.send('desktopLyrics:updateTrack', runtime.latestDesktopLyricsTrack)
+    runtime.desktopLyricsWindow.webContents.send(
+      'desktopLyrics:updateTrack',
+      runtime.latestDesktopLyricsTrack
+    )
   }
-  runtime.desktopLyricsWindow.webContents.send('desktopLyrics:updateTime', runtime.latestDesktopLyricsTime)
+  runtime.desktopLyricsWindow.webContents.send(
+    'desktopLyrics:updateTime',
+    runtime.latestDesktopLyricsTime
+  )
 }
 
 function createDesktopLyricsWindow(): void {
@@ -138,7 +147,7 @@ export function hideDesktopLyrics(): void {
   destroyDesktopLyrics()
 }
 
-function toggleDesktopLyrics(): boolean {
+export function toggleDesktopLyrics(): boolean {
   const shouldShow = !runtime.appSettings.desktopLyrics.enabled
   runtime.appSettings.desktopLyrics.enabled = shouldShow
   writeAppSettings(runtime.appSettings)
@@ -149,6 +158,7 @@ function toggleDesktopLyrics(): boolean {
   }
   // Notify renderer
   runtime.mainWindow?.webContents.send('desktopLyrics:toggleChanged', shouldShow)
+  runtime.refreshTrayMenu?.()
   return shouldShow
 }
 
@@ -160,8 +170,10 @@ export function applyDesktopLyricsSettings(settings: DesktopLyricsSettings): voi
     // Update window properties
     runtime.desktopLyricsWindow.setAlwaysOnTop(normalized.alwaysOnTop, 'screen-saver')
     runtime.desktopLyricsWindow.setIgnoreMouseEvents(normalized.clickThrough, { forward: true })
-    if (normalized.windowWidth !== runtime.desktopLyricsWindow.getBounds().width ||
-        normalized.windowHeight !== runtime.desktopLyricsWindow.getBounds().height) {
+    if (
+      normalized.windowWidth !== runtime.desktopLyricsWindow.getBounds().width ||
+      normalized.windowHeight !== runtime.desktopLyricsWindow.getBounds().height
+    ) {
       runtime.desktopLyricsWindow.setSize(normalized.windowWidth, normalized.windowHeight)
     }
     runtime.desktopLyricsWindow.webContents.send('desktopLyrics:initSettings', normalized)
@@ -183,7 +195,10 @@ export function setupDesktopLyricsIpc(): void {
     if (!Number.isFinite(time)) return
     runtime.latestDesktopLyricsTime = Math.max(0, time)
     if (runtime.desktopLyricsWindow && !runtime.desktopLyricsWindow.isDestroyed()) {
-      runtime.desktopLyricsWindow.webContents.send('desktopLyrics:updateTime', runtime.latestDesktopLyricsTime)
+      runtime.desktopLyricsWindow.webContents.send(
+        'desktopLyrics:updateTime',
+        runtime.latestDesktopLyricsTime
+      )
     }
   })
 
@@ -238,6 +253,7 @@ export function setupDesktopLyricsIpc(): void {
     writeAppSettings(runtime.appSettings)
     hideDesktopLyrics()
     runtime.mainWindow?.webContents.send('desktopLyrics:toggleChanged', false)
+    runtime.refreshTrayMenu?.()
   })
 }
 

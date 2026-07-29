@@ -41,6 +41,52 @@ test('lyric resolution uses local lyrics first while provider may fill missing t
   assert.equal(result.translatedLyricsSource, 'provider')
 })
 
+test('lyric resolution supports a local original combined with a provider translation', async () => {
+  const result = await resolveLyricsWithSources({
+    track: {
+      ...localTrack,
+      lyrics: '[00:01.00]Embedded lyric',
+      translatedLyrics: '[00:01.00]Embedded translation',
+      lyricsSource: 'embedded',
+      translatedLyricsSource: 'embedded'
+    },
+    originalSource: 'local',
+    translationSource: 'provider',
+    loadLocalLyrics: async () => '[00:01.00]Local lyric',
+    loadProviderLyrics: async () => ({
+      lyrics: '[00:01.00]Provider lyric',
+      translatedLyrics: '[00:01.00]Provider translation'
+    })
+  })
+
+  assert.deepEqual(result, {
+    lyrics: '[00:01.00]Local lyric',
+    translatedLyrics: '[00:01.00]Provider translation',
+    lyricsSource: 'local',
+    translatedLyricsSource: 'provider'
+  })
+})
+
+test('provider translation is fetched when automatic local lyrics have no translation', async () => {
+  let providerCalls = 0
+  const result = await resolveLyricsWithSources({
+    track: localTrack,
+    loadLocalLyrics: async () => '[00:01.00]Local lyric',
+    loadProviderLyrics: async () => {
+      providerCalls++
+      return {
+        lyrics: '[00:01.00]Provider lyric',
+        translatedLyrics: '[00:01.00]Provider translation'
+      }
+    }
+  })
+
+  assert.equal(providerCalls, 1)
+  assert.equal(result.lyrics, '[00:01.00]Local lyric')
+  assert.equal(result.translatedLyrics, '[00:01.00]Provider translation')
+  assert.equal(result.translatedLyricsSource, 'provider')
+})
+
 test('lyric resolution falls back to provider lyrics when local lyrics are missing', async () => {
   const result = await resolveLyricsWithSources({
     track: localTrack,

@@ -13,6 +13,13 @@ test('now playing lyrics do not surface original/translated source path chips', 
   assert.match(source, /currentTrack\.value\?\.translatedLyricsSource/)
 })
 
+test('now playing keeps lyric source controls in the player bar sidebar', () => {
+  const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+
+  assert.doesNotMatch(source, /class="lyric-source-controls"/)
+  assert.doesNotMatch(source, /class="lyric-translation-toggle"/)
+})
+
 test('visualizer mode does not keep the heavy blurred backdrop mounted', () => {
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
 
@@ -93,6 +100,23 @@ test('renderer playback consumers cannot retain a second playback state after ho
   assert.doesNotMatch(compatibilityExport, /defineStore/)
 })
 
+test('player bar artist is a keyboard-accessible navigation button', () => {
+  const playerBar = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
+  const style = readFileSync(new URL('./player-bar/PlayerBar.css', import.meta.url), 'utf8')
+  const app = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
+
+  assert.match(playerBar, /openArtist: \[\]/)
+  assert.match(
+    playerBar,
+    /<button[\s\S]*?class="player-artist"[\s\S]*?@click\.stop="onArtistClick"/
+  )
+  assert.match(playerBar, /emit\('openArtist'\)/)
+  assert.match(style, /\.player-artist:not\(:disabled\):focus-visible/)
+  assert.match(app, /@open-artist="handlePlayerBarArtistClick"/)
+  assert.match(app, /onSelectView\('artists', `artist:\$\{trackArtist\}`\)/)
+  assert.match(app, /:artist-navigation-request="streamingArtistRequest"/)
+})
+
 test('player bar remounts the progress control for every queue entry', () => {
   const source = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
 
@@ -102,11 +126,14 @@ test('player bar remounts the progress control for every queue entry', () => {
   )
 })
 
-test('player bar progress follows the player store clock without a second animation loop', () => {
+test('player bar smooths progress between player store ticks and snaps large jumps', () => {
   const source = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
 
-  assert.match(source, /width: `\$\{progressPercent\.value\}%`/)
-  assert.doesNotMatch(source, /useSmoothedValue\(progressPercent/)
+  assert.match(source, /useSmoothedValue\(progressPercent, \{\s*tau: 160,\s*snapThreshold: 2\.5/)
+  assert.match(
+    source,
+    /width: `\$\{Math\.min\(100, Math\.max\(0, smoothedProgressPercent\.value\)\)\}%`/
+  )
 })
 
 test('visualizer mode uses a full viewport stage without changing the regular stage cap', () => {
@@ -152,6 +179,7 @@ test('visualizer toggle sits top-left with the frosted time-chip style', () => {
 
 test('playbar lyrics section hosts the lyrics manager panel', () => {
   const sidebar = readFileSync(new URL('./player-bar/HiFiSidebar.vue', import.meta.url), 'utf8')
+  const playerBar = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
   const panel = readFileSync(
     new URL('./player-bar/LyricsManagerPanel.vue', import.meta.url),
     'utf8'
@@ -162,6 +190,13 @@ test('playbar lyrics section hosts the lyrics manager panel', () => {
   assert.match(panel, /class="lyric-manager lyric-manager--panel"/)
   assert.match(panel, /保存歌词/)
   assert.match(panel, /导入 LRC/)
+  assert.match(sidebar, /class="deck-lyric-source-controls"/)
+  assert.match(sidebar, /:value="originalLayerSelection"/)
+  assert.match(sidebar, /:value="translationLayerSelection"/)
+  assert.match(sidebar, /@click="emit\('toggleTranslationVisibility'\)"/)
+  assert.match(playerBar, /:show-translation="showTranslation"/)
+  assert.match(playerBar, /@set-lyric-layer-selection="setLyricLayerSelection"/)
+  assert.match(playerBar, /@toggle-translation-visibility="toggleTranslationVisibility"/)
 })
 
 test('desktop lyrics html exposes lyric source metadata on hover', () => {

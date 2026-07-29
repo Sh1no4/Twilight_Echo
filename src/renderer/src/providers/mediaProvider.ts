@@ -430,29 +430,37 @@ function hasAnyLyrics(lyrics: MediaProviderLyrics | null | undefined): boolean {
 }
 
 function normalizeMatchText(value: string | null | undefined): string {
-  return (value ?? '')
-    .normalize('NFKC')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
+  return (value ?? '').normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
 function pickBestLyricSearchMatch(local: Track, candidates: Track[]): Track | null {
   const localTitle = normalizeMatchText(local.title)
   const localArtist = normalizeMatchText(local.artist)
   if (!localTitle) return null
+  const localCompactTitle = compactLyricMatchText(localTitle)
+  const localArtistTokens = lyricArtistTokens(localArtist)
   let best: Track | null = null
   let bestScore = -1
   for (const candidate of candidates) {
     const title = normalizeMatchText(candidate.title)
-    if (!title || title !== localTitle) continue
+    const compactTitle = compactLyricMatchText(title)
+    if (!title || !compactTitle) continue
+    const titleScore =
+      title === localTitle
+        ? 24
+        : compactTitle === localCompactTitle
+          ? 20
+          : lyricTitleScore(compactTitle, localCompactTitle)
+    if (titleScore === 0) continue
     const artist = normalizeMatchText(candidate.artist)
-    let score = 10
+    let artistScore = 0
     if (localArtist && artist) {
-      if (artist === localArtist) score += 10
-      else if (artist.includes(localArtist) || localArtist.includes(artist)) score += 4
-      else continue
+      if (artist === localArtist) artistScore = 10
+      else if (lyricArtistTokens(artist).some((token) => localArtistTokens.includes(token)))
+        artistScore = 8
+      else if (artist.includes(localArtist) || localArtist.includes(artist)) artistScore = 4
     }
+    let durationScore = 0
     if (
       typeof local.duration === 'number' &&
       local.duration > 0 &&
@@ -460,16 +468,36 @@ function pickBestLyricSearchMatch(local: Track, candidates: Track[]): Track | nu
       candidate.duration > 0
     ) {
       const delta = Math.abs(local.duration - candidate.duration)
-      if (delta <= 3) score += 5
-      else if (delta <= 8) score += 2
+      if (delta <= 3) durationScore = 5
+      else if (delta <= 8) durationScore = 2
       else if (delta > 30) continue
     }
+    if (artistScore === 0 && durationScore === 0) continue
+    const score = titleScore + artistScore + durationScore
     if (score > bestScore) {
       bestScore = score
       best = candidate
     }
   }
-  return bestScore >= 10 ? best : null
+  return bestScore >= 16 ? best : null
+}
+
+function compactLyricMatchText(value: string): string {
+  return value
+    .replace(/[（(][^）)]*(?:feat|ft|with)[^）)]*[）)]/giu, '')
+    .replace(/[^\p{L}\p{N}]+/gu, '')
+}
+
+function lyricTitleScore(candidate: string, local: string): number {
+  if (candidate.length < 4 || local.length < 4) return 0
+  return candidate.includes(local) || local.includes(candidate) ? 14 : 0
+}
+
+function lyricArtistTokens(value: string): string[] {
+  return value
+    .split(/[\\/＆&、,，;；]/u)
+    .map((part) => compactLyricMatchText(part))
+    .filter((part) => part.length >= 2)
 }
 
 async function withTimeout<T>(

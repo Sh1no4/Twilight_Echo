@@ -14,6 +14,7 @@ import { usePlayerStore } from '../stores/usePlayerStore'
 import { useMusicStore } from '../stores/useMusicStore'
 import { useMediaProviders } from '../providers'
 import type {
+  MediaProviderAlbumSummary,
   MediaProviderArtistSummary,
   MediaProviderPlaylistSummary,
   MediaProviderProfile
@@ -37,14 +38,12 @@ import {
 } from '../utils/streamingNavigation'
 import {
   findBestStreamingArtistMatch,
-  resolveLinkedStreamingArtist
+  resolveLinkedStreamingArtist,
+  type StreamingArtistNavigationRequest
 } from '../utils/streamingArtistResolution'
 import { getRecentTracks, getTopTracks } from '../stores/useListeningStatsStore'
 import { resolveUnifiedRecentTracks } from '../utils/unifiedRecentTracks'
-import {
-  resolveUnifiedFavoriteTracks,
-  summarizeUnifiedFavorites
-} from '../utils/unifiedFavoriteTracks'
+import { summarizeUnifiedFavorites } from '../utils/unifiedFavoriteTracks'
 import {
   searchLocalStreamingArtists,
   searchLocalStreamingPlaylists,
@@ -87,9 +86,9 @@ type ArtistDetailTab = 'songs' | 'albums' | 'playlists'
 type DetailView =
   | { type: 'liked' }
   | { type: 'playlist'; playlist: MediaProviderPlaylistSummary }
-  | { type: 'album'; album: NcmAlbumSummary }
+  | { type: 'album'; album: MediaProviderAlbumSummary }
   | { type: 'rec'; section: RecSection }
-  | { type: 'artist'; artist: NcmArtistSummary; user?: NcmUserSummary }
+  | { type: 'artist'; artist: MediaProviderArtistSummary; user?: NcmUserSummary }
   | { type: 'user_list'; listType: 'follows' | 'followers'; users: NcmUserSummary[]; title: string }
   | { type: 'user_playlists'; user: NcmUserSummary; playlists: NcmPlaylistSummary[] }
   | { type: 'recent' }
@@ -98,7 +97,9 @@ type DetailView =
 const props = defineProps<{
   menuOpen: boolean
   hasPlayer: boolean
+  active?: boolean
   initialTab?: StreamingTab
+  artistNavigationRequest?: StreamingArtistNavigationRequest | null
 }>()
 
 const activeTab = ref<StreamingTab>(props.initialTab ?? 'home')
@@ -161,8 +162,8 @@ function beginDetailTransition(): void {
 // thousands of tracks and deep reactivity over them is pure overhead.
 const detailTracks = shallowRef<Track[]>([])
 const detailUsers = ref<NcmUserSummary[]>([])
-const artistAlbums = ref<NcmAlbumSummary[]>([])
-const artistPlaylists = ref<NcmPlaylistSummary[]>([])
+const artistAlbums = ref<MediaProviderAlbumSummary[]>([])
+const artistPlaylists = ref<MediaProviderPlaylistSummary[]>([])
 const artistIntro = ref('')
 const artistFollowed = ref<boolean | null>(null)
 const activeArtistTab = ref<ArtistDetailTab>('songs')
@@ -244,14 +245,14 @@ const preferredProvider = ref<string>(
 )
 const fallbackProvider = ref<string | null>(null)
 
-// Resolved active provider: preferred when available, else the first provider
-// that can back the shared music-library surface. If none exists, keep the
-// ncm id as an inert fallback so the empty streaming state can render.
+// Resolved active provider: a non-persisted navigation override wins while it
+// is available; otherwise use the persisted preference, then the first provider
+// that can back the shared music-library surface.
 const activeProvider = computed<string>(() => {
-  if (isProviderAvailable(preferredProvider.value)) return preferredProvider.value
   if (fallbackProvider.value && isProviderAvailable(fallbackProvider.value)) {
     return fallbackProvider.value
   }
+  if (isProviderAvailable(preferredProvider.value)) return preferredProvider.value
   return libraryProviders.value[0]?.id ?? NCM_PROVIDER_ID
 })
 
@@ -664,28 +665,30 @@ const rootLoading = computed(() =>
 )
 
 const likedSummary = computed(() => {
-  const unifiedTracks = unifiedFavoriteTracks.value
   if (isExternalActive.value) {
     const state = activeExternalState.value
+    const providerSummary = {
+      name: state?.likedPlaylist?.name ?? '我喜欢的音乐',
+      cover: state?.likedPlaylist?.cover ?? null,
+      coverSource: state?.likedPlaylist?.coverSource ?? null,
+      trackCount: state?.likedPlaylist?.trackCount ?? 0
+    }
+    // Prefer the provider liked playlist; only fall back to local unified
+    // favorites when the external source has no liked playlist of its own.
+    if (state?.likedPlaylist) return providerSummary
     return summarizeUnifiedFavorites({
-      unifiedTracks,
-      providerSummary: {
-        name: state?.likedPlaylist?.name ?? '我喜欢的音乐',
-        cover: state?.likedPlaylist?.cover ?? null,
-        coverSource: state?.likedPlaylist?.coverSource ?? null,
-        trackCount: state?.likedPlaylist?.trackCount ?? 0
-      }
+      unifiedTracks: unifiedFavoriteTracks.value,
+      providerSummary
     })
   }
-  return summarizeUnifiedFavorites({
-    unifiedTracks,
-    providerSummary: {
-      name: '我收藏的歌曲',
-      cover: likedPlaylist.value?.cover ?? null,
-      coverSource: likedPlaylist.value?.coverSource ?? null,
-      trackCount: likedCount.value ?? likedPlaylist.value?.trackCount ?? 0
-    }
-  })
+  // NCM cloud likes are authoritative on the streaming page. Local default
+  // favorites ("我收藏的音乐") must not replace or shrink this summary.
+  return {
+    name: '我收藏的歌曲',
+    cover: likedPlaylist.value?.cover ?? null,
+    coverSource: likedPlaylist.value?.coverSource ?? null,
+    trackCount: likedCount.value ?? likedPlaylist.value?.trackCount ?? 0
+  }
 })
 
 const userPlaylistEntries = computed(() =>
@@ -858,9 +861,11 @@ const detailFollowState = computed<boolean>(() => {
   return false
 })
 
-const showDetailFollowButton = computed(
-  () => currentDetail.value?.type === 'artist' || currentDetail.value?.type === 'user_playlists'
-)
+const showDetailFollowButton = computed(() => {
+  if (currentDetail.value?.type === 'user_playlists') return true
+  if (currentDetail.value?.type !== 'artist') return false
+  return !isExternalActive.value || Boolean(mediaProviders.get(activeProvider.value)?.followArtist)
+})
 
 const detailFollowButtonLabel = computed(() => (detailFollowState.value ? '取消关注' : '关注'))
 
@@ -1019,13 +1024,14 @@ function isActiveDetailLoad(token: number): boolean {
   return token === detailLoadToken
 }
 
-function mergePlaylistSummaries(...groups: NcmPlaylistSummary[][]): NcmPlaylistSummary[] {
-  const seen = new Set<number>()
-  const merged: NcmPlaylistSummary[] = []
+function mergePlaylistSummaries<T extends MediaProviderPlaylistSummary>(...groups: T[][]): T[] {
+  const seen = new Set<string>()
+  const merged: T[] = []
   for (const group of groups) {
     for (const playlist of group) {
-      if (seen.has(playlist.id)) continue
-      seen.add(playlist.id)
+      const id = String(playlist.id)
+      if (seen.has(id)) continue
+      seen.add(id)
       merged.push(playlist)
     }
   }
@@ -1118,20 +1124,6 @@ async function ensureExternalLibraryLoaded(id: string, force = false): Promise<v
 }
 
 async function openLikedTracks(force = false): Promise<void> {
-  const unifiedTracks = unifiedFavoriteTracks.value
-  if (unifiedTracks.length > 0) {
-    beginDetailTransition()
-    currentDetail.value = { type: 'liked' }
-    detailTracks.value = resolveUnifiedFavoriteTracks({
-      unifiedTracks,
-      providerTracks: []
-    }).tracks
-    likedCount.value = detailTracks.value.length
-    detailError.value = ''
-    detailLoading.value = false
-    return
-  }
-
   // External providers (e.g. YouTube Music) expose liked music as a playlist
   // (ytm's "LM"), so open it through the generic playlist path rather than the
   // ncm-only fetchLikedTracks.
@@ -1141,13 +1133,19 @@ async function openLikedTracks(force = false): Promise<void> {
       await openPlaylist(liked, force)
       return
     }
+    // No provider liked playlist: fall back to local unified favorites only.
+    const unifiedTracks = unifiedFavoriteTracks.value
     beginDetailTransition()
     currentDetail.value = { type: 'liked' }
-    detailTracks.value = []
+    detailTracks.value = unifiedTracks
+    likedCount.value = unifiedTracks.length
+    detailError.value = ''
     detailLoading.value = false
     return
   }
 
+  // NCM: always load cloud liked tracks. Local "我收藏的音乐" is a separate
+  // in-app playlist and must not short-circuit the provider liked list.
   beginDetailTransition()
   currentDetail.value = { type: 'liked' }
   const token = beginDetailLoad()
@@ -1242,13 +1240,18 @@ async function openPlaylist(playlist: MediaProviderPlaylistSummary, force = fals
   }
 }
 
-async function openAlbum(album: NcmAlbumSummary): Promise<void> {
+async function openAlbum(album: MediaProviderAlbumSummary): Promise<void> {
   beginDetailTransition()
   currentDetail.value = { type: 'album', album }
   const token = beginDetailLoad()
 
   try {
-    const tracks = await fetchAlbumTracks(album.id)
+    const provider = mediaProviders.get(activeProvider.value)
+    const tracks = isExternalActive.value
+      ? provider?.fetchAlbumTracks
+        ? await provider.fetchAlbumTracks(album.id)
+        : []
+      : await fetchAlbumTracks(Number(album.id))
     if (!isActiveDetailLoad(token)) return
     detailTracks.value = tracks
   } catch (error) {
@@ -1266,19 +1269,44 @@ async function openArtist(
   artist: MediaProviderArtistSummary,
   linkedUser?: NcmUserSummary
 ): Promise<void> {
-  const ncmArtist: NcmArtistSummary = {
-    id: Number(artist.id),
-    name: artist.name,
-    picUrl: artist.picUrl,
-    albumSize: artist.albumSize ?? 0,
-    musicSize: artist.musicSize ?? 0
-  }
   beginDetailTransition()
-  currentDetail.value = { type: 'artist', artist: ncmArtist, user: linkedUser }
+  currentDetail.value = { type: 'artist', artist, user: linkedUser }
   activeArtistTab.value = 'songs'
   const token = beginDetailLoad()
 
   try {
+    if (isExternalActive.value) {
+      const provider = mediaProviders.get(activeProvider.value)
+      if (!provider?.fetchArtistTopSongs) {
+        throw new Error(`${activeProviderLabel.value} does not implement fetchArtistTopSongs`)
+      }
+      const [tracks, albums, playlists, intro, followed] = await Promise.all([
+        provider.fetchArtistTopSongs(artist.id).catch(() => [] as Track[]),
+        provider.fetchArtistAlbums?.(artist.id).catch(() => [] as MediaProviderAlbumSummary[]) ??
+          Promise.resolve([] as MediaProviderAlbumSummary[]),
+        provider
+          .fetchArtistPlaylists?.(artist.id)
+          .catch(() => [] as MediaProviderPlaylistSummary[]) ??
+          Promise.resolve([] as MediaProviderPlaylistSummary[]),
+        provider.fetchArtistIntro?.(artist.id).catch(() => '') ?? Promise.resolve(''),
+        provider.fetchArtistFollowState?.(artist.id).catch(() => null) ?? Promise.resolve(null)
+      ])
+      if (!isActiveDetailLoad(token)) return
+      detailTracks.value = tracks
+      artistAlbums.value = albums
+      artistPlaylists.value = playlists
+      artistIntro.value = intro
+      artistFollowed.value = followed
+      return
+    }
+
+    const ncmArtist: NcmArtistSummary = {
+      id: Number(artist.id),
+      name: artist.name,
+      picUrl: artist.picUrl,
+      albumSize: artist.albumSize ?? 0,
+      musicSize: artist.musicSize ?? 0
+    }
     let resolvedArtist = await resolveLinkedStreamingArtist(
       ncmArtist,
       linkedUser,
@@ -1296,9 +1324,9 @@ async function openArtist(
         fetchArtistFollowState(resolvedArtist.id).catch(() => null)
       ])
 
-    if (linkedUser && resolvedArtist.id === artist.id && tracks.length === 0) {
+    if (linkedUser && resolvedArtist.id === Number(artist.id) && tracks.length === 0) {
       const matchedArtist = await findArtistByUserName(linkedUser).catch(() => null)
-      if (matchedArtist && matchedArtist.id !== artist.id) {
+      if (matchedArtist && matchedArtist.id !== Number(artist.id)) {
         const [matchedTracks, matchedAlbums, matchedPlaylists, matchedIntro, matchedFollowed] =
           await Promise.all([
             fetchArtistTopSongs(matchedArtist.id).catch(() => [] as Track[]),
@@ -1340,6 +1368,45 @@ async function openArtist(
     if (isActiveDetailLoad(token)) {
       detailLoading.value = false
     }
+  }
+}
+
+let artistNavigationToken = 0
+
+async function openRequestedArtist(request: StreamingArtistNavigationRequest): Promise<void> {
+  const providerId = request.providerId.trim().toLowerCase()
+  const artistName = request.artistName.trim()
+  if (!providerId || !artistName) return
+  const token = ++artistNavigationToken
+
+  await providerStore.syncProviders().catch(() => undefined)
+  const provider = mediaProviders.get(providerId)
+  if (!provider?.searchArtists || !provider.fetchArtistTopSongs) {
+    if (token !== artistNavigationToken) return
+    pushNotice({
+      kind: 'error',
+      message: `${provider?.name ?? providerId} 暂不支持歌手详情`
+    })
+    return
+  }
+
+  if (activeProvider.value !== providerId) {
+    selectProvider(providerId, false)
+    await nextTick()
+  }
+
+  try {
+    const result = await mediaProviders.searchArtists(providerId, artistName, 8, 0)
+    if (token !== artistNavigationToken) return
+    const artist = findBestStreamingArtistMatch(artistName, result.items)
+    if (!artist) {
+      pushNotice({ kind: 'error', message: `未找到歌手「${artistName}」` })
+      return
+    }
+    await openArtist(artist)
+  } catch (error) {
+    if (token !== artistNavigationToken) return
+    pushNotice({ kind: 'error', message: friendlyStreamingError(error, '打开歌手页面失败') })
   }
 }
 
@@ -1493,7 +1560,13 @@ async function toggleCurrentDetailFollow(): Promise<void> {
   followActionError.value = ''
   try {
     if (detail.type === 'artist') {
-      await followArtist(detail.artist.id, nextFollowState)
+      if (isExternalActive.value) {
+        const follow = mediaProviders.get(activeProvider.value)?.followArtist
+        if (!follow) return
+        await follow(detail.artist.id, nextFollowState)
+      } else {
+        await followArtist(Number(detail.artist.id), nextFollowState)
+      }
       artistFollowed.value = nextFollowState
       return
     }
@@ -2236,6 +2309,15 @@ watch(
 )
 
 watch(
+  () => props.artistNavigationRequest?.key,
+  () => {
+    const request = props.artistNavigationRequest
+    if (request) void openRequestedArtist(request)
+  },
+  { immediate: true }
+)
+
+watch(
   getSidebarItemsSignature,
   () => {
     ensureVisibleSidebarSelection()
@@ -2316,10 +2398,7 @@ watch(
   }
 )
 
-onMounted(async () => {
-  await providerStore.syncProviders().catch(() => undefined)
-  // syncProviders may have resolved the preferred external provider, in which
-  // case the activeProvider watcher above already handles the initial load.
+async function refreshStreamingSurface(): Promise<void> {
   if (activeProvider.value === NCM_PROVIDER_ID) {
     if (!ncmNavigationAvailable.value) return
     await checkLogin()
@@ -2340,6 +2419,25 @@ onMounted(async () => {
   if (activeExternalState.value?.loggedIn) {
     await ensureExternalLibraryLoaded(activeProvider.value)
   }
+}
+
+// StreamingPage stays mounted for the app session (App.vue v-show) so leaving
+// and re-entering restores the last tab/detail. When the surface becomes
+// visible again after login/settings, refresh auth-bound data without resetting
+// navigation state.
+watch(
+  () => props.active,
+  (active, wasActive) => {
+    if (!active || wasActive === true) return
+    void refreshStreamingSurface()
+  }
+)
+
+onMounted(async () => {
+  await providerStore.syncProviders().catch(() => undefined)
+  // syncProviders may have resolved the preferred external provider, in which
+  // case the activeProvider watcher above already handles the initial load.
+  await refreshStreamingSurface()
 })
 </script>
 

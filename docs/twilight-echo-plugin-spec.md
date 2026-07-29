@@ -123,15 +123,15 @@ bridge 会在失败后保留该 key，payload 改变或上一次调用成功后�
 
 ### 4.4 扩展点清单（首批）
 
-| 扩展点          | 类型     | 能力                                                    |
-| --------------- | -------- | ------------------------------------------------------- |
-| `MediaProvider` | provider | 搜索、播放 URL/流、歌词、封面、歌单、登录态（可选实现） |
-| 事件总线        | tool     | 订阅曲目切换、播放/暂停、进度、队列变更、应用启停       |
-| 侧边栏页面      | ui       | 插件提供自定义页面渲染入口                              |
-| PlayerBar 按钮  | ui       | 附加操作按钮                                            |
-| 设置页配置区    | ui       | 插件自有设置界面                                        |
-| 主题            | theme    | CSS 变量包 + 自定义样式表；**仅声明式样式，不执行脚本** |
-| DSP 节点        | dsp      | 挂入引擎 DSP 链（见第 5 节）                            |
+| 扩展点          | 类型     | 能力                                                     |
+| --------------- | -------- | -------------------------------------------------------- |
+| `MediaProvider` | provider | 搜索、播放 URL/流、歌词、封面、歌单、登录态（可选实现）  |
+| 事件总线        | tool     | 订阅曲目切换、播放/暂停、进度、队列变更、应用启停        |
+| 侧边栏页面      | ui       | 插件提供自定义页面渲染入口                               |
+| PlayerBar 按钮  | ui       | 附加操作按钮                                             |
+| 设置页配置区    | ui       | 插件自有设置界面                                         |
+| 主题            | theme    | CSS 变量、样式表与宿主托管布局；**仅声明式，不执行脚本** |
+| DSP 节点        | dsp      | 挂入引擎 DSP 链（见第 5 节）                             |
 
 Phase 3 的受控 UI 注入只渲染宿主批准的 DTO：`sidebarPage`、`playerBarButton`
 和 `settingsPanel` 均通过 command 回到插件宿主进程执行业务逻辑，不向插件开放
@@ -148,6 +148,14 @@ Phase 3 的受控 UI 注入只渲染宿主批准的 DTO：`sidebarPage`、`playe
 Studio 兼容提示返回。API v1 不接受 schemaVersion 2，不能通过回填字段改变已冻结的 v1
 语义。API v2 仍接受 schemaVersion 1，`variables + stylesheet` 也继续兼容。完整机器可读目录
 随 `@twilight-echo/plugin-api` 的 `theme-contract.json` 分发。
+
+插件 API v3 允许 `structured.schemaVersion: 3` 追加 `layout`。`layout.desktop`（必填）及可选
+`layout.compact` 使用宿主登记的 `titleBar`、`navigation`、`content`、`playerBar` 区域重排主窗口；
+`titleBar` 和 `content` 必须存在，其他区域可用 `.` 省略。网格的每个区域必须为矩形，轨道仅可使用
+`auto`、`content`、`narrow`、`standard`、`wide`、`fill`、`double`，从而由宿主生成 CSS Grid，不能注入
+任意 CSS/DOM。`navigation` 仅支持 `toggle`、`persistent`、`hidden`。API v1/v2 不接受
+schemaVersion 3；API v3 继续接受 schemaVersion 1/2 和 `variables + stylesheet`。布局只重排现有宿主
+组件，不开放 Vue 组件注入、任意 DOM、Electron、Node、播放、DSP 或队列访问。
 
 ### 4.5 多音源数据模型
 

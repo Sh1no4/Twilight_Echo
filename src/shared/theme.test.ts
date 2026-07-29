@@ -12,6 +12,7 @@ import {
   TWILIGHT_DEFAULT_THEME_ID,
   createThemeAccentTokenOverrides,
   createDefaultThemeLibraryDocument,
+  findInvalidThemeShellLayoutFields,
   findUnsupportedThemeModeIds,
   normalizeThemeModes,
   normalizeStructuredPluginTheme,
@@ -28,8 +29,11 @@ import {
   resolveThemeIconClasses,
   ensureThemeTextContrast,
   themeContrastRatio,
+  themeShellLayoutToCssVariables,
+  themeShellLayoutToDataAttributes,
   themeModesToDataAttributes,
-  themeTokensToCssVariables
+  themeTokensToCssVariables,
+  type ThemeShellLayout
 } from './theme.ts'
 
 test('the immutable built-in theme preserves the current light and dark root values', () => {
@@ -507,5 +511,74 @@ test('structured plugin theme v2 keeps only host-registered modes', () => {
   assert.equal(
     themeModesToDataAttributes(resolveThemeModes(rawModes))['data-te-visible-player-duration'],
     'false'
+  )
+})
+
+test('structured plugin theme v3 accepts a host-owned shell layout and rejects unsafe grids', () => {
+  const layout: ThemeShellLayout = {
+    desktop: {
+      columns: ['standard', 'fill'],
+      rows: ['auto', 'fill', 'auto'],
+      areas: [
+        ['titleBar', 'titleBar'],
+        ['navigation', 'content'],
+        ['navigation', 'playerBar']
+      ]
+    },
+    compact: {
+      columns: ['fill'],
+      rows: ['auto', 'fill', 'auto'],
+      areas: [['titleBar'], ['content'], ['playerBar']]
+    },
+    navigation: 'persistent'
+  }
+  const normalized = normalizeStructuredPluginTheme({
+    schemaVersion: 3,
+    variants: {},
+    modes: { navigation: { style: 'rail' } },
+    layout
+  })
+
+  assert.deepEqual(normalized, {
+    schemaVersion: 3,
+    variants: {},
+    modes: { navigation: { style: 'rail' } },
+    layout
+  })
+  assert.deepEqual(findInvalidThemeShellLayoutFields(layout), [])
+  assert.deepEqual(themeShellLayoutToDataAttributes(layout), {
+    'data-te-shell-layout': 'custom',
+    'data-te-shell-navigation': 'persistent'
+  })
+  assert.equal(
+    themeShellLayoutToCssVariables(layout)['--te-shell-template-areas'],
+    "'titleBar titleBar' 'navigation content' 'navigation playerBar'"
+  )
+  assert.deepEqual(
+    findInvalidThemeShellLayoutFields({
+      desktop: {
+        columns: ['fill'],
+        rows: ['fill'],
+        areas: [['content']]
+      }
+    }),
+    ['layout.desktop.areas.titleBar']
+  )
+  assert.deepEqual(
+    normalizeStructuredPluginTheme({
+      schemaVersion: 3,
+      variants: {},
+      layout: {
+        desktop: {
+          columns: ['fill', 'fill'],
+          rows: ['fill', 'fill'],
+          areas: [
+            ['titleBar', 'content'],
+            ['content', 'content']
+          ]
+        }
+      }
+    }),
+    undefined
   )
 })

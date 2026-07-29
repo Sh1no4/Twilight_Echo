@@ -4,6 +4,7 @@ import {
   resolveThemeModes,
   themeTokensToCssVariables,
   type StructuredPluginTheme,
+  type ThemeShellLayout,
   type ThemeModes,
   type ThemeTone
 } from '../../../shared/theme.ts'
@@ -14,6 +15,7 @@ interface PluginThemeRuntimeInput {
 }
 
 export interface PluginThemeRuntimeContract {
+  layout: ThemeShellLayout | undefined
   modes: ThemeModes
   resolvedTokens: Record<string, string>
   variables: Record<string, string>
@@ -43,9 +45,14 @@ export function resolvePluginThemeRuntimeContract(
     Object.assign(variables, themeTokensToCssVariables(resolvedTokens))
   }
   const structuredModes =
-    contribution.structured?.schemaVersion === 2 ? contribution.structured.modes : undefined
-  const usesStructuredModes = contribution.structured?.schemaVersion === 2
+    contribution.structured?.schemaVersion === 2 || contribution.structured?.schemaVersion === 3
+      ? contribution.structured.modes
+      : undefined
+  const usesStructuredModes =
+    contribution.structured?.schemaVersion === 2 || contribution.structured?.schemaVersion === 3
   return {
+    layout:
+      contribution.structured?.schemaVersion === 3 ? contribution.structured.layout : undefined,
     modes: resolveThemeModes(structuredModes),
     resolvedTokens,
     variables,

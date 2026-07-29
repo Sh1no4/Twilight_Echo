@@ -36,7 +36,10 @@ import {
 } from '../utils/playbackQueueVirtualization.ts'
 import { findPlaybackFallbackTrack } from '../utils/playbackFallback.ts'
 import { findProviderRematchCandidate } from '../utils/libraryRepair.ts'
-import { resolveLyricsWithSources } from '../utils/lyricSourceResolution.ts'
+import {
+  resolveLyricsWithSources,
+  type LyricResolverSource
+} from '../utils/lyricSourceResolution.ts'
 import { resolverLyricsInput } from '../utils/managedLyricsSource.ts'
 import { useLyricsManagement } from './lyricsManagement.ts'
 import {
@@ -295,7 +298,8 @@ function setNativePlaybackInfoIntent(
   intentionalTrackGuard = {
     trackId: track.id,
     source: normalizedSource || getTrackAudioSource(track),
-    until: now + NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS + NATIVE_PLAYBACK_INFO_POST_CONFIRMATION_GRACE_MS
+    until:
+      now + NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS + NATIVE_PLAYBACK_INFO_POST_CONFIRMATION_GRACE_MS
   }
 }
 
@@ -499,7 +503,11 @@ function getPlaybackAudio(): HTMLAudioElement {
     if (nativePlaybackActive) return
     const track = currentTrack.value
     if (!track) return
-    if (track.source === 'radio' || track.source === 'podcast' || /^https?:\/\//i.test(track.filePath || '')) {
+    if (
+      track.source === 'radio' ||
+      track.source === 'podcast' ||
+      /^https?:\/\//i.test(track.filePath || '')
+    ) {
       isStreamBuffering.value = true
     }
   }
@@ -1001,7 +1009,10 @@ function hydratePlaybackTrack(track: Track, libraryHint?: Track | null): Track {
   }
 }
 
-function activateCurrentTrack(track: Track, options: { resetUi?: boolean; position?: number } = {}): void {
+function activateCurrentTrack(
+  track: Track,
+  options: { resetUi?: boolean; position?: number } = {}
+): void {
   const next = hydratePlaybackTrack(track)
   // Fresh object every activation so cover/lyrics watchers always rebind.
   currentTrack.value = { ...next }
@@ -1188,9 +1199,7 @@ function applyNativePlaybackInfo(
     // Treat queue-index changes as a switch even when consecutive CUE/logical
     // entries share metadata, so cover + progress always rebind.
     switchedTrack =
-      previousTrackId !== track.id ||
-      previousQueueIndex !== infoIndex ||
-      loadedTrackId !== track.id
+      previousTrackId !== track.id || previousQueueIndex !== infoIndex || loadedTrackId !== track.id
     const mergedTrack = mergeTrackTransientData(track, currentTrack.value)
     queueIndex.value = infoIndex
     if (mergedTrack !== track) {
@@ -1242,7 +1251,8 @@ function applyNativePlaybackInfo(
     // reset duration/time so the playbar cover + progress do not stick on the previous track.
     clearAbLoop()
     pendingLoadStartTime = 0
-    duration.value = nextDuration > 0 ? nextDuration : currentTrack.value ? cueDuration(currentTrack.value) : 0
+    duration.value =
+      nextDuration > 0 ? nextDuration : currentTrack.value ? cueDuration(currentTrack.value) : 0
     beginPlaybackPositionTransition(nextPosition)
     // Keep the intent/guard confirmed so delayed previous-track ticks still drop.
     markNativePlaybackInfoIntentConfirmed()
@@ -1544,11 +1554,7 @@ function flushPodcastEpisodeProgress(force = false): void {
   lastPodcastProgressWriteAt = now
   lastPodcastProgressTrackId = track.id
   lastPodcastProgressSeconds = seconds
-  void usePodcastStore().updateEpisodeProgress(
-    parsed.subscriptionId,
-    parsed.episodeGuid,
-    seconds
-  )
+  void usePodcastStore().updateEpisodeProgress(parsed.subscriptionId, parsed.episodeGuid, seconds)
 }
 
 watch(
@@ -1742,8 +1748,7 @@ function applyPlaybackPositionSample(time: number): boolean {
           : 0
       const expectedPosition = pending.position + elapsed
       if (
-        Math.abs(position - expectedPosition) >
-        PLAYBACK_POSITION_CONFIRMATION_TOLERANCE_SECONDS
+        Math.abs(position - expectedPosition) > PLAYBACK_POSITION_CONFIRMATION_TOLERANCE_SECONDS
       ) {
         return false
       }
@@ -1804,7 +1809,7 @@ function tickRendererPlaybackClock(): void {
   const rate = Number.isFinite(playbackRate.value) ? playbackRate.value : 1
   const estimated =
     rendererClockAnchorPosition + Math.max(0, (now - rendererClockAnchorAt) / 1000) * rate
-  const total = duration.value > 0 ? duration.value : currentTrack.value?.duration ?? 0
+  const total = duration.value > 0 ? duration.value : (currentTrack.value?.duration ?? 0)
   const position = total > 0 ? Math.min(estimated, total) : estimated
   if (position <= currentTime.value) return
   latestPlaybackTime = position
@@ -2084,7 +2089,7 @@ function commitResolvedLyrics(
   const updatedTrack = {
     ...resolverTrack,
     lyrics: nextLyrics,
-    translatedLyrics: resolved.translatedLyrics ?? resolverTrack.translatedLyrics ?? null,
+    translatedLyrics: resolved.translatedLyrics,
     lyricsSource: resolved.lyricsSource,
     translatedLyricsSource: resolved.translatedLyricsSource,
     romanizedLyrics: resolverTrack.romanizedLyrics ?? null,
@@ -2127,6 +2132,23 @@ async function ensureCurrentTrackLyricsLoaded(
 
   const override = lyricsManagement.entryFor(triggerTrack.id)
   const requestedSource = override?.source ?? 'auto'
+  const layerSource = (
+    key: 'originalSelection' | 'translationSelection'
+  ): LyricResolverSource | 'manual' => {
+    const selection = override?.[key]
+    if (selection === 'local' || selection === 'provider' || selection === 'manual') {
+      return selection
+    }
+    if (requestedSource === 'local' || requestedSource === 'provider') return requestedSource
+    return 'automatic'
+  }
+  const originalLayerSource = layerSource('originalSelection')
+  const translationLayerSource = layerSource('translationSelection')
+  const resolverOriginalSource: LyricResolverSource =
+    originalLayerSource === 'manual' ? 'automatic' : originalLayerSource
+  const resolverTranslationSource: LyricResolverSource =
+    translationLayerSource === 'manual' ? 'automatic' : translationLayerSource
+  const sourceSelectionSignature = `${requestedSource}:${originalLayerSource}:${translationLayerSource}`
   // Manual content is applied by the presentation layer. Keeping it out of
   // the queue record means choosing Auto later can always recover
   // the resolver result instead of treating a previous edit as embedded data.
@@ -2149,7 +2171,14 @@ async function ensureCurrentTrackLyricsLoaded(
     return
   }
 
-  if (requestedSource !== 'auto' && !automaticLyricsBaselines.has(triggerTrack.id)) {
+  if (
+    (requestedSource !== 'auto' ||
+      originalLayerSource === 'local' ||
+      originalLayerSource === 'provider' ||
+      translationLayerSource === 'local' ||
+      translationLayerSource === 'provider') &&
+    !automaticLyricsBaselines.has(triggerTrack.id)
+  ) {
     automaticLyricsBaselines.set(triggerTrack.id, { ...triggerTrack })
   }
   const resolverTrack = resolverLyricsInput(
@@ -2165,19 +2194,19 @@ async function ensureCurrentTrackLyricsLoaded(
 
   const source = getTrackSource(resolverTrack)
   const canLoadLocalLyrics =
-    requestedSource !== 'provider' &&
     source === 'local' &&
-    (requestedSource === 'local' || resolverTrack.lyrics == null) &&
+    (resolverOriginalSource === 'local' ||
+      (resolverOriginalSource === 'automatic' && resolverTrack.lyrics == null)) &&
     !!resolverTrack.dir &&
     !!resolverTrack.fileName
   const canLoadProviderLyrics =
-    requestedSource !== 'local' &&
     allowProviderLookup &&
-    (requestedSource === 'provider' ||
-      resolverTrack.lyrics == null ||
-      resolverTrack.translatedLyrics == null)
+    (resolverOriginalSource === 'provider' ||
+      resolverTranslationSource === 'provider' ||
+      (resolverOriginalSource === 'automatic' && resolverTrack.lyrics == null) ||
+      (resolverTranslationSource === 'automatic' && resolverTrack.translatedLyrics == null))
   const canLoadOnlineLyrics =
-    requestedSource === 'auto' &&
+    resolverOriginalSource === 'automatic' &&
     appSettings.value?.onlineLyricsFallback === true &&
     !!resolverTrack.title?.trim() &&
     !!resolverTrack.artist?.trim() &&
@@ -2198,6 +2227,8 @@ async function ensureCurrentTrackLyricsLoaded(
 
   const resolvePromise = resolveLyricsWithSources({
     track: resolverTrack,
+    originalSource: resolverOriginalSource,
+    translationSource: resolverTranslationSource,
     loadLocalLyrics: canLoadLocalLyrics
       ? () =>
           window.api.data
@@ -2249,7 +2280,24 @@ async function ensureCurrentTrackLyricsLoaded(
   // Source selection can change while an async local/provider resolver is
   // pending. Do not let a stale forced lookup overwrite the newer Auto (or
   // manual) choice when it finally completes.
-  if ((lyricsManagement.entryFor(triggerTrack.id)?.source ?? 'auto') !== requestedSource) {
+  const currentOverride = lyricsManagement.entryFor(triggerTrack.id)
+  const currentRequestedSource = currentOverride?.source ?? 'auto'
+  const currentLayerSource = (
+    key: 'originalSelection' | 'translationSelection'
+  ): LyricResolverSource | 'manual' => {
+    const selection = currentOverride?.[key]
+    if (selection === 'local' || selection === 'provider' || selection === 'manual') {
+      return selection
+    }
+    if (currentRequestedSource === 'local' || currentRequestedSource === 'provider') {
+      return currentRequestedSource
+    }
+    return 'automatic'
+  }
+  if (
+    `${currentRequestedSource}:${currentLayerSource('originalSelection')}:${currentLayerSource('translationSelection')}` !==
+    sourceSelectionSignature
+  ) {
     completeIfCurrent()
     return
   }
@@ -2461,7 +2509,12 @@ function setupAudioEngineListeners(): void {
           }
           break
         case 'pause':
-          if (!nativePlaybackActive && !nativeQueueDelegated && !isPlaying.value && !isLoading.value) {
+          if (
+            !nativePlaybackActive &&
+            !nativeQueueDelegated &&
+            !isPlaying.value &&
+            !isLoading.value
+          ) {
             break
           }
           applyNativePlayingState(!data)
@@ -3155,9 +3208,9 @@ async function togglePlayState(): Promise<void> {
         flushPodcastEpisodeProgress(true)
       }
       isPlaying.value = nextPlaying
-      void window.api.remote?.controlCast?.(
-        nextPlaying ? { play: true } : { pause: true }
-      ).catch(() => {})
+      void window.api.remote
+        ?.controlCast?.(nextPlaying ? { play: true } : { pause: true })
+        .catch(() => {})
       return
     }
     if (nativePlaybackActive) {
@@ -3288,7 +3341,8 @@ function isCurrentTrackLiveStream(): boolean {
   if (!track) return false
   if (track.source === 'radio') return true
   return (
-    (typeof track.duration === 'number' && track.duration <= 0) &&
+    typeof track.duration === 'number' &&
+    track.duration <= 0 &&
     Boolean(track.streamUrl || /^https?:\/\//i.test(track.filePath || ''))
   )
 }
@@ -4135,9 +4189,7 @@ export function usePlayerStore(): {
   castTargetName: Ref<string | null>
   castToDevice: (usn: string) => Promise<void>
   stopCast: () => Promise<void>
-  discoverCastDevices: () => Promise<
-    import('../../../shared/remoteControl.ts').DlnaDeviceInfo[]
-  >
+  discoverCastDevices: () => Promise<import('../../../shared/remoteControl.ts').DlnaDeviceInfo[]>
   refreshCastTarget: () => Promise<void>
   formatTime: (seconds: number) => string
 } {

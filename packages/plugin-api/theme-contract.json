@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "pluginApiVersion": 2,
-  "structuredThemeSchemaVersion": 2,
+  "pluginApiVersion": 3,
+  "structuredThemeSchemaVersion": 3,
   "tokens": [
     {
       "id": "color.primary.500",
@@ -1561,5 +1561,32 @@
     "previousButton",
     "nextButton",
     "miniPlayerArtwork"
-  ]
+  ],
+  "layout": {
+    "slots": [
+      "titleBar",
+      "navigation",
+      "content",
+      "playerBar"
+    ],
+    "tracks": [
+      "auto",
+      "content",
+      "narrow",
+      "standard",
+      "wide",
+      "fill",
+      "double"
+    ],
+    "navigation": [
+      "toggle",
+      "persistent",
+      "hidden"
+    ],
+    "requiredSlots": [
+      "titleBar",
+      "content"
+    ],
+    "compactBreakpointPx": 760
+  }
 }

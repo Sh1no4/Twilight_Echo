@@ -92,11 +92,11 @@ const draftTrackMismatch = computed(
   () =>
     draftDirty.value && seededTrackId.value !== '' && seededTrackId.value !== activeTrackId.value
 )
-const hasAutomaticLayer = computed(
+const requiresResolver = computed(
   () =>
-    draftOriginalSelection.value === 'automatic' ||
-    draftTranslationSelection.value === 'automatic' ||
-    draftRomanizationSelection.value === 'automatic'
+    draftOriginalSelection.value !== 'manual' ||
+    draftTranslationSelection.value !== 'manual' ||
+    draftRomanizationSelection.value !== 'manual'
 )
 const originalAutomaticSource = computed(() => lyricSourceLabel(currentTrack.value?.lyricsSource))
 const translationAutomaticSource = computed(() =>
@@ -120,7 +120,9 @@ function layerSelection(
   key: LayerSelectionKey
 ): LyricLayerSourceSelection {
   const value = override?.[key]
-  if (value === 'automatic' || value === 'manual') return value
+  if (value === 'automatic' || value === 'local' || value === 'provider' || value === 'manual') {
+    return value
+  }
   return override?.source === 'manual' ? 'manual' : 'automatic'
 }
 
@@ -190,11 +192,20 @@ function useManualLayer(layer: LayerKey): void {
 }
 
 function automaticLayerLabel(selection: LyricLayerSourceSelection, source: string): string {
-  return selection === 'manual' ? '手写内容' : `自动 · ${source}`
+  if (selection === 'local') return '本地 LRC'
+  if (selection === 'provider') return 'Provider'
+  if (selection === 'manual') return '手写内容'
+  return `自动 · ${source}`
 }
 
 function persistedSource(): LyricSourcePreference {
-  if (!hasAutomaticLayer.value) return 'manual'
+  if (
+    draftOriginalSelection.value === 'manual' &&
+    draftTranslationSelection.value === 'manual' &&
+    draftRomanizationSelection.value === 'manual'
+  ) {
+    return 'manual'
+  }
   return draftSource.value === 'manual' ? 'auto' : draftSource.value
 }
 
@@ -206,7 +217,7 @@ async function saveLyricManager(): Promise<void> {
     return
   }
   const trackId = track.id
-  const automaticLayers = hasAutomaticLayer.value
+  const needsResolver = requiresResolver.value
   lyricSaving.value = true
   lyricManagerError.value = ''
   lyricManagerNotice.value = ''
@@ -222,7 +233,7 @@ async function saveLyricManager(): Promise<void> {
       romanization: draftRomanization.value.trim() || null
     })
     if (currentTrack.value?.id !== trackId) return
-    if (automaticLayers) await refreshCurrentLyrics()
+    if (needsResolver) await refreshCurrentLyrics()
     if (currentTrack.value?.id !== trackId) return
     seededDraft.value = currentDraft()
     lyricManagerNotice.value = '歌词组合已保存'
@@ -458,6 +469,8 @@ function updateLyricDimOpacity(event: Event): void {
           <option value="automatic">
             {{ automaticLayerLabel('automatic', originalAutomaticSource) }}
           </option>
+          <option value="local">本地 LRC</option>
+          <option value="provider">Provider</option>
           <option value="manual">手写内容</option>
         </select>
       </label>
@@ -467,6 +480,8 @@ function updateLyricDimOpacity(event: Event): void {
           <option value="automatic">
             {{ automaticLayerLabel('automatic', translationAutomaticSource) }}
           </option>
+          <option value="local">本地</option>
+          <option value="provider">Provider</option>
           <option value="manual">手写内容</option>
         </select>
       </label>
@@ -476,6 +491,8 @@ function updateLyricDimOpacity(event: Event): void {
           <option value="automatic">
             {{ automaticLayerLabel('automatic', romanizationAutomaticSource) }}
           </option>
+          <option value="local">本地</option>
+          <option value="provider">Provider</option>
           <option value="manual">手写内容</option>
         </select>
       </label>

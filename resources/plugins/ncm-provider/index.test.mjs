@@ -1262,3 +1262,31 @@ test('playlist tracks load anonymously without a login error', async () => {
     ncmProvider.deactivate()
   }
 })
+
+test('lyrics search and lookup work without a NetEase login', async () => {
+  const cookies = []
+  const provider = await activateProvider(async (path, cookie) => {
+    cookies.push(cookie)
+    const url = parseRequest(path)
+    if (url.pathname === '/cloudsearch') {
+      return { result: { songCount: 1, songs: [song(77)] } }
+    }
+    if (url.pathname === '/lyric/new') {
+      return {
+        lrc: { lyric: '[00:01.00]Original' },
+        tlyric: { lyric: '[00:01.00]Translation' }
+      }
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  }, new Map())
+
+  try {
+    const search = await provider.searchSongs('song 77')
+    const lyrics = await provider.getLyrics(search.items[0])
+    assert.equal(search.items[0].id, 'ncm:77')
+    assert.equal(lyrics.translatedLyrics, '[00:01.00]Translation')
+    assert.ok(cookies.every((cookie) => !cookie))
+  } finally {
+    ncmProvider.deactivate()
+  }
+})

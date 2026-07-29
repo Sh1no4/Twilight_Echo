@@ -128,25 +128,6 @@
   min-width: 0;
 }
 
-.view-kicker {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0;
-  color: var(--te-neutral-500);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.22em;
-  white-space: nowrap;
-}
-
-.kicker-rule {
-  width: 26px;
-  height: 2px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, rgba(124, 77, 255, 0.75), rgba(34, 211, 238, 0.55));
-}
-
 .title-line {
   display: flex;
   align-items: baseline;
@@ -388,7 +369,8 @@
   border-color: rgba(124, 77, 255, 0.28);
 }
 
-.library-filter-badge {
+.library-filter-badge,
+.library-tools-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -490,7 +472,8 @@
 }
 
 /* Recent source dropdown */
-.recent-source-dropdown {
+.recent-source-dropdown,
+.library-tools-dropdown {
   position: relative;
   display: inline-block;
   flex-shrink: 0;
@@ -528,7 +511,8 @@
   color: var(--te-primary-500, #7c4dff);
 }
 
-.recent-source-menu {
+.recent-source-menu,
+.library-tools-menu {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
@@ -544,7 +528,8 @@
   gap: 2px;
 }
 
-.recent-source-option {
+.recent-source-option,
+.library-tools-option {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -561,7 +546,15 @@
   white-space: nowrap;
 }
 
-.recent-source-option:hover {
+.library-tools-option {
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-family: inherit;
+}
+
+.recent-source-option:hover,
+.library-tools-option:hover {
   background: rgba(124, 77, 255, 0.08);
   color: var(--te-primary-500, #7c4dff);
 }
@@ -1916,6 +1909,11 @@
   background: rgba(124, 77, 255, 0.08);
 }
 
+.library-tools-dropdown.open .library-tools-trigger {
+  color: var(--te-primary-600);
+  background: rgba(124, 77, 255, 0.1);
+}
+
 .excluded-tracks-dialog {
   width: min(720px, calc(100vw - 32px));
   max-height: min(720px, calc(100vh - 48px));
@@ -2149,18 +2147,6 @@
 
 :global(html[data-theme='dark'] .btn-shuffle-all) {
   background: rgba(255, 255, 255, 0.06);
-}
-
-:global(html[data-theme='dark'] .view-kicker) {
-  color: var(--te-neutral-500);
-}
-
-:global(html[data-theme='dark'] .kicker-rule) {
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--te-primary-500) 80%, transparent),
-    color-mix(in srgb, var(--te-accent-cyan) 60%, transparent)
-  );
 }
 
 :global(html[data-theme='dark'] .library-filter-trigger),

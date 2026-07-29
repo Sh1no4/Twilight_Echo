@@ -223,6 +223,57 @@ test('accepts plugin API v2 declarative theme modes', () => {
   assert.equal(manifest.apiVersion, 2)
 })
 
+test('requires plugin API v3 for declarative shell layouts', () => {
+  const layoutTheme = {
+    ...validManifest,
+    id: 'com.example.shell-theme',
+    type: ['theme'],
+    main: undefined,
+    permissions: [],
+    contributes: {
+      themes: [
+        {
+          id: 'shell-theme',
+          name: 'Shell Theme',
+          structured: {
+            schemaVersion: 3,
+            variants: {},
+            layout: {
+              desktop: {
+                columns: ['standard', 'fill'],
+                rows: ['auto', 'fill', 'auto'],
+                areas: [
+                  ['titleBar', 'titleBar'],
+                  ['navigation', 'content'],
+                  ['navigation', 'playerBar']
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+  assert.throws(() => validatePluginManifest({ ...layoutTheme, apiVersion: 2 }), /apiVersion 3/)
+  assert.equal(validatePluginManifest({ ...layoutTheme, apiVersion: 3 }).apiVersion, 3)
+  assert.throws(
+    () =>
+      validatePluginManifest({
+        ...layoutTheme,
+        apiVersion: 3,
+        contributes: {
+          themes: [
+            {
+              ...layoutTheme.contributes.themes[0],
+              structured: { schemaVersion: 3, variants: {}, layout: [] }
+            }
+          ]
+        }
+      }),
+    /layout must be an object/
+  )
+})
+
 test('rejects structured theme v2 under plugin API v1', () => {
   assert.throws(
     () =>

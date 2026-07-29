@@ -17,7 +17,7 @@ const PLUGIN_PERMISSIONS = new Set([
 
 const PLUGIN_ID_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)+$/
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
-const TWILIGHT_PLUGIN_API_VERSION = 2
+const TWILIGHT_PLUGIN_API_VERSION = 3
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -83,21 +83,32 @@ function validateThemeContributions(raw, type, apiVersion) {
     let hasStructured = false
     if (structured != null) {
       if (!isRecord(structured)) throw new Error('theme contribution structured must be an object')
-      if (structured.schemaVersion !== 1 && structured.schemaVersion !== 2) {
-        throw new Error('theme contribution structured schemaVersion must be 1 or 2')
+      if (structured.schemaVersion !== 1 && structured.schemaVersion !== 2 && structured.schemaVersion !== 3) {
+        throw new Error('theme contribution structured schemaVersion must be 1, 2, or 3')
       }
       if (structured.schemaVersion === 2 && apiVersion < 2) {
         throw new Error('structured schemaVersion 2 requires plugin apiVersion 2')
+      }
+      if (structured.schemaVersion === 3 && apiVersion < 3) {
+        throw new Error('structured schemaVersion 3 requires plugin apiVersion 3')
       }
       if (structured.variants != null && !isRecord(structured.variants)) {
         throw new Error('theme contribution structured variants must be an object')
       }
       if (structured.modes != null) {
-        if (structured.schemaVersion !== 2) {
-          throw new Error('theme contribution modes require structured schemaVersion 2')
+        if (structured.schemaVersion !== 2 && structured.schemaVersion !== 3) {
+          throw new Error('theme contribution modes require structured schemaVersion 2 or 3')
         }
         if (!isRecord(structured.modes)) {
           throw new Error('theme contribution modes must be an object')
+        }
+      }
+      if (structured.layout != null) {
+        if (structured.schemaVersion !== 3) {
+          throw new Error('theme contribution layout requires structured schemaVersion 3')
+        }
+        if (!isRecord(structured.layout)) {
+          throw new Error('theme contribution layout must be an object')
         }
       }
       if (structured.windowDefaults != null && !isRecord(structured.windowDefaults)) {

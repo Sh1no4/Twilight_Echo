@@ -106,7 +106,6 @@
   opacity: 0;
 }
 
-.settings-preview-page.settings-page-enter-active .settings-preview-nav,
 .settings-preview-page.settings-page-enter-active .settings-page-header,
 .settings-preview-page.settings-page-enter-active .settings-command-bar,
 .settings-preview-page.settings-page-enter-active .preview-section {
@@ -114,6 +113,8 @@
 }
 
 .settings-preview-page.settings-page-enter-active .settings-preview-nav {
+  /* Nav-specific arrive keyframes preserve translateY(-50%) centering. */
+  animation: te-settings-nav-arrive var(--te-motion-page) var(--te-ease-soft) both;
   animation-delay: 0ms;
 }
 
@@ -2259,6 +2260,19 @@ html[data-te-motion='full'] .swatch.active {
   to {
     opacity: 1;
     transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+/* Like te-settings-arrive, but keeps fixed-nav translateY(-50%) on every frame. */
+@keyframes te-settings-nav-arrive {
+  from {
+    opacity: 0;
+    transform: translate3d(0, calc(-50% + 12px), 0) scale(0.992);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, -50%, 0) scale(1);
   }
 }
 

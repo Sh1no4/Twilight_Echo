@@ -987,7 +987,7 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
               </div>
 
               <div v-else class="hero-actions">
-                <button type="button" class="hero-primary-action" @click="handleHeroPlay">
+                <button type="button" class="hero-ghost-action" @click="handleHeroPlay">
                   <i class="ph ph-play"></i>
                   播放这首
                 </button>

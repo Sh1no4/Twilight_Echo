@@ -9,7 +9,9 @@ import type { PlaybackBookmark } from '../../../shared/playbackBookmarks.ts'
 import { useExtensionRegistry } from '../extensions/registry'
 import { useMediaProviders } from '../providers'
 import { normalizeAccentColor } from '../utils/colorExtractor'
+import { useSmoothedValue } from '../utils/useSmoothedValue'
 import { HIFI_STATUS_COPY } from '../../../shared/audioProcessingOptions.ts'
+import type { LyricLayerSourceSelection } from '../../../shared/lyricsManagement.ts'
 import CoverImg from './CoverImg.vue'
 import HiFiSidebar from './player-bar/HiFiSidebar.vue'
 import nextTrackIcon from '../assets/icons/next-track.svg'
@@ -150,6 +152,11 @@ const lyricsManagement = useLyricsManagement()
 const desktopLyricsOn = ref(settings.value.desktopLyrics.enabled)
 const miniPlayerOpening = ref(false)
 const lyricsReloading = ref(false)
+const lyricControlsPending = ref(false)
+const managedLyricOverride = computed(() => lyricsManagement.entryFor(currentTrack.value?.id ?? ''))
+const originalLayerSelection = computed(() => lyricLayerSelection('originalSelection'))
+const translationLayerSelection = computed(() => lyricLayerSelection('translationSelection'))
+const showTranslation = computed(() => lyricsManagement.document.value.showTranslation)
 
 async function toggleDesktopLyrics(): Promise<void> {
   const enabled = await window.api.desktopLyrics.toggle()
@@ -183,7 +190,13 @@ const emit = defineEmits<{
   openSettings: []
   openDsp: []
   openEqualizer: []
+  openArtist: []
 }>()
+
+function onArtistClick(): void {
+  if (props.preview || !currentTrack.value?.artist.trim()) return
+  emit('openArtist')
+}
 
 function onCoverClick(): void {
   const el = coverRef.value
@@ -240,10 +253,15 @@ const progressPercent = computed(() => {
   return Math.min(100, Math.max(0, ratio * 100))
 })
 
+// Playback ticks arrive stepped (~4/s); chase them so the fill glides between
+// ticks. Jumps over 2.5% (seek / track switch) snap instead of gliding.
+const smoothedProgressPercent = useSmoothedValue(progressPercent, {
+  tau: 160,
+  snapThreshold: 2.5
+})
+
 const progressFillStyle = computed(() => ({
-  // Keep the playbar on the same reactive clock as LocalDashboard. The player
-  // store already publishes interpolated currentTime samples between engine ticks.
-  width: `${progressPercent.value}%`
+  width: `${Math.min(100, Math.max(0, smoothedProgressPercent.value))}%`
 }))
 
 const abLoopTitle = computed(() => {
@@ -962,6 +980,54 @@ async function onReloadLyrics(prefer: 'auto' | 'local' | 'provider'): Promise<vo
   }
 }
 
+function lyricLayerSelection(
+  key: 'originalSelection' | 'translationSelection' | 'romanizationSelection'
+): LyricLayerSourceSelection {
+  const selection = managedLyricOverride.value?.[key]
+  if (
+    selection === 'automatic' ||
+    selection === 'local' ||
+    selection === 'provider' ||
+    selection === 'manual'
+  ) {
+    return selection
+  }
+  const source = managedLyricOverride.value?.source
+  return source === 'local' || source === 'provider' || source === 'manual' ? source : 'automatic'
+}
+
+async function setLyricLayerSelection(
+  key: 'originalSelection' | 'translationSelection',
+  selection: LyricLayerSourceSelection
+): Promise<void> {
+  const track = currentTrack.value
+  if (!track || lyricsReloading.value || lyricControlsPending.value) return
+  lyricControlsPending.value = true
+  try {
+    await lyricsManagement.updateTrack(track.id, {
+      source: 'auto',
+      originalSelection:
+        key === 'originalSelection' ? selection : lyricLayerSelection('originalSelection'),
+      translationSelection:
+        key === 'translationSelection' ? selection : lyricLayerSelection('translationSelection'),
+      romanizationSelection: lyricLayerSelection('romanizationSelection')
+    })
+    if (currentTrack.value?.id === track.id) await refreshCurrentLyrics()
+  } finally {
+    lyricControlsPending.value = false
+  }
+}
+
+async function toggleTranslationVisibility(): Promise<void> {
+  if (lyricsReloading.value || lyricControlsPending.value) return
+  lyricControlsPending.value = true
+  try {
+    await lyricsManagement.updateVisibility({ showTranslation: !showTranslation.value })
+  } finally {
+    lyricControlsPending.value = false
+  }
+}
+
 onMounted(() => {
   if (!props.preview) void syncExtensions()
 })
@@ -1165,7 +1231,16 @@ onMounted(() => {
               >{{ isStreamBuffering && !isLiveStream ? '缓冲中' : liveBadgeLabel }}</span
             >
           </div>
-          <div class="player-artist">{{ currentTrack.artist }}</div>
+          <button
+            type="button"
+            class="player-artist"
+            data-te-interactive
+            :disabled="preview || !currentTrack.artist.trim()"
+            :title="currentTrack.artist ? `打开歌手：${currentTrack.artist}` : undefined"
+            @click.stop="onArtistClick"
+          >
+            {{ currentTrack.artist }}
+          </button>
           <div
             v-if="streamNowPlaying && isLiveStream"
             class="player-stream-now-playing"
@@ -1424,6 +1499,10 @@ onMounted(() => {
           :current-track="currentTrack"
           :desktop-lyrics-on="desktopLyricsOn"
           :lyrics-reloading="lyricsReloading"
+          :original-layer-selection="originalLayerSelection"
+          :translation-layer-selection="translationLayerSelection"
+          :show-translation="showTranslation"
+          :lyric-controls-pending="lyricsReloading || lyricControlsPending"
           :player-bar-buttons="playerBarButtons"
           :is-live-stream="isLiveStream"
           :playback-rate="playbackRate"
@@ -1472,6 +1551,8 @@ onMounted(() => {
           @select-impulse-response="selectImpulseResponse"
           @clear-impulse-response="clearImpulseResponse"
           @reload-lyrics="onReloadLyrics"
+          @set-lyric-layer-selection="setLyricLayerSelection"
+          @toggle-translation-visibility="toggleTranslationVisibility"
           @run-extension="runPlayerBarExtension"
           @cycle-playback-rate="cyclePlaybackRate"
           @toggle-ab-loop="toggleAbLoopAtCurrentTime"

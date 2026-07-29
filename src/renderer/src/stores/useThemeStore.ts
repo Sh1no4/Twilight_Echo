@@ -12,12 +12,15 @@ import {
   resolveScheduledThemeTone,
   resolveThemeProfileModes,
   resolveThemeProfileTokens,
+  themeShellLayoutToCssVariables,
+  themeShellLayoutToDataAttributes,
   themeModesToDataAttributes,
   themeTokensToCssVariables,
   type ThemeAssetReference,
   type ThemeAssetType,
   type ThemeBootstrap,
   type ThemeLibrarySnapshot,
+  type ThemeShellLayout,
   type ThemeProfileV2,
   type ThemeSelection,
   type ThemeTone,
@@ -158,6 +161,7 @@ interface ThemeRuntimeState {
   dataAttributes: Record<`data-te-${string}`, string>
   activeTheme: string
   presetLayout: string
+  shellLayout: ThemeShellLayout | undefined
   tone: ThemeTone
   resourceUrls: string[]
 }
@@ -188,13 +192,16 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
   const selection = previewSelection.value ?? snapshot.value?.data.activeTheme
   const selectedProfile = getSelectedProfile(selection)
   let selectedPluginTheme: ThemeContribution | null = null
+  let shellLayout: ThemeShellLayout | undefined
   let modes = resolveThemeProfileModes(selectedProfile)
   if (!selectedProfile && selection?.kind === 'plugin') {
     const registry = useExtensionRegistry()
     if (syncPluginExtensions) await registry.syncExtensions()
     selectedPluginTheme = resolvePluginTheme(registry.themeContributions.value, selection)
     if (selectedPluginTheme) {
-      modes = resolvePluginThemeRuntimeContract(selectedPluginTheme, resolveTone()).modes
+      const contract = resolvePluginThemeRuntimeContract(selectedPluginTheme, resolveTone())
+      modes = contract.modes
+      shellLayout = contract.layout
     }
   }
   const tone = resolveRuntimeTone(selectedProfile, modes)
@@ -223,11 +230,13 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
           dataAttributes: themeModesToDataAttributes(resolveThemeProfileModes(null)),
           activeTheme: TWILIGHT_DEFAULT_THEME_ID,
           presetLayout: presetLayoutKey(TWILIGHT_DEFAULT_THEME_ID),
+          shellLayout: undefined,
           tone,
           resourceUrls: []
         }
       }
       const contract = resolvePluginThemeRuntimeContract(contribution, tone)
+      shellLayout = contract.layout
       Object.assign(variables, contract.variables)
       if (contract.usesStructuredModes) {
         applyProfileModeVariables(modes, tone, contract.resolvedTokens, variables)
@@ -248,16 +257,20 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
       applyProfileModeVariables(modes, tone, resolvedTokens, variables)
     }
   }
-  const root = Object.entries(variables)
+  const root = Object.entries({ ...themeShellLayoutToCssVariables(shellLayout), ...variables })
     .map(([name, value]) => `  ${name}: ${value} !important;`)
     .join('\n')
   return {
     css: [assetStylesheet, root ? `:root {\n${root}\n}` : '', stylesheet]
       .filter(Boolean)
       .join('\n\n'),
-    dataAttributes: themeModesToDataAttributes(modes),
+    dataAttributes: {
+      ...themeModesToDataAttributes(modes),
+      ...themeShellLayoutToDataAttributes(shellLayout)
+    },
     activeTheme: activeThemeKey(selection),
     presetLayout: resolvePresetLayout(selection, selectedProfile),
+    shellLayout,
     tone,
     resourceUrls
   }

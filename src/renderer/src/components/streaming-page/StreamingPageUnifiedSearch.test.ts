@@ -21,6 +21,21 @@ test('streaming page exposes unified song search beyond the NetEase-only surface
   assert.doesNotMatch(source, /const showNcmSearch = computed/)
 })
 
+test('streaming page resolves player-bar artist requests through the track provider', () => {
+  assert.match(source, /artistNavigationRequest\?: StreamingArtistNavigationRequest \| null/)
+  assert.match(source, /mediaProviders\.searchArtists\(providerId, artistName, 8, 0\)/)
+  assert.match(source, /findBestStreamingArtistMatch\(artistName, result\.items\)/)
+  assert.match(source, /provider\.fetchArtistTopSongs\(artist\.id\)/)
+  assert.match(
+    source,
+    /if \(isExternalActive\.value\)[\s\S]*provider\.fetchArtistTopSongs\(artist\.id\)/
+  )
+  assert.doesNotMatch(
+    source,
+    /if \(provider === NCM_PROVIDER_ID\) \{\s*fallbackProvider\.value = null/
+  )
+})
+
 test('streaming page keeps third-party providers on the generic provider library surface', () => {
   assert.doesNotMatch(source, /import BilibiliPage/)
   assert.doesNotMatch(source, /<BilibiliPage/)
@@ -45,22 +60,32 @@ test('ranking detail uses cross-source listening stats before provider play reco
   assert.doesNotMatch(source, /const tracks = await fetchPlayRecords\(1\)/)
 })
 
-test('liked detail uses unified default favorites before provider liked APIs', () => {
-  assert.match(source, /summarizeUnifiedFavorites\(\{/)
-  assert.match(source, /resolveUnifiedFavoriteTracks\(\{/)
-  assert.match(
-    source,
-    /const unifiedFavoriteTracks = computed\(\(\) => musicStore\.getPlaylistTracks\('我收藏的音乐'\)\)/
-  )
-  assert.match(source, /if \(unifiedTracks\.length > 0\)/)
+test('liked detail loads provider cloud likes instead of local default favorites', () => {
+  assert.match(source, /fetchLikedTracksPage\(0, LIKED_TRACKS_PAGE_SIZE, force\)/)
+  assert.match(source, /NCM: always load cloud liked tracks/)
+  assert.match(source, /must not short-circuit the provider liked list/)
+  assert.match(source, /const unifiedFavoriteTracks = computed\(\(\) => musicStore\.getPlaylistTracks\(/)
+  // Local unified favorites are only a fallback for external providers without
+  // their own liked playlist - never a short-circuit for NCM.
+  assert.doesNotMatch(source, /resolveUnifiedFavoriteTracks\(\{/)
+  assert.match(source, /if \(state\?\.likedPlaylist\) return providerSummary/)
 })
+
+
+test('streaming page stays mounted across local/streaming switches in one session', () => {
+  const appSource = readFileSync(new URL('../../App.vue', import.meta.url), 'utf8')
+  assert.match(appSource, /const streamingPageMounted = ref\(false\)/)
+  assert.match(appSource, /v-if="streamingPageMounted"/)
+  assert.match(appSource, /v-show="showStreamingPage"/)
+  assert.match(appSource, /:active="showStreamingPage"/)
+  assert.match(source, /async function refreshStreamingSurface/)
+  assert.match(source, /\(\) => props\.active/)
+})
+
 
 test('streaming page supports multi-select batch favorite and delete on track lists', () => {
   const searchSource = readFileSync(new URL('../StreamingSearch.vue', import.meta.url), 'utf8')
-  const detailSource = readFileSync(
-    new URL('./StreamingDetailStage.vue', import.meta.url),
-    'utf8'
-  )
+  const detailSource = readFileSync(new URL('./StreamingDetailStage.vue', import.meta.url), 'utf8')
 
   assert.match(source, /useTrackMultiSelect/)
   assert.match(source, /handleStreamingBatchFavorite/)
@@ -90,7 +115,10 @@ test('local-only streaming deletion uses one library removal transaction', async
   const result = await executeStreamingBatchRemoval(tracks, {
     removeLocalTracks: async (selected, mode) => {
       calls.push({ ids: selected.map((track) => track.id), mode })
-      return createLocalResult(selected, selected.map((track) => track.id))
+      return createLocalResult(
+        selected,
+        selected.map((track) => track.id)
+      )
     },
     removeProviderTrack: async () => {
       throw new Error('provider removal must not run for local tracks')
@@ -124,9 +152,7 @@ test('mixed streaming deletion batches locals and keeps provider semantics separ
   assert.deepEqual(localCalls, [['local:first', 'local:failed']])
   assert.deepEqual(providerCalls, ['ncm:42'])
   assert.deepEqual(result.removedTrackIds, ['local:first', 'ncm:42'])
-  assert.deepEqual(result.failures, [
-    { filePath: failedLocal.filePath, message: 'local failed' }
-  ])
+  assert.deepEqual(result.failures, [{ filePath: failedLocal.filePath, message: 'local failed' }])
 })
 
 test('external provider unfavorite still runs when the local removal phase rejects', async () => {

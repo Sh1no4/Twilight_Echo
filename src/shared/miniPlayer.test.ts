@@ -188,7 +188,10 @@ test('mini player state normalization keeps only the renderer snapshot contract'
     currentTime: 120,
     duration: 100,
     volume: 3,
-    playMode: 'shuffle',
+    playMode: 'listLoop',
+    favoriteAvailable: true,
+    favoriteLiked: true,
+    favoriteLoading: false,
     dominantColor: '#7c4dff',
     queueIndex: 99,
     queueLength: 3
@@ -200,6 +203,10 @@ test('mini player state normalization keeps only the renderer snapshot contract'
   assert.equal(state.track?.coverSource, 'https://p1.music.126.net/cover.jpg')
   assert.equal(state.currentTime, 100)
   assert.equal(state.volume, 1)
+  assert.equal(state.playMode, 'listLoop')
+  assert.equal(state.favoriteAvailable, true)
+  assert.equal(state.favoriteLiked, true)
+  assert.equal(state.favoriteLoading, false)
   assert.equal(state.queueIndex, 2)
 })
 
@@ -241,6 +248,14 @@ test('mini player commands reject invalid payloads and clamp numeric controls', 
     type: 'set-volume',
     value: 0
   })
+  assert.deepEqual(normalizeMiniPlayerCommand({ type: 'set-play-mode', value: 'listLoop' }), {
+    type: 'set-play-mode',
+    value: 'listLoop'
+  })
+  assert.deepEqual(normalizeMiniPlayerCommand({ type: 'toggle-favorite' }), {
+    type: 'toggle-favorite'
+  })
+  assert.equal(normalizeMiniPlayerCommand({ type: 'set-play-mode', value: 'unsafe' }), null)
   assert.equal(normalizeMiniPlayerCommand({ type: 'seek', value: Number.NaN }), null)
   assert.equal(normalizeMiniPlayerCommand({ type: 'delete-library' }), null)
 })

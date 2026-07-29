@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 const {
+  DEFAULT_LYRICS_MANAGEMENT,
   clampLyricOffset,
   effectiveLyricOffsetSeconds,
   isLyricsManagementDocument,
@@ -10,6 +11,11 @@ const {
 } = (await import(
   new URL('./lyricsManagement.ts', import.meta.url).href
 )) as typeof import('./lyricsManagement')
+
+test('lyrics management defaults to showing integrated translations', () => {
+  assert.equal(DEFAULT_LYRICS_MANAGEMENT.showOriginal, true)
+  assert.equal(DEFAULT_LYRICS_MANAGEMENT.showTranslation, true)
+})
 
 test('lyric timing combines global and per-track offsets with a bounded range', () => {
   assert.equal(effectiveLyricOffsetSeconds(120, -45), 0.075)
@@ -86,6 +92,30 @@ test('layer source selections combine manual and automatic lyrics independently'
     translationSource: 'provider',
     romanizationSource: 'manual'
   })
+})
+
+test('provider and local layer choices keep resolver-owned content out of manual overrides', () => {
+  const automatic = {
+    original: '[00:01.00]Local original',
+    translation: '[00:01.00]Provider translation',
+    romanization: null,
+    originalSource: 'local',
+    translationSource: 'provider',
+    romanizationSource: null
+  }
+  const projected = projectManagedLyrics(automatic, {
+    ...manualOverride(),
+    source: 'auto',
+    originalSelection: 'local',
+    translationSelection: 'provider',
+    original: '[00:01.00]Stale manual original',
+    translation: '[00:01.00]Stale manual translation'
+  })
+
+  assert.equal(projected.original, automatic.original)
+  assert.equal(projected.translation, automatic.translation)
+  assert.equal(projected.originalSource, 'local')
+  assert.equal(projected.translationSource, 'provider')
 })
 
 test('lyric display toggles independently hide original, translation, and romanization', () => {

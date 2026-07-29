@@ -2,6 +2,17 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+test('song list omits header kickers from all non-dashboard local library views', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('./song-list/SongList.css', import.meta.url), 'utf8')
+
+  assert.doesNotMatch(source, /viewKicker/)
+  assert.doesNotMatch(source, /class="view-kicker"/)
+  assert.doesNotMatch(source, /class="kicker-rule"/)
+  assert.doesNotMatch(styles, /\.view-kicker/)
+  assert.doesNotMatch(styles, /\.kicker-rule/)
+})
+
 test('song list exposes local metadata match confidence from provider enrichment', () => {
   const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
 
@@ -182,4 +193,47 @@ test('song list exposes exclusion management and restore controls', () => {
   assert.match(source, /全部恢复/)
   assert.match(styles, /\.excluded-tracks-dialog/)
   assert.match(styles, /\.excluded-track-row/)
+})
+
+test('all songs header hides track count and total duration', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+
+  const start = source.indexOf('const viewStatsText = computed(')
+  assert.ok(start > 0)
+  const body = source.slice(start, source.indexOf('})', start))
+  assert.match(body, /props\.category === 'allSongs'\) return ''/)
+})
+
+test('all songs merges duplicate check and excluded management into one 库管理 dropdown', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('./song-list/SongList.css', import.meta.url), 'utf8')
+
+  assert.match(source, /libraryToolsMenuOpen/)
+  assert.match(source, /openLibraryDuplicates/)
+  assert.match(source, /openLibraryExcluded/)
+  assert.match(source, /class="library-tools-dropdown"/)
+  assert.match(source, /class="library-tools-menu"/)
+  assert.match(styles, /\.library-tools-dropdown/)
+  assert.match(styles, /\.library-tools-menu/)
+  // Only one all-songs trigger remains in the header.
+  const triggers = source.match(/class="excluded-tracks-trigger[^"]*"/g) ?? []
+  assert.equal(triggers.length, 1)
+})
+
+test('library header places the search box last so it renders right-most', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+
+  const tableHeader = source.slice(source.lastIndexOf('<div class="header-right">'))
+  const searchIndex = tableHeader.indexOf('class="search-box"')
+  assert.ok(searchIndex > 0)
+  for (const marker of [
+    'class="library-tools-dropdown"',
+    'class="recent-source-dropdown"',
+    'class="library-filter-dropdown"',
+    'class="playlist-lifecycle-actions"'
+  ]) {
+    const index = tableHeader.indexOf(marker)
+    assert.ok(index > 0, `${marker} missing from library header`)
+    assert.ok(index < searchIndex, `${marker} should precede the search box`)
+  }
 })

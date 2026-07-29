@@ -3,7 +3,7 @@
  * folder can never discard a user's timing correction or hand-edited text.
  */
 export type LyricSourcePreference = 'auto' | 'local' | 'provider' | 'manual'
-export type LyricLayerSourceSelection = 'automatic' | 'manual'
+export type LyricLayerSourceSelection = 'automatic' | 'local' | 'provider' | 'manual'
 
 export interface LyricTrackOverride {
   offsetMs: number
@@ -73,8 +73,6 @@ export function projectManagedLyrics(
   ) {
     return automatic
   }
-  // null means "unset" on disk; for manual presentation treat as confirmed empty
-  // so the now-playing pane shows 暂无歌词 instead of 加载歌词… forever.
   return {
     original: originalSelection === 'manual' ? (override.original ?? '') : automatic.original,
     translation:
@@ -102,7 +100,14 @@ function layerSelection(
   key: 'originalSelection' | 'translationSelection' | 'romanizationSelection'
 ): LyricLayerSourceSelection {
   const selection = override[key]
-  if (selection === 'automatic' || selection === 'manual') return selection
+  if (
+    selection === 'automatic' ||
+    selection === 'local' ||
+    selection === 'provider' ||
+    selection === 'manual'
+  ) {
+    return selection
+  }
   return override.source === 'manual' ? 'manual' : 'automatic'
 }
 
@@ -181,7 +186,13 @@ function isLyricSourcePreference(value: unknown): value is LyricSourcePreference
 function isOptionalLyricLayerSourceSelection(
   value: unknown
 ): value is LyricLayerSourceSelection | undefined {
-  return value === undefined || value === 'automatic' || value === 'manual'
+  return (
+    value === undefined ||
+    value === 'automatic' ||
+    value === 'local' ||
+    value === 'provider' ||
+    value === 'manual'
+  )
 }
 
 function isLyricText(value: unknown): value is string | null {

@@ -727,7 +727,7 @@
   transform: scale(var(--te-motion-press-scale));
 }
 
-.transport-play {
+.transport-button.transport-play {
   width: 56px;
   height: 56px;
   border: none;
@@ -739,36 +739,6 @@
 
 .transport-play:hover {
   background: color-mix(in srgb, var(--home-ink) 84%, var(--home-accent));
-}
-
-.hero-primary-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  height: 46px;
-  padding: 0 24px;
-  border: none;
-  border-radius: 999px;
-  background: var(--home-ink);
-  color: var(--home-card);
-  font-size: 14px;
-  font-weight: 700;
-  cursor: pointer;
-  box-shadow: 0 14px 30px color-mix(in srgb, var(--home-ink) 26%, transparent);
-  transition:
-    transform var(--te-motion-hover) var(--te-ease-soft),
-    background var(--te-motion-hover),
-    box-shadow var(--te-motion-hover);
-}
-
-.hero-primary-action:hover {
-  transform: translateY(-2px);
-  background: color-mix(in srgb, var(--home-ink) 84%, var(--home-accent));
-  box-shadow: 0 18px 38px color-mix(in srgb, var(--home-ink) 32%, transparent);
-}
-
-.hero-primary-action:active {
-  transform: scale(var(--te-motion-press-scale));
 }
 
 .hero-ghost-action {

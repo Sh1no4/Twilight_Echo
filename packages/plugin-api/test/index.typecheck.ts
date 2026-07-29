@@ -5,6 +5,7 @@ import type {
   TwilightMediaProviderRegistration,
   TwilightPluginExtensionContribution,
   TwilightStructuredThemeV2,
+  TwilightStructuredThemeV3,
   TwilightThemeContribution,
   TwilightUiContribution,
   TwilightUiContributionKind
@@ -52,6 +53,23 @@ const themeContribution: TwilightThemeContribution = {
   id: 'mode-theme',
   name: 'Mode Theme',
   structured: structuredThemeV2
+}
+
+const structuredThemeV3: TwilightStructuredThemeV3 = {
+  schemaVersion: 3,
+  variants: {},
+  layout: {
+    desktop: {
+      columns: ['standard', 'fill'],
+      rows: ['auto', 'fill', 'auto'],
+      areas: [
+        ['titleBar', 'titleBar'],
+        ['navigation', 'content'],
+        ['navigation', 'playerBar']
+      ]
+    },
+    navigation: 'persistent'
+  }
 }
 
 const playbackUrlHealth: TwilightMediaProviderMethodHealth = {
@@ -103,6 +121,7 @@ const providerTrackWithBpm: Track = {
 
 void extensionContribution
 void themeContribution
+void structuredThemeV3
 void TWILIGHT_PLUGIN_API_VERSION
 void providerRegistration
 void providerTrackWithBpm

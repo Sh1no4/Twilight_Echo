@@ -109,11 +109,11 @@ test('desktop lyrics window replays cached track and time on creation', () => {
   assert.match(desktopLyricsSource, /function sendDesktopLyricsSnapshot\(\): void/)
   assert.match(
     desktopLyricsSource,
-    /runtime\.desktopLyricsWindow\.webContents\.send\('desktopLyrics:updateTrack', runtime\.latestDesktopLyricsTrack\)/
+    /runtime\.desktopLyricsWindow\.webContents\.send\(\s*'desktopLyrics:updateTrack',\s*runtime\.latestDesktopLyricsTrack\s*\)/
   )
   assert.match(
     desktopLyricsSource,
-    /runtime\.desktopLyricsWindow\.webContents\.send\('desktopLyrics:updateTime', runtime\.latestDesktopLyricsTime\)/
+    /runtime\.desktopLyricsWindow\.webContents\.send\(\s*'desktopLyrics:updateTime',\s*runtime\.latestDesktopLyricsTime\s*\)/
   )
   assert.match(desktopLyricsSource, /runtime\.latestDesktopLyricsTrack = data/)
   assert.match(desktopLyricsSource, /Number\.isFinite\(time\)/)

@@ -1,4 +1,4 @@
-export const TWILIGHT_PLUGIN_API_VERSION = 2 as const
+export const TWILIGHT_PLUGIN_API_VERSION = 3 as const
 export const TAE_DSP_PLUGIN_ABI_VERSION = 1 as const
 export const TAE_DSP_PLUGIN_ABI_VERSION_V2 = 2 as const
 
@@ -618,7 +618,42 @@ export interface TwilightStructuredThemeV2 extends Omit<
   modes?: TwilightThemeModesV2
 }
 
-export type TwilightStructuredTheme = TwilightStructuredThemeV1 | TwilightStructuredThemeV2
+export type TwilightThemeShellSlot = 'titleBar' | 'navigation' | 'content' | 'playerBar'
+export type TwilightThemeShellTrack =
+  | 'auto'
+  | 'content'
+  | 'narrow'
+  | 'standard'
+  | 'wide'
+  | 'fill'
+  | 'double'
+export type TwilightThemeShellNavigation = 'toggle' | 'persistent' | 'hidden'
+
+export interface TwilightThemeShellGrid {
+  columns: TwilightThemeShellTrack[]
+  rows: TwilightThemeShellTrack[]
+  areas: Array<Array<TwilightThemeShellSlot | '.'>>
+}
+
+export interface TwilightThemeShellLayout {
+  desktop: TwilightThemeShellGrid
+  compact?: TwilightThemeShellGrid
+  navigation?: TwilightThemeShellNavigation
+}
+
+export interface TwilightStructuredThemeV3 extends Omit<
+  TwilightStructuredThemeV2,
+  'schemaVersion'
+> {
+  schemaVersion: 3
+  /** Host-owned shell grid. It can rearrange components but cannot inject DOM or script. */
+  layout?: TwilightThemeShellLayout
+}
+
+export type TwilightStructuredTheme =
+  | TwilightStructuredThemeV1
+  | TwilightStructuredThemeV2
+  | TwilightStructuredThemeV3
 
 export interface TwilightThemesApi {
   /** @deprecated Themes must be declared in plugin.json contributes.themes. This call rejects. */

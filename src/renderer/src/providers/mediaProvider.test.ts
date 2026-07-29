@@ -3,9 +3,10 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { reactive } from 'vue'
 
-const { MediaProviderRegistry, getProviderLocalId, getTrackProviderId, toProviderIpcArgs } = (await import(
-  new URL('./mediaProvider.ts', import.meta.url).href
-)) as typeof import('./mediaProvider')
+const { MediaProviderRegistry, getProviderLocalId, getTrackProviderId, toProviderIpcArgs } =
+  (await import(
+    new URL('./mediaProvider.ts', import.meta.url).href
+  )) as typeof import('./mediaProvider')
 
 const { getNcmSongId } = (await import(
   new URL('./ncmTrack.ts', import.meta.url).href
@@ -79,6 +80,56 @@ test('resolveLyricsAcrossProviders fans out to NCM for local tracks', async () =
   assert.equal(ncmSearchCalls, 1)
   assert.equal(ncmLyricCalls, 1)
   assert.equal(result.lyrics, '[00:01.00]Provider lyric')
+  assert.equal(result.translatedLyrics, '[00:01.00]翻译')
+})
+
+test('local lyric matching tolerates featured-artist title and artist formatting', async () => {
+  const registry = new MediaProviderRegistry()
+  let matchedId = ''
+  registry.register({
+    id: 'ncm',
+    name: 'NetEase',
+    source: 'plugin',
+    capabilities: ['search', 'lyrics'],
+    searchSongs: async () => ({
+      total: 1,
+      items: [
+        {
+          id: 'ncm:hyperglyph',
+          title: 'HyperGlyph-生命流',
+          artist: 'TSAR',
+          album: '明日方舟',
+          filePath: 'ncm:hyperglyph',
+          fileName: 'HyperGlyph-生命流',
+          duration: 166,
+          size: 0,
+          cover: null,
+          lyrics: null,
+          source: 'ncm'
+        }
+      ]
+    }),
+    getLyrics: async (track) => {
+      matchedId = track.id
+      return { lyrics: '[00:01.00]Provider lyric', translatedLyrics: '[00:01.00]翻译' }
+    }
+  })
+
+  const result = await registry.resolveLyricsAcrossProviders({
+    id: 'local:hyperglyph',
+    title: 'HyperGlyph-生命流 (feat. 兔子ST)',
+    artist: 'TSAR/兔子ST',
+    album: '明日方舟',
+    filePath: 'D:\\Music\\HyperGlyph.flac',
+    fileName: 'HyperGlyph.flac',
+    duration: 166,
+    size: 1,
+    cover: null,
+    lyrics: '[00:01.00]Local lyric',
+    source: 'local'
+  })
+
+  assert.equal(matchedId, 'ncm:hyperglyph')
   assert.equal(result.translatedLyrics, '[00:01.00]翻译')
 })
 
@@ -247,7 +298,10 @@ test('registry updates provider health without replacing method handlers', async
 
   assert.equal(updated, true)
   assert.equal(registry.get('ncm')?.health?.available, false)
-  assert.equal(registry.get('ncm')?.health?.methodStats?.getPlaybackUrl?.lastError, 'stream expired')
+  assert.equal(
+    registry.get('ncm')?.health?.methodStats?.getPlaybackUrl?.lastError,
+    'stream expired'
+  )
   assert.equal(
     await registry.get('ncm')?.getPlaybackUrl?.({
       id: 'ncm:1',

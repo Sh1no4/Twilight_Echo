@@ -39,17 +39,18 @@ test('init creates provider, ui-tool, and theme manifests', async () => {
     assert.equal(manifest.id, `com.example.${type}`)
     if (type === 'theme') {
       assert.equal(manifest.main, undefined)
-      assert.equal(manifest.apiVersion, 2)
+      assert.equal(manifest.apiVersion, 3)
       assert.equal(await exists(path.join(target, 'theme.css')), true)
       assert.equal(await exists(path.join(target, 'src', 'index.mts')), false)
       assert.equal(Array.isArray(manifest.contributes?.themes), true)
-      assert.equal(manifest.contributes.themes[0].structured.schemaVersion, 2)
+      assert.equal(manifest.contributes.themes[0].structured.schemaVersion, 3)
       assert.equal(manifest.contributes.themes[0].structured.modes.player.layout, 'split')
+      assert.equal(manifest.contributes.themes[0].structured.layout.navigation, 'persistent')
     }
   }
 })
 
-test('tooling gates structured theme v2 on plugin API v2', () => {
+test('tooling gates structured theme v2 and v3 on their matching plugin API versions', () => {
   const manifest = {
     id: 'com.example.mode-theme',
     name: 'Mode Theme',
@@ -78,7 +79,33 @@ test('tooling gates structured theme v2 on plugin API v2', () => {
 
   assert.throws(() => validatePluginManifest(manifest), /requires plugin apiVersion 2/)
   assert.equal(validatePluginManifest({ ...manifest, apiVersion: 2 }).apiVersion, 2)
-  assert.throws(() => validatePluginManifest({ ...manifest, apiVersion: 3 }), /supported version 2/)
+  assert.equal(validatePluginManifest({ ...manifest, apiVersion: 3 }).apiVersion, 3)
+  assert.throws(
+    () =>
+      validatePluginManifest({
+        ...manifest,
+        apiVersion: 2,
+        contributes: {
+          themes: [
+            {
+              ...manifest.contributes.themes[0],
+              structured: {
+                schemaVersion: 3,
+                variants: {},
+                layout: {
+                  desktop: {
+                    columns: ['fill'],
+                    rows: ['auto', 'fill'],
+                    areas: [['titleBar'], ['content']]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }),
+    /requires plugin apiVersion 3/
+  )
 })
 
 test('pack creates a tep for declarative theme plugins without a JS build', async () => {

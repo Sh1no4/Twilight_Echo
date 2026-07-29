@@ -9,7 +9,7 @@
   "engines": {
     "twilightEcho": ">=0.20.0"
   },
-  "apiVersion": 2,
+  "apiVersion": 3,
   "permissions": [],
   "contributes": {
     "themes": [
@@ -22,7 +22,7 @@
           "--te-success-500": "#16a34a"
         },
         "structured": {
-          "schemaVersion": 2,
+          "schemaVersion": 3,
           "variants": {
             "pureWhite": {
               "tokens": {
@@ -53,6 +53,23 @@
             "visibility": {
               "playerWaveform": false
             }
+          },
+          "layout": {
+            "desktop": {
+              "columns": ["standard", "fill"],
+              "rows": ["auto", "fill", "auto"],
+              "areas": [
+                ["titleBar", "titleBar"],
+                ["navigation", "content"],
+                ["navigation", "playerBar"]
+              ]
+            },
+            "compact": {
+              "columns": ["fill"],
+              "rows": ["auto", "fill", "auto"],
+              "areas": [["titleBar"], ["content"], ["playerBar"]]
+            },
+            "navigation": "persistent"
           }
         },
         "stylesheet": "theme.css"

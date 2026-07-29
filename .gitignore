@@ -86,6 +86,7 @@ $RECYCLE.BIN/
 CLAUDE.md
 
 # AI agent session state / local tool state
+.workbuddy/
 .omo/
 .superpowers/
 .worktrees/

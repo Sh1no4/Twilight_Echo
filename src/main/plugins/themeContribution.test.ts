@@ -96,3 +96,53 @@ test('schema v1 modes are ignored with a compatibility note', () => {
     'structured schemaVersion 1 不支持 modes，已忽略该字段'
   ])
 })
+
+test('structured theme v3 accepts a declarative host shell layout only for plugin API v3', () => {
+  const raw = {
+    id: 'shell-theme',
+    name: 'Shell Theme',
+    structured: {
+      schemaVersion: 3,
+      variants: {},
+      layout: {
+        desktop: {
+          columns: ['standard', 'fill'],
+          rows: ['auto', 'fill', 'auto'],
+          areas: [
+            ['titleBar', 'titleBar'],
+            ['navigation', 'content'],
+            ['navigation', 'playerBar']
+          ]
+        },
+        navigation: 'persistent'
+      }
+    }
+  }
+
+  assert.throws(
+    () =>
+      normalizeThemeContribution({
+        pluginApiVersion: 2,
+        pluginTypes: ['theme'],
+        source: 'manifest theme',
+        resolveStylesheet: (stylesheet) => stylesheet,
+        raw
+      }),
+    /apiVersion 3/
+  )
+
+  const contribution = normalizeThemeContribution({
+    pluginApiVersion: 3,
+    pluginTypes: ['theme'],
+    source: 'manifest theme',
+    resolveStylesheet: (stylesheet) => stylesheet,
+    raw
+  })
+  assert.equal(contribution.structured?.schemaVersion, 3)
+  assert.equal(
+    contribution.structured?.schemaVersion === 3
+      ? contribution.structured.layout?.navigation
+      : undefined,
+    'persistent'
+  )
+})

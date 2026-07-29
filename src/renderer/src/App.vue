@@ -37,13 +37,19 @@ import { useSettingsStore } from './stores/useSettingsStore'
 import { useThemeStore } from './stores/useThemeStore'
 import { setupPluginThemeRuntime } from './extensions/themeRuntime'
 import { useExtensionRegistry } from './extensions/registry'
-import { syncPluginProviders } from './providers'
+import { syncPluginProviders, useMediaProviders } from './providers'
 import { useAppNavigation } from './app/useAppNavigation'
 import { createPlaybackSessionPersistence } from './app/usePlaybackSessionPersistence'
 import { useSideMenuClearance } from './app/useSideMenuClearance'
 import { useMiniPlayerSync } from './app/useMiniPlayerSync'
+import { useFavoriteButton } from './components/player-bar/useFavoriteButton'
 import { useMotionPreference } from './app/useMotionPreference'
 import { useAppNoticeStore } from './stores/useAppNoticeStore'
+import { getTrackSource } from './utils/logicalTrackModel'
+import {
+  getPrimaryStreamingArtistName,
+  type StreamingArtistNavigationRequest
+} from './utils/streamingArtistResolution'
 import AppNoticeHost from './components/AppNoticeHost.vue'
 
 type TitleSurface = 'default' | 'settings' | 'streaming'
@@ -106,10 +112,26 @@ const togglePluginPage = navigation.createTogglePluginHandler()
 
 const coverOrigin = ref({ x: 48, y: window.innerHeight - 36, w: 48, h: 48 })
 const streamingInitialTab = ref<StreamingInitialTab | null>(null)
+const streamingArtistRequest = ref<StreamingArtistNavigationRequest | null>(null)
+let streamingArtistRequestKey = 0
+// Keep StreamingPage mounted for the rest of the session so leaving/re-entering
+// restores the last tab and detail. App restart remounts and returns to home.
+const streamingPageMounted = ref(false)
+watch(
+  showStreamingPage,
+  (visible) => {
+    if (visible) streamingPageMounted.value = true
+  },
+  { immediate: true }
+)
 const showOnboarding = ref(false)
 
-function applyExternalNavigation(target: 'local' | 'streaming'): void {
+function applyExternalNavigation(target: 'local' | 'streaming' | 'settings'): void {
   showOnboarding.value = false
+  if (target === 'settings') {
+    openSettingsPage('general')
+    return
+  }
   streamingInitialTab.value = target === 'streaming' ? 'home' : null
   if (target === 'streaming') {
     enterStreamingMode()
@@ -144,7 +166,10 @@ function handleCoverClick(rect: { x: number; y: number; w: number; h: number }):
 }
 
 function enterStreamingLogin(): void {
-  streamingInitialTab.value = 'library'
+  // First entry can land on library; later re-entries keep the mounted page state.
+  if (!streamingPageMounted.value) {
+    streamingInitialTab.value = 'library'
+  }
   enterStreamingMode()
   if (!ncmLoggedIn.value) {
     openLoginPage('ncm')
@@ -197,6 +222,7 @@ function handleLoginSuccess(): void {
   closeLoginPage()
 }
 
+const musicStore = useMusicStore()
 const {
   loadLibrary,
   loadPlaylists,
@@ -206,7 +232,7 @@ const {
   startStartupLibraryScan,
   applyLibraryScanProgress,
   applyLibraryScanStatus
-} = useMusicStore()
+} = musicStore
 const { checkLogin, isLoggedIn: ncmLoggedIn } = useNcmStore()
 const {
   currentTrack,
@@ -228,12 +254,51 @@ const {
   seek,
   setVolume,
   cyclePlayMode,
+  setPlayMode,
   restorePlaybackSession,
   createPlaybackSession,
   rehydrateCurrentTrackFromLibrary,
   visualizerActive
 } = usePlayerStore()
 const { setAdaptiveMedia } = useThemeStore()
+const mediaProviders = useMediaProviders()
+
+function handlePlayerBarArtistClick(): void {
+  const track = currentTrack.value
+  const trackArtist = track?.artist.trim() ?? ''
+  if (!track || !trackArtist) return
+
+  const source = getTrackSource(track)
+  if (source === 'local') {
+    streamingArtistRequest.value = null
+    returnToLocalMode()
+    onSelectView('artists', `artist:${trackArtist}`)
+    return
+  }
+
+  const artistName = getPrimaryStreamingArtistName(trackArtist)
+  if (!artistName) return
+  streamingInitialTab.value = 'home'
+  streamingArtistRequest.value = {
+    key: ++streamingArtistRequestKey,
+    providerId: source,
+    artistName
+  }
+  enterStreamingMode()
+}
+
+const { favoriteButtonVisible, favoriteButtonLiked, favoriteButtonLoading, toggleFavorite } =
+  useFavoriteButton({
+    currentTrack,
+    playlists: musicStore.playlists,
+    mediaProviders,
+    addToPlaylist: musicStore.addToPlaylist,
+    removeFromPlaylist: musicStore.removeFromPlaylist,
+    createPlaylist: musicStore.createPlaylist,
+    isFavoriteTrack: musicStore.isFavoriteTrack,
+    addFavoriteTrack: musicStore.addFavoriteTrack,
+    removeFavoriteTrack: musicStore.removeFavoriteTrack
+  })
 
 watch(
   [themeCoverIdentity, coverThemeColor, themeCoverUrl],
@@ -251,6 +316,9 @@ useMiniPlayerSync({
   duration,
   volume,
   playMode,
+  favoriteAvailable: favoriteButtonVisible,
+  favoriteLiked: favoriteButtonLiked,
+  favoriteLoading: favoriteButtonLoading,
   dominantColor,
   queue,
   queueIndex,
@@ -259,7 +327,9 @@ useMiniPlayerSync({
   prev,
   seek,
   setVolume,
-  cyclePlayMode
+  cyclePlayMode,
+  setPlayMode,
+  toggleFavorite
 })
 const { loadSettings, settings, updateSettings } = useSettingsStore()
 useMotionPreference(computed(() => settings.value.motionPreference))
@@ -590,41 +660,46 @@ const titleSurface = computed<TitleSurface>(() => {
 </script>
 
 <template>
-  <TitleBar
-    :glass="showPlayingPage"
-    :streaming="showStreamingPage && !showPlayingPage"
-    :hide-start="showThemeStudioPage"
-    :title-surface="titleSurface"
-    :menu-open="titleMenuOpen"
-    @toggle-menu="toggleMenu"
-    @collapse-menu="collapseMenu"
-    @back="handleTitleBack"
-    @login="handleTitleLogin"
-    @settings="toggleSettingsPage"
-    @plugins="togglePluginPage"
-  />
-  <SideMenu
-    v-if="showLocalSidebar"
-    :open="menuOpen"
-    :active-key="sideMenuActiveKey"
-    :plugin-pages="sidebarPages"
-    :local-items="localSidebarItems"
-    @select-view="onSelectView"
-    @select-plugin-page="onSelectPluginPage"
-    @enter-streaming="enterStreamingLogin"
-    @enter-radio-podcast="enterRadioPodcastMode"
-  />
-  <div
-    class="main-content"
-    :class="{
-      'menu-open': menuOpen && showLocalSidebar,
-      'playing-open': showPlayingPage,
-      'plugin-open': showPluginPage,
-      'dsp-rack-open': showDspRackPage,
-      'radio-podcast-open': showRadioPodcastPage
-    }"
-    :style="{ minHeight: mainContentMinHeight }"
-  >
+  <div class="app-shell">
+    <div class="app-shell-title">
+      <TitleBar
+        :glass="showPlayingPage"
+        :streaming="showStreamingPage && !showPlayingPage"
+        :hide-start="showThemeStudioPage"
+        :title-surface="titleSurface"
+        :menu-open="titleMenuOpen"
+        @toggle-menu="toggleMenu"
+        @collapse-menu="collapseMenu"
+        @back="handleTitleBack"
+        @login="handleTitleLogin"
+        @settings="toggleSettingsPage"
+        @plugins="togglePluginPage"
+      />
+    </div>
+    <div v-if="showLocalSidebar" class="app-shell-navigation">
+      <SideMenu
+        :open="menuOpen"
+        :active-key="sideMenuActiveKey"
+        :plugin-pages="sidebarPages"
+        :local-items="localSidebarItems"
+        @select-view="onSelectView"
+        @select-plugin-page="onSelectPluginPage"
+        @enter-streaming="enterStreamingLogin"
+        @enter-radio-podcast="enterRadioPodcastMode"
+      />
+    </div>
+    <div class="app-shell-content">
+      <div
+        class="main-content"
+        :class="{
+          'menu-open': menuOpen && showLocalSidebar,
+          'playing-open': showPlayingPage,
+          'plugin-open': showPluginPage,
+          'dsp-rack-open': showDspRackPage,
+          'radio-podcast-open': showRadioPodcastPage
+        }"
+        :style="{ minHeight: mainContentMinHeight }"
+      >
     <Transition :name="songlistTransitionName" mode="out-in">
       <LocalDashboard
         v-if="localViewVisible && activeCategory === 'dashboard'"
@@ -652,10 +727,13 @@ const titleSurface = computed<TitleSurface>(() => {
       />
     </Transition>
     <StreamingPage
-      v-if="showStreamingPage"
+      v-if="streamingPageMounted"
+      v-show="showStreamingPage"
+      :active="showStreamingPage"
       :menu-open="streamingMenuOpen"
       :has-player="hasPlayerBar"
       :initial-tab="streamingInitialTab ?? undefined"
+      :artist-navigation-request="streamingArtistRequest"
       @toggle-menu="toggleStreamingMenu"
       @back-to-local="returnToLocalMode"
       @login="handleStreamingLogin"
@@ -704,15 +782,20 @@ const titleSurface = computed<TitleSurface>(() => {
         @back="closePluginPage"
       />
     </Transition>
+      </div>
+    </div>
+    <div class="app-shell-player">
+      <PlayerBar
+        v-if="hasPlayerBar"
+        :glass="showPlayingPage"
+        @click-cover="handleCoverClick"
+        @open-settings="openPlaybackSettings"
+        @open-dsp="openDspSettings"
+        @open-equalizer="openEqualizerPage"
+        @open-artist="handlePlayerBarArtistClick"
+      />
+    </div>
   </div>
-  <PlayerBar
-    v-if="hasPlayerBar"
-    :glass="showPlayingPage"
-    @click-cover="handleCoverClick"
-    @open-settings="openPlaybackSettings"
-    @open-dsp="openDspSettings"
-    @open-equalizer="openEqualizerPage"
-  />
   <Transition name="onboarding-page">
     <OnboardingWizard v-if="showOnboarding" @finish="handleOnboardingFinish" />
   </Transition>
@@ -722,6 +805,110 @@ const titleSurface = computed<TitleSurface>(() => {
 <style>
 body {
   background: transparent;
+}
+
+html[data-te-shell-layout='custom'],
+html[data-te-shell-layout='custom'] body,
+html[data-te-shell-layout='custom'] #app {
+  min-height: 100%;
+  height: 100%;
+}
+
+html[data-te-shell-layout='custom'] .app-shell {
+  display: grid;
+  grid-template-columns: var(--te-shell-template-columns);
+  grid-template-rows: var(--te-shell-template-rows);
+  grid-template-areas: var(--te-shell-template-areas);
+  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
+}
+
+html[data-te-shell-layout='custom'] .app-shell-title {
+  grid-area: titleBar;
+  min-width: 0;
+  min-height: 0;
+}
+
+html[data-te-shell-layout='custom'] .app-shell-navigation {
+  grid-area: navigation;
+  display: var(--te-shell-navigation-display);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+html[data-te-shell-layout='custom'] .app-shell-content {
+  grid-area: content;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+html[data-te-shell-layout='custom'] .app-shell-player {
+  grid-area: playerBar;
+  display: var(--te-shell-player-bar-display);
+  min-width: 0;
+  min-height: 0;
+}
+
+html[data-te-shell-layout='custom'] .app-shell-title .title-bar {
+  position: relative !important;
+  inset: auto !important;
+  width: 100% !important;
+  min-height: 32px;
+  height: 100%;
+}
+
+html[data-te-shell-layout='custom'] .app-shell-navigation .side-menu {
+  position: relative !important;
+  inset: auto !important;
+  width: 100% !important;
+  min-width: 0;
+  height: 100% !important;
+  border-radius: 0;
+}
+
+html[data-te-shell-layout='custom'][data-te-shell-navigation='persistent']
+  .app-shell-navigation
+  .side-menu {
+  transform: none !important;
+}
+
+html[data-te-shell-layout='custom'][data-te-shell-navigation='hidden'] .app-shell-navigation {
+  display: none;
+}
+
+html[data-te-shell-layout='custom'] .app-shell-content .main-content,
+html[data-te-shell-layout='custom'] .app-shell-content .main-content.menu-open {
+  min-height: 0 !important;
+  height: 100%;
+  padding-left: 0;
+}
+
+html[data-te-shell-layout='custom'] .app-shell-player .player-bar-shell,
+html[data-te-shell-layout='custom'] .app-shell-player .player-bar-shell.menu-open {
+  position: relative !important;
+  inset: auto !important;
+  width: 100% !important;
+  height: 100%;
+  pointer-events: auto;
+}
+
+@media (max-width: 760px) {
+  html[data-te-shell-layout='custom'] .app-shell {
+    grid-template-columns: var(--te-shell-compact-template-columns);
+    grid-template-rows: var(--te-shell-compact-template-rows);
+    grid-template-areas: var(--te-shell-compact-template-areas);
+  }
+
+  html[data-te-shell-layout='custom'] .app-shell-navigation {
+    display: var(--te-shell-compact-navigation-display);
+  }
+
+  html[data-te-shell-layout='custom'] .app-shell-player {
+    display: var(--te-shell-compact-player-bar-display);
+  }
 }
 
 .main-content {

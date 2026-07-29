@@ -1092,14 +1092,43 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 }
 
 .player-artist {
+  display: block;
+  max-width: 100%;
+  margin: 2px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
   font-family: var(--te-font-rounded);
   font-size: 12px;
   font-weight: 700;
+  line-height: 1.35;
   color: #999;
-  margin-top: 2px;
+  text-align: inherit;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: pointer;
+  transition: color 0.16s ease;
+}
+
+.player-artist:not(:disabled):hover,
+.player-artist:not(:disabled):focus-visible {
+  color: var(--accent-color, var(--te-primary-500));
+}
+
+.player-artist:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-color, var(--te-primary-500)) 52%, transparent);
+  outline-offset: 2px;
+}
+
+.player-artist:disabled {
+  cursor: default;
+}
+
+.player-bar-glass .player-artist:not(:disabled):hover,
+.player-bar-glass .player-artist:not(:disabled):focus-visible {
+  color: #fff;
 }
 
 .player-stream-now-playing {

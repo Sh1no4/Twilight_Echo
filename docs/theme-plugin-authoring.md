@@ -1,8 +1,8 @@
 # Twilight Echo Theme Plugin Authoring
 
 Theme plugins are declarative packages. A pure theme plugin has no `main` entry, executes no script,
-and contributes one or more themes through `plugin.json`. Plugin API v2 adds host-owned layout,
-presentation, and visibility modes while keeping every API v1 theme valid.
+and contributes one or more themes through `plugin.json`. Plugin API v3 adds a host-owned shell grid
+that can rearrange the application layout while keeping every API v1 and v2 theme valid.
 
 ## Contract Files
 
@@ -26,7 +26,7 @@ the committed catalog no longer matches the host registry.
   "license": "Apache-2.0",
   "type": ["theme"],
   "engines": { "twilightEcho": ">=0.20.0" },
-  "apiVersion": 2,
+  "apiVersion": 3,
   "permissions": [],
   "contributes": {
     "themes": [
@@ -35,7 +35,7 @@ the committed catalog no longer matches the host registry.
         "name": "Nocturne",
         "description": "Compact glass presentation",
         "structured": {
-          "schemaVersion": 2,
+          "schemaVersion": 3,
           "variants": {
             "pureWhite": {
               "tokens": {
@@ -61,6 +61,23 @@ the committed catalog no longer matches the host registry.
           "windowDefaults": {
             "miniPlayer": { "surfaceColor": "#07090a", "cornerRadius": 18 },
             "desktopLyrics": { "highlightColor": "#5eead4", "shadowBlur": 12 }
+          },
+          "layout": {
+            "desktop": {
+              "columns": ["standard", "fill"],
+              "rows": ["auto", "fill", "auto"],
+              "areas": [
+                ["titleBar", "titleBar"],
+                ["navigation", "content"],
+                ["navigation", "playerBar"]
+              ]
+            },
+            "compact": {
+              "columns": ["fill"],
+              "rows": ["auto", "fill", "auto"],
+              "areas": [["titleBar"], ["content"], ["playerBar"]]
+            },
+            "navigation": "persistent"
           }
         },
         "stylesheet": "theme.css"
@@ -84,9 +101,10 @@ The selected plugin theme resolves in this order:
 4. Host-derived values required by structured v2 modes.
 5. The optional packaged stylesheet.
 
-Only registered token IDs become CSS variables. Only registered modes become `data-te-*`
-attributes. Unknown mode IDs or unsupported values are ignored, written once to the owning plugin
-log, and shown as compatibility notes in Theme Studio.
+Only registered token IDs become CSS variables. Only registered modes and validated shell layouts
+become `data-te-*` attributes and host-generated CSS Grid values. Unknown mode IDs, unsupported
+values, or invalid layouts are ignored, written once to the owning plugin log, and shown as
+compatibility notes in Theme Studio.
 
 ## Mode Reference
 
@@ -106,6 +124,23 @@ Visibility accepts only the cataloged boolean slots: `playerAlbumArtist`, `playe
 `equalizerGrid`, `equalizerFrequencyGuides`, `equalizerSpectrum`, `previousButton`, `nextButton`, and
 `miniPlayerArtwork`.
 
+## Shell Layout (API v3)
+
+`structured.layout` is the supported way for a theme to reconstruct the main-window layout. It
+places host-rendered `titleBar`, `navigation`, `content`, and `playerBar` regions in a CSS Grid;
+the `titleBar` and `content` regions are required. A region may be omitted by using `.` in every
+grid cell, which hides that host region without creating an implicit grid area. Grid areas for each
+region must be rectangular.
+
+The only allowed track names are `auto`, `content`, `narrow`, `standard`, `wide`, `fill`, and
+`double`. These map to host-owned CSS values, so manifests cannot inject arbitrary CSS. `desktop`
+is required; `compact` replaces it below 760px. `navigation` is `toggle` (default), `persistent`,
+or `hidden`.
+
+The grid repositions existing host components only. It does not change their data contract, mount
+untrusted Vue components, or permit HTML, script, Electron, Node, playback, DSP, or arbitrary DOM
+access. Theme stylesheets remain a visual compatibility layer, not the supported layout API.
+
 ## Component Preview
 
 Theme Studio previews plugin themes on the real dashboard, player, equalizer, navigation, title bar,
@@ -119,19 +154,22 @@ light/dark selector and the three preview surfaces to review tokens and modes be
 | 1              | omitted or 1      | Supported without behavior changes                           |
 | 2              | omitted or 1      | Supported compatibility path                                 |
 | 2              | 2                 | Current token + mode + window contract                       |
+| 3              | 3                 | Current token, mode, window, and host shell-layout contract  |
 | 1              | 2                 | Rejected because modes are not added retroactively to API v1 |
+| 1 or 2         | 3                 | Rejected because shell layouts require API v3                |
 | greater than 2 | any               | Rejected by the current host and tooling                     |
 
 Disabling or uninstalling the selected plugin always reconciles the active theme back to Twilight
-Default. Invalid tokens, unknown modes, and unavailable window fields are discarded independently;
-they do not grant arbitrary DOM, Electron, Node, playback, DSP, or queue access.
+Default. Invalid tokens, unknown modes, invalid shell layouts, and unavailable window fields are
+discarded independently; they do not grant arbitrary DOM, Electron, Node, playback, DSP, or queue
+access.
 
 ## V1 to V2 Migration
 
-1. Change `plugin.json` `apiVersion` from `1` to `2`.
-2. Change `structured.schemaVersion` from `1` to `2`.
+1. Change `plugin.json` `apiVersion` from `1` to `2` for modes, or to `3` for shell layouts.
+2. Change `structured.schemaVersion` from `1` to `2` for modes, or to `3` for shell layouts.
 3. Keep existing `variables`, `variants`, `windowDefaults`, and `stylesheet` fields unchanged.
-4. Add only modes listed in `theme-contract.json`.
+4. Add only modes, slots, and tracks listed in `theme-contract.json`.
 5. Move stable colors, lengths, fonts, and material values from raw CSS into semantic tokens.
 6. Keep CSS only for presentation that has no public token or mode, and do not depend on internal
    selectors remaining stable.
@@ -145,5 +183,6 @@ they do not grant arbitrary DOM, Electron, Node, playback, DSP, or queue access.
 | Packaged `stylesheet`                        | Supported advanced path; internal selector compatibility is not promised |
 | `structured` schemaVersion 1                 | Supported for API v1 and v2                                              |
 | `structured` schemaVersion 2                 | Current API v2 theme contract                                            |
+| `structured` schemaVersion 3                 | Current API v3 theme contract; adds host-owned shell layout              |
 | `twilight.themes.register()`                 | Deprecated source signature; runtime registration rejects                |
-| Renderer scripts, remote code, arbitrary DOM | Never supported                                                          |
+| Renderer scripts, remote code, arbitrary DOM | Never supported; API v3 shell layout is declarative host composition     |

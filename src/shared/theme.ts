@@ -1,4 +1,24 @@
 import type { VersionedDataEnvelope } from './versionedPersistence.ts'
+import {
+  normalizeThemeShellLayout,
+  THEME_SHELL_MANAGED_DATA_ATTRIBUTES,
+  type ThemeShellLayout
+} from './themeLayout.ts'
+
+export {
+  findInvalidThemeShellLayoutFields,
+  themeShellLayoutToCssVariables,
+  themeShellLayoutToDataAttributes,
+  THEME_SHELL_MANAGED_DATA_ATTRIBUTES,
+  THEME_SHELL_SLOT_IDS,
+  THEME_SHELL_TRACK_IDS,
+  type ThemeShellGrid,
+  type ThemeShellGridArea,
+  type ThemeShellLayout,
+  type ThemeShellNavigationMode,
+  type ThemeShellSlotId,
+  type ThemeShellTrackId
+} from './themeLayout.ts'
 
 export const TWILIGHT_DEFAULT_THEME_ID = 'builtin:twilight-echo-default'
 export const BUILT_IN_THEME_PRESET_IDS = [
@@ -11,7 +31,8 @@ export const BUILT_IN_THEME_PRESET_IDS = [
   'builtin:zen-minimal'
 ] as const
 export const THEME_DOCUMENT_SCHEMA_VERSION = 1
-export const STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION = 2
+export const STRUCTURED_PLUGIN_THEME_MODE_SCHEMA_VERSION = 2
+export const STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION = 3
 export const THEME_PROFILE_SCHEMA_VERSION = 2
 export const THEME_ARCHIVE_SCHEMA_VERSION = 2
 export const THEME_LIBRARY_SCHEMA_VERSION = 1
@@ -362,7 +383,15 @@ export interface StructuredPluginThemeV2 {
   windowDefaults?: ThemeWindowDefaults
 }
 
-export type StructuredPluginTheme = StructuredPluginThemeV1 | StructuredPluginThemeV2
+export interface StructuredPluginThemeV3 extends Omit<StructuredPluginThemeV2, 'schemaVersion'> {
+  schemaVersion: 3
+  layout?: ThemeShellLayout
+}
+
+export type StructuredPluginTheme =
+  | StructuredPluginThemeV1
+  | StructuredPluginThemeV2
+  | StructuredPluginThemeV3
 
 const lightFont =
   "'Inter', 'Plus Jakarta Sans', 'MiSans Full', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
@@ -4114,6 +4143,7 @@ export function normalizeStructuredPluginTheme(value: unknown): StructuredPlugin
   if (
     !isRecord(value) ||
     (value.schemaVersion !== THEME_DOCUMENT_SCHEMA_VERSION &&
+      value.schemaVersion !== STRUCTURED_PLUGIN_THEME_MODE_SCHEMA_VERSION &&
       value.schemaVersion !== STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION)
   ) {
     return undefined
@@ -4128,12 +4158,28 @@ export function normalizeStructuredPluginTheme(value: unknown): StructuredPlugin
   }
   const windowDefaults = normalizeWindowDefaults(value.windowDefaults)
   const modes =
+    schemaVersion === STRUCTURED_PLUGIN_THEME_MODE_SCHEMA_VERSION ||
     schemaVersion === STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION
       ? normalizeThemeModes(value.modes)
       : undefined
   const hasDeclaredModes =
-    schemaVersion === STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION && isRecord(value.modes)
-  if (Object.keys(variants).length === 0 && !windowDefaults && !hasDeclaredModes) return undefined
+    (schemaVersion === STRUCTURED_PLUGIN_THEME_MODE_SCHEMA_VERSION ||
+      schemaVersion === STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION) &&
+    isRecord(value.modes)
+  const layout =
+    schemaVersion === STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION
+      ? normalizeThemeShellLayout(value.layout)
+      : undefined
+  const hasDeclaredLayout =
+    schemaVersion === STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION && value.layout !== undefined
+  if (
+    Object.keys(variants).length === 0 &&
+    !windowDefaults &&
+    !hasDeclaredModes &&
+    (!hasDeclaredLayout || !layout)
+  ) {
+    return undefined
+  }
   if (schemaVersion === THEME_DOCUMENT_SCHEMA_VERSION) {
     return {
       schemaVersion: THEME_DOCUMENT_SCHEMA_VERSION,
@@ -4141,10 +4187,19 @@ export function normalizeStructuredPluginTheme(value: unknown): StructuredPlugin
       ...(windowDefaults ? { windowDefaults } : {})
     }
   }
+  if (schemaVersion === STRUCTURED_PLUGIN_THEME_MODE_SCHEMA_VERSION) {
+    return {
+      schemaVersion: STRUCTURED_PLUGIN_THEME_MODE_SCHEMA_VERSION,
+      variants,
+      ...(modes && Object.keys(modes).length > 0 ? { modes } : {}),
+      ...(windowDefaults ? { windowDefaults } : {})
+    }
+  }
   return {
     schemaVersion: STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION,
     variants,
     ...(modes && Object.keys(modes).length > 0 ? { modes } : {}),
+    ...(layout ? { layout } : {}),
     ...(windowDefaults ? { windowDefaults } : {})
   }
 }
@@ -4439,7 +4494,8 @@ function visibilityDataAttribute(id: ThemeVisibilitySlotId): `data-te-${string}`
 
 export const THEME_MANAGED_DATA_ATTRIBUTES: readonly `data-te-${string}`[] = Object.freeze([
   ...THEME_MODE_DEFINITIONS.map((definition) => definition.dataAttribute),
-  ...THEME_VISIBILITY_SLOT_IDS.map(visibilityDataAttribute)
+  ...THEME_VISIBILITY_SLOT_IDS.map(visibilityDataAttribute),
+  ...THEME_SHELL_MANAGED_DATA_ATTRIBUTES
 ])
 
 export function themeTokensToCssVariables(tokens: Record<string, string>): Record<string, string> {

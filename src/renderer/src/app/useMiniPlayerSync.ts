@@ -11,6 +11,9 @@ interface MiniPlayerStateSource {
   duration: number
   volume: number
   playMode: PlayMode
+  favoriteAvailable: boolean
+  favoriteLiked: boolean
+  favoriteLoading: boolean
   dominantColor: string
   queueIndex: number
   queueLength: number
@@ -24,6 +27,9 @@ interface MiniPlayerSyncOptions {
   duration: Ref<number>
   volume: Ref<number>
   playMode: Ref<PlayMode>
+  favoriteAvailable: Ref<boolean>
+  favoriteLiked: Ref<boolean>
+  favoriteLoading: Ref<boolean>
   dominantColor: Ref<string>
   queueIndex: Ref<number>
   queue: Ref<Track[]>
@@ -33,6 +39,8 @@ interface MiniPlayerSyncOptions {
   seek: (time: number) => void
   setVolume: (volume: number) => void
   cyclePlayMode: () => void
+  setPlayMode: (mode: PlayMode) => void
+  toggleFavorite: () => Promise<void>
 }
 
 export function buildMiniPlayerStateSnapshot(
@@ -56,6 +64,9 @@ export function buildMiniPlayerStateSnapshot(
     duration: source.duration,
     volume: source.volume,
     playMode: source.playMode,
+    favoriteAvailable: source.favoriteAvailable,
+    favoriteLiked: source.favoriteLiked,
+    favoriteLoading: source.favoriteLoading,
     dominantColor: source.dominantColor,
     queueIndex: source.queueIndex,
     queueLength: source.queueLength
@@ -73,6 +84,9 @@ export function useMiniPlayerSync(options: MiniPlayerSyncOptions): void {
         duration: options.duration.value,
         volume: options.volume.value,
         playMode: options.playMode.value,
+        favoriteAvailable: options.favoriteAvailable.value,
+        favoriteLiked: options.favoriteLiked.value,
+        favoriteLoading: options.favoriteLoading.value,
         dominantColor: options.dominantColor.value,
         queueIndex: options.queueIndex.value,
         queueLength: options.queue.value.length
@@ -102,6 +116,14 @@ export function useMiniPlayerSync(options: MiniPlayerSyncOptions): void {
       case 'cycle-play-mode':
         options.cyclePlayMode()
         break
+      case 'set-play-mode':
+        options.setPlayMode(command.value)
+        break
+      case 'toggle-favorite':
+        void options.toggleFavorite().catch((error) => {
+          console.error('[tray] Failed to toggle favorite:', error)
+        })
+        break
     }
   }
 
@@ -119,6 +141,9 @@ export function useMiniPlayerSync(options: MiniPlayerSyncOptions): void {
       options.duration,
       options.volume,
       options.playMode,
+      options.favoriteAvailable,
+      options.favoriteLiked,
+      options.favoriteLoading,
       options.dominantColor,
       options.queueIndex,
       () => options.queue.value.length

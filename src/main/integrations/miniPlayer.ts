@@ -395,6 +395,7 @@ export function setupMiniPlayerIpc(): void {
     const state = normalizeMiniPlayerStateSnapshot(rawState)
     runtime.latestMiniPlayerState = state
     sendMiniPlayerState(state)
+    runtime.refreshTrayMenu?.()
     const trayPlayerWindow = runtime.trayPlayerWindow
     if (
       trayPlayerWindow &&

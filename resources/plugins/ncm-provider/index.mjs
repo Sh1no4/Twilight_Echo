@@ -161,7 +161,8 @@ function describeApiError(code, data) {
     return `网易云登录接口触发高频或风控限制：${rawMessage}。请等待几分钟后再试。`
   }
   if (code === 301) return '网易云登录态无效或接口缓存了未登录结果，请重新登录或等待 2 分钟后重试。'
-  if (code === 400) return normalizeApiMessage(data, '网易云登录参数无效，请检查账号、密码或验证码。')
+  if (code === 400)
+    return normalizeApiMessage(data, '网易云登录参数无效，请检查账号、密码或验证码。')
   if (code === 502) return '网易云二维码状态检查失败，已尝试无 Cookie 模式，请刷新二维码后重试。'
   if (code === 503) return '网易云登录接口触发高频/风控限制，请等待几分钟后再试。'
   if (code === 460) return '网易云限制了当前网络环境，请切换到国内网络或稍后重试。'
@@ -176,7 +177,8 @@ function requireNonEmptyString(value, fieldName) {
 }
 
 function normalizeCountryCode(countrycode) {
-  const normalized = typeof countrycode === 'string' && countrycode.trim() ? countrycode.trim() : '86'
+  const normalized =
+    typeof countrycode === 'string' && countrycode.trim() ? countrycode.trim() : '86'
   return /^[0-9]{1,6}$/.test(normalized) ? normalized : '86'
 }
 
@@ -314,7 +316,9 @@ async function persistProviderWriteResults() {
     .catch(() => undefined)
     .then(() => getContext().settings.set(PROVIDER_WRITE_IDEMPOTENCY_SETTINGS_KEY, { records }))
     .catch((error) => {
-      getContext().logger.warn(`Unable to persist provider idempotency records: ${getErrorMessage(error)}`)
+      getContext().logger.warn(
+        `Unable to persist provider idempotency records: ${getErrorMessage(error)}`
+      )
     })
   await providerWritePersistenceTail
 }
@@ -466,8 +470,9 @@ function getSongAudioMeta(song) {
   const sampleRate = Number(source.sr ?? source.sampleRate ?? song.sr ?? song.sampleRate)
   const size = Number(source.size ?? song.size)
   const format =
-    normalizeNcmFormat(source.type ?? source.encodeType ?? source.format ?? song.type ?? song.encodeType) ??
-    undefined
+    normalizeNcmFormat(
+      source.type ?? source.encodeType ?? source.format ?? song.type ?? song.encodeType
+    ) ?? undefined
 
   return {
     format,
@@ -479,7 +484,9 @@ function getSongAudioMeta(song) {
 
 function normalizeTrack(song) {
   const songId = Number(song.id)
-  const artists = Array.isArray(song.ar) ? song.ar.map((artist) => artist?.name).filter(Boolean) : []
+  const artists = Array.isArray(song.ar)
+    ? song.ar.map((artist) => artist?.name).filter(Boolean)
+    : []
   const artist =
     artists.join(' / ') ||
     song.artist ||
@@ -723,7 +730,8 @@ async function fetchUserDetailInfo(userId) {
   try {
     const data = await requestAuthed(`/user/detail?uid=${userId}`)
     return {
-      signature: data.profile?.signature || data.userPoint?.signature || data.data?.profile?.signature || '',
+      signature:
+        data.profile?.signature || data.userPoint?.signature || data.data?.profile?.signature || '',
       follows: data.profile?.follows || 0,
       followeds: data.profile?.followeds || 0
     }
@@ -856,7 +864,9 @@ async function getQrKey() {
 
 async function getQrImage(key) {
   const data = await request(
-    withQrLoginParams(`/login/qr/create?key=${encodeURIComponent(String(key))}&platform=web&qrimg=true`)
+    withQrLoginParams(
+      `/login/qr/create?key=${encodeURIComponent(String(key))}&platform=web&qrimg=true`
+    )
   )
   if (data.code !== 200 || !data.data?.qrimg) return null
   const raw = data.data.qrimg
@@ -929,7 +939,9 @@ async function fetchSongDetailsByIds(ids, label) {
   const chunkSize = 100
   for (let index = 0; index < ids.length; index += chunkSize) {
     const chunk = ids.slice(index, index + chunkSize)
-    songs.push(...(await fetchSongDetailChunk(chunk, `${label} ${index}-${index + chunk.length - 1}`)))
+    songs.push(
+      ...(await fetchSongDetailChunk(chunk, `${label} ${index}-${index + chunk.length - 1}`))
+    )
   }
   return songs
 }
@@ -1045,7 +1057,9 @@ async function fetchLikedTracks(force = false) {
   try {
     library = await fetchUserLibrary(force)
   } catch (error) {
-    getContext().logger.warn(`网易云音乐库列表读取失败，将尝试 likelist 兜底：${getErrorMessage(error)}`)
+    getContext().logger.warn(
+      `网易云音乐库列表读取失败，将尝试 likelist 兜底：${getErrorMessage(error)}`
+    )
   }
 
   if (library.likedPlaylist) {
@@ -1110,7 +1124,9 @@ async function fetchLikedTrackIds(force = false) {
       return ids
     }
   } catch (error) {
-    getContext().logger.warn(`网易云喜欢歌单详情读取失败，将尝试 likelist 兜底：${getErrorMessage(error)}`)
+    getContext().logger.warn(
+      `网易云喜欢歌单详情读取失败，将尝试 likelist 兜底：${getErrorMessage(error)}`
+    )
   }
 
   const currentProfile = await ensureProfile()
@@ -1175,8 +1191,7 @@ function getPlaybackQualityFallbacks(quality) {
 function getPlaybackUrlRequestPaths(songId, quality) {
   const encodedId = encodeURIComponent(String(songId))
   const levelPaths = getPlaybackQualityFallbacks(quality).map(
-    (level) =>
-      `/song/url/v1?id=${encodedId}&level=${encodeURIComponent(level)}&encodeType=flac`
+    (level) => `/song/url/v1?id=${encodedId}&level=${encodeURIComponent(level)}&encodeType=flac`
   )
   // Classic bitrate endpoints remain as a compatibility fallback when the
   // level-based player API returns no official URL for the signed-in account.
@@ -1251,9 +1266,7 @@ async function getPlaybackUrl(track, options = {}) {
       if (url) {
         rememberStreamAudioMeta(songId, streamItem)
         streamUrlCache.set(cacheKey, url)
-        void ncmApi
-          .cacheSong(songId, url, track?.fileName)
-          .catch(() => {})
+        void ncmApi.cacheSong(songId, url, track?.fileName).catch(() => {})
         return url
       }
       lastFailureMessage = getPlaybackFailureMessage(data, streamItem) || lastFailureMessage
@@ -1279,14 +1292,22 @@ async function fetchRecommendSongs() {
 
 async function fetchPersonalFm() {
   const data = await requestAuthed('/personal_fm')
-  const fmData = Array.isArray(data.data) ? data.data : Array.isArray(data.result) ? data.result : []
+  const fmData = Array.isArray(data.data)
+    ? data.data
+    : Array.isArray(data.result)
+      ? data.result
+      : []
   if (fmData.length > 0) return fmData.map(normalizeTrack)
   return getSongItems(data).map(normalizeTrack)
 }
 
 async function fetchPrivateContent() {
   const data = await requestAuthed('/personalized/privatecontent')
-  const result = Array.isArray(data.result) ? data.result : Array.isArray(data.data) ? data.data : []
+  const result = Array.isArray(data.result)
+    ? data.result
+    : Array.isArray(data.data)
+      ? data.data
+      : []
   if (result.length > 0) return result.map(normalizeTrack)
   return getSongItems(data).map(normalizeTrack)
 }
@@ -1294,7 +1315,11 @@ async function fetchPrivateContent() {
 async function fetchRecommendPlaylists() {
   try {
     const data = await requestAuthed('/recommend/resource')
-    const recommend = Array.isArray(data.recommend) ? data.recommend : Array.isArray(data.data) ? data.data : []
+    const recommend = Array.isArray(data.recommend)
+      ? data.recommend
+      : Array.isArray(data.data)
+        ? data.data
+        : []
     return recommend.map((item) => ({
       id: Number(item.id),
       name: item.name || '未命名歌单',
@@ -1318,7 +1343,11 @@ function getCatalogueCategoryMap(data) {
 }
 
 function getHotTagNames(data) {
-  const tags = Array.isArray(data.tags) ? data.tags : Array.isArray(data.data?.tags) ? data.data.tags : []
+  const tags = Array.isArray(data.tags)
+    ? data.tags
+    : Array.isArray(data.data?.tags)
+      ? data.data.tags
+      : []
   return tags.map((tag) => tag?.name).filter((name) => typeof name === 'string' && name.trim())
 }
 
@@ -1415,7 +1444,7 @@ async function getLyrics(track) {
   const songId = getSongIdFromTrack(track)
   if (songId == null) return { lyrics: null, translatedLyrics: null, wordLyrics: null }
   try {
-    const data = await requestAuthed(`/lyric/new?id=${songId}`)
+    const data = await requestOptionalAuth(`/lyric/new?id=${songId}`)
     const yrc = extractLyricText(data, 'yrc')
     const lrc = extractLyricText(data, 'lrc')
     const translatedLyrics = extractLyricText(data, 'tlyric')
@@ -1427,7 +1456,7 @@ async function getLyrics(track) {
         wordLyrics: yrc || null
       }
     }
-    const data2 = await requestAuthed(`/lyric?id=${songId}`)
+    const data2 = await requestOptionalAuth(`/lyric?id=${songId}`)
     return {
       lyrics: extractLyricText(data2, 'lrc'),
       translatedLyrics: extractLyricText(data2, 'tlyric'),
@@ -1439,7 +1468,7 @@ async function getLyrics(track) {
 }
 
 async function searchSongs(keywords, limit = 30, offset = 0) {
-  const data = await requestAuthed(
+  const data = await requestOptionalAuth(
     `/cloudsearch?keywords=${encodeURIComponent(keywords)}&type=1&limit=${limit}&offset=${offset}`
   )
   const result = data.result || data.data?.result || {}
@@ -1501,8 +1530,7 @@ async function fetchArtistTopSongs(artistId) {
 async function fetchArtistAlbums(artistId) {
   const encodedId = encodeURIComponent(String(artistId))
   const albums = await fetchPagedItems({
-    makePath: (limit, offset) =>
-      `/artist/album?id=${encodedId}&limit=${limit}&offset=${offset}`,
+    makePath: (limit, offset) => `/artist/album?id=${encodedId}&limit=${limit}&offset=${offset}`,
     getItems: getAlbumItems,
     limit: 100
   })
@@ -1522,7 +1550,9 @@ async function fetchArtistIntro(artistId) {
 }
 
 async function fetchArtistFollowState(artistId) {
-  const data = await requestAuthed(`/artist/detail/dynamic?id=${encodeURIComponent(String(artistId))}`)
+  const data = await requestAuthed(
+    `/artist/detail/dynamic?id=${encodeURIComponent(String(artistId))}`
+  )
   const candidates = [
     data.followed,
     data.isSub,
@@ -1618,17 +1648,22 @@ async function fetchUserFolloweds(uid, limit = 30, offset = 0) {
 }
 
 async function followArtist(artistId, follow, requestContext) {
-  return runIdempotentProviderWrite('followArtist', [artistId, follow], requestContext, async () => {
-    const data = await requestAuthed(
-      `/artist/sub?id=${encodeURIComponent(String(artistId))}&t=${follow ? '1' : '0'}`,
-      requestContext
-    )
-    throwIfRequestAborted(requestContext)
-    const code = Number(data.code)
-    if (Number.isFinite(code) && code !== 200) {
-      throw new Error(normalizeApiMessage(data, follow ? '关注歌手失败' : '取消关注歌手失败'))
+  return runIdempotentProviderWrite(
+    'followArtist',
+    [artistId, follow],
+    requestContext,
+    async () => {
+      const data = await requestAuthed(
+        `/artist/sub?id=${encodeURIComponent(String(artistId))}&t=${follow ? '1' : '0'}`,
+        requestContext
+      )
+      throwIfRequestAborted(requestContext)
+      const code = Number(data.code)
+      if (Number.isFinite(code) && code !== 200) {
+        throw new Error(normalizeApiMessage(data, follow ? '关注歌手失败' : '取消关注歌手失败'))
+      }
     }
-  })
+  )
 }
 
 async function followUser(userId, follow, requestContext) {
@@ -1683,9 +1718,7 @@ function normalizeTrackIdList(trackIds) {
   if (!Array.isArray(trackIds) || trackIds.length === 0) {
     throw new Error('歌曲列表不能为空')
   }
-  const ids = trackIds
-    .map((id) => Number(id))
-    .filter((id) => Number.isFinite(id) && id > 0)
+  const ids = trackIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
   if (ids.length === 0) throw new Error('歌曲列表不能为空')
   return [...new Set(ids)]
 }
@@ -1801,9 +1834,7 @@ async function removeTracksFromPlaylist(playlistId, trackIds, requestContext) {
 
 function syncLikedIds(tracks) {
   likedSongIds = new Set(
-    tracks
-      .map((track) => Number(track.ncmSongId))
-      .filter((id) => Number.isFinite(id) && id > 0)
+    tracks.map((track) => Number(track.ncmSongId)).filter((id) => Number.isFinite(id) && id > 0)
   )
 }
 
@@ -1812,12 +1843,15 @@ function syncLikedIds(tracks) {
 async function fetchPlayRecords(type = 1) {
   const currentProfile = await ensureProfile()
   const data = await requestAuthed(`/user/record?uid=${currentProfile.userId}&type=${type}`)
-  const list =
-    Array.isArray(data.weekData) ? data.weekData :
-    Array.isArray(data.allData) ? data.allData :
-    Array.isArray(data.data?.weekData) ? data.data.weekData :
-    Array.isArray(data.data?.allData) ? data.data.allData :
-    []
+  const list = Array.isArray(data.weekData)
+    ? data.weekData
+    : Array.isArray(data.allData)
+      ? data.allData
+      : Array.isArray(data.data?.weekData)
+        ? data.data.weekData
+        : Array.isArray(data.data?.allData)
+          ? data.data.allData
+          : []
   return list.map((item) => {
     const track = normalizeTrack(item.song || item)
     track.playCount = Number(item.playCount ?? item.playcount ?? 0) || 0
@@ -1829,10 +1863,11 @@ async function fetchPlayRecords(type = 1) {
 // ── 最近播放歌曲 (record/recent/song) ────────────────────────────────
 async function fetchRecentSongs(limit = 100) {
   const data = await requestAuthed(`/record/recent/song?limit=${limit}`)
-  const list =
-    Array.isArray(data.data?.list) ? data.data.list :
-    Array.isArray(data.list) ? data.list :
-    []
+  const list = Array.isArray(data.data?.list)
+    ? data.data.list
+    : Array.isArray(data.list)
+      ? data.list
+      : []
   return list.map((item) => {
     // /record/recent/song 返回结构: { resourceId, playTime, resourceType, data: { song fields } }
     const song = item.data ?? item.song ?? item

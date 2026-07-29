@@ -91,6 +91,8 @@ export interface MiniPlayerTrackSnapshot {
   coverSource: string | null
 }
 
+export type MiniPlayerPlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle'
+
 export interface MiniPlayerStateSnapshot {
   track: MiniPlayerTrackSnapshot | null
   isPlaying: boolean
@@ -98,7 +100,10 @@ export interface MiniPlayerStateSnapshot {
   currentTime: number
   duration: number
   volume: number
-  playMode: 'sequential' | 'listLoop' | 'repeat' | 'shuffle'
+  playMode: MiniPlayerPlayMode
+  favoriteAvailable: boolean
+  favoriteLiked: boolean
+  favoriteLoading: boolean
   dominantColor: string
   queueIndex: number
   queueLength: number
@@ -109,6 +114,8 @@ export type MiniPlayerCommand =
   | { type: 'previous' }
   | { type: 'next' }
   | { type: 'cycle-play-mode' }
+  | { type: 'set-play-mode'; value: MiniPlayerPlayMode }
+  | { type: 'toggle-favorite' }
   | { type: 'seek'; value: number }
   | { type: 'set-volume'; value: number }
 
@@ -267,6 +274,9 @@ export const EMPTY_MINI_PLAYER_STATE: Readonly<MiniPlayerStateSnapshot> = Object
   duration: 0,
   volume: 0.7,
   playMode: 'sequential',
+  favoriteAvailable: false,
+  favoriteLiked: false,
+  favoriteLoading: false,
   dominantColor: '#7c4dff',
   queueIndex: -1,
   queueLength: 0
@@ -523,8 +533,10 @@ export function normalizeMiniPlayerStateSnapshot(raw: unknown): MiniPlayerStateS
     currentTime,
     duration,
     volume: clampFiniteNumber(value.volume, 0, 1, EMPTY_MINI_PLAYER_STATE.volume),
-    playMode:
-      value.playMode === 'repeat' || value.playMode === 'shuffle' ? value.playMode : 'sequential',
+    playMode: normalizeMiniPlayerPlayMode(value.playMode) ?? 'sequential',
+    favoriteAvailable: value.favoriteAvailable === true,
+    favoriteLiked: value.favoriteLiked === true,
+    favoriteLoading: value.favoriteLoading === true,
     dominantColor: normalizeDominantColor(value.dominantColor),
     queueIndex: clampFiniteNumber(value.queueIndex, -1, Math.max(-1, queueLength - 1), -1, true),
     queueLength
@@ -538,7 +550,12 @@ export function normalizeMiniPlayerCommand(raw: unknown): MiniPlayerCommand | nu
     case 'previous':
     case 'next':
     case 'cycle-play-mode':
+    case 'toggle-favorite':
       return { type: value.type }
+    case 'set-play-mode': {
+      const playMode = normalizeMiniPlayerPlayMode(value.value, null)
+      return playMode ? { type: 'set-play-mode', value: playMode } : null
+    }
     case 'seek':
       if (typeof value.value !== 'number' || !Number.isFinite(value.value)) return null
       return {
@@ -612,6 +629,15 @@ function normalizeLayoutPreference(
 
 function normalizeBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback
+}
+
+function normalizeMiniPlayerPlayMode(
+  value: unknown,
+  fallback: MiniPlayerPlayMode | null = 'sequential'
+): MiniPlayerPlayMode | null {
+  return value === 'sequential' || value === 'listLoop' || value === 'repeat' || value === 'shuffle'
+    ? value
+    : fallback
 }
 
 function normalizeDominantColor(value: unknown): string {

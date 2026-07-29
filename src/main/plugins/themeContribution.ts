@@ -1,5 +1,7 @@
 import {
   STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION,
+  STRUCTURED_PLUGIN_THEME_MODE_SCHEMA_VERSION,
+  findInvalidThemeShellLayoutFields,
   findUnsupportedThemeModeIds,
   normalizeStructuredPluginTheme
 } from '../../shared/theme.ts'
@@ -30,10 +32,16 @@ export function normalizeThemeContribution(
       : undefined
   const structuredRecord = isRecord(record.structured) ? record.structured : undefined
   if (
-    structuredRecord?.schemaVersion === STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION &&
+    structuredRecord?.schemaVersion === STRUCTURED_PLUGIN_THEME_MODE_SCHEMA_VERSION &&
     options.pluginApiVersion < 2
   ) {
     throw new Error('structured schemaVersion 2 需要 plugin.json apiVersion 2')
+  }
+  if (
+    structuredRecord?.schemaVersion === STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION &&
+    options.pluginApiVersion < STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION
+  ) {
+    throw new Error('structured schemaVersion 3 requires plugin.json apiVersion 3')
   }
   const structured = normalizeStructuredPluginTheme(record.structured)
   const compatibilityNotes = collectCompatibilityNotes(structuredRecord)
@@ -58,12 +66,23 @@ function collectCompatibilityNotes(structured: Record<string, unknown> | undefin
       ? ['structured schemaVersion 1 不支持 modes，已忽略该字段']
       : []
   }
-  if (structured.schemaVersion !== STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION) {
+  if (
+    structured.schemaVersion !== STRUCTURED_PLUGIN_THEME_MODE_SCHEMA_VERSION &&
+    structured.schemaVersion !== STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION
+  ) {
     return [`不支持 structured schemaVersion ${String(structured.schemaVersion)}，已忽略`]
   }
-  return findUnsupportedThemeModeIds(structured.modes).map(
+  const modeNotes = findUnsupportedThemeModeIds(structured.modes).map(
     (id) => `主题 mode ${id} 不受当前宿主支持，已忽略`
   )
+  const layoutNotes =
+    structured.schemaVersion === STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION &&
+    structured.layout !== undefined
+      ? findInvalidThemeShellLayoutFields(structured.layout).map(
+          (field) => `Theme layout ${field} is not supported by this host and was ignored`
+        )
+      : []
+  return [...modeNotes, ...layoutNotes]
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

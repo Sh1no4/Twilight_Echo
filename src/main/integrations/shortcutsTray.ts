@@ -1,4 +1,11 @@
-import { app, globalShortcut, Menu, nativeImage, Tray } from 'electron'
+import {
+  app,
+  globalShortcut,
+  Menu,
+  nativeImage,
+  Tray,
+  type MenuItemConstructorOptions
+} from 'electron'
 import { existsSync } from 'fs'
 import { runtime } from '../core/runtime'
 import { PLAYER_SHORTCUTS } from '../core/types'
@@ -7,13 +14,10 @@ import { buildPlayerShortcutStatuses } from '../core/shortcutStatus'
 import { getAppIconPath } from '../app/window'
 import { applyDiscordRpcSetting } from './discord'
 import { applyLibraryWatchers } from '../library/watcher'
-import { hideMiniPlayerWindow, restoreMainWindowFromMiniPlayer } from './miniPlayer'
-import {
-  destroyTrayPlayerWindow,
-  hideTrayPlayerWindow,
-  openMainWindowAt,
-  toggleTrayPlayerWindow
-} from './trayPlayer'
+import { restoreMainWindowFromMiniPlayer, showMiniPlayer } from './miniPlayer'
+import { toggleDesktopLyrics } from './desktopLyrics'
+import { destroyTrayPlayerWindow, openMainWindowAt } from './trayPlayer'
+import type { MiniPlayerCommand, MiniPlayerPlayMode } from '../../shared/miniPlayer.ts'
 
 let playerShortcutStatuses: PlayerShortcutStatus[] = buildPlayerShortcutStatuses(
   PLAYER_SHORTCUTS,
@@ -71,6 +75,150 @@ export function resetPlayerShortcutStatuses(): void {
   playerShortcutStatuses = buildPlayerShortcutStatuses(PLAYER_SHORTCUTS, false, () => false)
 }
 
+const PLAY_MODE_LABELS: Record<MiniPlayerPlayMode, string> = {
+  sequential: '顺序播放',
+  listLoop: '列表循环',
+  repeat: '单曲循环',
+  shuffle: '随机播放'
+}
+
+let trayMenuSignature: string | null = null
+
+function createTrayMenuSignature(): string {
+  const state = runtime.latestMiniPlayerState
+  const track = state?.track
+  return JSON.stringify([
+    track?.id ?? null,
+    track?.title ?? null,
+    track?.artist ?? null,
+    state?.isPlaying ?? false,
+    state?.playMode ?? 'sequential',
+    state?.favoriteAvailable ?? false,
+    state?.favoriteLiked ?? false,
+    state?.favoriteLoading ?? false,
+    runtime.appSettings.desktopLyrics.enabled
+  ])
+}
+
+function sendMiniPlayerCommand(command: MiniPlayerCommand): void {
+  const mainWindow = runtime.mainWindow
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return
+  mainWindow.webContents.send('miniPlayer:command', command)
+}
+
+function formatTrayTrackTooltip(): string {
+  const track = runtime.latestMiniPlayerState?.track
+  if (!track) return 'Twilight Echo'
+  return track.artist ? `${track.title} - ${track.artist}` : track.title
+}
+
+function truncateTrayLabel(label: string, maxWidth = 18): string {
+  let width = 0
+  let result = ''
+  for (const character of label) {
+    const characterWidth = character.codePointAt(0)! > 0x7f ? 2 : 1
+    if (width + characterWidth > maxWidth - 2) return `${result}…`
+    result += character
+    width += characterWidth
+  }
+  return result
+}
+
+function formatTrayTrackLabel(): string {
+  const track = runtime.latestMiniPlayerState?.track
+  if (!track) return '暂无播放'
+  const label = track.artist ? `${track.title} - ${track.artist}` : track.title
+  return truncateTrayLabel(label)
+}
+
+function buildPlayModeSubmenu(): MenuItemConstructorOptions[] {
+  const activeMode = runtime.latestMiniPlayerState?.playMode ?? 'sequential'
+  return (Object.entries(PLAY_MODE_LABELS) as [MiniPlayerPlayMode, string][]).map(
+    ([mode, label]) => ({
+      label,
+      type: 'radio',
+      checked: mode === activeMode,
+      click: () => sendMiniPlayerCommand({ type: 'set-play-mode', value: mode })
+    })
+  )
+}
+
+function buildTrayMenuTemplate(): MenuItemConstructorOptions[] {
+  const state = runtime.latestMiniPlayerState
+  const hasTrack = Boolean(state?.track)
+  const isPlaying = state?.isPlaying === true
+  const favoriteEnabled = hasTrack && state?.favoriteAvailable === true && !state.favoriteLoading
+  return [
+    {
+      label: formatTrayTrackLabel(),
+      enabled: hasTrack,
+      click: () => restoreMainWindowFromMiniPlayer()
+    },
+    { type: 'separator' },
+    {
+      label: '上一首',
+      enabled: hasTrack,
+      click: () => sendMiniPlayerCommand({ type: 'previous' })
+    },
+    {
+      label: isPlaying ? '暂停' : '播放',
+      enabled: hasTrack,
+      click: () => sendMiniPlayerCommand({ type: 'toggle-play' })
+    },
+    {
+      label: '下一首',
+      enabled: hasTrack,
+      click: () => sendMiniPlayerCommand({ type: 'next' })
+    },
+    {
+      label: state?.favoriteLiked ? '取消喜欢' : '喜欢',
+      enabled: favoriteEnabled,
+      click: () => sendMiniPlayerCommand({ type: 'toggle-favorite' })
+    },
+    { type: 'separator' },
+    {
+      label: '播放模式',
+      submenu: buildPlayModeSubmenu()
+    },
+    { type: 'separator' },
+    {
+      label: '桌面歌词',
+      type: 'checkbox',
+      checked: runtime.appSettings.desktopLyrics.enabled,
+      click: () => {
+        toggleDesktopLyrics()
+      }
+    },
+    { type: 'separator' },
+    {
+      label: '迷你播放器',
+      click: () => showMiniPlayer()
+    },
+    { type: 'separator' },
+    {
+      label: '设置',
+      click: () => openMainWindowAt('settings')
+    },
+    { type: 'separator' },
+    {
+      label: '退出',
+      click: () => {
+        runtime.forceQuit = true
+        app.quit()
+      }
+    }
+  ]
+}
+
+export function refreshTrayMenu(force = false): void {
+  if (!runtime.tray) return
+  const signature = createTrayMenuSignature()
+  if (!force && signature === trayMenuSignature) return
+  trayMenuSignature = signature
+  runtime.tray.setToolTip(formatTrayTrackTooltip())
+  runtime.tray.setContextMenu(Menu.buildFromTemplate(buildTrayMenuTemplate()))
+}
+
 export function createTray(): void {
   if (runtime.tray) return
 
@@ -79,70 +227,20 @@ export function createTray(): void {
     ? nativeImage.createFromPath(iconPath)
     : nativeImage.createEmpty()
   runtime.tray = new Tray(icon)
-  runtime.tray.setToolTip('Twilight Echo')
-  runtime.tray.setContextMenu(
-    Menu.buildFromTemplate([
-      {
-        label: '播放控制',
-        click: () => toggleTrayPlayerWindow()
-      },
-      {
-        label: '打开本地主页',
-        click: () => openMainWindowAt('local')
-      },
-      {
-        label: '打开流媒体页',
-        click: () => openMainWindowAt('streaming')
-      },
-      {
-        label: '显示 Twilight Echo',
-        click: () => {
-          hideTrayPlayerWindow()
-          restoreMainWindowFromMiniPlayer()
-        }
-      },
-      {
-        label: '隐藏窗口',
-        click: () => {
-          runtime.mainWindow?.hide()
-          hideMiniPlayerWindow()
-          hideTrayPlayerWindow()
-        }
-      },
-      { type: 'separator' },
-      {
-        label: '播放/暂停',
-        click: () => sendPlayerShortcut('playPause')
-      },
-      {
-        label: '上一首',
-        click: () => sendPlayerShortcut('previous')
-      },
-      {
-        label: '下一首',
-        click: () => sendPlayerShortcut('next')
-      },
-      { type: 'separator' },
-      {
-        label: '退出',
-        click: () => {
-          runtime.forceQuit = true
-          app.quit()
-        }
-      }
-    ])
-  )
+  runtime.refreshTrayMenu = refreshTrayMenu
+  refreshTrayMenu(true)
   runtime.tray.on('click', () => {
-    toggleTrayPlayerWindow()
+    restoreMainWindowFromMiniPlayer()
   })
   runtime.tray.on('double-click', () => {
-    hideTrayPlayerWindow()
     restoreMainWindowFromMiniPlayer()
   })
 }
 
 export function destroyTray(): void {
   destroyTrayPlayerWindow()
+  runtime.refreshTrayMenu = null
+  trayMenuSignature = null
   runtime.tray?.destroy()
   runtime.tray = null
 }

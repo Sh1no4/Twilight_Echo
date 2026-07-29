@@ -28,9 +28,11 @@ Theme contributions may add a `structured` schemaVersion 1 document with `pureWh
 and `dark` token overrides. Existing `variables` and `stylesheet` fields remain supported;
 stylesheets are the advanced compatibility path and may depend on host selectors.
 
-Plugin API v2 adds `structured` schemaVersion 2 with host-registered `modes`. API v1 themes and
-schemaVersion 1 remain supported without behavior changes. The machine-readable token, mode, and
-visibility registry ships as `theme-contract.json`; the complete authoring guide is
+Plugin API v2 adds `structured` schemaVersion 2 with host-registered `modes`. Plugin API v3 adds
+`structured` schemaVersion 3 with a host-owned shell grid that can rearrange the title bar,
+navigation, content, and player bar without executing plugin code. API v1 and v2 themes remain
+supported without behavior changes. The machine-readable token, mode, visibility, and layout
+registry ships as `theme-contract.json`; the complete authoring guide is
 `docs/theme-plugin-authoring.md` in the Twilight Echo repository.
 
 Provider registrations may expose optional `health` metadata through

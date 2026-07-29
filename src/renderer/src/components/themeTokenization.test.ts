@@ -94,6 +94,13 @@ const pluginThemeContract = JSON.parse(
   tokens: Array<{ id: string }>
   modes: Array<{ id: string }>
   visibility: string[]
+  layout: {
+    slots: string[]
+    tracks: string[]
+    navigation: string[]
+    requiredSlots: string[]
+    compactBreakpointPx: number
+  }
 }
 
 test('every registered playback token is wired into a real playback or DSP surface', () => {
@@ -266,20 +273,28 @@ test('phase five presets, recovery, window inheritance, and contextual entries s
   assert.match(themeIpc, /reconcileThemeAfterPluginChange\(\)/)
 })
 
-test('phase six plugin theme modes are API v2, host-owned, and compatibility-reporting', () => {
-  assert.match(pluginApi, /TWILIGHT_PLUGIN_API_VERSION = 2/)
+test('phase six plugin shell layouts are API v3, host-owned, and compatibility-reporting', () => {
+  assert.match(pluginApi, /TWILIGHT_PLUGIN_API_VERSION = 3/)
   assert.match(pluginApi, /interface TwilightStructuredThemeV2/)
-  assert.match(pluginThemeTemplate, /"apiVersion": 2/)
-  assert.match(pluginThemeTemplate, /"schemaVersion": 2/)
-  assert.match(pluginThemeContribution, /pluginApiVersion < 2/)
+  assert.match(pluginApi, /interface TwilightStructuredThemeV3/)
+  assert.match(pluginThemeTemplate, /"apiVersion": 3/)
+  assert.match(pluginThemeTemplate, /"schemaVersion": 3/)
+  assert.match(pluginThemeTemplate, /"layout"/)
+  assert.match(
+    pluginThemeContribution,
+    /options\.pluginApiVersion < STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION/
+  )
   assert.match(pluginThemeContribution, /findUnsupportedThemeModeIds/)
-  assert.match(pluginThemeRuntime, /structured\?\.schemaVersion === 2/)
+  assert.match(pluginThemeRuntime, /structured\?\.schemaVersion === 3/)
   assert.match(pluginThemeRuntime, /resolveThemeModes/)
   assert.match(themeStore, /resolvePluginThemeRuntimeContract/)
+  assert.match(themeStore, /themeShellLayoutToCssVariables/)
+  assert.match(app, /class="app-shell"/)
+  assert.match(app, /grid-template-areas: var\(--te-shell-template-areas\)/)
   assert.match(studio, /profile\.modes = normalizeThemeModes/)
   assert.match(studio, /selectedPluginTheme\?\.compatibilityNotes/)
-  assert.equal(pluginThemeContract.pluginApiVersion, 2)
-  assert.equal(pluginThemeContract.structuredThemeSchemaVersion, 2)
+  assert.equal(pluginThemeContract.pluginApiVersion, 3)
+  assert.equal(pluginThemeContract.structuredThemeSchemaVersion, 3)
   assert.deepEqual(
     pluginThemeContract.tokens.map(({ id }) => id),
     THEME_TOKEN_DEFINITIONS.map(({ id }) => id)
@@ -289,6 +304,23 @@ test('phase six plugin theme modes are API v2, host-owned, and compatibility-rep
     THEME_MODE_DEFINITIONS.map(({ id }) => id)
   )
   assert.deepEqual(pluginThemeContract.visibility, THEME_VISIBILITY_SLOT_IDS)
+  assert.deepEqual(pluginThemeContract.layout.slots, [
+    'titleBar',
+    'navigation',
+    'content',
+    'playerBar'
+  ])
+  assert.deepEqual(pluginThemeContract.layout.tracks, [
+    'auto',
+    'content',
+    'narrow',
+    'standard',
+    'wide',
+    'fill',
+    'double'
+  ])
+  assert.deepEqual(pluginThemeContract.layout.requiredSlots, ['titleBar', 'content'])
+  assert.equal(pluginThemeContract.layout.compactBreakpointPx, 760)
 })
 
 test('preview and failed writes restore the persisted runtime without partially committing assets', () => {

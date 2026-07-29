@@ -32,6 +32,7 @@ import type {
 import type { LyricSource, Track } from '../../types/music'
 import type { DlnaDeviceInfo } from '../../../../shared/remoteControl.ts'
 import type { PlaybackBookmark } from '../../../../shared/playbackBookmarks.ts'
+import type { LyricLayerSourceSelection } from '../../../../shared/lyricsManagement.ts'
 import LyricsManagerPanel from './LyricsManagerPanel.vue'
 
 export type StatusTone = 'success' | 'warning' | 'muted'
@@ -71,6 +72,10 @@ const props = defineProps<{
   currentTrack: Track | null
   desktopLyricsOn: boolean
   lyricsReloading?: boolean
+  originalLayerSelection: LyricLayerSourceSelection
+  translationLayerSelection: LyricLayerSourceSelection
+  showTranslation: boolean
+  lyricControlsPending?: boolean
   playerBarButtons: Array<{
     id: string
     title: string
@@ -127,6 +132,11 @@ const emit = defineEmits<{
   selectImpulseResponse: []
   clearImpulseResponse: []
   reloadLyrics: [prefer: 'auto' | 'local' | 'provider']
+  setLyricLayerSelection: [
+    key: 'originalSelection' | 'translationSelection',
+    selection: LyricLayerSourceSelection
+  ]
+  toggleTranslationVisibility: []
   runExtension: [command?: string]
   cyclePlaybackRate: []
   toggleAbLoop: []
@@ -246,6 +256,22 @@ const renameDraftValue = computed({
 
 function onSleepTimerChange(event: Event): void {
   emit('sleepTimerSelect', (event.target as HTMLSelectElement).value)
+}
+
+function onLyricLayerSelectionChange(
+  key: 'originalSelection' | 'translationSelection',
+  event: Event
+): void {
+  const selection = (event.target as HTMLSelectElement).value
+  if (
+    selection !== 'automatic' &&
+    selection !== 'local' &&
+    selection !== 'provider' &&
+    selection !== 'manual'
+  ) {
+    return
+  }
+  emit('setLyricLayerSelection', key, selection)
 }
 
 function formatBookmarkTime(seconds: number): string {
@@ -1501,6 +1527,45 @@ const deckAccentVars = computed(() => {
                   <strong>{{ hasTranslatedLyrics ? translatedLyricsSourceLabel : '无' }}</strong>
                 </div>
               </div>
+              <div class="deck-lyric-source-controls" aria-label="歌词来源">
+                <label>
+                  <span>原文</span>
+                  <select
+                    :value="originalLayerSelection"
+                    :disabled="!currentTrack || lyricControlsPending"
+                    aria-label="原文歌词来源"
+                    @change="onLyricLayerSelectionChange('originalSelection', $event)"
+                  >
+                    <option value="automatic">自动</option>
+                    <option value="local">本地</option>
+                    <option value="provider">Provider</option>
+                    <option value="manual">手写</option>
+                  </select>
+                </label>
+                <label>
+                  <span>翻译</span>
+                  <select
+                    :value="translationLayerSelection"
+                    :disabled="!currentTrack || lyricControlsPending"
+                    aria-label="翻译歌词来源"
+                    @change="onLyricLayerSelectionChange('translationSelection', $event)"
+                  >
+                    <option value="automatic">自动</option>
+                    <option value="local">本地</option>
+                    <option value="provider">Provider</option>
+                    <option value="manual">手写</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  class="deck-btn ghost deck-translation-toggle"
+                  :aria-pressed="showTranslation"
+                  :disabled="!currentTrack || lyricControlsPending"
+                  @click="emit('toggleTranslationVisibility')"
+                >
+                  {{ showTranslation ? '隐藏翻译' : '显示翻译' }}
+                </button>
+              </div>
               <div class="deck-actions trio">
                 <button
                   type="button"
@@ -2299,6 +2364,52 @@ button:disabled {
 }
 
 /* ===== LED 拨杆 ===== */
+.deck-lyric-source-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.deck-lyric-source-controls label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--d-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.deck-lyric-source-controls select {
+  min-width: 76px;
+  height: 30px;
+  border: 1px solid var(--d-line-strong);
+  border-radius: 8px;
+  background: var(--d-well);
+  color: var(--d-ink);
+  font: inherit;
+  padding: 0 7px;
+}
+
+.deck-lyric-source-controls select:focus-visible,
+.deck-translation-toggle:focus-visible {
+  outline: 2px solid var(--d-accent);
+  outline-offset: 2px;
+}
+
+.deck-translation-toggle[aria-pressed='true'] {
+  border-color: var(--d-accent-line);
+  color: var(--d-accent);
+}
+
+.deck-lyric-source-controls select:disabled,
+.deck-translation-toggle:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
 .deck-toggles {
   display: grid;
   grid-template-columns: 1fr 1fr;

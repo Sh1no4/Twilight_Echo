@@ -138,8 +138,21 @@ function validateThemeSchemaVersion(raw: Record<string, unknown>, apiVersion: nu
   if (!isRecord(raw.contributes) || !Array.isArray(raw.contributes.themes)) return
   for (const contribution of raw.contributes.themes) {
     if (!isRecord(contribution) || !isRecord(contribution.structured)) continue
-    if (contribution.structured.schemaVersion === 2 && apiVersion < 2) {
+    const schemaVersion = contribution.structured.schemaVersion
+    if (schemaVersion !== 1 && schemaVersion !== 2 && schemaVersion !== 3) {
+      throw new Error('theme contribution structured schemaVersion must be 1, 2, or 3')
+    }
+    if (schemaVersion === 2 && apiVersion < 2) {
       throw new Error('structured schemaVersion 2 需要 plugin.json apiVersion 2')
+    }
+    if (schemaVersion === 3 && apiVersion < 3) {
+      throw new Error('structured schemaVersion 3 需要 plugin.json apiVersion 3')
+    }
+    if (contribution.structured.layout != null && schemaVersion !== 3) {
+      throw new Error('theme contribution layout requires structured schemaVersion 3')
+    }
+    if (contribution.structured.layout != null && !isRecord(contribution.structured.layout)) {
+      throw new Error('theme contribution layout must be an object')
     }
   }
 }

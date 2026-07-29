@@ -537,6 +537,9 @@ interface MiniPlayerStateSnapshot {
   duration: number
   volume: number
   playMode: PlayMode
+  favoriteAvailable: boolean
+  favoriteLiked: boolean
+  favoriteLoading: boolean
   dominantColor: string
   queueIndex: number
   queueLength: number
@@ -547,6 +550,8 @@ type MiniPlayerCommand =
   | { type: 'previous' }
   | { type: 'next' }
   | { type: 'cycle-play-mode' }
+  | { type: 'set-play-mode'; value: PlayMode }
+  | { type: 'toggle-favorite' }
   | { type: 'seek'; value: number }
   | { type: 'set-volume'; value: number }
 
@@ -563,7 +568,7 @@ interface MiniPlayerBootstrap {
   motionPreference: MotionPreference
 }
 
-type TrayNavigationTarget = 'local' | 'streaming'
+type TrayNavigationTarget = 'local' | 'streaming' | 'settings'
 
 interface TrayPlayerBootstrap {
   state: MiniPlayerStateSnapshot

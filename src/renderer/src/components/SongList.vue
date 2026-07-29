@@ -129,6 +129,9 @@ function closeRecentSourceMenuDelayed(): void {
   }, 150)
 }
 
+// ─── 库管理下拉（重复检查 + 已移除） ────────────────────────────────────────
+const libraryToolsMenuOpen = ref(false)
+
 const baseDisplayTracks = computed(() => {
   if (props.category === 'allSongs') return tracks.value
   if (props.category === 'recent') {
@@ -211,6 +214,7 @@ const libraryFilterDropdownRef = ref<HTMLElement | null>(null)
 
 function toggleLibraryFilterPanel(): void {
   libraryFilterPanelOpen.value = !libraryFilterPanelOpen.value
+  if (libraryFilterPanelOpen.value) libraryToolsMenuOpen.value = false
 }
 
 function closeLibraryFilterPanel(): void {
@@ -249,6 +253,7 @@ const activeLibraryFilterCount = computed(() => {
 
 watch([() => props.category, () => props.filter], () => {
   closeLibraryFilterPanel()
+  libraryToolsMenuOpen.value = false
 })
 
 onMounted(() => {
@@ -324,17 +329,6 @@ const viewTitle = computed(() => {
   return '我的音乐'
 })
 
-const viewKicker = computed(() => {
-  if (props.category === 'allSongs') return 'LIBRARY · 音乐库'
-  if (props.category === 'recent') return 'HISTORY · 回放'
-  if (props.category === 'artists') return 'ARTISTS · 艺术家'
-  if (props.category === 'albums') return 'ALBUMS · 专辑'
-  if (props.category === 'genres') return 'GENRES · 流派'
-  if (props.category === 'playlists') return 'PLAYLISTS · 歌单'
-  if (props.category === 'folders') return 'FOLDERS · 文件夹'
-  return 'LIBRARY · 音乐库'
-})
-
 const gridStatsText = computed(() => {
   const count = gridTotalCount.value
   if (count === 0) return ''
@@ -364,6 +358,7 @@ const totalDurationText = computed(() => {
 })
 
 const viewStatsText = computed(() => {
+  if (props.category === 'allSongs') return ''
   const count = displayTracks.value.length
   if (count === 0) return ''
   return totalDurationText.value ? `${count} 首 · ${totalDurationText.value}` : `${count} 首`
@@ -1029,6 +1024,22 @@ function openTagManager(initialView: 'edit' | 'duplicates' = 'edit'): void {
   closeContextMenu()
 }
 
+function closeLibraryToolsMenuDelayed(): void {
+  setTimeout(() => {
+    libraryToolsMenuOpen.value = false
+  }, 150)
+}
+
+function openLibraryDuplicates(): void {
+  libraryToolsMenuOpen.value = false
+  openTagManager('duplicates')
+}
+
+function openLibraryExcluded(): void {
+  libraryToolsMenuOpen.value = false
+  showExcludedTracksDialog.value = true
+}
+
 function closeTagManager(): void {
   showTagManager.value = false
   const target = tagManagerFocusRestoreTarget.value
@@ -1095,10 +1106,6 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
         <template v-if="showGrid">
           <div class="song-list-header">
             <div class="title-group">
-              <p class="view-kicker">
-                <span class="kicker-rule" aria-hidden="true"></span>
-                <span>{{ viewKicker }}</span>
-              </p>
               <div class="title-line">
                 <h2 class="song-list-title">{{ viewTitle }}</h2>
                 <span v-if="gridStatsText" class="view-stats">{{ gridStatsText }}</span>
@@ -1211,7 +1218,8 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
               <div
                 class="playlist-card create-playlist-card"
                 data-te-interactive
-                @click="openCreatePlaylistDialog()">
+                @click="openCreatePlaylistDialog()"
+              >
                 <div class="playlist-cover-placeholder create-placeholder">
                   <ThemeIcon class="library-placeholder-icon" icon-slot="library.add" />
                 </div>
@@ -1292,10 +1300,6 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 <i class="pi pi-arrow-left"></i>
               </button>
               <div class="title-group">
-                <p class="view-kicker">
-                  <span class="kicker-rule" aria-hidden="true"></span>
-                  <span>{{ viewKicker }}</span>
-                </p>
                 <div class="title-line">
                   <h2 class="song-list-title">{{ viewTitle }}</h2>
                   <span v-if="viewStatsText" class="view-stats">{{ viewStatsText }}</span>
@@ -1371,16 +1375,48 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   ></i>
                 </button>
               </div>
-              <button
+              <div
                 v-if="category === 'allSongs'"
-                type="button"
-                class="excluded-tracks-trigger"
-                title="管理从音乐库移除的文件"
-                @click="showExcludedTracksDialog = true"
+                class="library-tools-dropdown"
+                :class="{ open: libraryToolsMenuOpen }"
               >
-                <i class="pi pi-ban"></i>
-                <span>已移除 {{ excludedTracks.length }}</span>
-              </button>
+                <button
+                  type="button"
+                  class="excluded-tracks-trigger library-tools-trigger"
+                  title="重复检查与已移除管理"
+                  :aria-expanded="libraryToolsMenuOpen"
+                  aria-haspopup="menu"
+                  @click="libraryToolsMenuOpen = !libraryToolsMenuOpen"
+                  @blur="closeLibraryToolsMenuDelayed"
+                >
+                  <i class="pi pi-sitemap"></i>
+                  <span>库管理</span>
+                  <span v-if="excludedTracks.length > 0" class="library-tools-badge">{{
+                    excludedTracks.length
+                  }}</span>
+                  <i class="pi pi-chevron-down" style="font-size: 10px"></i>
+                </button>
+                <div v-if="libraryToolsMenuOpen" class="library-tools-menu" role="menu">
+                  <button
+                    type="button"
+                    class="library-tools-option"
+                    role="menuitem"
+                    @mousedown.prevent="openLibraryDuplicates"
+                  >
+                    <i class="pi pi-copy"></i>
+                    <span>重复检查</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="library-tools-option"
+                    role="menuitem"
+                    @mousedown.prevent="openLibraryExcluded"
+                  >
+                    <i class="pi pi-ban"></i>
+                    <span>已移除 {{ excludedTracks.length }}</span>
+                  </button>
+                </div>
+              </div>
               <div
                 v-if="category === 'recent'"
                 class="recent-source-dropdown"
@@ -1412,20 +1448,6 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                     ></i>
                   </div>
                 </div>
-              </div>
-              <div class="search-box" :class="{ focused: searchInputFocused }">
-                <ThemeIcon class="search-icon" icon-slot="library.search" />
-                <input
-                  v-model="searchQuery"
-                  type="text"
-                  class="search-input"
-                  placeholder="搜索歌曲、歌手、专辑或文件夹"
-                  @focus="searchInputFocused = true"
-                  @blur="searchInputFocused = false"
-                />
-                <button v-if="searchQuery" class="search-clear" @click="searchQuery = ''">
-                  <ThemeIcon icon-slot="library.clear" />
-                </button>
               </div>
               <div
                 ref="libraryFilterDropdownRef"
@@ -1605,16 +1627,20 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   </div>
                 </div>
               </div>
-              <button
-                v-if="props.category === 'allSongs'"
-                type="button"
-                class="excluded-tracks-trigger"
-                title="检查重复歌曲"
-                @click="openTagManager('duplicates')"
-              >
-                <i class="pi pi-copy"></i>
-                <span>重复检查</span>
-              </button>
+              <div class="search-box" :class="{ focused: searchInputFocused }">
+                <ThemeIcon class="search-icon" icon-slot="library.search" />
+                <input
+                  v-model="searchQuery"
+                  type="text"
+                  class="search-input"
+                  placeholder="搜索歌曲、歌手、专辑或文件夹"
+                  @focus="searchInputFocused = true"
+                  @blur="searchInputFocused = false"
+                />
+                <button v-if="searchQuery" class="search-clear" @click="searchQuery = ''">
+                  <ThemeIcon icon-slot="library.clear" />
+                </button>
+              </div>
             </div>
           </div>
           <div
@@ -1925,7 +1951,12 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   <i class="pi pi-times-circle"></i>
                   <span>取消流媒体匹配</span>
                 </div>
-                <div v-if="selectedCount <= 1" class="menu-item" data-te-interactive @click="handleOpenFolder">
+                <div
+                  v-if="selectedCount <= 1"
+                  class="menu-item"
+                  data-te-interactive
+                  @click="handleOpenFolder"
+                >
                   <i class="pi pi-folder-open"></i>
                   <span>打开文件所在位置</span>
                 </div>
