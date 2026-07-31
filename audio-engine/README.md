@@ -11,7 +11,7 @@ Twilight Echo 的 C++20 原生音频引擎，通过稳定 C ABI 和 Node-API 桥
 - 解码与管线：FFmpeg 解码、Float32 内部渲染、环形缓冲、gapless preload、只读 visualization tap（含 decoupled 示波器时域采样）。
 - DSD-preserving DST provider：vendored FFmpeg dstdec 算术核心（LGPL-2.1+，attribution 保留，未 relicense 为 Apache），输出原始 DSD 字节而非 PCM，接入 SACD ISO demuxer，使 DST 压缩曲目进入与未压缩 DSD 相同的 Native DSD / DoP / PCM 决策链。
 - Queue：native 侧负责队列索引、upcoming track、EOF auto-next、gapless 预加载和 crossfade overlap mixing。
-- 后端：WASAPI Shared/Exclusive、Windows x64 独立 ASIO 兼容层、CoreAudio/ALSA 源码后端；ASIO 默认运行时关闭，直到 ABI 与硬件门禁完成；ALSA `hw:` 支持 native DSD 直送（`DSD_U8` / `DSD_U16_LE` / `DSD_U32_LE`），`backendCanAttemptNativeDsd("alsa")==true`；ICoreAudioHost / IAlsaHost seam + Mock 使 CoreAudio / ALSA 后端逻辑可在 Windows 单元测试。
+- 后端：WASAPI Shared/Exclusive、Windows x64 独立 ASIO 兼容层、CoreAudio/ALSA 源码后端；ASIO 默认枚举已安装驱动，可用 `TWILIGHT_DISABLE_ASIO=1` 显式禁用；ALSA `hw:` 支持 native DSD 直送（`DSD_U8` / `DSD_U16_LE` / `DSD_U32_LE`），`backendCanAttemptNativeDsd("alsa")==true`；ICoreAudioHost / IAlsaHost seam + Mock 使 CoreAudio / ALSA 后端逻辑可在 Windows 单元测试。
 - DSP：ReplayGain、Parametric EQ、FIR Convolver、Crossfeed、FFT Spectrum / Waveform / Peak / LUFS / Spectrogram / 示波器采样。
 - Metadata：container、channel layout、channel count、DSD64/128/256/512 识别字段、ReplayGain/R128 字段。
 
@@ -99,7 +99,7 @@ $env:TWILIGHT_ENABLE_HTMLAUDIO_FALLBACK="1"
 
 ## 当前非闭环范围
 
-- ASIO 兼容层不携带 SDK，只在 Windows x64 构建中编译；没有 `TWILIGHT_EXPERIMENTAL_ASIO_ABI=1` 时不会枚举或激活驱动。
+- ASIO 兼容层不携带 SDK，只在 Windows x64 构建中编译并默认启用；设置 `TWILIGHT_DISABLE_ASIO=1` 可停止枚举和激活驱动。
 - 真实设备 smoke 是 opt-in；没有目标平台工具链或对应设备时跳过，不阻塞默认 CI。
 - Crossfade 已进入 native float 渲染路径，能对预加载下一首做 overlap mixing，并在启用时稳定报告 `outputPerfect=false` / `perfectReasonCode=crossfade_active`。
 - DSF/DFF DSD64/128/256/512 可进入 DoP carrier path（遵循 dCS DoP open standard v1.1，carrier 上限 DSD512，运行时由设备 carrier-rate 能力门控：ASIO `dopCarrierSampleRates` 或 WASAPI/CoreAudio Exclusive `IsFormatSupported` 探测），并在 UI 中展示 DSD 源到 `DoP carrier` 再到后端实际输出；DoP 是用 PCM carrier 承载 DSD bitstream，不等同于把 DSD 转成 PCM。

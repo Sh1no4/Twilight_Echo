@@ -36,7 +36,7 @@ export const AUDIO_OUTPUT_OPTIONS: AudioOutputOption[] = [
   {
     id: 'asio',
     label: '专业声卡输出',
-    description: '专业声卡驱动输出；配置声卡开发包后编译启用。',
+    description: 'Windows x64 专业声卡驱动输出；自动枚举已安装的 ASIO 驱动。',
     platform: 'win32',
     supportsExclusive: true
   },

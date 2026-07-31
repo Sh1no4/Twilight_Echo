@@ -14,6 +14,17 @@ import { getTrackSource as getLogicalTrackSource } from '../utils/logicalTrackMo
 import { useEscapeToClose } from '../app/useDismissLayer.ts'
 import { buildMetadataMatchCandidates } from '../utils/musicMetadataMatching'
 import {
+  applyLibraryCollectionView,
+  availableCollectionGenres,
+  availableCollectionLetters,
+  AZ_INDEX_LETTERS,
+  collectionIndexLetter,
+  firstCollectionIndexForLetter,
+  LibraryCollectionViewPreferences,
+  type LibraryCollectionSort,
+  type LibraryCollectionViewState
+} from '../utils/libraryCollectionView.ts'
+import {
   formatPlaylistSourceSummary,
   summarizePlaylistSources
 } from '../utils/playlistSourceSummary'
@@ -475,9 +486,50 @@ const showTable = computed(() => {
   return !!props.filter
 })
 
-const currentGridItems = computed<GridItem[]>(() => {
+const isCollectionGrid = computed(
+  () => showGrid.value && (props.category === 'artists' || props.category === 'albums')
+)
+const collectionViewPreferences = new LibraryCollectionViewPreferences()
+const collectionViewState = ref<LibraryCollectionViewState>(
+  collectionViewPreferences.read(props.category)
+)
+const activeCollectionLetter = ref<string | null>(null)
+
+watch(
+  () => props.category,
+  (category) => {
+    if (category === 'artists' || category === 'albums') {
+      collectionViewState.value = collectionViewPreferences.read(category)
+    }
+    activeCollectionLetter.value = null
+  }
+)
+
+function updateCollectionView(next: LibraryCollectionViewState): void {
+  collectionViewState.value = next
+  collectionViewPreferences.write(props.category, next)
+  activeCollectionLetter.value = null
+}
+
+function setCollectionSort(value: string): void {
+  updateCollectionView({ ...collectionViewState.value, sort: value as LibraryCollectionSort })
+}
+
+function setCollectionGenre(value: string): void {
+  updateCollectionView({ ...collectionViewState.value, genre: value || null })
+}
+
+const baseCollectionItems = computed<GridItem[]>(() => {
   if (props.category === 'artists') return artists.value
   if (props.category === 'albums') return albums.value
+  return []
+})
+const collectionGenreOptions = computed(() => availableCollectionGenres(baseCollectionItems.value))
+const collectionGridItems = computed(() =>
+  applyLibraryCollectionView(baseCollectionItems.value, collectionViewState.value)
+)
+const currentGridItems = computed<GridItem[]>(() => {
+  if (isCollectionGrid.value) return collectionGridItems.value
   if (props.category === 'genres') return genres.value
   if (props.category === 'playlists') return playlists.value
   if (props.category === 'folders') return folders.value
@@ -1057,12 +1109,14 @@ function applyTagManagerWrite(filePaths: string[], patch: LocalLibraryTagPatch):
 
 const {
   renderedGridCount,
+  filteredGridItems,
   gridTotalCount,
   visibleArtists,
   visibleAlbums,
   visibleGenres,
   visiblePlaylists,
   visibleFolders,
+  renderGridThroughIndex,
   localTransitionName,
   viewKey,
   isSwitching,
@@ -1076,6 +1130,62 @@ const {
   currentGridItems,
   showGrid,
   updateViewportHeight
+})
+
+const availableIndexLetters = computed(() => availableCollectionLetters(filteredGridItems.value))
+
+function collectionLetterDisabled(letter: string): boolean {
+  return !availableIndexLetters.value.has(letter)
+}
+
+async function jumpToCollectionLetter(letter: string): Promise<void> {
+  if (!isCollectionGrid.value || collectionLetterDisabled(letter)) return
+  const index = firstCollectionIndexForLetter(filteredGridItems.value, letter)
+  if (index < 0) return
+  activeCollectionLetter.value = letter
+  renderGridThroughIndex(index)
+  await nextTick()
+  const card = await ensureCollectionCardRendered(index)
+  if (!card || !containerRef.value) return
+  const containerRect = containerRef.value.getBoundingClientRect()
+  const cardRect = card.getBoundingClientRect()
+  containerRef.value.scrollTo({
+    top: Math.max(0, containerRef.value.scrollTop + cardRect.top - containerRect.top - 92),
+    behavior: 'smooth'
+  })
+}
+
+async function ensureCollectionCardRendered(index: number): Promise<HTMLElement | null> {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const card = containerRef.value?.querySelector<HTMLElement>(
+      `[data-collection-index="${index}"]`
+    )
+    if (card) return card
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 50))
+  }
+  return null
+}
+
+function updateActiveCollectionLetter(): void {
+  if (!isCollectionGrid.value || !containerRef.value) return
+  const containerTop = containerRef.value.getBoundingClientRect().top + 104
+  let current: string | null = null
+  for (const card of containerRef.value.querySelectorAll<HTMLElement>('[data-collection-letter]')) {
+    if (card.getBoundingClientRect().top <= containerTop)
+      current = card.dataset.collectionLetter ?? null
+    else break
+  }
+  activeCollectionLetter.value =
+    current ?? collectionIndexLetter(filteredGridItems.value[0]?.name ?? '')
+}
+
+function onSongListScroll(event: Event): void {
+  onScroll(event)
+  updateActiveCollectionLetter()
+}
+
+watch([filteredGridItems, () => props.category], () => {
+  activeCollectionLetter.value = collectionIndexLetter(filteredGridItems.value[0]?.name ?? '')
 })
 
 function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
@@ -1092,7 +1202,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
     class="song-list"
     :class="{ 'has-player': props.hasPlayer, 'is-switching': isSwitching }"
     :style="{ height: '100vh' }"
-    @scroll="onScroll"
+    @scroll="onSongListScroll"
   >
     <Transition
       :name="localTransitionName"
@@ -1112,6 +1222,34 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
               </div>
             </div>
             <div class="header-right">
+              <div v-if="isCollectionGrid" class="collection-view-controls" aria-label="分类与排序">
+                <label>
+                  <span class="sr-only">排序方式</span>
+                  <select
+                    :value="collectionViewState.sort"
+                    aria-label="排序方式"
+                    @change="setCollectionSort(($event.target as HTMLSelectElement).value)"
+                  >
+                    <option value="name-asc">名称 A-Z</option>
+                    <option value="name-desc">名称 Z-A</option>
+                    <option value="added-newest">添加时间：最新优先</option>
+                    <option value="added-oldest">添加时间：最旧优先</option>
+                  </select>
+                </label>
+                <label>
+                  <span class="sr-only">按流派筛选</span>
+                  <select
+                    :value="collectionViewState.genre ?? ''"
+                    aria-label="按流派筛选"
+                    @change="setCollectionGenre(($event.target as HTMLSelectElement).value)"
+                  >
+                    <option value="">全部流派</option>
+                    <option v-for="genre in collectionGenreOptions" :key="genre" :value="genre">
+                      {{ genre }}
+                    </option>
+                  </select>
+                </label>
+              </div>
               <div class="search-box" :class="{ focused: searchInputFocused }">
                 <ThemeIcon class="search-icon" icon-slot="library.search" />
                 <input
@@ -1136,6 +1274,10 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
             <p class="empty-text">暂无专辑</p>
             <p class="empty-hint">通过歌单「添加文件夹」导入音乐</p>
           </div>
+          <div v-else-if="isCollectionGrid && gridTotalCount === 0" class="empty-state">
+            <p class="empty-text">没有符合条件的{{ category === 'artists' ? '艺术家' : '专辑' }}</p>
+            <p class="empty-hint">请更改流派筛选或搜索条件</p>
+          </div>
           <div v-else-if="category === 'genres' && genres.length === 0" class="empty-state">
             <p class="empty-text">暂无流派</p>
             <p class="empty-hint">导入带流派标签的音乐，或完整重扫媒体库以回填</p>
@@ -1144,148 +1286,175 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
             <p class="empty-text">暂无歌单</p>
             <p class="empty-hint">点击下方卡片创建你的第一个歌单</p>
           </div>
-          <div v-else class="card-grid">
-            <!-- Artist Cards -->
-            <template v-if="category === 'artists'">
-              <div
-                v-for="artist in visibleArtists"
-                :key="artist.name"
-                class="artist-card"
-                data-te-interactive
-                @click="emit('selectView', 'artists', `artist:${artist.name}`)"
-              >
-                <CoverImg
-                  v-if="artist.cover"
-                  :cover="artist.cover"
-                  class="artist-cover"
-                  alt="cover"
-                />
-                <div v-else class="artist-cover-placeholder">
-                  <ThemeIcon class="library-placeholder-icon" icon-slot="library.artist" />
-                </div>
-                <div class="artist-name">{{ artist.name }}</div>
-                <div class="artist-count">{{ artist.trackCount }} 首</div>
-              </div>
-              <div v-if="renderedGridCount < gridTotalCount" class="grid-loading-more">
-                正在加载更多艺术家...
-              </div>
-            </template>
-            <!-- Album Cards -->
-            <template v-if="category === 'albums'">
-              <div
-                v-for="album in visibleAlbums"
-                :key="album.id"
-                class="album-card"
-                data-te-interactive
-                @click="emit('selectView', 'albums', `album:${album.id}`)"
-              >
-                <CoverImg v-if="album.cover" :cover="album.cover" class="album-cover" alt="cover" />
-                <div v-else class="album-cover-placeholder">
-                  <ThemeIcon class="library-placeholder-icon" icon-slot="library.album" />
-                </div>
-                <div class="album-name">{{ album.name }}</div>
-                <div class="album-count">{{ album.trackCount }} 首</div>
-              </div>
-            </template>
-            <!-- Genre Cards -->
-            <template v-if="category === 'genres'">
-              <div
-                v-for="genre in visibleGenres"
-                :key="genre.name"
-                class="artist-card"
-                data-te-interactive
-                @click="emit('selectView', 'genres', `genre:${genre.name}`)"
-              >
-                <CoverImg
-                  v-if="genre.cover"
-                  :cover="genre.cover"
-                  class="artist-cover"
-                  alt="cover"
-                />
-                <div v-else class="artist-cover-placeholder">
-                  <ThemeIcon class="library-placeholder-icon" icon-slot="library.genre" />
-                </div>
-                <div class="artist-name">{{ genre.name }}</div>
-                <div class="artist-count">{{ genre.trackCount }} 首</div>
-              </div>
-              <div v-if="renderedGridCount < gridTotalCount" class="grid-loading-more">
-                正在加载更多流派...
-              </div>
-            </template>
-            <!-- Playlist Cards -->
-            <template v-if="category === 'playlists'">
-              <!-- Create Playlist Card -->
-              <div
-                class="playlist-card create-playlist-card"
-                data-te-interactive
-                @click="openCreatePlaylistDialog()"
-              >
-                <div class="playlist-cover-placeholder create-placeholder">
-                  <ThemeIcon class="library-placeholder-icon" icon-slot="library.add" />
-                </div>
-                <div class="playlist-name">创建歌单</div>
-                <div class="playlist-count">点击创建新歌单</div>
-              </div>
-              <div
-                v-for="playlist in visiblePlaylists"
-                :key="playlist.id"
-                class="playlist-card"
-                data-te-interactive
-                @click="emit('selectView', 'playlists', `playlist:${playlist.name}`)"
-              >
-                <CoverImg
-                  v-if="playlist.cover"
-                  :cover="playlist.cover"
-                  class="album-cover"
-                  alt="playlist cover"
-                />
+          <div v-else class="collection-grid-layout" :class="{ 'has-az-index': isCollectionGrid }">
+            <div class="card-grid">
+              <!-- Artist Cards -->
+              <template v-if="category === 'artists'">
                 <div
-                  v-else
-                  class="playlist-cover-placeholder"
-                  :class="{ 'default-playlist-cover': playlist.isDefault }"
-                >
-                  <i
-                    :class="playlist.isDefault ? 'pi pi-heart' : 'pi pi-list'"
-                    style="font-size: 32px; color: #ccc"
-                  ></i>
-                </div>
-                <div class="playlist-name">{{ playlist.name }}</div>
-                <div class="playlist-count">{{ playlist.trackIds?.length ?? 0 }} 首</div>
-                <div v-if="playlistSourceSummaryLabel(playlist)" class="playlist-source-summary">
-                  {{ playlistSourceSummaryLabel(playlist) }}
-                </div>
-                <div
-                  v-if="!playlist.isDefault"
-                  class="playlist-delete-btn"
+                  v-for="(artist, index) in visibleArtists"
+                  :key="artist.name"
+                  class="artist-card"
+                  :data-collection-index="index"
+                  :data-collection-letter="collectionIndexLetter(artist.name) ?? undefined"
                   data-te-interactive
-                  title="删除歌单"
-                  @click="handleDeletePlaylist(playlist.id || '', $event)"
+                  @click="emit('selectView', 'artists', `artist:${artist.name}`)"
                 >
-                  <i class="pi pi-trash" style="font-size: 12px"></i>
+                  <CoverImg
+                    v-if="artist.cover"
+                    :cover="artist.cover"
+                    class="artist-cover"
+                    alt="cover"
+                  />
+                  <div v-else class="artist-cover-placeholder">
+                    <ThemeIcon class="library-placeholder-icon" icon-slot="library.artist" />
+                  </div>
+                  <div class="artist-name">{{ artist.name }}</div>
+                  <div class="artist-count">{{ artist.trackCount }} 首</div>
                 </div>
-              </div>
-            </template>
-            <template v-if="category === 'folders'">
-              <div
-                v-for="folder in visibleFolders"
-                :key="folder.path"
-                class="playlist-card folder-card"
-                data-te-interactive
-                @click="emit('selectView', 'folders', `folder:${folder.path}`)"
+                <div v-if="renderedGridCount < gridTotalCount" class="grid-loading-more">
+                  正在加载更多艺术家...
+                </div>
+              </template>
+              <!-- Album Cards -->
+              <template v-if="category === 'albums'">
+                <div
+                  v-for="(album, index) in visibleAlbums"
+                  :key="album.id"
+                  class="album-card"
+                  :data-collection-index="index"
+                  :data-collection-letter="collectionIndexLetter(album.name) ?? undefined"
+                  data-te-interactive
+                  @click="emit('selectView', 'albums', `album:${album.id}`)"
+                >
+                  <CoverImg
+                    v-if="album.cover"
+                    :cover="album.cover"
+                    class="album-cover"
+                    alt="cover"
+                  />
+                  <div v-else class="album-cover-placeholder">
+                    <ThemeIcon class="library-placeholder-icon" icon-slot="library.album" />
+                  </div>
+                  <div class="album-name">{{ album.name }}</div>
+                  <div class="album-count">{{ album.trackCount }} 首</div>
+                </div>
+              </template>
+              <!-- Genre Cards -->
+              <template v-if="category === 'genres'">
+                <div
+                  v-for="genre in visibleGenres"
+                  :key="genre.name"
+                  class="artist-card"
+                  data-te-interactive
+                  @click="emit('selectView', 'genres', `genre:${genre.name}`)"
+                >
+                  <CoverImg
+                    v-if="genre.cover"
+                    :cover="genre.cover"
+                    class="artist-cover"
+                    alt="cover"
+                  />
+                  <div v-else class="artist-cover-placeholder">
+                    <ThemeIcon class="library-placeholder-icon" icon-slot="library.genre" />
+                  </div>
+                  <div class="artist-name">{{ genre.name }}</div>
+                  <div class="artist-count">{{ genre.trackCount }} 首</div>
+                </div>
+                <div v-if="renderedGridCount < gridTotalCount" class="grid-loading-more">
+                  正在加载更多流派...
+                </div>
+              </template>
+              <!-- Playlist Cards -->
+              <template v-if="category === 'playlists'">
+                <!-- Create Playlist Card -->
+                <div
+                  class="playlist-card create-playlist-card"
+                  data-te-interactive
+                  @click="openCreatePlaylistDialog()"
+                >
+                  <div class="playlist-cover-placeholder create-placeholder">
+                    <ThemeIcon class="library-placeholder-icon" icon-slot="library.add" />
+                  </div>
+                  <div class="playlist-name">创建歌单</div>
+                  <div class="playlist-count">点击创建新歌单</div>
+                </div>
+                <div
+                  v-for="playlist in visiblePlaylists"
+                  :key="playlist.id"
+                  class="playlist-card"
+                  data-te-interactive
+                  @click="emit('selectView', 'playlists', `playlist:${playlist.name}`)"
+                >
+                  <CoverImg
+                    v-if="playlist.cover"
+                    :cover="playlist.cover"
+                    class="album-cover"
+                    alt="playlist cover"
+                  />
+                  <div
+                    v-else
+                    class="playlist-cover-placeholder"
+                    :class="{ 'default-playlist-cover': playlist.isDefault }"
+                  >
+                    <i
+                      :class="playlist.isDefault ? 'pi pi-heart' : 'pi pi-list'"
+                      style="font-size: 32px; color: #ccc"
+                    ></i>
+                  </div>
+                  <div class="playlist-name">{{ playlist.name }}</div>
+                  <div class="playlist-count">{{ playlist.trackIds?.length ?? 0 }} 首</div>
+                  <div v-if="playlistSourceSummaryLabel(playlist)" class="playlist-source-summary">
+                    {{ playlistSourceSummaryLabel(playlist) }}
+                  </div>
+                  <div
+                    v-if="!playlist.isDefault"
+                    class="playlist-delete-btn"
+                    data-te-interactive
+                    title="删除歌单"
+                    @click="handleDeletePlaylist(playlist.id || '', $event)"
+                  >
+                    <i class="pi pi-trash" style="font-size: 12px"></i>
+                  </div>
+                </div>
+              </template>
+              <template v-if="category === 'folders'">
+                <div
+                  v-for="folder in visibleFolders"
+                  :key="folder.path"
+                  class="playlist-card folder-card"
+                  data-te-interactive
+                  @click="emit('selectView', 'folders', `folder:${folder.path}`)"
+                >
+                  <CoverImg
+                    v-if="folder.cover"
+                    :cover="folder.cover"
+                    class="album-cover"
+                    alt="cover"
+                  />
+                  <div v-else class="playlist-cover-placeholder">
+                    <ThemeIcon class="library-placeholder-icon" icon-slot="library.folder" />
+                  </div>
+                  <div class="playlist-name">{{ folder.name }}</div>
+                  <div class="playlist-count">{{ folder.trackCount }} 首</div>
+                </div>
+              </template>
+            </div>
+            <nav v-if="isCollectionGrid" class="az-index" aria-label="A-Z 快捷索引">
+              <button
+                v-for="letter in AZ_INDEX_LETTERS"
+                :key="letter"
+                type="button"
+                :class="{ active: activeCollectionLetter === letter }"
+                :disabled="collectionLetterDisabled(letter)"
+                :aria-current="activeCollectionLetter === letter ? 'location' : undefined"
+                :title="
+                  collectionLetterDisabled(letter) ? `${letter} 暂无内容` : `跳转到 ${letter}`
+                "
+                @click="jumpToCollectionLetter(letter)"
               >
-                <CoverImg
-                  v-if="folder.cover"
-                  :cover="folder.cover"
-                  class="album-cover"
-                  alt="cover"
-                />
-                <div v-else class="playlist-cover-placeholder">
-                  <ThemeIcon class="library-placeholder-icon" icon-slot="library.folder" />
-                </div>
-                <div class="playlist-name">{{ folder.name }}</div>
-                <div class="playlist-count">{{ folder.trackCount }} 首</div>
-              </div>
-            </template>
+                {{ letter }}
+              </button>
+            </nav>
           </div>
         </template>
         <template v-else>
@@ -1294,6 +1463,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
               <button
                 v-if="showDetailBackButton"
                 class="btn-back"
+                data-te-back-button="icon"
                 title="返回"
                 @click="emit('selectView', category, null)"
               >
@@ -1308,27 +1478,6 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 <span v-else-if="libraryRepairStatusText" class="library-repair-status">
                   {{ libraryRepairStatusText }}
                 </span>
-              </div>
-              <div class="header-play-actions">
-                <button
-                  type="button"
-                  class="btn-play-all"
-                  title="播放全部"
-                  :disabled="displayTracks.length === 0"
-                  @click="playAllTracks"
-                >
-                  <i class="ph ph-play"></i>
-                  <span>播放全部</span>
-                </button>
-                <button
-                  type="button"
-                  class="btn-shuffle-all"
-                  title="随机播放"
-                  :disabled="displayTracks.length === 0"
-                  @click="shufflePlayTracks"
-                >
-                  <i class="ph ph-shuffle"></i>
-                </button>
               </div>
             </div>
             <div class="header-right">
@@ -1642,6 +1791,28 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 </button>
               </div>
             </div>
+          </div>
+          <div class="library-play-actions" aria-label="播放控制">
+            <button
+              type="button"
+              class="btn-play-all"
+              title="播放全部"
+              :disabled="displayTracks.length === 0"
+              @click="playAllTracks"
+            >
+              <i class="ph ph-play"></i>
+              <span>播放全部</span>
+            </button>
+            <button
+              type="button"
+              class="btn-shuffle-all"
+              title="随机播放"
+              :disabled="displayTracks.length === 0"
+              @click="shufflePlayTracks"
+            >
+              <i class="ph ph-shuffle"></i>
+              <span>随机播放</span>
+            </button>
           </div>
           <div
             v-if="showUnifiedSearchStatus"

@@ -70,6 +70,7 @@ import { DEFAULT_SOFTWARE_VOLUME } from '../../../shared/audioProcessingOptions.
 import { createSleepTimerController, getRestorableSleepTimerState } from './sleepTimerController.ts'
 import { createSleepTimerFadeController } from './sleepTimerFade.ts'
 import { usePlaybackBookmarks } from './playbackBookmarks'
+import { useAppNoticeStore } from './useAppNoticeStore'
 import {
   DEFAULT_AUDIO_DEVICE_OPTION,
   getFallbackAudioOutput,
@@ -154,6 +155,24 @@ const originalQueue = shallowRef<Track[]>([])
 const audioEngineReady = ref(false)
 const audioEngineError = ref<string | null>(null)
 const audioEngineRecoveryNotice = ref<AudioEngineRecoveryNotice | null>(null)
+const { pushNotice } = useAppNoticeStore()
+let lastAudioEngineNotice = ''
+
+function setAudioEngineError(error: string | null): void {
+  const message = typeof error === 'string' ? error.trim() : ''
+  audioEngineError.value = error
+  if (!message) {
+    lastAudioEngineNotice = ''
+    return
+  }
+  if (message === lastAudioEngineNotice) return
+  lastAudioEngineNotice = message
+  const isFallbackNotice =
+    message.includes('已启用临时播放通道') ||
+    message.includes('已尝试切换到') ||
+    message.includes('已重新匹配到')
+  pushNotice({ kind: isFallbackNotice ? 'warning' : 'error', message })
+}
 const exclusiveMode = ref(false)
 // Tracks whether the in-PlayingMusic audio visualizer surface is active.
 // App.vue reads this to hide the PlayerBar while the visualizer is open.
@@ -369,6 +388,7 @@ function shouldIgnoreNativePlaybackInfo(info: NativePlaybackInfo, infoIndex: num
 }
 
 function setPlaybackToggleIntent(playing: boolean): void {
+  if (playing) clearPendingNativePause()
   playbackToggleIntent = {
     playing,
     expiresAt: getNowMs() + PLAYBACK_TOGGLE_INTENT_GRACE_MS
@@ -379,7 +399,7 @@ function clearPlaybackToggleIntent(): void {
   playbackToggleIntent = null
 }
 
-function applyNativePlayingState(playing: boolean): void {
+function applyNativePlayingState(playing: boolean, pausePosition: number | null = null): void {
   if (playbackToggleIntent) {
     if (getNowMs() > playbackToggleIntent.expiresAt) {
       clearPlaybackToggleIntent()
@@ -393,6 +413,23 @@ function applyNativePlayingState(playing: boolean): void {
     // expires so later out-of-order ticks cannot reverse the button again.
   }
 
+  if (playing) {
+    clearPendingNativePause()
+    isPlaying.value = true
+    return
+  }
+
+  if (
+    pausePosition !== null &&
+    isPlaying.value &&
+    nativePlaybackActive &&
+    playbackToggleIntent?.playing !== false
+  ) {
+    deferNativePause(pausePosition)
+    return
+  }
+
+  clearPendingNativePause()
   isPlaying.value = playing
 }
 
@@ -485,14 +522,14 @@ function getPlaybackAudio(): HTMLAudioElement {
       void handlePlaybackFallback(track, new Error(message), activeLoadToken).then((handled) => {
         rendererFallbackInProgress = false
         if (!handled) {
-          audioEngineError.value = message
+          setAudioEngineError(message)
           isPlaying.value = false
           isLoading.value = false
         }
       })
       return
     }
-    audioEngineError.value = message
+    setAudioEngineError(message)
     isPlaying.value = false
     isLoading.value = false
   })
@@ -784,7 +821,7 @@ async function refreshAudioOutputState(): Promise<void> {
         }
       }
       audioEngineReady.value = true
-      audioEngineError.value = null
+      setAudioEngineError(null)
     } catch (err) {
       audioEngineReady.value = false
       console.warn('[audio-engine] Failed to refresh audio output state:', err)
@@ -820,12 +857,12 @@ async function persistAudioProcessingFallback(
   nextSettings: AudioProcessingSettings,
   reason: unknown
 ): Promise<void> {
-  audioEngineError.value = reason instanceof Error ? reason.message : String(reason)
+  setAudioEngineError(reason instanceof Error ? reason.message : String(reason))
   try {
     const savedSettings = await updateSettings({ audioProcessing: nextSettings })
     audioProcessing.value = cloneAudioProcessingSettings(savedSettings.audioProcessing)
   } catch (err) {
-    audioEngineError.value = err instanceof Error ? err.message : String(err)
+    setAudioEngineError(err instanceof Error ? err.message : String(err))
     console.error('[audio-engine] Failed to persist audio processing fallback:', err)
   }
 }
@@ -1261,7 +1298,10 @@ function applyNativePlaybackInfo(
     applyPlaybackPositionSample(nextPosition)
   }
 
-  applyNativePlayingState(normalizedInfo.state === 'playing')
+  applyNativePlayingState(
+    normalizedInfo.state === 'playing',
+    normalizedInfo.state === 'paused' ? nextPosition : null
+  )
   applyNativeStreamBufferingFromInfo(normalizedInfo)
   isLoading.value = false
   autoAdvanceInFlight = false
@@ -1454,7 +1494,7 @@ async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<vo
     }
   } catch (err) {
     clearNativePlaybackInfoIntent()
-    audioEngineError.value = err instanceof Error ? err.message : String(err)
+    setAudioEngineError(err instanceof Error ? err.message : String(err))
     console.error('[音频引擎] 切换歌曲失败:', err)
     isLoading.value = false
   } finally {
@@ -1647,6 +1687,7 @@ const TIME_UPDATE_INTERVAL_MS = 250
 const PLAYBACK_POSITION_CONFIRMATION_TOLERANCE_SECONDS = 1.5
 const PLAYBACK_POSITION_TRANSITION_GUARD_MS = 3000
 const RENDERER_CLOCK_STALE_AFTER_MS = 500
+const NATIVE_PAUSE_CONFIRMATION_MS = 500
 const VISUALIZATION_UPDATE_INTERVAL_MS = 200
 let latestPlaybackTime = 0
 let lastTimePublishAt = 0
@@ -1662,6 +1703,8 @@ let rendererClockAnchorAt = 0
 let lastAcceptedPlaybackSampleAt = 0
 let lastEnginePlaybackPosition = Number.NaN
 let lastEnginePlaybackTrackId = ''
+let pendingNativePause: { position: number } | null = null
+let nativePauseConfirmationTimer: number | null = null
 let rendererClockTimer: number | null = null
 let advancingFromEndedTrackId = ''
 let autoAdvanceInFlight = false
@@ -1676,6 +1719,38 @@ let dominantColorRequestId = 0
 
 function getNowMs(): number {
   return performance.now()
+}
+
+function clearPendingNativePause(): void {
+  pendingNativePause = null
+  if (nativePauseConfirmationTimer !== null) {
+    window.clearTimeout(nativePauseConfirmationTimer)
+    nativePauseConfirmationTimer = null
+  }
+}
+
+function deferNativePause(position: number): void {
+  pendingNativePause = {
+    position: Math.max(0, Number.isFinite(position) ? position : latestPlaybackTime)
+  }
+  if (nativePauseConfirmationTimer !== null) return
+  nativePauseConfirmationTimer = window.setTimeout(() => {
+    nativePauseConfirmationTimer = null
+    if (pendingNativePause) isPlaying.value = false
+  }, NATIVE_PAUSE_CONFIRMATION_MS)
+}
+
+function recoverFromStaleNativePause(position: number): void {
+  const pendingPause = pendingNativePause
+  if (
+    !pendingPause ||
+    position <= pendingPause.position + 0.01 ||
+    playbackToggleIntent?.playing === false
+  ) {
+    return
+  }
+  clearPendingNativePause()
+  isPlaying.value = true
 }
 
 function clearPendingTimePublish(): void {
@@ -1712,6 +1787,7 @@ function anchorRendererPlaybackClock(time: number): void {
 function beginPlaybackPositionTransition(time: number): void {
   const position = Math.max(0, Number.isFinite(time) ? time : 0)
   const startedAt = getNowMs()
+  clearPendingNativePause()
   lastEnginePlaybackPosition = Number.NaN
   lastEnginePlaybackTrackId = currentTrack.value?.id ?? ''
   pendingPlaybackPositionTarget = {
@@ -1773,6 +1849,7 @@ function applyPlaybackPositionSample(time: number): boolean {
   if (lastEnginePlaybackTrackId !== trackId) {
     lastEnginePlaybackTrackId = trackId
     lastEnginePlaybackPosition = Number.NaN
+    clearPendingNativePause()
   }
   const previousEnginePosition = lastEnginePlaybackPosition
   const engineAdvanced =
@@ -1786,6 +1863,7 @@ function applyPlaybackPositionSample(time: number): boolean {
   if (!expectedRewind && engineStalled) return false
 
   lastEnginePlaybackPosition = position
+  if (engineAdvanced) recoverFromStaleNativePause(position)
   if (!expectedRewind && engineAdvanced && position + 0.35 < currentTime.value) return false
 
   anchorRendererPlaybackClock(position)
@@ -2388,7 +2466,9 @@ async function handlePlaybackFallback(
   })
   if (!fallback) return await handleProviderRematchFallback(failedTrack, loadToken)
 
-  audioEngineError.value = `播放 ${failedTrack.title || '当前曲目'} 失败，已尝试切换到 ${fallback.source ?? getTrackSource(fallback)} 来源：${reason instanceof Error ? reason.message : String(reason)}`
+  setAudioEngineError(
+    `播放 ${failedTrack.title || '当前曲目'} 失败，已尝试切换到 ${fallback.source ?? getTrackSource(fallback)} 来源：${reason instanceof Error ? reason.message : String(reason)}`
+  )
   nativePlaybackActive = false
   loadedTrackId = ''
   stopVisualizationPolling(true)
@@ -2446,7 +2526,9 @@ async function handleProviderRematchFallback(
   const rematched = findProviderRematchCandidate(failedTrack, candidates)
   if (!rematched || !isActiveLoad(loadToken, failedTrack)) return false
 
-  audioEngineError.value = `播放 ${failedTrack.title || '当前曲目'} 失败，已重新匹配到 ${rematched.source ?? getTrackSource(rematched)} 来源`
+  setAudioEngineError(
+    `播放 ${failedTrack.title || '当前曲目'} 失败，已重新匹配到 ${rematched.source ?? getTrackSource(rematched)} 来源`
+  )
   nativePlaybackActive = false
   loadedTrackId = ''
   stopVisualizationPolling(true)
@@ -2515,7 +2597,7 @@ function setupAudioEngineListeners(): void {
           ) {
             break
           }
-          applyNativePlayingState(!data)
+          applyNativePlayingState(!data, data === true ? latestPlaybackTime : null)
           flushLatestCurrentTime()
           break
         case 'eof-reached':
@@ -2604,9 +2686,11 @@ function setupAudioEngineListeners(): void {
     cleanupFns.push(
       api.onServiceReady((event) => {
         audioEngineReady.value = true
-        audioEngineError.value = event.outputRouteSynced
-          ? null
-          : event.restoreErrors?.join('；') || '音频输出设备/后端未完全恢复'
+        setAudioEngineError(
+          event.outputRouteSynced
+            ? null
+            : event.restoreErrors?.join('；') || '音频输出设备/后端未完全恢复'
+        )
         setAudioServiceReadyNotice({
           outputRouteSynced: event.outputRouteSynced === true,
           restoreErrors: event.restoreErrors
@@ -2625,9 +2709,9 @@ function setupAudioEngineListeners(): void {
           outputRouteSynced: false,
           restoreErrors: ['等待结构化输出路由恢复确认']
         })
-        audioEngineError.value = '音频输出设备/后端未完全恢复'
+        setAudioEngineError('音频输出设备/后端未完全恢复')
       } else {
-        audioEngineError.value = null
+        setAudioEngineError(null)
       }
       api.setVolume(volume.value).catch(() => {})
       api.setPlaybackRate(playbackRate.value).catch(() => {})
@@ -2647,7 +2731,7 @@ function setupAudioEngineListeners(): void {
   cleanupFns.push(
     api.onError((message) => {
       console.error('[audio-engine] Playback error:', message)
-      audioEngineError.value = message
+      setAudioEngineError(message)
       if (message.includes('音频服务已重启')) {
         setAudioServiceCrashNotice(message)
       }
@@ -3012,7 +3096,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
     nativePlaybackActive = nativeStarted
 
     if (nativePlaybackActive) {
-      audioEngineError.value = ''
+      setAudioEngineError('')
       stopRendererAudio(true)
     } else if (useNativePlayback) {
       nativeQueueDelegated = false
@@ -3026,16 +3110,20 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         return
       }
       if (!htmlAudioFallbackAllowed) {
-        audioEngineError.value = nativeFallbackReason
-          ? `原生音频引擎不可用：${nativeFallbackReason}`
-          : '原生音频引擎不可用'
+        setAudioEngineError(
+          nativeFallbackReason
+            ? `原生音频引擎不可用：${nativeFallbackReason}`
+            : '原生音频引擎不可用'
+        )
         isPlaying.value = false
         releaseLoadIfOwned()
         return
       }
-      audioEngineError.value = nativeFallbackReason
-        ? `原生音频引擎不可用，已启用临时播放通道：${nativeFallbackReason}`
-        : ''
+      setAudioEngineError(
+        nativeFallbackReason
+          ? `原生音频引擎不可用，已启用临时播放通道：${nativeFallbackReason}`
+          : ''
+      )
       const rendererStarted = await playWithRendererAudio(
         track,
         playTarget,
@@ -3050,7 +3138,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
     } else {
       nativeQueueDelegated = false
       clearNativePlaybackInfoIntentForLoad(loadToken)
-      audioEngineError.value = ''
+      setAudioEngineError('')
       const rendererStarted = await playWithRendererAudio(
         track,
         playTarget,
@@ -3098,7 +3186,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
     clearNativePlaybackInfoIntentForLoad(loadToken)
     if (await handlePlaybackFallback(track, err, loadToken)) return
     console.error('[audio-engine] Playback failed:', err)
-    audioEngineError.value = err instanceof Error ? err.message : String(err)
+    setAudioEngineError(err instanceof Error ? err.message : String(err))
     autoAdvanceInFlight = false
     isLoading.value = false
     isPlaying.value = false
@@ -3768,7 +3856,7 @@ function commitQueueEdit(nextQueue: readonly Track[], nextIndex: number): void {
     snapshots.length === 0 ? -1 : Math.max(0, Math.min(nextIndex, snapshots.length - 1))
   persistPlaybackSessionAfterQueueMutation()
   void queueNativeQueueStateSync().catch((error) => {
-    audioEngineError.value = error instanceof Error ? error.message : String(error)
+    setAudioEngineError(error instanceof Error ? error.message : String(error))
   })
 }
 
@@ -3842,7 +3930,7 @@ function setPlayModeInternal(mode: PlayMode, options: { persist?: boolean } = {}
     })
   }
   void queueNativeQueueStateSync().catch((err) => {
-    audioEngineError.value = err instanceof Error ? err.message : String(err)
+    setAudioEngineError(err instanceof Error ? err.message : String(err))
     console.error('[音频引擎] 同步播放模式失败:', err)
   })
 }
@@ -4260,7 +4348,7 @@ export function usePlayerStore(): {
     try {
       applyAudioOutputState(await window.api.audioEngine.setExclusiveMode(next))
     } catch (err) {
-      audioEngineError.value = err instanceof Error ? err.message : String(err)
+      setAudioEngineError(err instanceof Error ? err.message : String(err))
       console.error('[audio-engine] Failed to toggle exclusive mode:', err)
     }
   }
@@ -4269,7 +4357,7 @@ export function usePlayerStore(): {
     try {
       applyAudioOutputState(await window.api.audioEngine.setAudioOutput(output, device))
     } catch (err) {
-      audioEngineError.value = err instanceof Error ? err.message : String(err)
+      setAudioEngineError(err instanceof Error ? err.message : String(err))
       console.error('[audio-engine] Failed to switch audio output:', err)
     }
   }
@@ -4278,7 +4366,7 @@ export function usePlayerStore(): {
     try {
       applyAudioOutputState(await window.api.audioEngine.setAudioDevice(device))
     } catch (err) {
-      audioEngineError.value = err instanceof Error ? err.message : String(err)
+      setAudioEngineError(err instanceof Error ? err.message : String(err))
       console.error('[audio-engine] Failed to switch audio device:', err)
     }
   }
@@ -4301,12 +4389,13 @@ export function usePlayerStore(): {
         await window.api.audioEngine.getPlaybackInfo()
       )
     } catch (err) {
-      audioEngineError.value = err instanceof Error ? err.message : String(err)
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      setAudioEngineError(errorMessage)
       audioOutputConfigApplyStatus.value = {
         ...audioOutputConfigApplyStatus.value,
         failedRevision: audioOutputConfigApplyStatus.value.requestedRevision,
         state: 'failed',
-        error: audioEngineError.value
+        error: errorMessage
       }
       console.error('[音频引擎] 更新输出配置失败:', err)
     }
@@ -4363,7 +4452,7 @@ export function usePlayerStore(): {
         await window.api.audioEngine.getPlaybackInfo()
       )
     } catch (err) {
-      audioEngineError.value = err instanceof Error ? err.message : String(err)
+      setAudioEngineError(err instanceof Error ? err.message : String(err))
       console.error('[音频引擎] 更新输出采样率锁失败:', err)
       try {
         const sceneState = await window.api.audioEngine.getDspSceneState()
@@ -4398,7 +4487,7 @@ export function usePlayerStore(): {
         await window.api.audioEngine.getPlaybackInfo()
       )
     } catch (err) {
-      audioEngineError.value = err instanceof Error ? err.message : String(err)
+      setAudioEngineError(err instanceof Error ? err.message : String(err))
       console.error('[音频引擎] 更新平衡/相位失败:', err)
       try {
         const sceneState = await window.api.audioEngine.getDspSceneState()

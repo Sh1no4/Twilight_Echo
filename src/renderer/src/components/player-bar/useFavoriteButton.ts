@@ -1,7 +1,11 @@
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { Track } from '../../types/music.ts'
 import { getNcmSongId, syncPluginProviders } from '../../providers/index.ts'
-import type { MediaProviderRegistry } from '../../providers/mediaProvider.ts'
+import {
+  getProviderLocalId,
+  getTrackProviderId,
+  type MediaProviderRegistry
+} from '../../providers/mediaProvider.ts'
 
 const DEFAULT_FAVORITE_PLAYLIST_NAME = '我收藏的音乐'
 
@@ -24,12 +28,15 @@ type UseFavoriteButtonOptions = {
   removeFavoriteTrack?: (track: Track) => void
 }
 
-function isNcmTrack(track: Pick<Track, 'id' | 'source' | 'ncmSongId'>): boolean {
-  return track.source === 'ncm' || track.id.startsWith('ncm:') || getNcmSongId(track) != null
+function isLocalTrack(track: Pick<Track, 'id' | 'source'>): boolean {
+  const providerId = getTrackProviderId(track)
+  return providerId == null || providerId === 'local'
 }
 
-function isLocalTrack(track: Pick<Track, 'id' | 'source'>): boolean {
-  return !track.source || track.source === 'local' || track.id.startsWith('local:')
+function getProviderTrackId(track: Track, providerId: string): string | number | null {
+  if (providerId === 'ncm') return getNcmSongId(track)
+  const localId = getProviderLocalId(track.id, providerId)?.trim()
+  return localId || null
 }
 
 export function useFavoriteButton({
@@ -49,9 +56,10 @@ export function useFavoriteButton({
   favoriteButtonTitle: ComputedRef<string>
   toggleFavorite: () => Promise<void>
 } {
-  const ncmFavoriteLoading = ref(false)
-  const ncmFavoriteLiked = ref(false)
-  let ncmFavoriteRequestId = 0
+  const providerFavoriteAvailable = ref(false)
+  const providerFavoriteLoading = ref(false)
+  const providerFavoriteLiked = ref(false)
+  let providerFavoriteRequestId = 0
 
   const defaultFavoritePlaylist = computed(() =>
     playlists.value.find((playlist) => playlist.isDefault) ??
@@ -69,49 +77,51 @@ export function useFavoriteButton({
   const favoriteButtonVisible = computed(() => {
     const track = currentTrack.value
     if (!track) return false
-    return isLocalTrack(track) || isNcmTrack(track) || Boolean(addFavoriteTrack && removeFavoriteTrack)
+    return isLocalTrack(track) || providerFavoriteAvailable.value
   })
 
   const favoriteButtonLiked = computed(() => {
     const track = currentTrack.value
     if (!track) return false
-    if (localFavoriteLiked.value) return true
-    if (isNcmTrack(track)) return ncmFavoriteLiked.value
-    return localFavoriteLiked.value
+    return isLocalTrack(track) ? localFavoriteLiked.value : providerFavoriteLiked.value
   })
 
   const favoriteButtonLoading = computed(() => {
     const track = currentTrack.value
-    return !!track && isNcmTrack(track) && ncmFavoriteLoading.value
+    return !!track && !isLocalTrack(track) && providerFavoriteLoading.value
   })
 
   const favoriteButtonTitle = computed(() =>
     favoriteButtonLiked.value ? '取消收藏' : '添加到收藏'
   )
 
-  async function refreshNcmFavoriteState(track: Track | null | undefined): Promise<void> {
-    const requestId = ++ncmFavoriteRequestId
-    ncmFavoriteLiked.value = false
-    if (!track || !isNcmTrack(track)) return
+  async function refreshProviderFavoriteState(track: Track | null | undefined): Promise<void> {
+    const requestId = ++providerFavoriteRequestId
+    providerFavoriteAvailable.value = false
+    providerFavoriteLiked.value = false
+    if (!track || isLocalTrack(track)) return
 
-    const songId = getNcmSongId(track)
-    if (songId == null) return
+    const providerId = getTrackProviderId(track)
+    if (!providerId) return
+    const providerTrackId = getProviderTrackId(track, providerId)
+    if (providerTrackId == null) return
 
-    if (typeof window === 'undefined' || !window.api?.providers) return
+    if (typeof window !== 'undefined' && window.api?.providers) {
+      await syncPluginProviders()
+      if (requestId !== providerFavoriteRequestId) return
+    }
 
-    await syncPluginProviders()
-    if (requestId !== ncmFavoriteRequestId) return
-
-    const provider = mediaProviders.get('ncm')
+    const provider = mediaProviders.get(providerId)
+    providerFavoriteAvailable.value = Boolean(provider?.likeTrack)
     if (!provider?.isTrackLiked) return
 
     try {
-      const liked = await provider.isTrackLiked(songId)
-      if (requestId === ncmFavoriteRequestId) {
-        ncmFavoriteLiked.value = liked
+      const liked = await provider.isTrackLiked(providerTrackId)
+      if (requestId === providerFavoriteRequestId) {
+        providerFavoriteLiked.value = liked
       }
     } catch (error) {
-      console.warn('Failed to read NetEase favorite state', error)
+      console.warn(`Failed to read ${providerId} favorite state`, error)
     }
   }
 
@@ -139,27 +149,32 @@ export function useFavoriteButton({
     }
   }
 
-  async function toggleNcmFavorite(track: Track): Promise<void> {
-    if (ncmFavoriteLoading.value) return
-    const songId = getNcmSongId(track)
-    if (songId == null) return
+  async function toggleProviderFavorite(track: Track): Promise<void> {
+    if (providerFavoriteLoading.value) return
+    const providerId = getTrackProviderId(track)
+    if (!providerId) return
+    const providerTrackId = getProviderTrackId(track, providerId)
+    if (providerTrackId == null) return
 
     const trackId = track.id
-    await syncPluginProviders()
-    const provider = mediaProviders.get('ncm')
-    if (!provider?.likeTrack) return
-
-    const nextLiked = !ncmFavoriteLiked.value
-    ncmFavoriteLoading.value = true
+    const nextLiked = !providerFavoriteLiked.value
+    ++providerFavoriteRequestId
+    providerFavoriteLoading.value = true
     try {
-      await provider.likeTrack(songId, nextLiked)
+      if (typeof window !== 'undefined' && window.api?.providers) {
+        await syncPluginProviders()
+      }
+      const provider = mediaProviders.get(providerId)
+      if (!provider?.likeTrack) return
+
+      await provider.likeTrack(providerTrackId, nextLiked)
       if (currentTrack.value?.id === trackId) {
-        ncmFavoriteLiked.value = nextLiked
+        providerFavoriteLiked.value = nextLiked
       }
     } catch (error) {
-      console.warn('Failed to toggle NetEase favorite state', error)
+      console.warn(`Failed to toggle ${providerId} favorite state`, error)
     } finally {
-      ncmFavoriteLoading.value = false
+      providerFavoriteLoading.value = false
     }
   }
 
@@ -167,29 +182,18 @@ export function useFavoriteButton({
     const track = currentTrack.value
     if (!track) return
 
-    if (isFavoriteTrack && addFavoriteTrack && removeFavoriteTrack) {
-      if (isFavoriteTrack(track)) {
-        removeFavoriteTrack(track)
-      } else {
-        addFavoriteTrack(track)
-      }
+    if (!isLocalTrack(track)) {
+      await toggleProviderFavorite(track)
       return
     }
 
-    if (isNcmTrack(track)) {
-      await toggleNcmFavorite(track)
-      return
-    }
-
-    if (isLocalTrack(track)) {
-      toggleLocalFavorite(track)
-    }
+    toggleLocalFavorite(track)
   }
 
   watch(
     () => [currentTrack.value?.id, currentTrack.value?.source, currentTrack.value?.ncmSongId] as const,
     () => {
-      void refreshNcmFavoriteState(currentTrack.value)
+      void refreshProviderFavoriteState(currentTrack.value)
     },
     { immediate: true }
   )

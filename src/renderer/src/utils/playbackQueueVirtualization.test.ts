@@ -108,6 +108,7 @@ test('player drawer iterates only the virtual queue window and wires current-ite
   assert.match(source, /:key="item\.queueEntryId"/)
   assert.match(source, /@drop="onQueueDrop\(\$event, item\.queueEntryId\)"/)
   assert.doesNotMatch(source, /v-for="\(track, i\) in queue"/)
+  assert.doesNotMatch(source, /Play Queue/)
 })
 
 test('player queue state uses shallow snapshots and revision-fenced native synchronization', () => {

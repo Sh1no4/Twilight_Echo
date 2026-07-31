@@ -543,7 +543,10 @@ test('genre derived collection and tag write updates groups', async () => {
   assert.equal(changed, 1)
   store.flushRebuild()
   assert.equal(store.genres.value.find((item) => item.name === 'Jazz')?.trackCount, 2)
-  assert.equal(store.genres.value.find((item) => item.name === '未知流派'), undefined)
+  assert.equal(
+    store.genres.value.find((item) => item.name === '未知流派'),
+    undefined
+  )
 
   store.clearTracks()
 })
@@ -711,6 +714,126 @@ test('missing albumArtist merges by release directory instead of track artist', 
   const albums = store.albums.value.filter((album) => album.name === 'Shared Title')
   assert.equal(albums.length, 1)
   assert.equal(albums[0]?.trackCount, 2)
+
+  store.clearTracks()
+})
+
+test('same-title tracks with shared cover merge across per-track directories', async () => {
+  const store = setupStore()
+  const sharedCover = 'cover://shared-release.jpg'
+  await store.addTracks(
+    [
+      {
+        ...generateMockTracks(1)[0],
+        id: 'split-release-a',
+        artist: 'Artist A',
+        album: '20',
+        cover: sharedCover,
+        filePath: 'C:\\music\\20\\01\\a.flac',
+        dir: 'C:\\music\\20\\01'
+      },
+      {
+        ...generateMockTracks(1)[0],
+        id: 'split-release-b',
+        artist: 'Artist B',
+        album: '２０',
+        cover: sharedCover,
+        filePath: 'C:\\music\\20\\02\\b.flac',
+        dir: 'C:\\music\\20\\02'
+      },
+      {
+        ...generateMockTracks(1)[0],
+        id: 'different-release',
+        artist: 'Artist C',
+        album: '20',
+        cover: 'cover://different-release.jpg',
+        filePath: 'C:\\music\\other\\c.flac',
+        dir: 'C:\\music\\other'
+      }
+    ],
+    { deferRebuild: false }
+  )
+  store.flushRebuild()
+
+  const sameNamed = store.albums.value.filter((album) => ['20', '２０'].includes(album.name))
+  assert.equal(sameNamed.length, 2)
+  const merged = sameNamed.find((album) => album.trackCount === 2)
+  assert.ok(merged, 'shared artwork should identify one release across nested directories')
+  assert.deepEqual(merged!.tracks.map((track) => track.id).sort(), [
+    'split-release-a',
+    'split-release-b'
+  ])
+
+  store.clearTracks()
+})
+
+test('distinct explicit album artists stay separate even when title and cover match', async () => {
+  const store = setupStore()
+  await store.addTracks(
+    [
+      {
+        ...generateMockTracks(1)[0],
+        id: 'owner-a',
+        artist: 'Guest A',
+        albumArtist: 'Album Owner A',
+        album: 'Shared Cover Title',
+        cover: 'cover://shared-artwork.jpg',
+        filePath: 'C:\\music\\owner-a\\a.flac',
+        dir: 'C:\\music\\owner-a'
+      },
+      {
+        ...generateMockTracks(1)[0],
+        id: 'owner-b',
+        artist: 'Guest B',
+        albumArtist: 'Album Owner B',
+        album: 'Shared Cover Title',
+        cover: 'cover://shared-artwork.jpg',
+        filePath: 'C:\\music\\owner-b\\b.flac',
+        dir: 'C:\\music\\owner-b'
+      }
+    ],
+    { deferRebuild: false }
+  )
+  store.flushRebuild()
+
+  const albums = store.albums.value.filter((album) => album.name === 'Shared Cover Title')
+  assert.equal(albums.length, 2)
+  assert.deepEqual(albums.map((album) => album.artist).sort(), ['Album Owner A', 'Album Owner B'])
+
+  store.clearTracks()
+})
+
+test('explicit album id stays authoritative over matching fallback cover evidence', async () => {
+  const store = setupStore()
+  await store.addTracks(
+    [
+      {
+        ...generateMockTracks(1)[0],
+        id: 'provider-release',
+        artist: 'Artist A',
+        albumId: 'provider:release-42',
+        album: 'Authoritative Release',
+        cover: 'cover://shared-authoritative.jpg',
+        filePath: 'C:\\music\\authoritative\\provider.flac',
+        dir: 'C:\\music\\authoritative'
+      },
+      {
+        ...generateMockTracks(1)[0],
+        id: 'fallback-release',
+        artist: 'Artist B',
+        album: 'Authoritative Release',
+        cover: 'cover://shared-authoritative.jpg',
+        filePath: 'C:\\music\\fallback\\local.flac',
+        dir: 'C:\\music\\fallback'
+      }
+    ],
+    { deferRebuild: false }
+  )
+  store.flushRebuild()
+
+  const albums = store.albums.value.filter((album) => album.name === 'Authoritative Release')
+  assert.equal(albums.length, 2)
+  assert.ok(albums.some((album) => album.id === 'id:provider:release-42'))
 
   store.clearTracks()
 })

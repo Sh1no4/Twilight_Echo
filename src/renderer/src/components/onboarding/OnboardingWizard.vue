@@ -206,7 +206,15 @@ onBeforeUnmount(() => {
       </div>
       <p class="onb-key-hint" aria-hidden="true">回车键继续 · 方向键切换</p>
       <div class="onb-footer-side is-end">
-        <button v-if="!isFirstStep" type="button" class="onb-btn-ghost" @click="back">返回</button>
+        <button
+          v-if="!isFirstStep"
+          type="button"
+          class="onb-btn-ghost"
+          data-te-back-button="pill"
+          @click="back"
+        >
+          返回
+        </button>
         <button
           type="button"
           class="onb-btn-primary"

@@ -1672,6 +1672,31 @@ function playDailyAll(): void {
   border-color: color-mix(in srgb, var(--home-ink) 32%, transparent);
 }
 
+/* Dark theme: keep hover overlays dark so white glyphs stay legible */
+
+:global(html[data-theme='dark'] .home-view .chart-cover-action) {
+  background: color-mix(in srgb, var(--te-neutral-50) 44%, transparent);
+}
+
+:global(html[data-theme='dark'] .home-view .shelf-scrim) {
+  background: linear-gradient(
+    180deg,
+    transparent 46%,
+    color-mix(in srgb, var(--te-neutral-50) 62%, transparent)
+  );
+}
+
+:global(html[data-theme='dark'] .home-view .shelf-count) {
+  color: var(--te-neutral-900);
+  background: color-mix(in srgb, var(--te-neutral-50) 46%, transparent);
+}
+
+:global(html[data-theme='dark'] .home-view .shelf-open) {
+  color: var(--te-neutral-900);
+  background: color-mix(in srgb, var(--te-neutral-50) 55%, transparent);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--te-neutral-50) 40%, transparent);
+}
+
 /* ══ Responsive ════════════════════════════════════════════════════════ */
 
 @media (max-width: 1100px) {

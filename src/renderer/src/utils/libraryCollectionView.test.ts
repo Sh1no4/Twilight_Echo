@@ -1,0 +1,114 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import type { Track } from '../types/music'
+import {
+  applyLibraryCollectionView,
+  availableCollectionGenres,
+  availableCollectionLetters,
+  collectionAddedAt,
+  collectionIndexLetter,
+  firstCollectionIndexForLetter,
+  LibraryCollectionViewPreferences,
+  type LibraryCollectionItem
+} from './libraryCollectionView.ts'
+
+function track(id: string, genre: string | null, addedAt: number): Track {
+  return {
+    id,
+    title: id,
+    artist: 'Artist',
+    album: 'Album',
+    genre,
+    filePath: `D:\\Music\\${id}.flac`,
+    fileName: `${id}.flac`,
+    duration: 180,
+    size: 1,
+    cover: null,
+    lyrics: null,
+    addedAt
+  }
+}
+
+function item(name: string, genresAndTimes: Array<[string | null, number]>): LibraryCollectionItem {
+  return {
+    name,
+    tracks: genresAndTimes.map(([genre, addedAt], index) =>
+      track(`${name}-${index}`, genre, addedAt)
+    )
+  }
+}
+
+test('combines genre filtering with all four collection sort modes', () => {
+  const items = [
+    item('Zulu', [['Rock', 300]]),
+    item('Alpha', [
+      ['Jazz', 200],
+      ['Rock', 100]
+    ]),
+    item('Beta', [['Rock', 400]])
+  ]
+
+  for (const [sort, expected] of [
+    ['name-asc', ['Alpha', 'Beta', 'Zulu']],
+    ['name-desc', ['Zulu', 'Beta', 'Alpha']],
+    ['added-newest', ['Beta', 'Zulu', 'Alpha']],
+    ['added-oldest', ['Alpha', 'Zulu', 'Beta']]
+  ] as const) {
+    assert.deepEqual(
+      applyLibraryCollectionView(items, { sort, genre: 'rock' }).map((entry) => entry.name),
+      expected
+    )
+  }
+})
+
+test('uses the latest track addedAt as the artist or album add time', () => {
+  assert.equal(
+    collectionAddedAt(
+      item('Release', [
+        ['Jazz', 100],
+        ['Jazz', 450],
+        ['Jazz', 200]
+      ])
+    ),
+    450
+  )
+})
+
+test('builds deduplicated genre choices case-insensitively', () => {
+  const items = [
+    item('A', [
+      ['Rock', 1],
+      ['rock', 2]
+    ]),
+    item('B', [['Jazz', 3]])
+  ]
+  assert.deepEqual(availableCollectionGenres(items), ['Jazz', 'Rock'])
+})
+
+test('builds an A-Z index, disables absent letters, and finds jump targets', () => {
+  const items = [item('Alpha', []), item('Beta', []), item('Björk', []), item('周杰伦', [])]
+  assert.equal(collectionIndexLetter('Éclair'), 'E')
+  assert.equal(collectionIndexLetter('周杰伦'), null)
+  assert.deepEqual([...availableCollectionLetters(items)].sort(), ['A', 'B'])
+  assert.equal(firstCollectionIndexForLetter(items, 'B'), 1)
+  assert.equal(firstCollectionIndexForLetter(items, 'Z'), -1)
+})
+
+test('persists independent artist and album collection preferences', () => {
+  const values = new Map<string, string>()
+  const storage = {
+    get length() {
+      return values.size
+    },
+    clear: () => values.clear(),
+    getItem: (key: string) => values.get(key) ?? null,
+    key: (index: number) => [...values.keys()][index] ?? null,
+    removeItem: (key: string) => values.delete(key),
+    setItem: (key: string, value: string) => values.set(key, value)
+  } satisfies Storage
+  const preferences = new LibraryCollectionViewPreferences(storage)
+  preferences.write('artists', { sort: 'added-newest', genre: 'Rock' })
+  preferences.write('albums', { sort: 'name-desc', genre: null })
+  assert.deepEqual(preferences.read('artists'), { sort: 'added-newest', genre: 'Rock' })
+  assert.deepEqual(preferences.read('albums'), { sort: 'name-desc', genre: null })
+})

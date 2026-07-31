@@ -39,7 +39,7 @@ import {
 test('the immutable built-in theme preserves the current light and dark root values', () => {
   assert.equal(TWILIGHT_DEFAULT_THEME.id, TWILIGHT_DEFAULT_THEME_ID)
   assert.equal(TWILIGHT_DEFAULT_THEME.variants.pureWhite.tokens['color.primary.500'], '#2563eb')
-  assert.equal(TWILIGHT_DEFAULT_THEME.variants.dark.tokens['color.primary.500'], '#f59e0b')
+  assert.equal(TWILIGHT_DEFAULT_THEME.variants.dark.tokens['color.primary.500'], '#2563eb')
   assert.equal(TWILIGHT_DEFAULT_THEME.variants.pureWhite.tokens['surface.card'], '#ffffff')
   assert.equal(TWILIGHT_DEFAULT_THEME.variants.dark.tokens['surface.card'], '#181818')
   assert.equal(

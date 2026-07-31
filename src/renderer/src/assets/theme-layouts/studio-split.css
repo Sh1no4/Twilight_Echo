@@ -1295,11 +1295,6 @@ html[data-te-preset-layout='studio-split'] body .player-bar-shell .playlist-head
   background: var(--ss-head);
 }
 
-html[data-te-preset-layout='studio-split'] body .player-bar-shell .playlist-eyebrow {
-  letter-spacing: 0.26em;
-  text-transform: uppercase;
-}
-
 html[data-te-preset-layout='studio-split'] body .player-bar-shell .playlist-cover {
   border-radius: 2px;
 }

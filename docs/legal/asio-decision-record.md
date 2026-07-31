@@ -1,10 +1,10 @@
 # ASIO Compatibility Decision Record
 
-Status: personal open-source policy; engineering gates remain pending
+Status: personal open-source policy; runtime enabled, hardware evidence remains opt-in
 
-Twilight Echo is evaluating an independent Windows x64 compatibility implementation. The project
-does not bundle, include, or compile an ASIO SDK. The implementation is not approved for release
-and remains hidden behind `TWILIGHT_EXPERIMENTAL_ASIO_ABI=1`.
+Twilight Echo ships an independent Windows x64 compatibility implementation. The project does not
+bundle, include, or compile an ASIO SDK. Installed ASIO drivers are enumerated by default; users can
+set `TWILIGHT_DISABLE_ASIO=1` to disable enumeration and activation for troubleshooting or rollback.
 
 For the current personal open-source project, written legal advice and a formal clean-room
 sign-off are not release prerequisites. Retain the lightweight provenance record, SDK-free scan

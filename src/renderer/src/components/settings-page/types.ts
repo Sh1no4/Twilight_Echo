@@ -222,7 +222,7 @@ export const RESET_DESKTOP_LYRICS: DesktopLyricsSettings = {
   bgOpacity: 30,
   align: 'center',
   showTranslation: true,
-  layout: 'multi',
+  layout: 'bilingual',
   lineSpacing: 1.6,
   shadow: true,
   shadowBlur: 8,

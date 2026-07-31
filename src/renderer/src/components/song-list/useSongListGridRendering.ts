@@ -50,6 +50,7 @@ export function useSongListGridRendering({
   visibleGenres: ComputedRef<GridItem[]>
   visiblePlaylists: ComputedRef<GridItem[]>
   visibleFolders: ComputedRef<GridItem[]>
+  renderGridThroughIndex: (index: number) => void
   localTransitionName: ComputedRef<LocalTransitionName>
   viewKey: ComputedRef<string>
   isSwitching: Ref<boolean>
@@ -148,6 +149,14 @@ export function useSongListGridRendering({
     { immediate: true, flush: 'post' }
   )
 
+  function renderGridThroughIndex(index: number): void {
+    if (!showGrid.value || index < 0) return
+    renderedGridCount.value = Math.min(
+      gridTotalCount.value,
+      Math.max(renderedGridCount.value, index + 1)
+    )
+  }
+
   function onViewBeforeLeave(): void {
     isSwitching.value = true
     stopGridRendering()
@@ -174,6 +183,7 @@ export function useSongListGridRendering({
     visibleGenres,
     visiblePlaylists,
     visibleFolders,
+    renderGridThroughIndex,
     localTransitionName,
     viewKey,
     isSwitching,

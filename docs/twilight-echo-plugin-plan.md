@@ -32,8 +32,9 @@ JS 插件 API 与 DSP C ABI 各自有独立版本号、独立的稳定性承诺�
 1. 定稿 manifest 规范、插件包格式、API 命名空间、版本策略（即配套规范文档）。
 2. 盘点宿主能力清单：梳理现有 `usePlayerStore` / `useMusicStore` / `useNcmStore` / `useSettingsStore`、主进程 IPC 通道、`audioEngineManager` 中可暴露给插件的能力，形成 API 草案。
 3. 产出物：
-   - `docs/plugin-spec.md`（规范，本计划的配套文档可作为初稿）
-   - `docs/plugin-api-draft.md`（API 草案）
+   - `docs/twilight-echo-plugin-spec.md`（权威规范）
+   - `docs/PLUGIN_README.md`（开发导读）
+   - `packages/plugin-api` 与 `packages/create-twilight-plugin`（类型和脚手架/打包工具）
 
 ### 验收标准
 

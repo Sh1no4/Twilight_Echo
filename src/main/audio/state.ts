@@ -59,12 +59,19 @@ export function broadcastPlayerLifecycleEvents(info: PlaybackInfo): void {
 }
 
 export function persistAudioProcessingState(processing: AudioProcessingSettings): SettingsSnapshot {
-  const scenes = normalizeDspScenes(runtime.appSettings.dspScenes, processing).map((scene) =>
+  // Persist the effective default scene (OPRA compensation stacked on the
+  // manual EQ) so the restored DSP graph matches what the engine applies;
+  // a user-only scene would silently drop OPRA after a restart.
+  const effective = buildEffectiveAudioProcessingSettings(
+    processing,
+    runtime.appSettings.headphoneCompensation
+  )
+  const scenes = normalizeDspScenes(runtime.appSettings.dspScenes, effective).map((scene) =>
     scene.id === 'default'
       ? {
           ...scene,
           graph: createLegacyDspGraph({
-            ...processing,
+            ...effective,
             // Keep HiFi sample-rate lock and balance/phase when classic processing changes.
             outputStage: scene.graph.outputStage,
             stereoImage: extractStereoImageFromGraph(scene.graph)

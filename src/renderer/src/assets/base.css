@@ -200,6 +200,94 @@
   --te-warning-soft-fg: #d97706;
   --te-danger-soft-bg: #fef2f2;
   --te-danger-soft-fg: #b91c1c;
+  --te-scrollbar-thumb: rgba(71, 85, 105, 0.34);
+  --te-scrollbar-thumb-hover: rgba(51, 65, 85, 0.56);
+  --te-back-button-bg: rgba(255, 255, 255, 0.9);
+  --te-back-button-bg-hover: #ffffff;
+  --te-back-button-border: rgba(15, 23, 42, 0.12);
+  --te-back-button-color: #2563eb;
+  --te-back-button-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+/* Scrollbars stay visually absent until the pointer reaches the scroll edge or scrolling is active. */
+:where(*) {
+  scrollbar-color: transparent transparent !important;
+  scrollbar-width: thin;
+}
+
+:where(*)::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+:where(*)::-webkit-scrollbar-track,
+:where(*)::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+:where(*)::-webkit-scrollbar-thumb {
+  border: 3px solid transparent !important;
+  border-radius: 999px;
+  background: transparent !important;
+  background-clip: content-box !important;
+  transition:
+    background-color var(--te-motion-hover) ease,
+    border-width var(--te-motion-hover) ease;
+}
+
+:where(.te-auto-scrollbar.is-scrollbar-near, .te-auto-scrollbar.is-scrollbar-active) {
+  scrollbar-color: var(--te-scrollbar-thumb) transparent !important;
+}
+
+:where(
+  .te-auto-scrollbar.is-scrollbar-near,
+  .te-auto-scrollbar.is-scrollbar-active
+)::-webkit-scrollbar-thumb {
+  border-width: 2px !important;
+  background: var(--te-scrollbar-thumb) !important;
+  background-clip: content-box !important;
+}
+
+:where(
+    .te-auto-scrollbar.is-scrollbar-near,
+    .te-auto-scrollbar.is-scrollbar-active
+  )::-webkit-scrollbar-thumb:hover {
+  border-width: 1px !important;
+  background: var(--te-scrollbar-thumb-hover) !important;
+  background-clip: content-box !important;
+}
+
+/* Back controls use quiet neutral surfaces and a restrained blue navigation cue. */
+:where([data-te-back-button]) {
+  border: 1px solid var(--te-back-button-border) !important;
+  background: var(--te-back-button-bg) !important;
+  color: var(--te-back-button-color) !important;
+  box-shadow: var(--te-back-button-shadow) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+:where([data-te-back-button='icon']) {
+  border-radius: 10px !important;
+}
+
+:where([data-te-back-button='pill']) {
+  border-radius: 999px !important;
+}
+
+:where([data-te-back-button]):hover {
+  border-color: color-mix(
+    in srgb,
+    var(--te-back-button-color) 24%,
+    var(--te-back-button-border)
+  ) !important;
+  background: var(--te-back-button-bg-hover) !important;
+  color: var(--te-back-button-color) !important;
+  box-shadow: var(--te-back-button-shadow) !important;
+}
+
+:where([data-te-back-button]):focus-visible {
+  outline-color: var(--te-back-button-color) !important;
 }
 
 :where(button, [role='button'], [role='switch'], [data-te-interactive]) {
@@ -358,6 +446,13 @@ html[data-te-motion='off'] *::after {
   --te-hover-bg: rgba(255, 255, 255, 0.065);
   --te-active-bg: rgba(245, 158, 11, 0.16);
   --te-shell-control-text: #f7f7f2;
+  --te-scrollbar-thumb: rgba(212, 212, 216, 0.34);
+  --te-scrollbar-thumb-hover: rgba(244, 244, 245, 0.58);
+  --te-back-button-bg: rgba(24, 24, 27, 0.88);
+  --te-back-button-bg-hover: rgba(39, 39, 42, 0.96);
+  --te-back-button-border: rgba(255, 255, 255, 0.14);
+  --te-back-button-color: #60a5fa;
+  --te-back-button-shadow: 0 4px 14px rgba(0, 0, 0, 0.24);
   --te-shell-control-hover: rgba(245, 158, 11, 0.12);
   --te-settings-text: #f7f7f2;
   --te-settings-text-muted: #9b9b9b;
@@ -1074,7 +1169,7 @@ html[data-theme='dark'] .song-list {
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
-  scrollbar-color: rgba(var(--te-primary-rgb), 0.38) transparent;
+  scrollbar-color: var(--te-scrollbar-thumb) transparent;
 }
 
 html[data-theme='dark'] .grid-view::before,

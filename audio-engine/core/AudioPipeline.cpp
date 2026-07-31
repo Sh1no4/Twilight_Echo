@@ -3172,6 +3172,7 @@ PipelineStatus AudioPipeline::buildStatusLocked() {
 PipelineStatus AudioPipeline::fallbackStatus() const {
   std::lock_guard lock(statusMutex_);
   PipelineStatus status = lastStatus_;
+  status.state = renderState_.load(std::memory_order_acquire);
   const int positionSampleRate = positionSampleRateForStream(status.stream, status.outputFormat);
   status.positionSeconds =
       positionSampleRate > 0

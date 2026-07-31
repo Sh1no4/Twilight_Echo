@@ -1016,7 +1016,9 @@ onBeforeUnmount(() => {
         >
           <i class="pi pi-download"></i>
         </button>
-        <button type="button" class="text-button" @click="emit('back')">返回</button>
+        <button type="button" class="text-button" data-te-back-button="pill" @click="emit('back')">
+          返回
+        </button>
       </div>
     </header>
 

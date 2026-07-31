@@ -177,6 +177,29 @@ const headphoneCompensation = computed<HeadphoneCompensationSettings>(
       bands: []
     }
 )
+const opraCompensationEnabled = computed(
+  () => headphoneCompensation.value.enabled && headphoneCompensation.value.bands.length > 0
+)
+
+// The engine stacks OPRA compensation on top of the manual EQ (see
+// buildEffectiveAudioProcessingSettings). Mirror that here so the plotted
+// curve keeps reflecting OPRA even after the manual EQ is reset.
+const displayEqMode = computed<EqMode>(() =>
+  opraCompensationEnabled.value ? 'parametric' : audioProcessing.value.eqMode
+)
+const displayEqPreamp = computed(() =>
+  opraCompensationEnabled.value
+    ? audioProcessing.value.eqPreamp + headphoneCompensation.value.preampDb
+    : audioProcessing.value.eqPreamp
+)
+const displayEqBands = computed(() =>
+  opraCompensationEnabled.value
+    ? [
+        ...cloneBands(headphoneCompensation.value.bands),
+        ...cloneBands(audioProcessing.value.eqBands)
+      ]
+    : audioProcessing.value.eqBands
+)
 const selectedBand = computed(
   () => audioProcessing.value.eqBands[selectedBandIndex.value] ?? audioProcessing.value.eqBands[0]
 )
@@ -205,17 +228,13 @@ const responseSampleRate = computed(() => {
 // Exact RBJ biquad response (same math as ParametricEqProcessor.cpp), computed
 // only when bands / preamp / mode change — never per frame.
 const responsePoints = computed(() => {
-  const response = computeCompositeResponse(
-    audioProcessing.value.eqBands,
-    audioProcessing.value.eqPreamp,
-    {
-      sampleRate: responseSampleRate.value,
-      mode: audioProcessing.value.eqMode,
-      pointCount: 257,
-      minFrequency: graphMinFrequency,
-      maxFrequency: graphMaxFrequency
-    }
-  )
+  const response = computeCompositeResponse(displayEqBands.value, displayEqPreamp.value, {
+    sampleRate: responseSampleRate.value,
+    mode: displayEqMode.value,
+    pointCount: 257,
+    minFrequency: graphMinFrequency,
+    maxFrequency: graphMaxFrequency
+  })
   return response.map((point) => ({
     x: frequencyToX(point.frequency),
     y: gainToY(clampNumber(point.db, graphMinGain, graphMaxGain, 0))
@@ -413,6 +432,10 @@ async function loadAppSettings(): Promise<void> {
 }
 
 function applyActiveSceneEqToEditor(dspState: DspSceneState): void {
+  // The scene EQ node holds the effective (OPRA-stacked) bands; never fold
+  // those into the manual editor state or the next manual edit would persist
+  // OPRA bands as user EQ and the engine would apply them twice.
+  if (opraCompensationEnabled.value) return
   const scene = dspState.scenes.find((item) => item.id === dspState.activeSceneId)
   const node = scene?.graph.nodes.find((item) => item.type === 'equalizer')
   if (!node) return
@@ -434,12 +457,19 @@ async function syncActiveSceneEq(nextSettings: AudioProcessingSettings): Promise
   const scene = dspState.scenes.find((item) => item.id === dspState.activeSceneId)
   const node = scene?.graph.nodes.find((item) => item.type === 'equalizer')
   if (!node) return
-  node.enabled = nextSettings.eqEnabled
+  // Keep OPRA in the applied graph: the scene EQ node must hold the effective
+  // processing (compensation stacked on the manual EQ), otherwise resetting or
+  // editing the manual EQ silently drops OPRA from the DSP chain.
+  node.enabled = nextSettings.eqEnabled || opraCompensationEnabled.value
   node.params = {
     ...node.params,
-    mode: nextSettings.eqMode,
-    preampDb: nextSettings.eqPreamp,
-    bands: nextSettings.eqBands
+    mode: opraCompensationEnabled.value ? 'parametric' : nextSettings.eqMode,
+    preampDb: opraCompensationEnabled.value
+      ? nextSettings.eqPreamp + headphoneCompensation.value.preampDb
+      : nextSettings.eqPreamp,
+    bands: opraCompensationEnabled.value
+      ? [...cloneBands(headphoneCompensation.value.bands), ...cloneBands(nextSettings.eqBands)]
+      : nextSettings.eqBands
   }
   await window.api.audioEngine.setDspScenes(dspState.scenes, dspState.pinnedSceneId)
 }
@@ -579,6 +609,7 @@ async function applyOpraProfile(profile: OpraProfile): Promise<void> {
       }
     })
     appSettings.value = { ...appSettings.value, ...savedSettings }
+    await syncActiveSceneEq(audioProcessing.value)
   } catch (err) {
     opraError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -604,6 +635,7 @@ async function disableOpraCompensation(): Promise<void> {
         enabled: false
       }
     }
+    await syncActiveSceneEq(audioProcessing.value)
   } catch (err) {
     console.error('停用 OPRA 补偿失败：', err)
     // Fallback: at least update local state so the UI reflects the change
@@ -768,7 +800,13 @@ watch(opraQuery, () => {
 
 <template>
   <div class="eq-page">
-    <button type="button" class="eq-back-button" aria-label="返回" @click="emit('back')">
+    <button
+      type="button"
+      class="eq-back-button"
+      data-te-back-button="icon"
+      aria-label="返回"
+      @click="emit('back')"
+    >
       <i class="pi pi-chevron-left"></i>
     </button>
 
@@ -1368,25 +1406,19 @@ watch(opraQuery, () => {
   left: 42px;
   width: 40px;
   height: 40px;
-  border-radius: 50%;
-  background: var(--te-glass-bg);
+  border-radius: 10px;
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(15, 23, 42, 0.08);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  color: var(--te-neutral-700);
   font-size: 16px;
   transition: all 0.2s;
   z-index: 100;
 }
 
 .eq-back-button:hover {
-  background: var(--te-card-bg);
-  color: var(--te-primary-500);
   transform: translateX(-2px);
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
 }
 
 /* Ensure eq-page allows absolute positioning of the back button */

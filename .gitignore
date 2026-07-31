@@ -95,6 +95,8 @@ CLAUDE.md
 .workbuddy/
 .omo/
 .superpowers/
+/docs/superpowers/
+/docs/audit-evidence/
 .worktrees/
 agent-tools/
 .idea/
@@ -136,8 +138,9 @@ resources/font/_originals/
 *.pfx
 *.snk
 
-# Optional personal notes that should not ship
-docs/superpowers/plans/2026-07-11-native-queue-memory-restore.md
+# Local sponsor payment QR codes (private, never publish)
+resources/sponsor/alipay.jpg
+resources/sponsor/wechat.png
 
 # Optional full MiSans faces (multi-MB; keep local)
 resources/font/misans/full/*.woff2

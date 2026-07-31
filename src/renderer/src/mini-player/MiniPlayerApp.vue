@@ -420,6 +420,7 @@ onBeforeUnmount(() => {
             <button
               type="button"
               class="mini-tool-button return-button"
+              data-te-back-button="icon"
               title="返回完整播放器"
               aria-label="返回完整播放器"
               @click="returnToMainWindow"

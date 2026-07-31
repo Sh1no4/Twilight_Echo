@@ -2448,8 +2448,15 @@ onBeforeUnmount(() => {
                 <i :class="deviceIcon(device)"></i>
                 <span>{{ device.label }}</span>
                 <small>{{ deviceSpecText(device) }}</small>
-                <div class="device-capability-row">
+                <div
+                  v-if="
+                    normalizeCapabilityState(device.dopSupportState) !== 'unsupported' ||
+                    normalizeCapabilityState(device.nativeDsdSupportState) !== 'unsupported'
+                  "
+                  class="device-capability-row"
+                >
                   <span
+                    v-if="normalizeCapabilityState(device.dopSupportState) !== 'unsupported'"
                     class="device-capability-chip"
                     :class="capabilityStateTone(device.dopSupportState)"
                     :title="capabilityStateTitle(device, 'DoP')"
@@ -2457,6 +2464,7 @@ onBeforeUnmount(() => {
                     DoP {{ capabilityStateLabel(device.dopSupportState) }}
                   </span>
                   <span
+                    v-if="normalizeCapabilityState(device.nativeDsdSupportState) !== 'unsupported'"
                     class="device-capability-chip"
                     :class="capabilityStateTone(device.nativeDsdSupportState)"
                     :title="capabilityStateTitle(device, 'Native DSD')"
@@ -4976,7 +4984,7 @@ onBeforeUnmount(() => {
               </div>
               <select
                 class="preview-select wide"
-                :value="settings.desktopLyrics.layout ?? 'multi'"
+                :value="settings.desktopLyrics.layout ?? 'bilingual'"
                 @change="
                   updateDl(
                     'layout',

@@ -4,6 +4,7 @@ import '@phosphor-icons/web/regular'
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import { bootstrapThemeRuntime } from './stores/useThemeStore'
+import { installAutoHideScrollbars } from './utils/autoHideScrollbars'
 
 const query = new URLSearchParams(window.location.search)
 const windowKind = query.get('window')
@@ -17,6 +18,8 @@ if (isMiniPlayer || isTrayPlayer) {
   document.body.style.background = 'transparent'
   document.body.style.padding = '0'
 }
+
+installAutoHideScrollbars()
 
 async function mountApp(): Promise<void> {
   if (!isTrayPlayer) await bootstrapThemeRuntime()

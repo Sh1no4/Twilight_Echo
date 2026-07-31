@@ -505,6 +505,7 @@ class FakeNativeBinding implements NativeAudioBinding {
   outputConfigCalls = 0
   outputDeviceCalls = 0
   outputBackendCalls = 0
+  preservePlaybackRouteOnSet = false
   loadQueueCalls = 0
   stopCalls = 0
   seekCalls = 0
@@ -610,6 +611,7 @@ class FakeNativeBinding implements NativeAudioBinding {
 
   SetOutputBackend = (backend: string): void => {
     this.outputBackendCalls += 1
+    if (this.preservePlaybackRouteOnSet) return
     const exclusive =
       backend === 'asio' || backend === 'wasapi-exclusive' || backend === 'coreaudio-exclusive'
     const accessMode = backend === 'wasapi' || backend === 'coreaudio' ? 'shared' : 'exclusive'
@@ -2051,6 +2053,66 @@ test('setExclusiveMode refreshes backend facts immediately', async () => {
   assert.equal(info.outputInfo.exclusive, true)
   assert.equal(info.outputInfo.supportsOutputPerfect, true)
   assert.equal(info.outputInfo.perfectReasonCode, '')
+  assertPlaybackMirrorsOutputInfo(info)
+})
+
+test('setAudioOutput rejects a stale ASIO snapshot after switching to WASAPI', async () => {
+  const nativeBinding = new FakeNativeBinding({
+    outputInfo: makeOutputInfo({
+      backend: 'asio',
+      actualBackend: 'asio',
+      exclusive: true,
+      accessMode: 'exclusive',
+      devicePathKind: 'asio',
+      deviceName: 'asio:studio',
+      actualDeviceName: 'Studio ASIO'
+    })
+  })
+  nativeBinding.preservePlaybackRouteOnSet = true
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'asio',
+      audioDevice: 'asio:studio'
+    },
+    nativeBinding
+  )
+
+  await manager.setAudioOutput('wasapi', 'auto')
+  const info = await manager.getPlaybackInfo()
+
+  assert.equal(info.outputBackend, 'wasapi')
+  assert.equal(info.actualBackend, 'wasapi')
+  assert.equal(info.outputInfo.backend, 'wasapi')
+  assert.equal(info.outputInfo.actualBackend, 'wasapi')
+  assert.equal(info.outputInfo.accessMode, 'shared')
+  assert.equal(info.outputInfo.devicePathKind, 'default')
+  assert.equal(info.outputInfo.deviceName, 'auto')
+  assertPlaybackMirrorsOutputInfo(info)
+})
+
+test('setAudioOutput rejects a stale WASAPI snapshot after switching to ASIO', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  nativeBinding.preservePlaybackRouteOnSet = true
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+
+  await manager.setAudioOutput('asio', 'asio:studio')
+  const info = await manager.getPlaybackInfo()
+
+  assert.equal(info.outputBackend, 'asio')
+  assert.equal(info.actualBackend, 'asio')
+  assert.equal(info.outputInfo.backend, 'asio')
+  assert.equal(info.outputInfo.actualBackend, 'asio')
+  assert.equal(info.outputInfo.accessMode, 'exclusive')
+  assert.equal(info.outputInfo.devicePathKind, 'asio')
+  assert.equal(info.outputInfo.deviceName, 'asio:studio')
   assertPlaybackMirrorsOutputInfo(info)
 })
 
@@ -4099,7 +4161,18 @@ test('getMetadataAsync reuses service metadata for the same source within the ca
 })
 
 test('setOutputConfig keeps routing and non-perfect reasons in sync', async () => {
-  const nativeBinding = new FakeNativeBinding()
+  const nativeBinding = new FakeNativeBinding({
+    outputInfo: makeOutputInfo({
+      backend: 'wasapi-exclusive',
+      actualBackend: 'wasapi-exclusive',
+      exclusive: true,
+      accessMode: 'exclusive',
+      supportsOutputPerfect: true,
+      perfectReason: '',
+      perfectReasonCode: '',
+      capabilityReason: ''
+    })
+  })
   const manager = makeManager(
     {
       exclusiveMode: true,

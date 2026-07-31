@@ -158,7 +158,7 @@
   transform: translate3d(0, 0, 0);
   will-change: transform, flex-basis, width;
   scrollbar-width: thin;
-  scrollbar-color: rgba(124, 77, 255, 0.28) transparent;
+  scrollbar-color: var(--te-scrollbar-thumb) transparent;
   transition:
     transform 0.32s var(--te-ease-soft),
     flex-basis 0.32s var(--te-ease-soft),
@@ -241,17 +241,14 @@
 .btn-back {
   width: 32px;
   height: 32px;
-  border: none;
-  background: rgba(124, 77, 255, 0.09);
   cursor: pointer;
-  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--te-primary-500);
   font-size: 16px;
   transition:
     background 0.18s,
+    border-color 0.18s,
     color 0.18s,
     transform 0.18s var(--te-ease-soft);
   flex-shrink: 0;
@@ -259,9 +256,7 @@
 }
 
 .btn-back:hover {
-  background: rgba(124, 77, 255, 0.16);
-  color: #5f36df;
-  transform: translateY(-1px);
+  transform: translateX(-1px);
 }
 
 .streaming-placeholder {
@@ -1481,7 +1476,6 @@
   padding: 16px 40px 36px;
 }
 
-.btn-back,
 .streaming-round-btn,
 .streaming-avatar-btn {
   border: 1px solid rgba(255, 255, 255, 0.72);
@@ -1490,10 +1484,6 @@
   box-shadow:
     0 12px 28px rgba(86, 70, 160, 0.08),
     inset 0 1px 0 rgba(255, 255, 255, 0.7);
-}
-
-.btn-back {
-  color: #6f46e8;
 }
 
 .streaming-search-box {
@@ -1850,7 +1840,6 @@
 }
 
 .streaming-search-box,
-.btn-back,
 .streaming-round-btn,
 .streaming-avatar-btn,
 .search-tab-pill,
@@ -1978,7 +1967,6 @@
 }
 
 :global(html[data-theme='dark'] .streaming-page .streaming-search-box),
-:global(html[data-theme='dark'] .streaming-page .btn-back),
 :global(html[data-theme='dark'] .streaming-page .streaming-round-btn),
 :global(html[data-theme='dark'] .streaming-page .streaming-avatar-btn),
 :global(html[data-theme='dark'] .streaming-page .search-tab-pill),
@@ -2328,12 +2316,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--bar-line-strong);
-  border-radius: 999px;
-  background: var(--bar-paper-raised);
-  color: var(--bar-ink);
-  font-size: 13px;
-  box-shadow: 0 1px 0 rgba(28, 25, 23, 0.03);
+  font-size: 15px;
   cursor: pointer;
   transition:
     background 0.16s var(--bar-ease),
@@ -2343,10 +2326,7 @@
 }
 
 .btn-back:hover {
-  background: var(--bar-paper);
-  border-color: var(--bar-ink-soft);
-  color: var(--bar-ink);
-  transform: none;
+  transform: translateX(-1px);
 }
 
 .streaming-header-right {
@@ -2551,7 +2531,6 @@
   --bar-accent-soft: rgba(251, 146, 60, 0.14);
 }
 
-:global(html[data-theme='dark'] .streaming-page .btn-back),
 :global(html[data-theme='dark'] .streaming-page .streaming-search-box),
 :global(html[data-theme='dark'] .streaming-page .streaming-round-btn),
 :global(html[data-theme='dark'] .streaming-page .streaming-avatar-btn),
@@ -2560,11 +2539,6 @@
   border-color: var(--bar-line);
   box-shadow: none;
   color: var(--bar-ink-soft);
-}
-
-:global(html[data-theme='dark'] .streaming-page .btn-back) {
-  color: var(--bar-ink);
-  border-color: var(--bar-line-strong);
 }
 
 :global(html[data-theme='dark'] .streaming-page .streaming-search-box.focused) {
@@ -2597,7 +2571,6 @@
 
 /* Transparent window: keep the editorial bar flat (no purple glass).
    Earlier transparent rules use !important, so these must match. */
-:global(html[data-window-transparent='on'] .streaming-page .btn-back),
 :global(html[data-window-transparent='on'] .streaming-page .streaming-search-box),
 :global(html[data-window-transparent='on'] .streaming-page .streaming-round-btn),
 :global(html[data-window-transparent='on'] .streaming-page .streaming-avatar-btn),
@@ -2609,11 +2582,6 @@
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   color: var(--bar-ink-soft) !important;
-}
-
-:global(html[data-window-transparent='on'] .streaming-page .btn-back) {
-  color: var(--bar-ink) !important;
-  border-color: var(--bar-line-strong) !important;
 }
 
 :global(html[data-window-transparent='on'] .streaming-page .streaming-search-box.focused) {

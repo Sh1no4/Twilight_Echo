@@ -660,7 +660,7 @@ onUnmounted(() => {
       <div class="sky-halo"></div>
     </div>
 
-    <button class="lp-close" title="返回" @click="handleBack">
+    <button class="lp-close" data-te-back-button="pill" title="返回" @click="handleBack">
       <svg
         width="17"
         height="17"
@@ -750,7 +750,12 @@ onUnmounted(() => {
           <!-- 登录 -->
           <section v-else-if="view === 'login'" key="login" class="stage-view">
             <header class="stage-head">
-              <button type="button" class="chip-back" @click="backToAccounts">
+              <button
+                type="button"
+                class="chip-back"
+                data-te-back-button="pill"
+                @click="backToAccounts"
+              >
                 <svg
                   width="13"
                   height="13"
@@ -1017,7 +1022,12 @@ onUnmounted(() => {
           <!-- 资料页 -->
           <section v-else-if="view === 'profile'" key="profile" class="stage-view profile-view">
             <header class="stage-head">
-              <button type="button" class="chip-back" @click="backToAccounts">
+              <button
+                type="button"
+                class="chip-back"
+                data-te-back-button="pill"
+                @click="backToAccounts"
+              >
                 <svg
                   width="13"
                   height="13"
@@ -1139,7 +1149,12 @@ onUnmounted(() => {
             <p class="error-text">{{ errorMsg || '出了点问题，请稍后重试' }}</p>
             <div class="error-actions">
               <button type="button" class="btn-primary" @click="handleRefresh">重试</button>
-              <button type="button" class="btn-secondary" @click="backToAccounts">
+              <button
+                type="button"
+                class="btn-secondary"
+                data-te-back-button="pill"
+                @click="backToAccounts"
+              >
                 返回平台列表
               </button>
             </div>
@@ -1259,9 +1274,7 @@ onUnmounted(() => {
 
 .lp-close:hover {
   transition-duration: var(--te-motion-settle);
-  color: var(--te-primary-500);
   transform: translateX(-2px);
-  box-shadow: var(--lp-shadow-soft);
 }
 
 /* ─── 主壳体 ──────────────────────────────── */
@@ -1420,8 +1433,7 @@ onUnmounted(() => {
 }
 
 .chip-back:hover {
-  color: var(--te-primary-500);
-  background: var(--lp-tint);
+  transform: translateX(-1px);
 }
 
 /* ─── 平台列表 ─────────────────────────────── */

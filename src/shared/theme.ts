@@ -797,7 +797,7 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'global',
     'color',
     '#2563eb',
-    '#f59e0b',
+    '#2563eb',
     {
       adaptive: 'cover-accent'
     }
@@ -810,7 +810,7 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'global',
     'color',
     '#3b82f6',
-    '#fbbf24',
+    '#3b82f6',
     {
       adaptive: 'cover-accent'
     }
@@ -823,7 +823,7 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'global',
     'color',
     '#93c5fd',
-    '#fde68a',
+    '#93c5fd',
     {
       adaptive: 'cover-accent'
     }
@@ -836,7 +836,7 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'global',
     'raw',
     '37, 99, 235',
-    '245, 158, 11',
+    '37, 99, 235',
     {
       adaptive: 'cover-accent'
     }

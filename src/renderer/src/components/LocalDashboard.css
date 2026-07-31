@@ -29,9 +29,7 @@
   overflow-x: hidden;
   overflow-y: auto;
   box-sizing: border-box;
-  scrollbar-color: transparent transparent;
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
   color: var(--home-ink);
   background-color: var(--te-local-bg);
   background-image: var(--te-local-bg-image);
@@ -63,46 +61,6 @@
 .home button {
   color: inherit;
   font: inherit;
-}
-
-/* ── Auto scrollbar ─────────────────────────────────────────────────── */
-
-.home.te-auto-scrollbar::-webkit-scrollbar {
-  width: 10px;
-}
-
-.home.te-auto-scrollbar::-webkit-scrollbar-track {
-  margin: 10px 0;
-  background: transparent;
-}
-
-.home.te-auto-scrollbar::-webkit-scrollbar-thumb {
-  border: 3px solid transparent;
-  border-radius: 999px;
-  background: transparent;
-  background-clip: content-box;
-  transition:
-    background 0.2s ease,
-    border-width 0.2s ease;
-}
-
-.home.te-auto-scrollbar.is-scrollbar-near,
-.home.te-auto-scrollbar.is-scrollbar-active {
-  scrollbar-color: color-mix(in srgb, var(--te-primary-500) 40%, transparent) transparent;
-}
-
-.home.te-auto-scrollbar.is-scrollbar-near::-webkit-scrollbar-thumb,
-.home.te-auto-scrollbar.is-scrollbar-active::-webkit-scrollbar-thumb {
-  border-width: 2px;
-  background: color-mix(in srgb, var(--te-primary-500) 42%, transparent);
-  background-clip: content-box;
-}
-
-.home.te-auto-scrollbar.is-scrollbar-near::-webkit-scrollbar-thumb:hover,
-.home.te-auto-scrollbar.is-scrollbar-active::-webkit-scrollbar-thumb:hover {
-  border-width: 1px;
-  background: color-mix(in srgb, var(--te-primary-500) 62%, transparent);
-  background-clip: content-box;
 }
 
 /* ── Ambient wash ───────────────────────────────────────────────────── */

@@ -169,6 +169,11 @@ async function refreshSelected(): Promise<void> {
   }
 }
 
+async function unsubscribePodcast(id: string): Promise<void> {
+  await podcast.unsubscribe(id)
+  if (selectedPodcastId.value === id) selectedPodcastId.value = null
+}
+
 function playEpisode(subscription: PodcastSubscription, guid: string): void {
   const episode = subscription.episodes.find((item) => item.guid === guid)
   if (!episode) return
@@ -212,7 +217,7 @@ function formatDuration(seconds: number): string {
 <template>
   <div class="radio-podcast-page">
     <header class="page-header">
-      <button type="button" class="back-btn" @click="emit('back')">
+      <button type="button" class="back-btn" data-te-back-button="pill" @click="emit('back')">
         <i class="pi pi-arrow-left"></i>
         <span>返回</span>
       </button>
@@ -248,7 +253,12 @@ function formatDuration(seconds: number): string {
         <h2>添加电台</h2>
         <label>
           名称
-          <input v-model="stationName" type="text" placeholder="例如：BBC Radio 1" maxlength="120" />
+          <input
+            v-model="stationName"
+            type="text"
+            placeholder="例如：BBC Radio 1"
+            maxlength="120"
+          />
         </label>
         <label>
           流地址
@@ -264,7 +274,9 @@ function formatDuration(seconds: number): string {
           允许 HTTP 明文流（仅用户显式确认时使用）
         </label>
         <div class="form-actions">
-          <button type="button" class="primary" :disabled="formBusy" @click="addStation">添加</button>
+          <button type="button" class="primary" :disabled="formBusy" @click="addStation">
+            添加
+          </button>
         </div>
         <label>
           导入 M3U / PLS
@@ -309,7 +321,9 @@ function formatDuration(seconds: number): string {
                 <span v-if="row.tags?.length">{{ row.tags.slice(0, 3).join(', ') }}</span>
               </small>
             </div>
-            <button type="button" :disabled="formBusy" @click="addDirectoryStation(row)">添加</button>
+            <button type="button" :disabled="formBusy" @click="addDirectoryStation(row)">
+              添加
+            </button>
           </li>
         </ul>
       </div>
@@ -338,7 +352,12 @@ function formatDuration(seconds: number): string {
           <input v-model="feedUrl" type="url" placeholder="https://example.com/feed.xml" />
         </label>
         <div class="form-actions">
-          <button type="button" class="primary" :disabled="formBusy || podcast.busy.value" @click="subscribeFeed">
+          <button
+            type="button"
+            class="primary"
+            :disabled="formBusy || podcast.busy.value"
+            @click="subscribeFeed"
+          >
             订阅
           </button>
           <button type="button" :disabled="podcast.busy.value" @click="podcast.refreshAll()">
@@ -358,11 +377,7 @@ function formatDuration(seconds: number): string {
           >
             <strong>{{ sub.title }}</strong>
             <small>{{ sub.episodes.length }} 集</small>
-            <button
-              type="button"
-              class="linkish"
-              @click.stop="podcast.unsubscribe(sub.id); if (selectedPodcastId === sub.id) selectedPodcastId = null"
-            >
+            <button type="button" class="linkish" @click.stop="unsubscribePodcast(sub.id)">
               取消订阅
             </button>
           </li>
@@ -374,9 +389,13 @@ function formatDuration(seconds: number): string {
             <div>
               <h2>{{ selectedPodcast.title }}</h2>
               <p v-if="selectedPodcast.author">{{ selectedPodcast.author }}</p>
-              <p v-if="selectedPodcast.lastError" class="page-error">{{ selectedPodcast.lastError }}</p>
+              <p v-if="selectedPodcast.lastError" class="page-error">
+                {{ selectedPodcast.lastError }}
+              </p>
             </div>
-            <button type="button" :disabled="podcast.busy.value" @click="refreshSelected">刷新</button>
+            <button type="button" :disabled="podcast.busy.value" @click="refreshSelected">
+              刷新
+            </button>
           </div>
           <ul class="episode-list">
             <li v-for="episode in selectedPodcast.episodes" :key="episode.guid">
@@ -421,7 +440,7 @@ function formatDuration(seconds: number): string {
   padding: 24px 28px 126px;
   color: var(--te-text, #0f172a);
   scrollbar-width: thin;
-  scrollbar-color: rgba(var(--te-primary-rgb, 37, 99, 235), 0.28) transparent;
+  scrollbar-color: var(--te-scrollbar-thumb) transparent;
 }
 
 .radio-podcast-page::-webkit-scrollbar {
@@ -433,7 +452,7 @@ function formatDuration(seconds: number): string {
 }
 
 .radio-podcast-page::-webkit-scrollbar-thumb {
-  background: rgba(var(--te-primary-rgb, 37, 99, 235), 0.28);
+  background: var(--te-scrollbar-thumb);
   border-radius: 999px;
 }
 
@@ -454,7 +473,6 @@ function formatDuration(seconds: number): string {
   font-size: 1.4rem;
   flex: 1;
 }
-.back-btn,
 .tabs button,
 .form-card button,
 .station-actions button,
@@ -467,6 +485,20 @@ function formatDuration(seconds: number): string {
   padding: 8px 12px;
   cursor: pointer;
 }
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 14px 0 11px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.back-btn:hover {
+  transform: translateX(-1px);
+}
+
 .episode-actions {
   display: flex;
   gap: 8px;
@@ -674,7 +706,6 @@ button.primary {
   background: rgba(15, 23, 42, 0.55);
   border-color: rgba(148, 163, 184, 0.12);
 }
-:global(html[data-theme='dark'] .back-btn),
 :global(html[data-theme='dark'] .tabs button),
 :global(html[data-theme='dark'] .form-card button),
 :global(html[data-theme='dark'] .station-actions button),

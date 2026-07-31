@@ -1,5 +1,7 @@
 const assert = require('node:assert/strict')
 const test = require('node:test')
+const { readFileSync } = require('node:fs')
+const { join } = require('node:path')
 
 const { FORBIDDEN_CONTENT, FORBIDDEN_PATHS } = require('./verify-asio-sdk-free.cjs')
 
@@ -22,4 +24,17 @@ test('ASIO SDK removal gate catches SDK paths and includes without matching inte
     FORBIDDEN_CONTENT.some((pattern) => pattern.test('#include "AsioAbi.h"')),
     false
   )
+})
+
+test('Windows x64 ASIO runtime is enabled by default with an explicit opt-out', () => {
+  const source = readFileSync(
+    join(__dirname, '..', 'audio-engine', 'output', 'asio', 'RealAsioHost.cpp'),
+    'utf8'
+  )
+
+  assert.match(source, /std::getenv\("TWILIGHT_DISABLE_ASIO"\)/)
+  assert.match(source, /return !value \|\| std::string_view\(value\) != "1";/)
+  assert.doesNotMatch(source, /TWILIGHT_EXPERIMENTAL_ASIO_ABI/)
+  assert.match(source, /if \(!asioEnabled\(\)\) return \{\};/)
+  assert.match(source, /ASIO backend is disabled by TWILIGHT_DISABLE_ASIO=1/)
 })

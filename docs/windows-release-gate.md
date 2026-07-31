@@ -250,14 +250,15 @@ remain opt-in and are not part of the default gate.
 
 ## ASIO Compatibility Gate
 
-The Windows x64 ASIO compatibility backend must remain disabled unless
-`TWILIGHT_EXPERIMENTAL_ASIO_ABI=1` is set for an explicit validation run. A release may enable it
-only after the frozen ABI specification, MSVC fake-driver round trip, MinGW ABI checks, and
-retained hardware evidence required by `docs/legal/asio-decision-record.md` are complete. For
-this personal open-source project, written legal advice and a formal clean-room signature are
-recommended records rather than hard gates; commercialization or a hardware-partner release
-requires a fresh formal review. Release sources and build commands must not reference an ASIO SDK
-directory, SDK headers, or SDK source files.
+The Windows x64 ASIO compatibility backend is enabled by default and can be disabled with
+`TWILIGHT_DISABLE_ASIO=1` for troubleshooting or rollback. Release verification must retain the
+frozen ABI specification, MSVC fake-driver round trip, MinGW ABI checks, and the available hardware
+evidence required by `docs/legal/asio-decision-record.md`. Real-device smoke remains opt-in and its
+absence must be reported rather than represented as a pass. For this personal open-source project,
+written legal advice and a formal clean-room signature are recommended records rather than hard
+gates; commercialization or a hardware-partner release requires a fresh formal review. Release
+sources and build commands must not reference an ASIO SDK directory, SDK headers, or SDK source
+files.
 
 `pnpm run verify:asio-sdk-free` and `pnpm run test:asio-cross-abi` are required implementation
 evidence for this gate. They do not replace the frozen ABI contract or real-device evidence

@@ -1713,7 +1713,8 @@ const deckAccentVars = computed(() => {
   box-sizing: border-box;
 }
 
-.deck-dark {
+.deck-dark,
+html[data-theme='dark'] .deck {
   --d-ink: #eef2f7;
   --d-muted: #9aa3b2;
   --d-faint: #64748b;
@@ -1795,7 +1796,8 @@ button:disabled {
   color: var(--d-ink);
 }
 
-.deck-dark .deck-display {
+.deck-dark .deck-display,
+html[data-theme='dark'] .deck .deck-display {
   background:
     radial-gradient(
       120% 160% at 10% -20%,
@@ -1872,7 +1874,8 @@ button:disabled {
   color: transparent;
 }
 
-.deck-dark .deck-rate-num {
+.deck-dark .deck-rate-num,
+html[data-theme='dark'] .deck .deck-rate-num {
   background: linear-gradient(115deg, var(--d-accent) 15%, var(--d-accent-strong) 90%);
   -webkit-background-clip: text;
   background-clip: text;
@@ -2067,7 +2070,8 @@ button:disabled {
   box-shadow: 0 4px 18px rgba(86, 70, 160, 0.05);
 }
 
-.deck-dark .deck-card {
+.deck-dark .deck-card,
+html[data-theme='dark'] .deck .deck-card {
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
 }
 
@@ -2733,6 +2737,11 @@ button:disabled {
 .deck-select option {
   color: #111827;
   background: #ffffff;
+}
+
+html[data-theme='dark'] .deck .deck-select option {
+  color: var(--d-ink);
+  background: var(--d-card);
 }
 
 /* ===== 滑杆 ===== */

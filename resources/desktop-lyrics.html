@@ -450,7 +450,7 @@
 
     var maxLines = settings.maxLines || 2;
     var showTranslation = settings.showTranslation !== false;
-    var layout = settings.layout === 'bilingual' ? 'bilingual' : 'multi';
+    var layout = settings.layout === 'multi' ? 'multi' : 'bilingual';
     var shadow = settings.shadow ? '0 0 ' + settings.shadowBlur + 'px ' + settings.shadowColor : 'none';
     var lineOffset = typeof settings.lineOffset === 'number' && isFinite(settings.lineOffset)
       ? settings.lineOffset

@@ -65,7 +65,6 @@ const {
   audioOutputOptions,
   audioDevice,
   audioDeviceOptions,
-  audioEngineError,
   audioEngineRecoveryNotice,
   audioProcessing,
   audioOutputConfig,
@@ -1054,7 +1053,6 @@ onMounted(() => {
       <div v-if="playlistOpen" class="playlist-panel" :class="{ 'panel-glass': glass }">
         <div class="playlist-header">
           <div class="playlist-heading">
-            <span class="playlist-eyebrow">Play Queue</span>
             <div class="playlist-heading-row">
               <span class="playlist-heading-title">播放列表</span>
               <span class="playlist-count">{{ queue.length }} 首</span>
@@ -1247,9 +1245,6 @@ onMounted(() => {
             :title="streamNowPlaying"
           >
             {{ streamNowPlaying }}
-          </div>
-          <div v-if="audioEngineError" class="player-playback-diagnostic" :title="audioEngineError">
-            {{ audioEngineError }}
           </div>
           <div
             v-if="audioEngineRecoveryNotice"

@@ -362,7 +362,8 @@ export function useMusicStore(): {
       }))
       .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
 
-    albums.value = Array.from(albumMap.entries())
+    const mergedAlbumMap = mergeAlbumGroupsByReleaseEvidence(albumMap)
+    albums.value = Array.from(mergedAlbumMap.entries())
       .map(([id, group]) => {
         const ordered = [...group.tracks].sort(compareAlbumTrackOrder)
         return {
@@ -1985,22 +1986,21 @@ function getAlbumIdentity(track: Track): string {
   const albumId = track.albumId?.trim()
   if (albumId) return `id:${albumId}`
 
-  const album = (track.album || '未知专辑').trim().toLocaleLowerCase()
+  const album = normalizeAlbumIdentityText(track.album || '未知专辑')
   const albumArtist = track.albumArtist?.trim()
   const artist = track.artist?.trim()
   // Older scans copied track artist into albumArtist whenever ALBUMARTIST was
   // missing. Treat that pollution as "no album artist" so guest/feat tracks
   // from the same release still land on one album card.
   const hasDistinctAlbumArtist =
-    !!albumArtist &&
-    (!artist || albumArtist.toLocaleLowerCase() !== artist.toLocaleLowerCase())
+    !!albumArtist && (!artist || albumArtist.toLocaleLowerCase() !== artist.toLocaleLowerCase())
 
   if (hasDistinctAlbumArtist) {
     return `name:${albumArtist.toLocaleLowerCase()}\u001f${album}`
   }
 
-  // Prefer the release folder so multi-artist albums without ALBUMARTIST merge,
-  // while same-titled albums in different directories stay separate.
+  // Prefer the exact release directory so multi-artist albums without
+  // ALBUMARTIST merge, while same-titled albums in unrelated folders stay separate.
   const dir = track.dir?.trim() || parentDirectoryOf(track.filePath)
   if (dir) {
     return `dir:${normalizeLibraryPath(dir)}\u001f${album}`
@@ -2009,12 +2009,82 @@ function getAlbumIdentity(track: Track): string {
   return `name:${(albumArtist || artist || '未知艺术家').trim().toLocaleLowerCase()}\u001f${album}`
 }
 
+function normalizeAlbumIdentityText(value: string): string {
+  return value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase()
+}
+
+function mergeAlbumGroupsByReleaseEvidence(
+  albumMap: Map<string, DerivedTrackGroup>
+): Map<string, DerivedTrackGroup> {
+  const result = new Map<string, DerivedTrackGroup>()
+  const fallbackIdByReleaseEvidence = new Map<string, string>()
+
+  for (const [id, group] of albumMap) {
+    if (!id.startsWith('dir:')) {
+      result.set(id, group)
+      continue
+    }
+
+    const firstTrack = group.tracks[0]
+    const coverTrack = group.tracks.find((track) => !!track.cover)
+    const coverIdentity = coverTrack ? getAlbumCoverIdentity(coverTrack) : ''
+    const releaseDirectory = firstTrack ? getAlbumReleaseDirectory(firstTrack) : ''
+    if (!firstTrack || !coverIdentity || !releaseDirectory) {
+      result.set(id, group)
+      continue
+    }
+
+    const album = normalizeAlbumIdentityText(firstTrack.album || '未知专辑')
+    const evidenceKey = `${releaseDirectory}\u001f${coverIdentity}\u001f${album}`
+    const targetId = fallbackIdByReleaseEvidence.get(evidenceKey)
+    if (!targetId) {
+      fallbackIdByReleaseEvidence.set(evidenceKey, id)
+      result.set(id, group)
+      continue
+    }
+
+    const target = result.get(targetId)
+    if (!target) {
+      result.set(id, group)
+      continue
+    }
+    target.tracks.push(...group.tracks)
+    target.cover ||= group.cover
+  }
+
+  return result
+}
+
+function getAlbumReleaseDirectory(track: Track): string {
+  const album = normalizeAlbumIdentityText(track.album || '未知专辑')
+  const directory = normalizeLibraryPath(track.dir?.trim() || parentDirectoryOf(track.filePath))
+  let candidate = directory
+
+  while (candidate) {
+    const name = candidate.slice(candidate.lastIndexOf('\\') + 1)
+    if (normalizeAlbumIdentityText(name) === album) return candidate
+    const parent = parentDirectoryOf(candidate)
+    if (!parent || parent === candidate) break
+    candidate = parent
+  }
+
+  return ''
+}
+
+function getAlbumCoverIdentity(track: Track): string {
+  const cover = track.cover?.trim()
+  if (!cover) return ''
+  const durableSource = track.coverSource?.trim()
+  if (/^twilight-media:\/\/image\//i.test(cover) && durableSource) {
+    return durableSource.toLocaleLowerCase()
+  }
+  return cover.toLocaleLowerCase()
+}
+
 function compareAlbumTrackOrder(left: Track, right: Track): number {
-  const disc =
-    albumOrderIndex(left.discNumber) - albumOrderIndex(right.discNumber)
+  const disc = albumOrderIndex(left.discNumber) - albumOrderIndex(right.discNumber)
   if (disc !== 0) return disc
-  const track =
-    albumOrderIndex(left.trackNumber) - albumOrderIndex(right.trackNumber)
+  const track = albumOrderIndex(left.trackNumber) - albumOrderIndex(right.trackNumber)
   if (track !== 0) return track
   const byFile = (left.fileName || '').localeCompare(right.fileName || '', 'zh', {
     numeric: true,

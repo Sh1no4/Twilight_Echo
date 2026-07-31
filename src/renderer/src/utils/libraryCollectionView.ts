@@ -1,0 +1,180 @@
+import type { Track } from '../types/music'
+
+export const AZ_INDEX_LETTERS = Array.from({ length: 26 }, (_, index) =>
+  String.fromCharCode(65 + index)
+)
+
+export type LibraryCollectionSort = 'name-asc' | 'name-desc' | 'added-newest' | 'added-oldest'
+
+export interface LibraryCollectionItem {
+  name: string
+  id?: string
+  tracks?: Track[]
+}
+
+export interface LibraryCollectionViewState {
+  sort: LibraryCollectionSort
+  genre: string | null
+}
+
+const DEFAULT_STATE: LibraryCollectionViewState = {
+  sort: 'name-asc',
+  genre: null
+}
+
+const VALID_SORTS = new Set<LibraryCollectionSort>([
+  'name-asc',
+  'name-desc',
+  'added-newest',
+  'added-oldest'
+])
+
+export function applyLibraryCollectionView<T extends LibraryCollectionItem>(
+  items: readonly T[],
+  state: LibraryCollectionViewState
+): T[] {
+  const genre = normalizeGenre(state.genre)
+  return items
+    .map((item, index) => ({ item, index }))
+    .filter(
+      ({ item }) => !genre || itemGenres(item).some((value) => normalizeGenre(value) === genre)
+    )
+    .sort((left, right) => {
+      const comparison = compareCollectionItems(left.item, right.item, state.sort)
+      return (
+        comparison ||
+        left.index - right.index ||
+        collectionIdentity(left.item).localeCompare(collectionIdentity(right.item))
+      )
+    })
+    .map(({ item }) => item)
+}
+
+export function availableCollectionGenres(items: readonly LibraryCollectionItem[]): string[] {
+  const labels = new Map<string, string>()
+  for (const item of items) {
+    for (const genre of itemGenres(item)) {
+      const normalized = normalizeGenre(genre)
+      if (normalized && !labels.has(normalized)) labels.set(normalized, genre.trim())
+    }
+  }
+  return [...labels.values()].sort(compareNames)
+}
+
+export function collectionAddedAt(item: LibraryCollectionItem): number {
+  let latest = 0
+  for (const track of item.tracks ?? []) {
+    if (typeof track.addedAt === 'number' && Number.isFinite(track.addedAt)) {
+      latest = Math.max(latest, track.addedAt)
+    }
+  }
+  return latest
+}
+
+export function collectionIndexLetter(name: string): string | null {
+  const first = name.trim().normalize('NFKD').replace(/\p{M}/gu, '').charAt(0).toUpperCase()
+  return /^[A-Z]$/.test(first) ? first : null
+}
+
+export function availableCollectionLetters(items: readonly LibraryCollectionItem[]): Set<string> {
+  const result = new Set<string>()
+  for (const item of items) {
+    const letter = collectionIndexLetter(item.name)
+    if (letter) result.add(letter)
+  }
+  return result
+}
+
+export function firstCollectionIndexForLetter(
+  items: readonly LibraryCollectionItem[],
+  letter: string
+): number {
+  const normalized = letter.toUpperCase()
+  return items.findIndex((item) => collectionIndexLetter(item.name) === normalized)
+}
+
+export class LibraryCollectionViewPreferences {
+  private readonly storage: Storage | null
+  private readonly storageKey: string
+
+  constructor(
+    storage: Storage | null = globalThis.localStorage ?? null,
+    storageKey = 'twilight-echo:library-collection-view:v1'
+  ) {
+    this.storage = storage
+    this.storageKey = storageKey
+  }
+
+  read(category: string): LibraryCollectionViewState {
+    try {
+      const raw = this.storage?.getItem(this.storageKey)
+      if (!raw) return { ...DEFAULT_STATE }
+      const parsed = JSON.parse(raw) as Record<string, unknown>
+      return normalizeState(parsed[category])
+    } catch {
+      return { ...DEFAULT_STATE }
+    }
+  }
+
+  write(category: string, state: LibraryCollectionViewState): void {
+    try {
+      if (!this.storage) return
+      const raw = this.storage.getItem(this.storageKey)
+      const parsed = raw ? JSON.parse(raw) : {}
+      const values = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+      this.storage.setItem(
+        this.storageKey,
+        JSON.stringify({ ...values, [category]: normalizeState(state) })
+      )
+    } catch {
+      // Collection view preferences are optional and must never block library rendering.
+    }
+  }
+}
+
+function compareCollectionItems(
+  left: LibraryCollectionItem,
+  right: LibraryCollectionItem,
+  sort: LibraryCollectionSort
+): number {
+  if (sort === 'name-asc') return compareNames(left.name, right.name)
+  if (sort === 'name-desc') return compareNames(right.name, left.name)
+  const byAddedAt = collectionAddedAt(left) - collectionAddedAt(right)
+  if (byAddedAt !== 0) return sort === 'added-oldest' ? byAddedAt : -byAddedAt
+  return compareNames(left.name, right.name)
+}
+
+function itemGenres(item: LibraryCollectionItem): string[] {
+  const genres = new Map<string, string>()
+  for (const track of item.tracks ?? []) {
+    const genre = track.genre?.trim()
+    const normalized = normalizeGenre(genre)
+    if (genre && normalized && !genres.has(normalized)) genres.set(normalized, genre)
+  }
+  return [...genres.values()]
+}
+
+function normalizeGenre(value: string | null | undefined): string {
+  return value?.trim().toLocaleLowerCase() ?? ''
+}
+
+function normalizeState(value: unknown): LibraryCollectionViewState {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { ...DEFAULT_STATE }
+  const candidate = value as Partial<LibraryCollectionViewState>
+  return {
+    sort:
+      typeof candidate.sort === 'string' && VALID_SORTS.has(candidate.sort as LibraryCollectionSort)
+        ? (candidate.sort as LibraryCollectionSort)
+        : DEFAULT_STATE.sort,
+    genre:
+      typeof candidate.genre === 'string' && candidate.genre.trim() ? candidate.genre.trim() : null
+  }
+}
+
+function compareNames(left: string, right: string): number {
+  return left.localeCompare(right, ['zh-CN', 'en'], { numeric: true, sensitivity: 'base' })
+}
+
+function collectionIdentity(item: LibraryCollectionItem): string {
+  return item.id ?? item.name
+}

@@ -1026,11 +1026,26 @@ normalizePlaybackInfo(info: PlaybackInfo, nativeRevisions = false): PlaybackInfo
     }
     return ''
   }
+  const expectedBackend = this.getNativeBackendId()
+  const normalizeBackendId = (value: string | undefined | null): string =>
+    value === 'wasapi-shared' ? 'wasapi' : value?.trim() || ''
+  const reportedBackend = preferNonEmpty(info.outputInfo?.backend, info.outputBackend)
+  const reportedActualBackend = preferNonEmpty(
+    info.outputInfo?.actualBackend,
+    info.actualBackend,
+    reportedBackend
+  )
+  const staleNativeOutputRoute =
+    this.nativeOutputRouteSynced &&
+    [reportedBackend, reportedActualBackend].some(
+      (backend) =>
+        backend.length > 0 && normalizeBackendId(backend) !== normalizeBackendId(expectedBackend)
+    )
+  const canonicalOutput = staleNativeOutputRoute ? this.playbackInfo.outputInfo : info.outputInfo
   const outputInfo: OutputInfo = {
     ...this.playbackInfo.outputInfo,
-    ...(info.outputInfo ?? {})
+    ...(canonicalOutput ?? {})
   }
-  const canonicalOutput = info.outputInfo
   const sourceExact = canonicalOutput?.sourceExact ?? info.sourceExact ?? false
   const outputPerfect = canonicalOutput?.outputPerfect ?? info.outputPerfect ?? false
   const perfectReason = canonicalOutput?.perfectReason ?? info.perfectReason ?? ''
@@ -1083,12 +1098,12 @@ normalizePlaybackInfo(info: PlaybackInfo, nativeRevisions = false): PlaybackInfo
   outputInfo.isDsd = isDsd
   outputInfo.dsdMode = dsdMode
   outputInfo.dsdRate = dsdRate
-  outputInfo.backend = preferNonEmpty(
-    canonicalOutput?.backend,
-    info.outputBackend,
-    this.getNativeBackendId()
-  )
-  outputInfo.actualBackend = preferNonEmpty(canonicalOutput?.actualBackend, outputInfo.backend)
+  outputInfo.backend = staleNativeOutputRoute
+    ? expectedBackend
+    : preferNonEmpty(canonicalOutput?.backend, info.outputBackend, expectedBackend)
+  outputInfo.actualBackend = staleNativeOutputRoute
+    ? expectedBackend
+    : preferNonEmpty(canonicalOutput?.actualBackend, outputInfo.backend)
   outputInfo.accessMode = preferNonEmpty(
     canonicalOutput?.accessMode,
     outputInfo.exclusive ? 'exclusive' : 'shared'

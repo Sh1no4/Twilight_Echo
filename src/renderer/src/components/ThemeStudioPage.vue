@@ -708,12 +708,7 @@ function applyBackgroundPalette(value: string): void {
 }
 
 function updateAppearanceMode(
-  key:
-    | 'accentSource'
-    | 'backgroundTreatment'
-    | 'toneScheduling'
-    | 'contrastGuard'
-    | 'effectsMode',
+  key: 'accentSource' | 'backgroundTreatment' | 'toneScheduling' | 'contrastGuard' | 'effectsMode',
   event: Event
 ): void {
   const value = (event.target as HTMLSelectElement).value
@@ -1205,6 +1200,7 @@ onBeforeUnmount(() => {
       <button
         type="button"
         class="studio-icon-button"
+        data-te-back-button="icon"
         title="返回"
         aria-label="返回"
         @click="closeStudio"
@@ -1214,9 +1210,7 @@ onBeforeUnmount(() => {
       <div>
         <h1>主题工作室 · Beta</h1>
         <span>{{
-          isDirty
-            ? '有未应用的修改'
-            : '深度定制已可用；像素黄金矩阵与性能证据仍在收口 (P7)'
+          isDirty ? '有未应用的修改' : '深度定制已可用；像素黄金矩阵与性能证据仍在收口 (P7)'
         }}</span>
       </div>
       <label class="theme-profile-picker">
@@ -2339,7 +2333,11 @@ onBeforeUnmount(() => {
         </section>
 
         <div v-if="domain !== 'presets'" class="token-editor-list" :class="{ disabled: !draft }">
-          <div v-for="definition in visibleDefinitions" :key="definition.id" class="token-editor-row">
+          <div
+            v-for="definition in visibleDefinitions"
+            :key="definition.id"
+            class="token-editor-row"
+          >
             <div>
               <span
                 ><strong>{{ definition.label }}</strong

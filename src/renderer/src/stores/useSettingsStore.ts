@@ -107,7 +107,7 @@ const fallbackSettings: AppSettings = {
   discordRpcEnabled: false,
   accentColor: 'blue',
   lightAccentColor: 'blue',
-  darkAccentColor: 'amber',
+  darkAccentColor: 'blue',
   fontFamily: 'system',
   uiDensity: 'standard',
   appBackground: {
@@ -200,7 +200,7 @@ const fallbackSettings: AppSettings = {
     bgOpacity: 30,
     align: 'center',
     showTranslation: true,
-    layout: 'multi',
+    layout: 'bilingual',
     lineSpacing: 1.6,
     shadow: true,
     shadowBlur: 8,

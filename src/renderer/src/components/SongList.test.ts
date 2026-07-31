@@ -151,6 +151,30 @@ test('song list consolidates sort and filter controls into a 筛选器 button pa
   assert.match(source, /library-filter-panel[\s\S]*library-view-controls/)
 })
 
+test('artist and album grids expose combinable sorting, genre filtering, and A-Z navigation', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('./song-list/SongList.css', import.meta.url), 'utf8')
+
+  assert.match(source, /applyLibraryCollectionView/)
+  assert.match(source, /collectionViewState/)
+  assert.match(source, /名称 A-Z/)
+  assert.match(source, /名称 Z-A/)
+  assert.match(source, /添加时间：最新优先/)
+  assert.match(source, /添加时间：最旧优先/)
+  assert.match(source, /按流派筛选/)
+  assert.match(source, /AZ_INDEX_LETTERS/)
+  assert.match(source, /jumpToCollectionLetter/)
+  assert.match(source, /collectionLetterDisabled/)
+  assert.match(source, /activeCollectionLetter === letter/)
+  assert.match(source, /aria-current/)
+  assert.match(styles, /\.collection-view-controls/)
+  assert.match(styles, /\.az-index/)
+  assert.match(styles, /\.az-index\s*\{[^}]*position: sticky/)
+  assert.doesNotMatch(styles, /\.az-index\s*\{[^}]*position: fixed/)
+  assert.match(styles, /\.az-index button\.active/)
+  assert.match(styles, /\.az-index button:disabled/)
+})
+
 test('song list supports batch favorite plus explicit local remove and recycle-bin actions', () => {
   const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
   const styles = readFileSync(new URL('./song-list/SongList.css', import.meta.url), 'utf8')
@@ -236,4 +260,20 @@ test('library header places the search box last so it renders right-most', () =>
     assert.ok(index > 0, `${marker} missing from library header`)
     assert.ok(index < searchIndex, `${marker} should precede the search box`)
   }
+})
+
+test('library playback controls render below the table header', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+
+  assert.doesNotMatch(source, /class="header-play-actions"/)
+  const tableHeaderStart = source.lastIndexOf('<div class="song-list-header">')
+  const playActionsIndex = source.indexOf('class="library-play-actions"', tableHeaderStart)
+  const tableHeaderEnd = source.indexOf(
+    '</div>\n          <div class="library-play-actions"',
+    tableHeaderStart
+  )
+
+  assert.ok(tableHeaderStart > 0)
+  assert.ok(tableHeaderEnd > tableHeaderStart)
+  assert.ok(playActionsIndex > tableHeaderEnd)
 })

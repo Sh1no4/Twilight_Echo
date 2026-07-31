@@ -14,9 +14,9 @@
 namespace twilight::audio {
 namespace {
 
-bool experimentalAsioEnabled() {
-  const char* value = std::getenv("TWILIGHT_EXPERIMENTAL_ASIO_ABI");
-  return value && std::string_view(value) == "1";
+bool asioEnabled() {
+  const char* value = std::getenv("TWILIGHT_DISABLE_ASIO");
+  return !value || std::string_view(value) != "1";
 }
 
 std::string jsonEscape(const std::string& value) {
@@ -74,7 +74,7 @@ RealAsioHost::~RealAsioHost() {
 
 std::vector<AsioDeviceInfo> RealAsioHost::enumerateDevices() {
 #if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
-  if (!experimentalAsioEnabled()) return {};
+  if (!asioEnabled()) return {};
   std::vector<AsioDeviceInfo> devices;
   for (const auto& entry : asio_windows::AsioDriverCatalog::enumerate()) {
     devices.push_back(deviceInfoFor(entry));
@@ -88,8 +88,8 @@ std::vector<AsioDeviceInfo> RealAsioHost::enumerateDevices() {
 bool RealAsioHost::open(const AsioOpenConfig& config, AsioOpenResult* result, std::string* error) {
 #if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
   close();
-  if (!experimentalAsioEnabled()) {
-    if (error) *error = "ASIO ABI backend is disabled until hardware validation is complete";
+  if (!asioEnabled()) {
+    if (error) *error = "ASIO backend is disabled by TWILIGHT_DISABLE_ASIO=1";
     return false;
   }
   const auto entry = asio_windows::AsioDriverCatalog::resolve(config.deviceId);

@@ -28,3 +28,34 @@ test('theme modes change only equalizer presentation and use stable chart classe
   assert.match(source, /data-te-visible-equalizer-frequency-guides='false'/)
   assert.match(source, /data-te-visible-equalizer-spectrum='false'/)
 })
+
+test('OPRA compensation is reflected in the plotted response curve', () => {
+  assert.match(
+    source,
+    /const displayEqBands = computed\([\s\S]*?opraCompensationEnabled\.value[\s\S]*?headphoneCompensation\.value\.bands/
+  )
+  assert.match(
+    source,
+    /computeCompositeResponse\(\s*displayEqBands\.value,\s*displayEqPreamp\.value/
+  )
+  assert.match(source, /mode: displayEqMode\.value/)
+})
+
+test('resetting the EQ keeps OPRA stacked in the DSP scene equalizer node', () => {
+  assert.match(
+    source,
+    /node\.enabled = nextSettings\.eqEnabled \|\| opraCompensationEnabled\.value/
+  )
+  assert.match(
+    source,
+    /bands: opraCompensationEnabled\.value\s*\? \[\.\.\.cloneBands\(headphoneCompensation\.value\.bands\), \.\.\.cloneBands\(nextSettings\.eqBands\)\]/
+  )
+})
+
+test('applying or disabling OPRA re-syncs the DSP scene', () => {
+  assert.equal(source.match(/await syncActiveSceneEq\(audioProcessing\.value\)/g)?.length, 2)
+})
+
+test('OPRA-stacked scene bands never overwrite the manual editor state', () => {
+  assert.match(source, /if \(opraCompensationEnabled\.value\) return/)
+})

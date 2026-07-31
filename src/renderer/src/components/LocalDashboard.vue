@@ -41,54 +41,8 @@ const { audioProcessing, playbackInfo, outputInfo } = storeToRefs(audioOutputDsp
 const { playTrack, togglePlay, next, prev, seek, formatTime, setPlayMode } = playbackStore
 
 const now = ref(new Date())
-const homeScrollRef = ref<HTMLElement | null>(null)
-const homeScrollbarActive = ref(false)
-const homeScrollbarNear = ref(false)
-const HOME_SCROLLBAR_PROXIMITY_PX = 28
-let homeScrollbarHideTimer: ReturnType<typeof setTimeout> | null = null
-
-function clearHomeScrollbarHideTimer(): void {
-  if (homeScrollbarHideTimer == null) return
-  clearTimeout(homeScrollbarHideTimer)
-  homeScrollbarHideTimer = null
-}
-
-function revealHomeScrollbar(): void {
-  homeScrollbarActive.value = true
-  clearHomeScrollbarHideTimer()
-  homeScrollbarHideTimer = setTimeout(() => {
-    homeScrollbarActive.value = false
-    homeScrollbarHideTimer = null
-  }, 900)
-}
-
-function onHomeScroll(): void {
-  revealHomeScrollbar()
-}
-
-function onHomePointerMove(event: PointerEvent): void {
-  const el = homeScrollRef.value
-  if (!el) return
-  if (el.scrollHeight <= el.clientHeight + 1) {
-    homeScrollbarNear.value = false
-    return
-  }
-  const rect = el.getBoundingClientRect()
-  const distFromRight = rect.right - event.clientX
-  const withinY = event.clientY >= rect.top && event.clientY <= rect.bottom
-  homeScrollbarNear.value =
-    withinY && distFromRight >= 0 && distFromRight <= HOME_SCROLLBAR_PROXIMITY_PX
-}
-
-function onHomePointerLeave(): void {
-  homeScrollbarNear.value = false
-}
 
 onMounted(() => {
-  const el = homeScrollRef.value
-  el?.addEventListener('scroll', onHomeScroll, { passive: true })
-  el?.addEventListener('pointermove', onHomePointerMove, { passive: true })
-  el?.addEventListener('pointerleave', onHomePointerLeave, { passive: true })
   window.addEventListener('keydown', onDspRouteDialogKeydown)
   void refreshDspRouteState(true)
   dspRoutePoll = window.setInterval(() => {
@@ -100,14 +54,9 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  const el = homeScrollRef.value
-  el?.removeEventListener('scroll', onHomeScroll)
-  el?.removeEventListener('pointermove', onHomePointerMove)
-  el?.removeEventListener('pointerleave', onHomePointerLeave)
   window.removeEventListener('keydown', onDspRouteDialogKeydown)
   if (dspRoutePoll !== null) window.clearInterval(dspRoutePoll)
   dspRoutePoll = null
-  clearHomeScrollbarHideTimer()
 })
 
 const greeting = computed(() => {
@@ -849,15 +798,7 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
 </script>
 
 <template>
-  <div
-    ref="homeScrollRef"
-    class="home dashboard-wrapper te-auto-scrollbar"
-    :class="{
-      'is-scrollbar-active': homeScrollbarActive,
-      'is-scrollbar-near': homeScrollbarNear,
-      'has-route-dialog': dspRouteDialogOpen
-    }"
-  >
+  <div class="home dashboard-wrapper" :class="{ 'has-route-dialog': dspRouteDialogOpen }">
     <div class="ambient" aria-hidden="true">
       <span class="blob blob-a"></span>
       <span class="blob blob-b"></span>

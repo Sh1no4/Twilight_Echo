@@ -2,7 +2,6 @@
 
 > 本文面向想为 Twilight Echo 编写插件的开发者。
 > 权威契约是 [`./twilight-echo-plugin-spec.md`](./twilight-echo-plugin-spec.md)，本文是它的人话版导读，不重复其逐字条款，遇到分歧以 spec 为准。
-> 本 README 取代早期那份简略的英文版 [`./plugin-developer-guide.md`](./plugin-developer-guide.md)。
 
 ## 1. 简介
 
@@ -10,7 +9,7 @@ Twilight Echo 插件是一段随应用加载、通过统一 `twilight` API 句�
 
 插件系统当前是**信任式安装**：装上去的插件拥有与应用同等的权限。这不是安全沙箱，而是崩溃隔离加可观测性。这意味着开发者的责任很重，权限声明要诚实，代码要随包分发，不能偷偷拉远程脚本。
 
-完整契约、版本承诺、安全底线全部以 [`./twilight-echo-plugin-spec.md`](./twilight-echo-plugin-spec.md) 为准。配套的实施路线图在 [`./twilight-echo-plugin-plan.md`](./twilight-echo-plugin-plan.md)。
+完整契约、版本承诺、安全底线全部以 [`./twilight-echo-plugin-spec.md`](./twilight-echo-plugin-spec.md) 为准；分阶段落地边界见 [`./twilight-echo-plugin-plan.md`](./twilight-echo-plugin-plan.md)。
 
 ## 2. 插件类型
 
@@ -290,7 +289,7 @@ plugins.json              # 索引文件
 
 新增第三方插件时，源码放 `plugins/<plugin-name>/`，打包产物放 `packages/`。运行 `npm run index` 会扫描 `packages/*.tep`、读取包根 `plugin.json`、计算 sha256 并写入 `plugins.json`；`npm run validate:index` 用于发布前确认索引未过期。
 
-应用主仓库（`D:\Twilight_Echo-main`）只存：宿主与运行时代码、插件 API typings（`@twilight-echo/plugin-api`）、插件工具链（`create-twilight-plugin`）、内置 NCM provider、随应用分发的静态索引客户端。这是 `AGENTS.md` 明确规定的插件仓库边界，本文严格遵守。
+应用主仓库只存：宿主与运行时代码、插件 API typings（`@twilight-echo/plugin-api`）、插件工具链（`create-twilight-plugin`）、内置 NCM provider、随应用分发的静态索引客户端。这是权威插件规范定义的仓库边界。
 
 主项目默认通过 GitHub raw `plugins.json` 消费外部仓库，也可通过 `TWILIGHT_PLUGIN_INDEX_URL` 覆盖。边界规则见 [spec §2.1](./twilight-echo-plugin-spec.md#21-插件源码仓库边界)。
 
@@ -304,7 +303,7 @@ plugins.json              # 索引文件
 - 随应用分发，默认启用
 - 用户可以停用（隔离故障或隐藏在线音源），但**不可像第三方插件一样卸载**
 
-它是应用仓库里唯一的内置 provider 例外。第三方音源插件（如 Bilibili 收藏夹音频）走外部仓库分发，使用同一 Provider API，但不享受内置待遇。详见 `AGENTS.md` 的 Built-In Provider Exception 一节，以及 [spec §4.5](./twilight-echo-plugin-spec.md#45-多音源数据模型)。
+它是应用仓库里唯一的内置 provider 例外。第三方音源插件（如 Bilibili 收藏夹音频）走外部仓库分发，使用同一 Provider API，但不享受内置待遇。详见 [spec §4.5](./twilight-echo-plugin-spec.md#45-多音源数据模型)。
 
 ## 16. 安全底线
 
@@ -334,7 +333,7 @@ DSP 是审核最严的插件类型，因为实时音频路径对延迟和稳定�
 ## 18. 延伸阅读
 
 - [`./twilight-echo-plugin-spec.md`](./twilight-echo-plugin-spec.md)，插件系统规范与标准（权威契约）
-- [`./twilight-echo-plugin-plan.md`](./twilight-echo-plugin-plan.md)，插件系统分阶段实施计划
+- [`./twilight-echo-plugin-plan.md`](./twilight-echo-plugin-plan.md)，插件系统分阶段实施边界
 - [`./DEVELOPER_README.md`](./DEVELOPER_README.md)，应用开发者文档
 - [`../README.md`](../README.md)，Twilight Echo 项目主页
 

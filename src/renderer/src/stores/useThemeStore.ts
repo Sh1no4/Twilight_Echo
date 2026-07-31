@@ -72,7 +72,7 @@ let adaptiveMediaSequence = 0
 let toneRefreshTimer: number | null = null
 let lastAppliedTone: ThemeTone | null = null
 let lightAccentColor = 'blue'
-let darkAccentColor = 'amber'
+let darkAccentColor = 'blue'
 let themePreference: AppSettings['theme'] = 'system'
 
 function resolveTone(): ThemeTone {
@@ -97,7 +97,7 @@ function cacheSettingsAppearance(
   settings: Pick<AppSettings, 'accentColor' | 'lightAccentColor' | 'darkAccentColor' | 'uiDensity'>
 ): void {
   lightAccentColor = settings.lightAccentColor || settings.accentColor || 'blue'
-  darkAccentColor = settings.darkAccentColor || settings.accentColor || 'amber'
+  darkAccentColor = settings.darkAccentColor || settings.accentColor || 'blue'
   document.documentElement.dataset.density = settings.uiDensity
 }
 

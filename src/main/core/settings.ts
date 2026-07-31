@@ -68,7 +68,7 @@ export const DEFAULT_DESKTOP_LYRICS: DesktopLyricsSettings = {
   bgOpacity: 30,
   align: 'center',
   showTranslation: true,
-  layout: 'multi',
+  layout: 'bilingual',
   lineSpacing: 1.6,
   shadow: true,
   shadowBlur: 8,
@@ -126,7 +126,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   discordRpcEnabled: false,
   accentColor: 'blue',
   lightAccentColor: 'blue',
-  darkAccentColor: 'amber',
+  darkAccentColor: 'blue',
   fontFamily: 'system',
   uiDensity: 'standard',
   appBackground: {
@@ -568,7 +568,12 @@ export function normalizeDesktopLyrics(raw: unknown): DesktopLyricsSettings {
     bgOpacity: clampNumber(d.bgOpacity, 0, 100, DEFAULT_DESKTOP_LYRICS.bgOpacity),
     align: d.align === 'left' ? 'left' : 'center',
     showTranslation: d.showTranslation !== false,
-    layout: d.layout === 'bilingual' ? 'bilingual' : 'multi',
+    layout:
+      d.layout === 'multi'
+        ? 'multi'
+        : d.layout === 'bilingual'
+          ? 'bilingual'
+          : DEFAULT_DESKTOP_LYRICS.layout,
     lineSpacing: clampNumber(d.lineSpacing, 1.0, 3.0, DEFAULT_DESKTOP_LYRICS.lineSpacing),
     shadow: d.shadow !== false,
     shadowBlur: clampNumber(d.shadowBlur, 0, 30, DEFAULT_DESKTOP_LYRICS.shadowBlur),

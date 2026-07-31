@@ -59,17 +59,26 @@ onMounted(() => {
 })
 
 // Reload when page changes
-watch(() => props.page.id, () => {
-  if (shouldAutoLoad.value) {
-    void loadContent()
+watch(
+  () => props.page.id,
+  () => {
+    if (shouldAutoLoad.value) {
+      void loadContent()
+    }
   }
-})
+)
 </script>
 
 <template>
   <section class="plugin-extension-page">
     <header class="plugin-extension-header">
-      <button class="plugin-extension-back" type="button" title="返回" @click="emit('back')">
+      <button
+        class="plugin-extension-back"
+        type="button"
+        data-te-back-button="icon"
+        title="返回"
+        @click="emit('back')"
+      >
         <i class="pi pi-arrow-left"></i>
       </button>
       <div class="plugin-extension-icon">
@@ -117,11 +126,7 @@ watch(() => props.page.id, () => {
         <span class="plugin-extension-kicker">受控插件页面</span>
         <h2>{{ page.title }}</h2>
         <p>{{ page.description || '该页面由插件注册，点击刷新按钮执行命令。' }}</p>
-        <button
-          v-if="page.command"
-          class="plugin-extension-run-btn"
-          @click="runPageCommand"
-        >
+        <button v-if="page.command" class="plugin-extension-run-btn" @click="runPageCommand">
           <i class="pi pi-play"></i>
           执行
         </button>
@@ -151,10 +156,6 @@ watch(() => props.page.id, () => {
   height: 34px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 7px;
-  background: var(--te-card-bg);
-  color: var(--te-neutral-700);
   cursor: pointer;
 }
 

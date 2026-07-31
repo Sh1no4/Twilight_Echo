@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { compileStyle, parse } from '@vue/compiler-sfc'
 import type { LocalLibraryRemoveResult } from '../../../../shared/localLibrary.ts'
 import type { Track } from '../../types/music.ts'
 
@@ -19,6 +20,50 @@ test('streaming page exposes unified song search beyond the NetEase-only surface
   assert.match(source, /searchUnifiedSongs/)
   assert.match(source, /const showUnifiedSearch = computed/)
   assert.doesNotMatch(source, /const showNcmSearch = computed/)
+})
+
+test('streaming detail, social, and HiFi surfaces compile working dark-theme selectors', () => {
+  const detailStyles = readFileSync(new URL('./StreamingDetailStage.css', import.meta.url), 'utf8')
+  const socialStyles = readFileSync(new URL('./StreamingSocialStage.css', import.meta.url), 'utf8')
+  const hifiSource = readFileSync(new URL('../player-bar/HiFiSidebar.vue', import.meta.url), 'utf8')
+  const hifiSfc = parse(hifiSource, { filename: 'HiFiSidebar.vue' })
+  const hifiStyle = hifiSfc.descriptor.styles.find((style) => style.scoped)
+
+  assert.ok(hifiStyle)
+
+  const detailCode = compileStyle({
+    source: detailStyles,
+    filename: 'StreamingDetailStage.css',
+    id: 'data-v-streaming-detail-dark',
+    scoped: true
+  }).code
+  const socialCode = compileStyle({
+    source: socialStyles,
+    filename: 'StreamingSocialStage.css',
+    id: 'data-v-streaming-social-dark',
+    scoped: true
+  }).code
+  const hifiCode = compileStyle({
+    source: hifiStyle.content,
+    filename: 'HiFiSidebar.vue',
+    id: 'data-v-hifi-dark',
+    scoped: true
+  }).code
+
+  assert.match(
+    detailCode,
+    /html\[data-theme=['"]dark['"]\] \.detail-stage\[[^\]]+\]\s*\{[^}]*--stage-paper-raised:\s*#1c1917/
+  )
+  assert.match(
+    socialCode,
+    /html\[data-theme=['"]dark['"]\] \.social-stage \.stage-person-card\[[^\]]+\]:hover/
+  )
+  assert.match(hifiCode, /html\[data-theme=['"]dark['"]\] \.deck\[[^\]]+\]\s*\{[^}]*--d-card:/)
+  assert.match(hifiCode, /html\[data-theme=['"]dark['"]\] \.deck \.deck-display\[[^\]]+\]/)
+  assert.doesNotMatch(
+    [detailCode, socialCode, hifiCode].join('\n'),
+    /html\[data-theme=['"]dark['"]\]\s*\{[^}]*(?:--stage-paper-raised|--d-card):/
+  )
 })
 
 test('streaming page resolves player-bar artist requests through the track provider', () => {
@@ -64,13 +109,23 @@ test('liked detail loads provider cloud likes instead of local default favorites
   assert.match(source, /fetchLikedTracksPage\(0, LIKED_TRACKS_PAGE_SIZE, force\)/)
   assert.match(source, /NCM: always load cloud liked tracks/)
   assert.match(source, /must not short-circuit the provider liked list/)
-  assert.match(source, /const unifiedFavoriteTracks = computed\(\(\) => musicStore\.getPlaylistTracks\(/)
+  assert.match(
+    source,
+    /const unifiedFavoriteTracks = computed\(\(\) => musicStore\.getPlaylistTracks\(/
+  )
   // Local unified favorites are only a fallback for external providers without
   // their own liked playlist - never a short-circuit for NCM.
   assert.doesNotMatch(source, /resolveUnifiedFavoriteTracks\(\{/)
   assert.match(source, /if \(state\?\.likedPlaylist\) return providerSummary/)
 })
 
+test('liked playback resolves the complete provider list instead of queueing only the first page', () => {
+  assert.match(source, /async function resolveDetailPlaybackQueue\(\): Promise<Track\[]>/)
+  assert.match(source, /const tracks = await fetchLikedTracks\(\)/)
+  assert.match(source, /async function playAllDetailTracks\(\): Promise<void>/)
+  assert.match(source, /const tracks = await resolveDetailPlaybackQueue\(\)/)
+  assert.match(source, /playTrack\(tracks\[0\], tracks\)/)
+})
 
 test('streaming page stays mounted across local/streaming switches in one session', () => {
   const appSource = readFileSync(new URL('../../App.vue', import.meta.url), 'utf8')
@@ -81,7 +136,6 @@ test('streaming page stays mounted across local/streaming switches in one sessio
   assert.match(source, /async function refreshStreamingSurface/)
   assert.match(source, /\(\) => props\.active/)
 })
-
 
 test('streaming page supports multi-select batch favorite and delete on track lists', () => {
   const searchSource = readFileSync(new URL('../StreamingSearch.vue', import.meta.url), 'utf8')

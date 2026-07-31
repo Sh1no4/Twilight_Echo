@@ -212,10 +212,13 @@ test('desktop lyrics html supports bilingual original+translation layout', () =>
     'utf8'
   )
 
-  assert.match(source, /layout === 'bilingual'/)
+  assert.match(source, /settings\.layout === 'multi' \? 'multi' : 'bilingual'/)
   assert.match(source, /Bilingual: row0 = original/)
-  assert.match(settingsSource, /layout: 'multi'/)
-  assert.match(settingsSource, /d\.layout === 'bilingual' \? 'bilingual' : 'multi'/)
+  assert.match(settingsSource, /layout: 'bilingual'/)
+  assert.match(
+    settingsSource,
+    /d\.layout === 'multi'[\s\S]*\? 'multi'[\s\S]*d\.layout === 'bilingual'[\s\S]*\? 'bilingual'[\s\S]*DEFAULT_DESKTOP_LYRICS\.layout/
+  )
 })
 
 test('player lyric loading records local and provider lyric sources', () => {
@@ -858,13 +861,17 @@ test('playback failure tries a same-song fallback variant from the queue', () =>
   assert.match(loadAndPlay, /if \(await handlePlaybackFallback\(track, err, loadToken\)\) return/)
 })
 
-test('player bar surfaces playback fallback diagnostics from the player store', () => {
+test('audio engine errors use the global notice channel instead of the player bar', () => {
+  const storeSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const source = readFileSync(new URL('../components/PlayerBar.vue', import.meta.url), 'utf8')
 
-  assert.match(source, /audioEngineError/)
-  assert.match(source, /class="player-playback-diagnostic"/)
-  assert.match(source, /v-if="audioEngineError"/)
-  assert.match(source, /\{\{ audioEngineError \}\}/)
+  assert.match(storeSource, /function setAudioEngineError\(error: string \| null\): void/)
+  assert.match(
+    storeSource,
+    /pushNotice\(\{ kind: isFallbackNotice \? 'warning' : 'error', message \}\)/
+  )
+  assert.doesNotMatch(source, /audioEngineError/)
+  assert.doesNotMatch(source, /player-playback-diagnostic"[^>]*>[\s\S]*audioEngineError/)
 })
 
 test('audio visualizer iframe controls are wired to the player store', () => {

@@ -227,6 +227,22 @@ window.runLyricsPlayerRuntime = async () => {
   await new Promise((resolve) => setTimeout(resolve, 280))
   expect(player.currentTime.value >= 90, 'expired transition guard permanently rejected valid engine progress')
   player.isLoading.value = false
+  player.isPlaying.value = true
+  window.__audioFixture.emitProperty('time-pos', 100)
+  window.__audioFixture.emitPlaybackInfo({
+    state: 'paused', position: 100, duration: 180, source: nextTrack.id,
+    queueIndex: 1, nativePlaybackActive: true, volume: 1, playbackRate: 1
+  })
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  window.__audioFixture.emitProperty('time-pos', 100.25)
+  const stalePausedSamples = window.setInterval(
+    () => window.__audioFixture.emitProperty('time-pos', 100.25),
+    100
+  )
+  await new Promise((resolve) => setTimeout(resolve, 900))
+  window.clearInterval(stalePausedSamples)
+  expect(player.isPlaying.value, 'stale paused playback-info disabled the shared playback clock')
+  expect(player.currentTime.value > 100.5, 'stale paused playback-info froze playbar and lyric progress')
   console.log('LYRICS_PLAYER_RUNTIME_OK')
 }
 `

@@ -366,6 +366,7 @@ const {
   fetchUserLibrary,
   fetchUserPlaylistsByUid,
   fetchPlaylistTracks,
+  fetchLikedTracks,
   fetchLikedTracksPage,
   fetchRecommendSongs,
   fetchRecommendPlaylists,
@@ -1672,10 +1673,10 @@ function onStreamingTrackContextMenu(track: Track, index: number, event: MouseEv
   })
 }
 
-function handleContextPlayTrack(): void {
+async function handleContextPlayTrack(): Promise<void> {
   const track = streamingContextMenuTrack.value
   if (!track) return
-  const list = streamingListTracks.value
+  const list = currentDetail.value ? await resolveDetailPlaybackQueue() : streamingListTracks.value
   playTrack(track, list.length > 0 ? list : [track])
   closeStreamingContextMenu()
 }
@@ -1750,6 +1751,12 @@ onUnmounted(() => {
   window.removeEventListener('click', closeStreamingContextMenu)
 })
 
+async function playTrackFromCurrentDetail(track: Track): Promise<void> {
+  const tracks = await resolveDetailPlaybackQueue()
+  const resolvedTrack = tracks.find((item) => item.id === track.id) ?? track
+  playTrack(resolvedTrack, tracks.length > 0 ? tracks : [resolvedTrack])
+}
+
 function onTrackClick(track: Track, index: number, event?: MouseEvent): void {
   if (event && (event.shiftKey || event.ctrlKey || event.metaKey)) {
     multiSelect.onRowClick(track, index, event)
@@ -1758,21 +1765,51 @@ function onTrackClick(track: Track, index: number, event?: MouseEvent): void {
   if (event) {
     multiSelect.onRowClick(track, index, event)
   }
-  playTrack(track, detailTracks.value)
+  void playTrackFromCurrentDetail(track)
 }
 
 function playDetailTrack(track: Track, _index: number): void {
-  playTrack(track, detailTracks.value)
+  void playTrackFromCurrentDetail(track)
 }
 
-function playAllDetailTracks(): void {
-  if (detailTracks.value.length === 0) return
-  playTrack(detailTracks.value[0], detailTracks.value)
+async function resolveDetailPlaybackQueue(): Promise<Track[]> {
+  if (
+    currentDetail.value?.type !== 'liked' ||
+    isExternalActive.value ||
+    !likedTracksHasMore.value
+  ) {
+    return detailTracks.value
+  }
+
+  try {
+    const tracks = await fetchLikedTracks()
+    if (tracks.length > 0) {
+      detailTracks.value = tracks
+      likedCount.value = tracks.length
+      likedTracksTotal.value = tracks.length
+      likedTracksNextOffset.value = tracks.length
+      likedTracksHasMore.value = false
+      likedTracksLoadMoreError.value = ''
+      syncLikedIds(tracks)
+      return tracks
+    }
+  } catch (error) {
+    likedTracksLoadMoreError.value = friendlyStreamingError(error, '加载完整收藏列表失败')
+  }
+
+  return detailTracks.value
 }
 
-function shufflePlayDetailTracks(): void {
-  if (detailTracks.value.length === 0) return
-  const shuffled = [...detailTracks.value]
+async function playAllDetailTracks(): Promise<void> {
+  const tracks = await resolveDetailPlaybackQueue()
+  if (tracks.length === 0) return
+  playTrack(tracks[0], tracks)
+}
+
+async function shufflePlayDetailTracks(): Promise<void> {
+  const tracks = await resolveDetailPlaybackQueue()
+  if (tracks.length === 0) return
+  const shuffled = [...tracks]
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1))
     ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
@@ -2238,8 +2275,9 @@ async function playLikedSongs(): Promise<void> {
   if (!isViewingLiked) {
     await openLikedTracks()
   }
-  if (detailTracks.value.length > 0) {
-    playTrack(detailTracks.value[0], detailTracks.value)
+  const tracks = await resolveDetailPlaybackQueue()
+  if (tracks.length > 0) {
+    playTrack(tracks[0], tracks)
   }
 }
 
@@ -2496,6 +2534,7 @@ onMounted(async () => {
             v-if="currentDetail || isSearching"
             type="button"
             class="btn-back"
+            data-te-back-button="icon"
             title="返回"
             @click="currentDetail ? goBack() : clearSearch()"
           >
