@@ -174,52 +174,49 @@ pnpm run test:audio-engine:mingw
 The staged release must include the matching `twilight-audio-engine.dll` and
 `twilight_audio_node.node` under packaged `resources/audio-engine`.
 
-## Signed Release Artifact Gate
+## Unsigned Release Artifact Gate
 
 In-app updates on Windows download the latest GitHub Release installer (`*-setup.exe` preferred),
 optionally verify SHA-256 from the release body or a companion checksum asset, then launch the
 installer with `shell.openPath` and quit the app after an explicit confirm (exit, SmartScreen/UAC,
-official signed package). This is not `electron-updater`, not silent asar replacement, and not a
+official project release). This is not `electron-updater`, not silent asar replacement, and not a
 generic electron-builder `publish` URL. **Every Windows Release must publish SHA-256** (release body
 line or `*.sha256` asset). Without a checksum the client still downloads but marks verification as
 skipped and degrades the install CTA; if a checksum was known, install re-hashes before openPath.
 Unsigned installers remain subject to SmartScreen.
 
-A publishable Windows build must be created in the protected signing environment. `build:win` and
-`build:unpack` are deliberately unsigned development packaging paths. They still strip only the
-copied package payload when W64DevKit is configured, keeping the source runtime untouched.
+A publishable Windows build is intentionally unsigned because this personal project does not carry
+a commercial code-signing certificate. Code signing is not part of any release check and no signing
+environment variable is required. `build:win`, `build:unpack`, and `gate:release:win` all keep
+electron-builder signing disabled. They still strip only the copied package payload when W64DevKit
+is configured, keeping the source runtime untouched.
 Packaging delegates production dependency discovery to electron-builder and keeps only the
 `zh-CN`, `zh-TW`, and `en-US` Electron locales instead of copying the full development tree.
-Development packaging skips electron-builder's signing helper; `afterPack` writes the unsigned
-executable metadata directly. The protected release overlay restores signing and executable editing.
-Only `gate:release:win` loads `electron-builder.release-win.yml`, which enables electron-builder's
-`forceCodeSigning`; no signing identity is a hard failure, not an unsigned fallback. Set
-`TWILIGHT_RELEASE_SIGNING_THUMBPRINT` to the expected release certificate thumbprint there, then run:
+`afterPack` writes the executable icon and version metadata directly. Run:
 
 ```powershell
 pnpm run gate:release:win
 ```
 
-`gate:release:win` runs `gate:release:preflight` before signing. On success it writes
+`gate:release:win` runs `gate:release:preflight` and the cross-ABI ASIO gate before packaging. On
+success it writes
 `dist/<installer>-setup.exe.sha256`; upload that file alongside the installer and publish the same
 SHA-256 in the GitHub Release body.
 
 The gate checks every shipped DLL/EXE/NODE file under the packaged audio-engine directory for a
 non-zero size and a size budget. It additionally checks each required self-built native runtime
-binary for stripped PE debug/COFF metadata and a valid Authenticode signature from the
-expected certificate. Windows development and release packaging invoke GNU/LLVM
+binary for stripped PE debug/COFF metadata. Windows development and release packaging invoke GNU/LLVM
 `strip --strip-all` only on the copied package payload at
 `win-unpacked/resources/audio-engine`; they never alter `resources/audio-engine` in the source tree.
 Set `W64DEVKIT_ROOT` or `TWILIGHT_RELEASE_STRIP` so the packaging wrapper can locate `strip.exe`.
-The protected release gate deliberately fails when the strip tool or
-`TWILIGHT_RELEASE_SIGNING_THUMBPRINT` is absent. It does not create or simulate a signature.
+The release gate deliberately fails when the strip tool is absent. It does not create or simulate a
+signature, and release notes must disclose that Windows may show SmartScreen warnings.
 Current budgets are 192 MiB for the audio DLL, 16 MiB for the Node addon, 32 MiB for each VST3 host
 executable, 64 MiB for any other shipped native DLL/EXE/NODE, and 384 MiB for the installer.
-Microsoft VC runtimes are size-checked but are not stripped or required to carry the project
-certificate.
+Microsoft VC runtimes are size-checked but are not stripped.
 
 `pnpm run test:release-artifacts` validates this policy and its failure paths without needing a
-certificate or a packaged installer. A passing test is not release-signing evidence.
+packaged installer. A passing test is release-integrity evidence, not a platform trust endorsement.
 
 macOS CoreAudio and Linux ALSA package targets remain unverified. Their buildability is not a
 release-readiness claim; keep their real-device smoke evidence separate from the Windows gate.
@@ -250,6 +247,25 @@ measurements. It is a deterministic software gate, not a hardware or system-CPU 
 
 Real-device smoke checks for WASAPI Exclusive, ASIO, native DSD, SACD ISO, CoreAudio, and ALSA
 remain opt-in and are not part of the default gate.
+
+## ASIO Compatibility Gate
+
+The Windows x64 ASIO compatibility backend must remain disabled unless
+`TWILIGHT_EXPERIMENTAL_ASIO_ABI=1` is set for an explicit validation run. A release may enable it
+only after the frozen ABI specification, MSVC fake-driver round trip, MinGW ABI checks, and
+retained hardware evidence required by `docs/legal/asio-decision-record.md` are complete. For
+this personal open-source project, written legal advice and a formal clean-room signature are
+recommended records rather than hard gates; commercialization or a hardware-partner release
+requires a fresh formal review. Release sources and build commands must not reference an ASIO SDK
+directory, SDK headers, or SDK source files.
+
+`pnpm run verify:asio-sdk-free` and `pnpm run test:asio-cross-abi` are required implementation
+evidence for this gate. They do not replace the frozen ABI contract or real-device evidence
+requirements.
+
+The cross-compiler command requires `TAE_ASIO_MSVC_INSTALL_ROOT` to point to a Visual Studio 2022
+Build Tools installation and optionally accepts `TAE_ASIO_MSVC_BUILD_DIR`. It reuses
+`TAE_VST3_MSVC_INSTALL_ROOT` when the ASIO-specific install-root variable is absent.
 
 For a Windows WASAPI Exclusive performance soak, explicitly select a physical endpoint and retain the
 JSON output as release evidence:

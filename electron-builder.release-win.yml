@@ -1,6 +1,0 @@
-# Only scripts/build-windows-release.cjs uses this overlay. Development build:unpack remains
-# usable without a signing identity.
-extends: ./electron-builder.yml
-win:
-  forceCodeSigning: true
-  signAndEditExecutable: true

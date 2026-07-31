@@ -71,7 +71,7 @@
 .sleep-timer-select {
   max-width: 120px;
   min-height: 30px;
-  border: 1px solid var(--border-color, #dfe3e8);
+  border: 1px solid var(--border-color, var(--te-card-border));
   border-radius: 4px;
   background: var(--bg-secondary, #f7f8fa);
   color: inherit;

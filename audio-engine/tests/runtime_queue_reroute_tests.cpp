@@ -2002,6 +2002,9 @@ void testAsioNativeDsdMismatchFallsBackToDop() {
   assert(!snapshots.front().typedStarted);
   assert(formatLooksDopCarrier(snapshots.back().requestedFormat));
   assertLatestPlaybackContains(engine, "\"dsdMode\":\"dop\"");
+  assertLatestPlaybackContains(engine, "\"nativeDsdRuntimeState\":\"mismatch\"");
+  assertLatestPlaybackContains(engine, "\"nativeDsdRequestedRate\":2822400");
+  assertLatestPlaybackContains(engine, "Fake ASIO runtime sample type is not Native DSD");
 }
 
 void testAsioNativeDsdAndDopFailureFallsBackToPcm() {
@@ -2025,6 +2028,36 @@ void testAsioNativeDsdAndDopFailureFallsBackToPcm() {
   assertFormatLooksDsdPcmFallbackRequest(snapshots[2].requestedFormat);
   assert(snapshots[2].started);
   assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+  assertLatestPlaybackContains(engine, "\"nativeDsdRuntimeState\":\"mismatch\"");
+  assertLatestPlaybackContains(engine, "\"nativeDsdRequestedRate\":2822400");
+  assertLatestPlaybackContains(engine, "Fake ASIO runtime sample type is not Native DSD");
+  assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"dop_passthrough_unproven\"");
+}
+
+void testAsioNativeDsdUnsupportedAndDopFailureFallsBackToPcm() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+  assert(engine.setOutputBackend("asio") == TAE_RESULT_OK);
+  g_fakeNativeDsdBehavior = FakeNativeDsdBehavior::Unsupported;
+  g_fakeDopBehavior = FakeDopBehavior::Unproven;
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(3));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 3);
+  assert(formatLooksDsdSourceRequest(snapshots[0].requestedFormat));
+  assert(!snapshots[0].started);
+  assert(!snapshots[0].typedStarted);
+  assert(formatLooksDopCarrier(snapshots[1].requestedFormat));
+  assert(!snapshots[1].started);
+  assert(!snapshots[1].typedStarted);
+  assertFormatLooksDsdPcmFallbackRequest(snapshots[2].requestedFormat);
+  assert(snapshots[2].started);
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+  assertLatestPlaybackContains(engine, "\"nativeDsdRuntimeState\":\"unsupported\"");
+  assertLatestPlaybackContains(engine, "\"nativeDsdRequestedRate\":2822400");
+  assertLatestPlaybackContains(engine, "Fake ASIO backend does not advertise Native DSD support");
   assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"dop_passthrough_unproven\"");
 }
 
@@ -3040,6 +3073,7 @@ int main() {
   testAsioPcmModeDoesNotTryNativeDsd();
   testAsioNativeDsdMismatchFallsBackToDop();
   testAsioNativeDsdAndDopFailureFallsBackToPcm();
+  testAsioNativeDsdUnsupportedAndDopFailureFallsBackToPcm();
   testDsd256StartsOnWasapiExclusiveDop();
   testDsd256StartsOnAsioNativeDsd();
   testNativeDsdPositionUsesBitSampleFrames();

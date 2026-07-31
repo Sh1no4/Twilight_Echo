@@ -1,5 +1,4 @@
 const assert = require('node:assert/strict')
-const { execFileSync } = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
 
@@ -17,18 +16,12 @@ function parseArgs(argv) {
   const options = {
     nativeDir: '',
     artifactDir: '',
-    installer: '',
-    requireSignature: false,
-    signingThumbprint: process.env.TWILIGHT_RELEASE_SIGNING_THUMBPRINT || ''
+    installer: ''
   }
   const args = argv[0] === '--' ? argv.slice(1) : argv
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]
-    if (arg === '--require-signature') {
-      options.requireSignature = true
-      continue
-    }
-    if (!['--native-dir', '--artifact-dir', '--installer', '--signing-thumbprint'].includes(arg)) {
+    if (!['--native-dir', '--artifact-dir', '--installer'].includes(arg)) {
       throw new Error(`Unknown argument: ${arg}`)
     }
     const value = args[++index]
@@ -36,19 +29,12 @@ function parseArgs(argv) {
     if (arg === '--native-dir') options.nativeDir = value
     if (arg === '--artifact-dir') options.artifactDir = value
     if (arg === '--installer') options.installer = value
-    if (arg === '--signing-thumbprint') options.signingThumbprint = value
   }
   if (!options.nativeDir) throw new Error('--native-dir is required')
   if (!options.installer && !options.artifactDir) {
     throw new Error('Provide --installer or --artifact-dir so the installer size budget can be checked')
   }
   return options
-}
-
-function normalizeThumbprint(value) {
-  const normalized = String(value || '').replace(/[^a-f0-9]/gi, '').toUpperCase()
-  if (!/^[A-F0-9]{40,64}$/.test(normalized)) return ''
-  return normalized
 }
 
 function readPeHeader(filePath) {
@@ -140,31 +126,7 @@ function findInstaller(options) {
   return installers[0]
 }
 
-function readWindowsSignature(filePath, run = execFileSync) {
-  const script = [
-    "$signature = Get-AuthenticodeSignature -LiteralPath $args[0]",
-    "[PSCustomObject]@{ status = [string]$signature.Status; thumbprint = [string]$signature.SignerCertificate.Thumbprint } | ConvertTo-Json -Compress"
-  ].join('; ')
-  const output = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script, filePath], {
-    encoding: 'utf8',
-    windowsHide: true
-  })
-  return JSON.parse(String(output).trim())
-}
-
-function assertWindowsSignature(filePath, expectedThumbprint, readSignature = readWindowsSignature) {
-  const expected = normalizeThumbprint(expectedThumbprint)
-  assert.ok(expected, 'TWILIGHT_RELEASE_SIGNING_THUMBPRINT is required for a signed Windows release')
-  const actual = readSignature(filePath)
-  assert.equal(actual.status, 'Valid', `${path.basename(filePath)} does not have a valid Authenticode signature`)
-  assert.equal(
-    normalizeThumbprint(actual.thumbprint),
-    expected,
-    `${path.basename(filePath)} was not signed by TWILIGHT_RELEASE_SIGNING_THUMBPRINT`
-  )
-}
-
-function verifyReleaseArtifacts(options, dependencies = {}) {
+function verifyReleaseArtifacts(options) {
   const nativeBinaries = listNativeBinaries(options.nativeDir)
   const shippedBinaries = listShippedBinaries(options.nativeDir)
   const installer = findInstaller(options)
@@ -177,12 +139,7 @@ function verifyReleaseArtifacts(options, dependencies = {}) {
     assertStrippedPe(filePath)
   }
   sizes.installer = assertBudget(installer, DEFAULT_BUDGETS.installer, 'NSIS installer')
-  if (options.requireSignature) {
-    for (const filePath of [...nativeBinaries, installer]) {
-      assertWindowsSignature(filePath, options.signingThumbprint, dependencies.readSignature)
-    }
-  }
-  return { nativeBinaries, shippedBinaries, installer, sizes, signatureRequired: options.requireSignature }
+  return { nativeBinaries, shippedBinaries, installer, sizes }
 }
 
 function main() {
@@ -204,11 +161,9 @@ module.exports = {
   DEFAULT_SHIPPED_BINARY_BUDGET,
   assertBudget,
   assertStrippedPe,
-  assertWindowsSignature,
   findInstaller,
   listNativeBinaries,
   listShippedBinaries,
-  normalizeThumbprint,
   parseArgs,
   readPeHeader,
   verifyReleaseArtifacts

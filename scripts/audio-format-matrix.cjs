@@ -1,4 +1,5 @@
 const fs = require('node:fs')
+const { spawn } = require('node:child_process')
 const path = require('node:path')
 
 const root = path.resolve(__dirname, '..')
@@ -47,6 +48,7 @@ function parseArgs(argv) {
     durationMs: Number(process.env.TAE_AUDIO_MATRIX_DURATION_MS || 1200),
     modulePath: process.env.TAE_AUDIO_NODE || '',
     json: false,
+    worker: false,
     help: false
   }
 
@@ -66,6 +68,7 @@ function parseArgs(argv) {
     else if (arg === '--duration-ms') options.durationMs = Number(next())
     else if (arg === '--module') options.modulePath = next()
     else if (arg === '--json') options.json = true
+    else if (arg === '--worker') options.worker = true
     else if (arg === '--help' || arg === '-h') options.help = true
     else throw new Error(`Unknown option: ${arg}`)
   }
@@ -337,10 +340,66 @@ function printHumanSummary(summary) {
   }
 }
 
+function runAsioInIsolatedWorker() {
+  const args = process.argv.slice(2).filter((arg) => arg !== '--worker')
+  const child = spawn(process.execPath, [__filename, '--worker', ...args], {
+    cwd: root,
+    windowsHide: true,
+    stdio: ['ignore', 'ignore', 'pipe', 'ipc']
+  })
+
+  return new Promise((resolve, reject) => {
+    let settled = false
+    let stderr = ''
+    const finish = (callback, value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      callback(value)
+    }
+    const timeout = setTimeout(() => {
+      child.kill()
+      finish(reject, new Error('ASIO playback worker timed out after 30000ms'))
+    }, 30000)
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+    child.once('message', (message) => {
+      child.kill()
+      if (message && message.type === 'summary') {
+        finish(resolve, message.summary)
+      } else {
+        finish(reject, new Error(message?.error || 'ASIO playback worker returned no summary'))
+      }
+    })
+    child.once('error', (error) => finish(reject, error))
+    child.once('exit', (code, signal) => {
+      if (settled) return
+      const detail = stderr.trim()
+      finish(
+        reject,
+        new Error(
+          `ASIO playback worker exited before returning a result (code=${code}, signal=${signal || 'none'})${detail ? `: ${detail}` : ''}`
+        )
+      )
+    })
+  })
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2))
   if (options.help) {
     console.log(usage())
+    return
+  }
+
+  if (options.playback && options.backend === 'asio' && !options.worker) {
+    const summary = await runAsioInIsolatedWorker()
+    summary.execution = { isolatedWorker: true, workerTermination: 'forced-after-result' }
+    if (options.json) console.log(JSON.stringify(summary, null, 2))
+    else printHumanSummary(summary)
+    if (summary.results.some((result) => !result.ok)) process.exitCode = 1
     return
   }
 
@@ -383,7 +442,8 @@ async function main() {
     results
   }
 
-  if (options.json) console.log(JSON.stringify(summary, null, 2))
+  if (options.worker && typeof process.send === 'function') process.send({ type: 'summary', summary })
+  else if (options.json) console.log(JSON.stringify(summary, null, 2))
   else printHumanSummary(summary)
   if (results.some((result) => !result.ok)) process.exitCode = 1
 }

@@ -50,7 +50,7 @@ export const sections: { key: SectionKey; label: string; icon: string }[] = [
   { key: 'performance', label: '性能', icon: 'pi pi-bolt' },
   { key: 'appearance', label: '外观', icon: 'pi pi-palette' },
   { key: 'desktopLyrics', label: '桌面歌词', icon: 'pi pi-window-maximize' },
-  { key: 'shortcuts', label: '快捷键', icon: 'pi pi-keyboard' },
+  { key: 'shortcuts', label: '快捷键', icon: 'pi pi-key' },
   { key: 'about', label: '关于', icon: 'pi pi-info-circle' }
 ]
 
@@ -105,13 +105,15 @@ export const routingModeOptions: { value: ChannelRoutingMode; label: string }[] 
   { value: 'mono-to-multichannel', label: 'Mono → Multichannel' }
 ]
 
-export const pcmToDsdModeOptions: { value: import('../../types/settings').PcmToDsdMode; label: string }[] =
-  [
-    { value: 'off', label: '关闭' },
-    { value: 'dsd64', label: 'DSD64' },
-    { value: 'dsd128', label: 'DSD128' },
-    { value: 'dsd256', label: 'DSD256' }
-  ]
+export const pcmToDsdModeOptions: {
+  value: import('../../types/settings').PcmToDsdMode
+  label: string
+}[] = [
+  { value: 'off', label: '关闭' },
+  { value: 'dsd64', label: 'DSD64' },
+  { value: 'dsd128', label: 'DSD128' },
+  { value: 'dsd256', label: 'DSD256' }
+]
 
 export const replayGainOptions = VOLUME_NORMALIZATION_OPTIONS
 export const dsdOutputModeOptions = DSD_OUTPUT_MODE_OPTIONS
@@ -147,12 +149,13 @@ export const uiDensityOptions: { value: UiDensity; label: string }[] = [
   { value: 'comfortable', label: '舒展' }
 ]
 
-export const appBackgroundPageOptions: { value: AppBackgroundPage; label: string; desc: string }[] = [
-  { value: 'local', label: '本地主页', desc: '本地音乐首页和资料概览背景。' },
-  { value: 'settings', label: '设置与插件', desc: '设置页、插件中心等管理界面背景。' },
-  { value: 'streaming', label: '流媒体页', desc: '在线音乐浏览、搜索和详情页背景。' },
-  { value: 'player', label: '播放页', desc: '沉浸式播放页和全屏播放背景。' }
-]
+export const appBackgroundPageOptions: { value: AppBackgroundPage; label: string; desc: string }[] =
+  [
+    { value: 'local', label: '本地主页', desc: '本地音乐首页和资料概览背景。' },
+    { value: 'settings', label: '设置与插件', desc: '设置页、插件中心等管理界面背景。' },
+    { value: 'streaming', label: '流媒体页', desc: '在线音乐浏览、搜索和详情页背景。' },
+    { value: 'player', label: '播放页', desc: '沉浸式播放页和全屏播放背景。' }
+  ]
 
 export const lyricAlignOptions: { value: LyricAlign; label: string }[] = [
   { value: 'center', label: '居中对齐' },
@@ -167,11 +170,7 @@ export const streamingAudioCachePolicyOptions: {
   { value: 'off', label: '不缓存流媒体音频' }
 ]
 
-export {
-  GITHUB_URL,
-  HOMEPAGE_URL,
-  RELEASES_URL
-} from '../../../../shared/projectUrls.ts'
+export { GITHUB_URL, HOMEPAGE_URL, RELEASES_URL } from '../../../../shared/projectUrls.ts'
 
 export const SETTINGS_SEARCH_INDEX: Array<{
   section: SectionKey
@@ -237,4 +236,3 @@ export const RESET_DESKTOP_LYRICS: DesktopLyricsSettings = {
   maxLines: 2,
   lineOffset: 48
 }
-

@@ -124,6 +124,62 @@ inline size_t bytesPerSample(AudioSampleFormat format) {
   }
 }
 
+inline size_t bytesPerSample(const AsioChannelFormat& format) {
+  if (format.containerBits == 0 || format.containerBits % 8 != 0) return 0;
+  return static_cast<size_t>(format.containerBits / 8);
+}
+
+inline int transportSampleRate(const AudioFormat& format) {
+  if (format.sampleRate <= 0) return 0;
+  if (!isDsdSampleFormat(format.sampleFormat)) return format.sampleRate;
+  return format.sampleRate % 8 == 0 ? format.sampleRate / 8 : 0;
+}
+
+inline int semanticSampleRate(AudioSampleFormat format, int transportRate) {
+  if (transportRate <= 0) return 0;
+  if (!isDsdSampleFormat(format)) return transportRate;
+  return transportRate <= std::numeric_limits<int>::max() / 8 ? transportRate * 8 : 0;
+}
+
+inline bool isSupportedChannelFormat(const AsioChannelFormat& format) {
+  if (!format.littleEndian) return false;
+  switch (format.logicalFormat) {
+    case AudioSampleFormat::Int16Interleaved:
+      return format.containerBits == 16 && format.validBits == 16 &&
+             !format.validBitsAreMostSignificant && format.dsdPacking == AsioDsdPacking::None;
+    case AudioSampleFormat::Int24Interleaved:
+      return format.containerBits == 24 && format.validBits == 24 &&
+             !format.validBitsAreMostSignificant && format.dsdPacking == AsioDsdPacking::None;
+    case AudioSampleFormat::Int24In32Interleaved:
+      return format.containerBits == 32 && format.validBits == 24 &&
+             format.validBitsAreMostSignificant && format.dsdPacking == AsioDsdPacking::None;
+    case AudioSampleFormat::Int32Interleaved:
+      return format.containerBits == 32 && format.validBits == 32 &&
+             !format.validBitsAreMostSignificant && format.dsdPacking == AsioDsdPacking::None;
+    case AudioSampleFormat::Float32Interleaved:
+      return format.containerBits == 32 && format.validBits == 32 &&
+             !format.validBitsAreMostSignificant && format.dsdPacking == AsioDsdPacking::None;
+    case AudioSampleFormat::DsdInt8Lsb1:
+      return format.containerBits == 8 && format.validBits == 1 &&
+             format.dsdPacking == AsioDsdPacking::Lsb1;
+    case AudioSampleFormat::DsdInt8Msb1:
+      return format.containerBits == 8 && format.validBits == 1 &&
+             format.dsdPacking == AsioDsdPacking::Msb1;
+    case AudioSampleFormat::DsdInt8Ner8:
+      return format.containerBits == 8 && format.validBits == 8 &&
+             format.dsdPacking == AsioDsdPacking::Ner8;
+    default:
+      return false;
+  }
+}
+
+inline bool channelFormatsMatch(const AsioChannelFormat& left, const AsioChannelFormat& right) {
+  return left.logicalFormat == right.logicalFormat && left.containerBits == right.containerBits &&
+         left.validBits == right.validBits && left.littleEndian == right.littleEndian &&
+         left.validBitsAreMostSignificant == right.validBitsAreMostSignificant &&
+         left.dsdPacking == right.dsdPacking;
+}
+
 inline const float* channelSourcePointer(
     const float* input,
     int sourceChannels,
@@ -215,6 +271,19 @@ inline void writePackedChannelFromFloatScratch(
   }
 }
 
+inline void writePackedChannelFromFloatScratch(
+    const float* input,
+    size_t frameCount,
+    int sourceChannels,
+    int outputChannel,
+    ChannelRoutingMode routingMode,
+    const AsioChannelFormat& format,
+    uint8_t* output) {
+  if (!output || !isSupportedChannelFormat(format)) return;
+  writePackedChannelFromFloatScratch(
+      input, frameCount, sourceChannels, outputChannel, routingMode, format.logicalFormat, output);
+}
+
 inline bool canCopyInterleavedTypedChannelToPlanar(
     size_t frameCount,
     int sourceChannels,
@@ -280,6 +349,28 @@ inline void writeInterleavedTypedChannelToPlanar(
       break;
     }
   }
+}
+
+inline bool canCopyInterleavedTypedChannelToPlanar(
+    const AsioChannelFormat& format,
+    size_t frameCount,
+    int sourceChannels,
+    int channel) {
+  return isSupportedChannelFormat(format) &&
+         canCopyInterleavedTypedChannelToPlanar(
+             frameCount, sourceChannels, channel, bytesPerSample(format));
+}
+
+inline void writeInterleavedTypedChannelToPlanar(
+    const uint8_t* input,
+    size_t frameCount,
+    int sourceChannels,
+    int channel,
+    const AsioChannelFormat& format,
+    uint8_t* output) {
+  if (!output || !isSupportedChannelFormat(format)) return;
+  writeInterleavedTypedChannelToPlanar(
+      input, frameCount, sourceChannels, channel, bytesPerSample(format), output);
 }
 
 }  // namespace twilight::audio::asio

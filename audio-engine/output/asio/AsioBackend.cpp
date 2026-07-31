@@ -132,6 +132,14 @@ void applyNativeDsdFactsToOutputInfo(OutputInfo* info, const NativeDsdRuntimeFac
   info->nativeDsdExplicitlyCapable = facts.explicitlyCapable;
   info->nativeDsdAdvertisedSampleRates = facts.advertisedSampleRates;
   info->nativeDsdRuntimeReason = facts.reason;
+  if (facts.explicitlyCapable) info->driverNativeDsdCapable = true;
+  if (facts.actualDsdRate > 0 &&
+      std::find(
+          info->driverNativeDsdSampleRates.begin(),
+          info->driverNativeDsdSampleRates.end(),
+          facts.actualDsdRate) == info->driverNativeDsdSampleRates.end()) {
+    info->driverNativeDsdSampleRates.push_back(facts.actualDsdRate);
+  }
 }
 
 bool explicitBufferSizeAllowed(uint32_t size) {
@@ -226,28 +234,35 @@ NativeDsdRuntimeFacts buildAsioNativeDsdRuntimeFacts(
     return facts;
   }
 
-  if (!device.nativeDsdCapable) {
-    facts.state = NativeDsdRuntimeFactState::Unsupported;
-    facts.reason = "ASIO driver did not advertise Native DSD support";
-    return facts;
-  }
-
-  if (!containsSampleRate(device.nativeDsdSampleRates, facts.requestedDsdRate)) {
+  if (device.nativeDsdCapable && !device.nativeDsdSampleRates.empty() &&
+      !containsSampleRate(device.nativeDsdSampleRates, facts.requestedDsdRate)) {
     facts.state = NativeDsdRuntimeFactState::Mismatch;
     facts.reason = "ASIO driver did not advertise the requested Native DSD rate";
     return facts;
   }
 
-  if (!device.nativeDsdSampleFormats.empty() &&
+  if (device.nativeDsdCapable && !device.nativeDsdSampleFormats.empty() &&
       !containsSampleFormat(device.nativeDsdSampleFormats, requestedFormat.sampleFormat)) {
     facts.state = NativeDsdRuntimeFactState::Mismatch;
     facts.reason = "ASIO driver did not advertise the requested Native DSD sample type";
     return facts;
   }
 
+  const bool runtimeReportsNativeDsd =
+      actualObserved && actualChannelFormatsMatch && isDsdSampleFormat(actualFormat.sampleFormat) &&
+      actualFormat.sampleRate == facts.requestedDsdRate;
+  if (runtimeReportsNativeDsd) {
+    facts.explicitlyCapable = true;
+    if (!containsSampleRate(facts.advertisedSampleRates, actualFormat.sampleRate)) {
+      facts.advertisedSampleRates.push_back(actualFormat.sampleRate);
+    }
+  }
+
   if (!rawDsdPathStarted) {
     facts.state = NativeDsdRuntimeFactState::Candidate;
-    facts.reason = "ASIO driver advertises Native DSD, but raw DSD rendering is not active";
+    facts.reason = runtimeReportsNativeDsd
+                       ? "ASIO runtime reports Native DSD, but raw DSD rendering is not active"
+                       : "ASIO Native DSD format probe is awaiting runtime channel confirmation";
     return facts;
   }
 
@@ -627,6 +642,14 @@ std::string AsioBackend::deviceName() const {
 bool AsioBackend::chooseFormat(const AsioDeviceInfo& device, const AudioFormat& requestedFormat, AudioFormat* selected) const {
   if (!selected || requestedFormat.sampleRate <= 0 || requestedFormat.channelCount <= 0) return false;
 
+  // The ASIO registry exposes driver identity, not its active sample types. Probe a
+  // raw DSD request directly and only treat it as capable after getChannelInfo()
+  // reports a matching DSD type at runtime.
+  if (isNativeDsdRequest(requestedFormat) && !device.nativeDsdCapable) {
+    *selected = requestedFormat;
+    return true;
+  }
+
   std::vector<int> sampleRates = device.supportedSampleRates;
   if (device.dopCapable) appendUniqueSampleRates(&sampleRates, device.dopCarrierSampleRates);
   if (device.nativeDsdCapable) appendUniqueSampleRates(&sampleRates, device.nativeDsdSampleRates);
@@ -739,7 +762,25 @@ long AsioBackend::chooseBufferSize(const AsioDeviceInfo& device) const {
 }
 
 int AsioBackend::routedOutputChannels(const AsioDeviceInfo& device, int sourceChannels) const {
-  const int available = std::max(1, device.outputChannels);
+  const int requested = std::max(1, sourceChannels);
+  if (device.outputChannels <= 0) {
+    switch (outputConfig_.routingMode) {
+      case ChannelRoutingMode::StereoTo51:
+        return 6;
+      case ChannelRoutingMode::StereoTo71:
+        return 8;
+      case ChannelRoutingMode::MonoToStereo:
+        return 2;
+      case ChannelRoutingMode::MonoToMultichannel:
+        return std::max(2, requested);
+      case ChannelRoutingMode::Stereo:
+        return 2;
+      case ChannelRoutingMode::Auto:
+      default:
+        return requested;
+    }
+  }
+  const int available = device.outputChannels;
   switch (outputConfig_.routingMode) {
     case ChannelRoutingMode::StereoTo51:
       return std::min(available, 6);
@@ -779,10 +820,24 @@ bool AsioBackend::createAndStartHost(std::string* error) {
   {
     std::lock_guard lock(mutex_);
     const int outputChannels = std::max(1, openConfig_.format.channelCount);
-    const AudioSampleFormat firstActualSampleFormat = host_->outputSampleFormat(0);
+    const AsioChannelFormat firstChannelFormat = host_->outputChannelFormat(0);
+    if (!asio::isSupportedChannelFormat(firstChannelFormat)) {
+      if (error) *error = "unsupported_asio_sample_type";
+      ++diagnostics_.sessionBufferDropCount;
+      ++diagnostics_.lifetimeBufferDropCount;
+      diagnostics_.lastError = error ? *error : "unsupported_asio_sample_type";
+      outputInfo_.perfectReasonCode = "unsupported_asio_sample_type";
+      outputInfo_.capabilityReason = diagnostics_.lastError;
+      outputInfo_.perfectReason = "ASIO driver reported an unsupported output channel format";
+      outputInfo_.diagnostics = diagnostics_;
+      return false;
+    }
+    const AudioSampleFormat firstActualSampleFormat = firstChannelFormat.logicalFormat;
     bool uniformActualSampleFormat = true;
     for (int channel = 1; channel < outputChannels; ++channel) {
-      if (host_->outputSampleFormat(channel) != firstActualSampleFormat) {
+      const AsioChannelFormat channelFormat = host_->outputChannelFormat(channel);
+      if (!asio::isSupportedChannelFormat(channelFormat) ||
+          !asio::channelFormatsMatch(channelFormat, firstChannelFormat)) {
         uniformActualSampleFormat = false;
         break;
       }
@@ -875,9 +930,9 @@ void AsioBackend::renderBuffer(long bufferIndex) {
     for (int channel = 0; channel < outputChannels; ++channel) {
       auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
       if (!output) continue;
-      const AudioSampleFormat sampleFormat = host_->outputSampleFormat(channel);
-      const int silenceByte = isDsdSampleFormat(sampleFormat) ? 0x69 : 0;
-      std::memset(output, silenceByte, frames * asio::bytesPerSample(sampleFormat));
+      const AsioChannelFormat channelFormat = host_->outputChannelFormat(channel);
+      const int silenceByte = isDsdSampleFormat(channelFormat.logicalFormat) ? 0x69 : 0;
+      std::memset(output, silenceByte, frames * asio::bytesPerSample(channelFormat));
     }
   };
   {
@@ -915,9 +970,9 @@ void AsioBackend::renderBuffer(long bufferIndex) {
   lastRenderTime_ = now;
 
   if (typedCallback && outputConfig.routingMode == ChannelRoutingMode::Auto && sourceChannels == outputChannels &&
-      actualOutputChannelFormatsMatch && host_->outputSampleFormat(0) == outputFormat.sampleFormat &&
+      actualOutputChannelFormatsMatch &&
+      host_->outputChannelFormat(0).logicalFormat == outputFormat.sampleFormat &&
       audioFormatBytesPerFrame(outputFormat) > 0) {
-    const size_t sampleStride = asio::bytesPerSample(outputFormat.sampleFormat);
     const size_t bytesPerFrame = audioFormatBytesPerFrame(outputFormat);
     const size_t typedByteCount = frames * bytesPerFrame;
     if (typedRenderScratch_.size() >= typedByteCount) {
@@ -938,13 +993,17 @@ void AsioBackend::renderBuffer(long bufferIndex) {
         for (int channel = 0; channel < outputChannels; ++channel) {
           auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
           if (!output) continue;
-          if (host_->outputSampleFormat(channel) != outputFormat.sampleFormat) continue;
+          const AsioChannelFormat channelFormat = host_->outputChannelFormat(channel);
+          if (channelFormat.logicalFormat != outputFormat.sampleFormat ||
+              !asio::isSupportedChannelFormat(channelFormat)) {
+            continue;
+          }
           asio::writeInterleavedTypedChannelToPlanar(
               typedRenderScratch_.data(),
               frames,
               sourceChannels,
               channel,
-              sampleStride,
+              channelFormat,
               output);
         }
         host_->outputReady();
@@ -957,9 +1016,10 @@ void AsioBackend::renderBuffer(long bufferIndex) {
     for (int channel = 0; channel < outputChannels; ++channel) {
       auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
       if (!output) continue;
-      const AudioSampleFormat sampleFormat = host_->outputSampleFormat(channel);
+      const AsioChannelFormat channelFormat = host_->outputChannelFormat(channel);
+      const AudioSampleFormat sampleFormat = channelFormat.logicalFormat;
       if (!isDsdSampleFormat(sampleFormat)) continue;
-      std::memset(output, 0x69, frames * asio::bytesPerSample(sampleFormat));
+      std::memset(output, 0x69, frames * asio::bytesPerSample(channelFormat));
     }
     {
       std::unique_lock lock(mutex_, std::try_to_lock);
@@ -978,7 +1038,7 @@ void AsioBackend::renderBuffer(long bufferIndex) {
     for (int channel = 0; channel < outputChannels; ++channel) {
       auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
       if (!output) continue;
-      std::memset(output, 0, frames * asio::bytesPerSample(host_->outputSampleFormat(channel)));
+      std::memset(output, 0, frames * asio::bytesPerSample(host_->outputChannelFormat(channel)));
     }
     host_->outputReady();
     return;
@@ -995,14 +1055,14 @@ void AsioBackend::renderBuffer(long bufferIndex) {
   for (int channel = 0; channel < outputChannels; ++channel) {
     auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
     if (!output) continue;
-    const AudioSampleFormat sampleFormat = host_->outputSampleFormat(channel);
+    const AsioChannelFormat channelFormat = host_->outputChannelFormat(channel);
     asio::writePackedChannelFromFloatScratch(
         renderScratch_.data(),
         frames,
         sourceChannels,
         channel,
         outputConfig.routingMode,
-        sampleFormat,
+        channelFormat,
         output);
   }
   host_->outputReady();

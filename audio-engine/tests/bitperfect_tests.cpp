@@ -633,7 +633,7 @@ void testDsdProcessingFallbackReason() {
   assert(result.perfectReason == "DSD processing active; falling back to PCM");
 }
 
-void testDsdDopRoutingSemanticChangeUsesProcessingFallbackCode() {
+void testDsdDopRoutingSemanticChangeUsesRoutingFallbackCode() {
   auto dop = baseEvaluation();
   dop.sourceDsd = true;
   dop.dsdMode = DsdMode::Dop;
@@ -652,8 +652,8 @@ void testDsdDopRoutingSemanticChangeUsesProcessingFallbackCode() {
   assert(!result.sourceExact);
   assert(!result.outputPerfect);
   assert(!result.routingPreservesSemantics);
-  assert(result.perfectReasonCode == "dsd_processing_pcm_fallback");
-  assert(result.perfectReason == "DSD processing active; falling back to PCM");
+  assert(result.perfectReasonCode == "routing_changes_semantics");
+  assert(result.perfectReason == "Channel routing changes DSD channel semantics");
 }
 
 void testDsdHighRateFallbackReason() {
@@ -717,7 +717,7 @@ int main() {
   testNativeDsdPerfectWhenBackendProvesPassthrough();
   testNativeDsdProcessingBlocksPerfect();
   testDsdProcessingFallbackReason();
-  testDsdDopRoutingSemanticChangeUsesProcessingFallbackCode();
+  testDsdDopRoutingSemanticChangeUsesRoutingFallbackCode();
   testDsdHighRateFallbackReason();
   testUnsupportedDsdRateRejectsDopPerfect();
   return 0;

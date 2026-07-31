@@ -6,9 +6,7 @@ const test = require('node:test')
 
 const {
   assertBudget,
-  assertWindowsSignature,
   listShippedBinaries,
-  normalizeThumbprint,
   parseArgs,
   readPeHeader
 } = require('./verify-release-artifacts.cjs')
@@ -38,9 +36,7 @@ test('release artifact arguments require a native directory and installer target
   assert.deepEqual(parseArgs(['--native-dir', 'native', '--artifact-dir', 'dist']), {
     nativeDir: 'native',
     artifactDir: 'dist',
-    installer: '',
-    requireSignature: false,
-    signingThumbprint: process.env.TWILIGHT_RELEASE_SIGNING_THUMBPRINT || ''
+    installer: ''
   })
 })
 
@@ -58,20 +54,13 @@ test('PE inspection finds stripped and retained debug metadata', () => {
   }
 })
 
-test('size and signature checks reject unsafe release inputs', () => {
+test('size checks reject unsafe release inputs', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-release-'))
   try {
     const file = path.join(dir, 'item.exe')
     fs.writeFileSync(file, Buffer.alloc(11))
     assert.equal(assertBudget(file, 11), 11)
     assert.throws(() => assertBudget(file, 10), /budget/)
-    assert.equal(normalizeThumbprint('ab cd'), '')
-    assert.throws(() => assertWindowsSignature(file, '', () => ({ status: 'Valid', thumbprint: '' })), /SIGNING_THUMBPRINT/)
-    assert.throws(
-      () => assertWindowsSignature(file, 'A'.repeat(40), () => ({ status: 'NotSigned', thumbprint: '' })),
-      /valid Authenticode/
-    )
-    assertWindowsSignature(file, 'A'.repeat(40), () => ({ status: 'Valid', thumbprint: 'a'.repeat(40) }))
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }

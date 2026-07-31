@@ -141,7 +141,7 @@ onBeforeUnmount(() => {
           aria-label="上一首"
           @click="sendCommand({ type: 'previous' })"
         >
-          <i class="ph-fill ph-skip-back" aria-hidden="true"></i>
+          <i class="ph ph-skip-back" aria-hidden="true"></i>
         </button>
         <button
           class="icon-button play-button"
@@ -151,7 +151,7 @@ onBeforeUnmount(() => {
           @click="sendCommand({ type: 'toggle-play' })"
         >
           <i
-            :class="state.isPlaying ? 'ph-fill ph-pause' : 'ph-fill ph-play'"
+            :class="state.isPlaying ? 'ph ph-pause' : 'ph ph-play'"
             aria-hidden="true"
           ></i>
         </button>
@@ -161,7 +161,7 @@ onBeforeUnmount(() => {
           aria-label="下一首"
           @click="sendCommand({ type: 'next' })"
         >
-          <i class="ph-fill ph-skip-forward" aria-hidden="true"></i>
+          <i class="ph ph-skip-forward" aria-hidden="true"></i>
         </button>
       </div>
     </section>
@@ -182,11 +182,11 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   padding: 16px 17px 14px;
-  color: #f7f7fb;
-  background: linear-gradient(155deg, rgba(34, 36, 48, 0.98), rgba(16, 18, 27, 0.98));
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--te-neutral-50);
+  background: linear-gradient(155deg, var(--te-neutral-700), var(--te-neutral-900));
+  border: 1px solid var(--te-glass-border);
   border-radius: 18px;
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--te-glass-shadow);
   opacity: 0;
   transform: translateY(5px) scale(0.985);
   transition:
@@ -234,7 +234,7 @@ onBeforeUnmount(() => {
 
 .track-copy span,
 .time-row {
-  color: rgba(240, 241, 250, 0.62);
+  color: var(--te-neutral-300);
   font-size: 11px;
 }
 
@@ -247,7 +247,7 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 4px;
   margin: 0;
-  accent-color: #9b83ff;
+  accent-color: var(--te-primary-400);
   cursor: pointer;
 }
 
@@ -285,9 +285,9 @@ button {
   gap: 5px;
   height: 30px;
   padding: 0 10px;
-  color: rgba(247, 247, 251, 0.78);
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--te-neutral-100);
+  background: var(--te-navigation-hover);
+  border: 1px solid var(--te-glass-border);
   border-radius: 9px;
   font-size: 12px;
 }
@@ -305,26 +305,26 @@ button {
 
 .close-button {
   flex: 0 0 auto;
-  color: rgba(247, 247, 251, 0.58);
+  color: var(--te-neutral-300);
 }
 
 .play-button {
   width: 36px;
   height: 36px;
-  color: #171522;
-  background: #a995ff;
+  color: var(--te-neutral-900);
+  background: var(--te-primary-400);
   font-size: 18px;
 }
 
 button:hover:not(:disabled),
 button:focus-visible {
-  background-color: rgba(255, 255, 255, 0.14);
+  background-color: var(--te-navigation-hover);
   outline: none;
 }
 
 .play-button:hover:not(:disabled),
 .play-button:focus-visible {
-  background: #baaaff;
+  background: var(--te-primary-300);
 }
 
 button:disabled {

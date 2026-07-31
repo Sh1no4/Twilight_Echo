@@ -33,6 +33,7 @@ class MockAsioHost final : public IAsioHost {
   AsioOpenConfig lastOpenConfig;
   AsioOpenResult openResult;
   std::vector<AudioSampleFormat> channelFormats;
+  std::vector<AsioChannelFormat> channelDescriptors;
   std::vector<ChannelBuffer> channelBuffers;
   int openCalls = 0;
   int startCalls = 0;
@@ -57,6 +58,7 @@ class MockAsioHost final : public IAsioHost {
 
   void* outputBuffer(long channel, long bufferIndex) override;
   AudioSampleFormat outputSampleFormat(long channel) const override;
+  AsioChannelFormat outputChannelFormat(long channel) const override;
   bool outputReady() override;
 
   void triggerBufferSwitch(long bufferIndex);

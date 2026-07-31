@@ -404,7 +404,10 @@ PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation) {
     result.perfectReasonCode.clear();
     result.perfectReason.clear();
   } else if (evaluation.sourceDsd) {
-    if (result.processingActive || !result.routingPreservesSemantics) {
+    if (!result.routingPreservesSemantics) {
+      result.perfectReasonCode = "routing_changes_semantics";
+      result.perfectReason = "Channel routing changes DSD channel semantics";
+    } else if (result.processingActive) {
       result.perfectReasonCode = "dsd_processing_pcm_fallback";
       result.perfectReason = "DSD processing active; falling back to PCM";
     } else if (evaluation.dsdMode == DsdMode::Pcm && evaluation.dsdRate >= 256) {

@@ -35,6 +35,10 @@ const settingsStyle = readFileSync(
   new URL('./settings-page/SettingsPage.css', import.meta.url),
   'utf8'
 )
+const onboardingStyle = readFileSync(
+  new URL('./onboarding/OnboardingWizard.css', import.meta.url),
+  'utf8'
+)
 const themeStore = readFileSync(new URL('../stores/useThemeStore.ts', import.meta.url), 'utf8')
 const previewScheduler = readFileSync(
   new URL('../utils/themePreviewScheduler.ts', import.meta.url),
@@ -177,6 +181,22 @@ test('phase two runtime reuses cached cover media and supports native and timed 
   assert.match(preload, /themes:systemToneChanged/)
 })
 
+test('settings appearance choices override the active theme and provide usable density rules', () => {
+  assert.match(themeStore, /const SETTINGS_ACCENT_COLORS/)
+  assert.match(themeStore, /cacheSettingsAppearance\(bootstrap\.settings\)/)
+  assert.match(
+    themeStore,
+    /window\.api\.settings\.onChanged\(\(next\) => \{[\s\S]*cacheSettingsAppearance\(next\.settings\)/
+  )
+  assert.match(themeStore, /applySettingsThemeMode\(next\.settings\.theme\)/)
+  assert.match(themeStore, /applySettingsAccentColor\(tone, variables\)/)
+  assert.match(themeStore, /createThemeAccentTokenOverrides\(color, tone, background\)/)
+  assert.match(settingsStyle, /html\[data-density='compact'\] \.settings-preview-stack/)
+  assert.match(settingsStyle, /html\[data-density='comfortable'\] \.setting-item/)
+  assert.match(onboardingStyle, /html\[data-density='compact'\] \.onb-stage/)
+  assert.match(onboardingStyle, /html\[data-density='comfortable'\] \.onb-stage/)
+})
+
 test('phase two studio exposes palettes, nine typography settings, and contrast protection', () => {
   assert.match(studio, /THEME_ACCENT_PALETTES/)
   assert.match(studio, /THEME_BACKGROUND_PALETTES/)
@@ -207,8 +227,8 @@ test('phase two unified surface and background tokens are wired into host CSS', 
 })
 
 test('phase three icon, navigation, and library modes use static host-owned presentation', () => {
-  assert.match(rendererMain, /@phosphor-icons\/web\/bold/)
-  assert.match(rendererMain, /@phosphor-icons\/web\/fill/)
+  assert.match(rendererMain, /@phosphor-icons\/web\/regular/)
+  assert.doesNotMatch(rendererMain, /@phosphor-icons\/web\/(?:bold|fill)/)
   assert.match(themeIcon, /THEME_ICON_SLOT_REGISTRY/)
   assert.match(themeIcon, /data-theme-icon-slot/)
   assert.match(sideMenu, /icon-slot="navigation\.streaming"/)

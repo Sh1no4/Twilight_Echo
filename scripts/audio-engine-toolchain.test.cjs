@@ -132,7 +132,11 @@ test('rejects zero or incomplete MinGW CTest discovery even when ctest exits zer
 
   const incomplete = validateMingwCTestRegistration({
     ...base,
-    spawnSync: () => ({ status: 0, stdout: registeredCTestOutput(MINGW_EXPECTED_CTESTS.slice(1)), stderr: '' })
+    spawnSync: () => ({
+      status: 0,
+      stdout: registeredCTestOutput(MINGW_EXPECTED_CTESTS.slice(1)),
+      stderr: ''
+    })
   })
   assert.equal(incomplete.ok, false)
   assert.deepEqual(incomplete.missing, [MINGW_EXPECTED_CTESTS[0]])
@@ -718,10 +722,13 @@ test('MinGW CTest validation requires every native test registration, including 
     ...cmakeLists.matchAll(/add_test\(\s*NAME\s+(twilight_[a-z0-9_]+)/g)
   ].map((match) => match[1])
 
-  assert.equal(MINGW_EXPECTED_CTESTS.length, 23)
+  assert.equal(MINGW_EXPECTED_CTESTS.length, 26)
   assert.ok(MINGW_EXPECTED_CTESTS.includes('twilight_audio_performance_gate'))
   assert.deepEqual([...MINGW_EXPECTED_CTESTS].sort(), registeredTests.sort())
-  assert.match(cmakeLists, /target_compile_options\(twilight_audio_performance_gate PRIVATE -UNDEBUG\)/)
+  assert.match(
+    cmakeLists,
+    /target_compile_options\(twilight_audio_performance_gate PRIVATE -UNDEBUG\)/
+  )
 })
 
 test('Windows release gate documents MinGW toolchain and no-whitespace build layout requirements', () => {

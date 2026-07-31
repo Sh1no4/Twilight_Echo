@@ -206,7 +206,7 @@ std::string backendCapabilitiesJson() {
       false,
       "exclusive",
       "asio",
-      "ASIO SDK was not available when this build was configured",
+      "ASIO compatibility backend is unavailable for this build",
       true);
 #endif
 

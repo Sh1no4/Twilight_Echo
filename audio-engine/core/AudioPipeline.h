@@ -273,6 +273,7 @@ class AudioPipeline {
       bool allowNativeDsd,
       bool allowDop,
       const std::string& forcedDsdFallbackReason,
+      const std::optional<NativeDsdRuntimeFacts>& forcedNativeDsdFallbackFacts,
       std::string* error);
   bool updatePerfectLocked();
   PipelineStatus buildStatusLocked();
@@ -424,6 +425,7 @@ class AudioPipeline {
   uint64_t crossfadeFramesProcessed_ = 0;
   uint64_t crossfadeTotalFrames_ = 0;
   std::string dsdFallbackReason_;
+  std::optional<NativeDsdRuntimeFacts> nativeDsdFallbackFacts_;
   bool rerouteInProgress_ = false;
   std::string outputEventMessage_;
   std::vector<float> routingScratch_;

@@ -369,9 +369,21 @@ function buildAudioSmokeEvidenceReport(options = {}) {
   }
 }
 
+function readJsonText(filePath) {
+  const bytes = fs.readFileSync(filePath)
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return bytes.subarray(2).toString('utf16le').replace(/^\uFEFF/, '')
+  }
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    const payload = Buffer.from(bytes.subarray(2))
+    return payload.swap16().toString('utf16le').replace(/^\uFEFF/, '')
+  }
+  return bytes.toString('utf8').replace(/^\uFEFF/, '')
+}
+
 function readEntries(filePath) {
   if (!filePath) return []
-  const raw = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '')
+  const raw = readJsonText(filePath)
   const parsed = JSON.parse(raw)
   if (Array.isArray(parsed)) return parsed.map((entry) => withFallbackArtifact(entry, filePath))
   if (Array.isArray(parsed.entries)) {

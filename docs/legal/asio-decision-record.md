@@ -1,0 +1,19 @@
+# ASIO Compatibility Decision Record
+
+Status: personal open-source policy; engineering gates remain pending
+
+Twilight Echo is evaluating an independent Windows x64 compatibility implementation. The project
+does not bundle, include, or compile an ASIO SDK. The implementation is not approved for release
+and remains hidden behind `TWILIGHT_EXPERIMENTAL_ASIO_ABI=1`.
+
+For the current personal open-source project, written legal advice and a formal clean-room
+sign-off are not release prerequisites. Retain the lightweight provenance record, SDK-free scan
+result, ABI manifests, and hardware evidence instead. Do not claim official approval or support,
+and do not distribute an ASIO logo.
+
+Obtain a formal legal and license review before a commercial, closed-source, funded, company-run,
+hardware-partner, or channel-distributed release. That review must cover the interface,
+copyright, patent, license, trademark, and product-facing terminology applicable at that time.
+
+The fallback when this gate is incomplete is WASAPI Shared or WASAPI Exclusive. The project must
+not restore an SDK-based build as a temporary workaround.

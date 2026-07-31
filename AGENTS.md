@@ -129,10 +129,12 @@ pnpm run verify:ncm-patch
 pnpm run test:production-audit
 pnpm run audit:production
 pnpm run test:release-artifacts
-pnpm run gate:release:win    # requires TWILIGHT_RELEASE_SIGNING_THUMBPRINT; signed path only
+pnpm run gate:release:win    # intentional unsigned personal release + SHA-256 companion
 ```
 
-`build:win` / `build:unpack` are deliberately **unsigned** dev packaging. Full gate list: `docs/windows-release-gate.md`.
+All Windows packages are intentionally **unsigned** for this personal project. The release gate still
+fails closed on dependency closure, native stripping, size budgets, branding, tests, and SHA-256
+generation. Full gate list: `docs/windows-release-gate.md`.
 
 ## Architecture agents miss
 
@@ -196,7 +198,6 @@ Renderer → preload contextBridge → main IPC → audioEngineManager
 | `TWILIGHT_AUDIO_SERVICE=0` | Dev: load native engine in main process |
 | `TWILIGHT_ENABLE_HTMLAUDIO_FALLBACK=1` | Dev HTMLAudio fallback (off by default; not production) |
 | `TWILIGHT_PLUGIN_INDEX_URL` | Remote plugin `plugins.json` override |
-| `TWILIGHT_RELEASE_SIGNING_THUMBPRINT` | Required for `gate:release:win` |
 
 ## Platform caveats
 
@@ -230,5 +231,5 @@ Renderer → preload contextBridge → main IPC → audioEngineManager
 | Library scan | `src/main/library/libraryIndexCoordinator.ts`, `libraryScanService.ts` |
 | Logical track merge | `src/renderer/src/utils/logicalTrackModel.ts` |
 | Native engine | `audio-engine/` → staged under `resources/audio-engine/` |
-| Packaging | `electron-builder.yml`, `electron-builder.release-win.yml` |
+| Packaging | `electron-builder.yml`, `scripts/build-windows-release.cjs` |
 | CI | `.github/workflows/audio-engine.yml` |

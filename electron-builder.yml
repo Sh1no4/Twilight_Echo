@@ -45,13 +45,9 @@ extraResources:
 win:
   executableName: TwilightEcho
   icon: build/icon.ico
-  # Development packages remain unsigned. The protected release config extends this file and
-  # enables forceCodeSigning; see electron-builder.release-win.yml.
+  # Personal-project Windows packages are intentionally unsigned. Release integrity is provided
+  # by the generated SHA-256 companion file and the fail-closed artifact checks.
   signAndEditExecutable: false
-  signExts:
-    - .exe
-    - .dll
-    - .node
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}

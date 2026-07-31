@@ -24,7 +24,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-        "TAE_ENABLE_WASAPI": "ON"
+        "TAE_ENABLE_WASAPI": "ON",
+        "TAE_ENABLE_ASIO": "ON"
       },
       "condition": {
         "type": "equals",
@@ -67,7 +68,8 @@
         "VCPKG_BUILD_TYPE": "release",
         "VCPKG_APPLOCAL_DEPS": "OFF",
         "TAE_BUILD_NAPI": "ON",
-        "TAE_ENABLE_WASAPI": "ON"
+        "TAE_ENABLE_WASAPI": "ON",
+        "TAE_ENABLE_ASIO": "ON"
       },
       "condition": {
         "type": "equals",

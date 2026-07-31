@@ -46,6 +46,8 @@ import { consumeAppSettingsLoadIssue } from '../core/settings'
 import type { SettingsFileLoadIssue } from '../persistence/settingsFile.ts'
 
 export function startApp(): void {
+  app.setName('TwilightEcho')
+  electronApp.setAppUserModelId('com.TwilightEcho.music')
   runtime.launchSettings = { ...runtime.appSettings }
 
   if (!runtime.appSettings.hardwareAcceleration) {
@@ -145,7 +147,6 @@ export function startApp(): void {
     })
 
     app.whenReady().then(async () => {
-      electronApp.setAppUserModelId('com.TwilightEcho.music')
       installElectronSecurity()
       await initializeLocalPathGrants(runtime.launchSettings)
 

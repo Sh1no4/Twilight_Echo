@@ -2,6 +2,7 @@ const { spawnSync } = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
 const { verifyPackagedDependencyClosure } = require('./verify-packaged-dependency-closure.cjs')
+const { verifyWindowsAppBranding } = require('./verify-windows-app-branding.cjs')
 
 const root = path.resolve(__dirname, '..')
 const electronBuilder = require.resolve('electron-builder/out/cli/cli.js')
@@ -19,6 +20,11 @@ function main(args = process.argv.slice(2)) {
   if (result.error) throw result.error
   if ((result.status ?? 1) !== 0) process.exit(result.status ?? 1)
   const packagedAsar = path.join(root, 'dist', 'win-unpacked', 'resources', 'app.asar')
+  if (process.platform === 'win32') {
+    const unpackedApp = path.join(root, 'dist', 'win-unpacked')
+    const branding = verifyWindowsAppBranding(unpackedApp)
+    console.log(`Windows executable branding verified: ${branding.productName}`)
+  }
   if (process.platform === 'win32' && fs.existsSync(packagedAsar)) {
     const verified = verifyPackagedDependencyClosure(packagedAsar)
     console.log(`Packaged dependency closure verified: ${verified.packages} packages`)

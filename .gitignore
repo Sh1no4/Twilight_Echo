@@ -13,6 +13,7 @@ release-builds/
 *.AppImage
 *.dmg
 *.exe
+*.obj
 *.blockmap
 *.yml.sig
 
@@ -26,7 +27,6 @@ audio-engine/cmake_install.cmake
 audio-engine/compile_commands.json
 audio-engine/Testing/
 audio-engine/vcpkg_installed/
-audio-engine/third_party/ASIOSDK/
 # Staged native binaries are local/release artifacts, not source
 resources/audio-engine/**
 !resources/audio-engine/.gitkeep
@@ -38,6 +38,10 @@ playwright-report/
 test-results/
 Testing/
 output/
+!audio-engine/output/
+!audio-engine/output/asio/
+!audio-engine/output/asio/abi/
+!audio-engine/output/asio/windows/
 
 # Caches / typecheck incremental
 .cache/
@@ -135,4 +139,3 @@ docs/superpowers/plans/2026-07-11-native-queue-memory-restore.md
 
 # Optional full MiSans faces (multi-MB; keep local)
 resources/font/misans/full/*.woff2
-

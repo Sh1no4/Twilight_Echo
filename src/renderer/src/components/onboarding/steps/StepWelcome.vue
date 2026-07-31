@@ -19,6 +19,10 @@ const activeTone = computed<'light' | 'dark'>(() => {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 })
 
+const activeAccentColor = computed(() =>
+  activeTone.value === 'dark' ? settings.value.darkAccentColor : settings.value.lightAccentColor
+)
+
 const backgroundOptions = computed(() =>
   THEME_BACKGROUND_PALETTES[activeTone.value === 'dark' ? 'dark' : 'pureWhite'].slice(0, 6)
 )
@@ -52,8 +56,12 @@ function setTheme(theme: AppTheme): void {
 }
 
 function setAccent(color: string): void {
-  if (settings.value.lightAccentColor === color) return
-  void updateSettings({ accentColor: color, lightAccentColor: color })
+  if (activeAccentColor.value === color) return
+  void updateSettings(
+    activeTone.value === 'dark'
+      ? { accentColor: color, darkAccentColor: color }
+      : { accentColor: color, lightAccentColor: color }
+  )
 }
 
 function setDensity(uiDensity: UiDensity): void {
@@ -154,14 +162,14 @@ function clearBackgroundImage(): void {
         :key="option.value"
         type="button"
         class="onb-swatch"
-        :class="[option.class, { 'is-selected': settings.lightAccentColor === option.value }]"
+        :class="[option.class, { 'is-selected': activeAccentColor === option.value }]"
         role="radio"
-        :aria-checked="settings.lightAccentColor === option.value"
+        :aria-checked="activeAccentColor === option.value"
         :aria-label="option.label"
         :title="option.label"
         @click="setAccent(option.value)"
       >
-        <i v-if="settings.lightAccentColor === option.value" class="ph ph-check"></i>
+        <i v-if="activeAccentColor === option.value" class="ph ph-check"></i>
       </button>
     </div>
     <div class="onb-segmented" role="radiogroup" aria-label="界面密度">

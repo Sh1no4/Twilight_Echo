@@ -327,6 +327,19 @@ std::string nativeDsdPcmFallbackReason(const NativeDsdRuntimeFacts& facts) {
   return facts.reason.empty() ? "ASIO Native DSD could not prove raw DSD output" : facts.reason;
 }
 
+NativeDsdRuntimeFacts buildNativeDsdAttemptFacts(
+    const AudioFormat& requestedFormat,
+    NativeDsdRuntimeFacts facts,
+    const std::string& error) {
+  if (facts.requestedDsdRate <= 0) facts.requestedDsdRate = requestedFormat.sampleRate;
+  if (facts.channelCount <= 0) facts.channelCount = requestedFormat.channelCount;
+  if (!error.empty() &&
+      (facts.reason.empty() || facts.reason == "No Native DSD stream was requested")) {
+    facts.reason = error;
+  }
+  return facts;
+}
+
 int positionSampleRateForStream(const AudioStreamInfo& stream, const AudioFormat& outputFormat) {
   if (stream.isDsd && stream.dsdMode == DsdMode::Native && stream.decodedFormat.sampleRate > 0) {
     return stream.decodedFormat.sampleRate;
@@ -925,12 +938,11 @@ struct AudioPipeline::DecodeStream {
 
     while (running.load()) {
       if (remainingVirtualPregapFrames > 0) {
-        const size_t silenceFrames = static_cast<size_t>(std::min<uint64_t>(
-            remainingVirtualPregapFrames, static_cast<uint64_t>(kDecodeChunkFrames)));
         if (decodeFormat.sampleFormat == AudioSampleFormat::Float32Interleaved) {
-          std::fill(frames.begin(), frames.end(), 0.0f);
-          buffer.writeBlocking(frames.data(), silenceFrames, running);
+          remainingVirtualPregapFrames = 0;
         } else {
+          const size_t silenceFrames = static_cast<size_t>(std::min<uint64_t>(
+              remainingVirtualPregapFrames, static_cast<uint64_t>(kDecodeChunkFrames)));
           std::fill(typedFrames.begin(), typedFrames.end(), 0);
           PcmBlock silence;
           silence.format = decodeFormat;
@@ -938,9 +950,9 @@ struct AudioPipeline::DecodeStream {
           silence.frames = silenceFrames;
           silence.byteSize = silenceFrames * bytesPerFrame;
           buffer.writeBlocking(silence, running);
+          remainingVirtualPregapFrames -= silenceFrames;
+          continue;
         }
-        remainingVirtualPregapFrames -= silenceFrames;
-        continue;
       }
       if (!decoder) break;
       std::string error;
@@ -1362,6 +1374,7 @@ TAE_Result AudioPipeline::play(
       true,
       true,
       {},
+      {},
       error);
 }
 
@@ -1387,6 +1400,7 @@ TAE_Result AudioPipeline::play(
       true,
       true,
       {},
+      {},
       error);
 }
 
@@ -1402,6 +1416,7 @@ TAE_Result AudioPipeline::playInternal(
     bool allowNativeDsd,
     bool allowDop,
     const std::string& forcedDsdFallbackReason,
+    const std::optional<NativeDsdRuntimeFacts>& forcedNativeDsdFallbackFacts,
     std::string* error) {
   stop();
   if (item.source.empty()) return TAE_RESULT_INVALID_ARGUMENT;
@@ -1462,6 +1477,7 @@ TAE_Result AudioPipeline::playInternal(
   bool nativeDsdPath = false;
   std::string nativeAttemptError;
   std::string dopAttemptError;
+  std::optional<NativeDsdRuntimeFacts> attemptedNativeDsdFacts = forcedNativeDsdFallbackFacts;
 
   if (canTryNativeDsd) {
     auto nativeActive = makeDecodeStream();
@@ -1481,10 +1497,18 @@ TAE_Result AudioPipeline::playInternal(
             active = nativeActive;
             nativeDsdPath = true;
           } else {
+            if (nativeAttemptError.empty()) {
+              nativeAttemptError = nativeFacts.reason.empty()
+                                       ? "ASIO runtime format did not match the requested Native DSD stream"
+                                       : nativeFacts.reason;
+            }
+            attemptedNativeDsdFacts = buildNativeDsdAttemptFacts(requested, nativeFacts, nativeAttemptError);
             output->close();
             output.reset();
           }
         } else {
+          attemptedNativeDsdFacts =
+              buildNativeDsdAttemptFacts(requested, output->nativeDsdRuntimeFacts(), nativeAttemptError);
           output.reset();
         }
       }
@@ -1706,6 +1730,7 @@ TAE_Result AudioPipeline::playInternal(
           false,
           false,
           fallbackReason,
+          attemptedNativeDsdFacts,
           error);
     }
   }
@@ -1714,6 +1739,7 @@ TAE_Result AudioPipeline::playInternal(
     const NativeDsdRuntimeFacts nativeFacts = output->nativeDsdRuntimeFacts();
     if (nativeDsdRuntimeFactsRequirePcmFallback(nativeFacts)) {
       const std::string fallbackReason = nativeDsdPcmFallbackReason(nativeFacts);
+      attemptedNativeDsdFacts = nativeFacts;
       output->close();
       return playInternal(
           item,
@@ -1727,6 +1753,7 @@ TAE_Result AudioPipeline::playInternal(
           false,
           true,
           fallbackReason,
+          attemptedNativeDsdFacts,
           error);
     }
   }
@@ -1760,6 +1787,11 @@ TAE_Result AudioPipeline::playInternal(
     outputInfo_ = output_->outputInfo();
     outputInfo_.backend = backendId_;
     outputInfo_.deviceName = deviceName_;
+    nativeDsdFallbackFacts_ =
+        activeStream_->stream.isDsd && activeStream_->stream.dsdMode != DsdMode::Native &&
+                attemptedNativeDsdFacts.has_value()
+            ? attemptedNativeDsdFacts
+            : std::nullopt;
     dsdFallbackReason_ =
         (!dopAttemptError.empty() && activeStream_->stream.isDsd && activeStream_->stream.dsdMode == DsdMode::Pcm &&
          !pcmToDsdPath)
@@ -1908,6 +1940,7 @@ TAE_Result AudioPipeline::playInternal(
           false,
           false,
           fallbackReason,
+          attemptedNativeDsdFacts,
           error);
     }
   }
@@ -1916,6 +1949,7 @@ TAE_Result AudioPipeline::playInternal(
     const NativeDsdRuntimeFacts nativeFacts = output_->nativeDsdRuntimeFacts();
     if (nativeDsdRuntimeFactsRequirePcmFallback(nativeFacts)) {
       const std::string fallbackReason = nativeDsdPcmFallbackReason(nativeFacts);
+      attemptedNativeDsdFacts = nativeFacts;
       stop();
       return playInternal(
           item,
@@ -1929,6 +1963,7 @@ TAE_Result AudioPipeline::playInternal(
           false,
           true,
           fallbackReason,
+          attemptedNativeDsdFacts,
           error);
     }
   }
@@ -2054,6 +2089,7 @@ TAE_Result AudioPipeline::stop() {
     deviceName_.clear();
     perfectReason_.clear();
     dsdFallbackReason_.clear();
+    nativeDsdFallbackFacts_.reset();
     outputInfo_ = {};
     renderChannelCount_ = 2;
     renderOutputFormat_ = {};
@@ -3074,7 +3110,11 @@ PipelineStatus AudioPipeline::buildStatusLocked() {
   backendInfo.isDsd = outputInfo_.isDsd;
   backendInfo.dsdMode = outputInfo_.dsdMode;
   backendInfo.dsdRate = outputInfo_.dsdRate;
-  if (output_) applyNativeDsdRuntimeFacts(&backendInfo, output_->nativeDsdRuntimeFacts());
+  if (stream_.isDsd && stream_.dsdMode != DsdMode::Native && nativeDsdFallbackFacts_.has_value()) {
+    applyNativeDsdRuntimeFacts(&backendInfo, *nativeDsdFallbackFacts_);
+  } else if (output_) {
+    applyNativeDsdRuntimeFacts(&backendInfo, output_->nativeDsdRuntimeFacts());
+  }
   backendInfo.channelRoutingMode = outputInfo_.channelRoutingMode;
   backendInfo.perfectReasonCode = outputInfo_.perfectReasonCode;
   backendInfo.perfectReason = outputInfo_.perfectReason;
@@ -3309,8 +3349,12 @@ bool AudioPipeline::configureActiveStreamLocked(
 bool AudioPipeline::updatePerfectLocked() {
   const OutputInfo backendInfo = output_ ? output_->outputInfo() : outputInfo_;
   const DopRuntimeFacts dopFacts = output_ ? output_->dopRuntimeFacts() : DopRuntimeFacts{};
-  const NativeDsdRuntimeFacts nativeDsdFacts =
+  const NativeDsdRuntimeFacts backendNativeDsdFacts =
       output_ ? output_->nativeDsdRuntimeFacts() : unsupportedNativeDsdRuntimeFacts("No output backend is active");
+  const NativeDsdRuntimeFacts nativeDsdFacts =
+      stream_.isDsd && stream_.dsdMode != DsdMode::Native && nativeDsdFallbackFacts_.has_value()
+          ? *nativeDsdFallbackFacts_
+          : backendNativeDsdFacts;
   AudioFormat semanticOutputFormat = actualOutputFormat(outputFormat_, backendInfo);
   const bool backendResampled = backendInfo.resampled;
   const std::string backendPerfectReason =
@@ -3927,16 +3971,15 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
       float* segment = dest + filled * static_cast<size_t>(channels);
       float* readBuffer = routingRequired ? routingScratch_.data() : segment;
       const size_t logicalFramePosition = renderedFrames_.load() + positionRead;
-      const size_t read = active->readFloat(readBuffer, want);
       const size_t virtualSilenceFrames = active->virtualPregapFramesFromLogicalFrame(
           logicalFramePosition,
           outputFormat.sampleRate,
-          read);
+          want);
 
       if (virtualSilenceFrames > 0 && !dopPathActive && !nativeDsdPathActive) {
         std::fill(
-            readBuffer,
-            readBuffer + virtualSilenceFrames * static_cast<size_t>(decodeChannels),
+            segment,
+            segment + virtualSilenceFrames * static_cast<size_t>(channels),
             0.0f);
         // Virtual silence spans only map 1:1 onto output when rate is unity.
         if (!rateActive && virtualSilenceSpanCount < virtualSilenceSpanOffsets.size()) {
@@ -3944,29 +3987,22 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
           virtualSilenceSpanFrames[virtualSilenceSpanCount] = virtualSilenceFrames;
           ++virtualSilenceSpanCount;
         }
+        filled += virtualSilenceFrames;
+        positionRead += virtualSilenceFrames;
+        continue;
       }
 
+      const size_t read = active->readFloat(readBuffer, want);
       if (read > 0 && !dopPathActive && !nativeDsdPathActive) {
-        const size_t audioFrames = read - virtualSilenceFrames;
-        float* audioReadBuffer =
-            readBuffer + virtualSilenceFrames * static_cast<size_t>(decodeChannels);
-        if (activeDspChain && audioFrames > 0) activeDspChain->process(audioReadBuffer, audioFrames);
+        if (activeDspChain) activeDspChain->process(readBuffer, read);
         if (routingRequired) {
-          if (virtualSilenceFrames > 0) {
-            std::fill(
-                segment,
-                segment + virtualSilenceFrames * static_cast<size_t>(channels),
-                0.0f);
-          }
-          if (audioFrames > 0) {
-            channelRouter_.route(
-                audioReadBuffer,
-                segment + virtualSilenceFrames * static_cast<size_t>(channels),
-                audioFrames,
-                decodeChannels,
-                channels,
-                routingMode);
-          }
+          channelRouter_.route(
+              readBuffer,
+              segment,
+              read,
+              decodeChannels,
+              channels,
+              routingMode);
         } else if (readBuffer != segment) {
           std::memcpy(segment, readBuffer, read * static_cast<size_t>(channels) * sizeof(float));
         }

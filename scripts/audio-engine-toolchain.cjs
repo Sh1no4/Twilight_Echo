@@ -32,6 +32,9 @@ const MINGW_EXPECTED_CTESTS = Object.freeze([
   'twilight_backend_factory_unit',
   'twilight_wasapi_format_negotiator_unit',
   'twilight_asio_backend_unit',
+  'twilight_asio_abi_checks',
+  'twilight_asio_abi_manifest',
+  'twilight_asio_abi_cross_dll',
   'twilight_output_backend_unit',
   'twilight_runtime_queue_reroute_unit',
   'twilight_audio_performance_gate',
@@ -173,7 +176,11 @@ function prepareMingwCmakeEnvironment({
 
   const devkitBin = join(resolve(env.W64DEVKIT_ROOT), 'bin')
   const patchBin = dirname(patch)
-  const pathEntries = [patchBin, devkitBin, ...(environmentValue(env, 'PATH') ?? '').split(delimiter)]
+  const pathEntries = [
+    patchBin,
+    devkitBin,
+    ...(environmentValue(env, 'PATH') ?? '').split(delimiter)
+  ]
   const uniquePathEntries = []
   const seen = new Set()
   for (const entry of pathEntries) {
@@ -357,7 +364,8 @@ function validateMingwCTestRegistration({
   if (result?.error || result?.status !== 0 || noTests || missing.length > 0) {
     const reasons = []
     if (result?.error) reasons.push(result.error.message)
-    if (result?.status !== 0) reasons.push(`ctest -N exited with status ${result?.status ?? 'unknown'}`)
+    if (result?.status !== 0)
+      reasons.push(`ctest -N exited with status ${result?.status ?? 'unknown'}`)
     if (noTests) reasons.push('ctest discovered zero tests')
     if (missing.length > 0) reasons.push(`missing expected tests: ${missing.join(', ')}`)
     return {

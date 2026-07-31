@@ -49,6 +49,35 @@ struct ControlledBackendState {
   uint64_t callbacksWithAudio = 0;
 };
 
+class ScopedPerformanceTestThreadPriority {
+ public:
+  ScopedPerformanceTestThreadPriority() {
+#ifdef _WIN32
+    thread_ = GetCurrentThread();
+    previousPriority_ = GetThreadPriority(thread_);
+    if (previousPriority_ != THREAD_PRIORITY_ERROR_RETURN) {
+      changed_ = SetThreadPriority(thread_, THREAD_PRIORITY_ABOVE_NORMAL) != FALSE;
+    }
+#endif
+  }
+
+  ~ScopedPerformanceTestThreadPriority() {
+#ifdef _WIN32
+    if (changed_) SetThreadPriority(thread_, previousPriority_);
+#endif
+  }
+
+  ScopedPerformanceTestThreadPriority(const ScopedPerformanceTestThreadPriority&) = delete;
+  ScopedPerformanceTestThreadPriority& operator=(const ScopedPerformanceTestThreadPriority&) = delete;
+
+ private:
+#ifdef _WIN32
+  HANDLE thread_ = nullptr;
+  int previousPriority_ = THREAD_PRIORITY_ERROR_RETURN;
+  bool changed_ = false;
+#endif
+};
+
 std::mutex g_backendMutex;
 std::shared_ptr<ControlledBackendState> g_latestBackend;
 
@@ -556,6 +585,7 @@ int main() {
   std::cout << "audio-performance-gate skipped: FFmpeg support is not compiled\n";
   return 77;
 #else
+  ScopedPerformanceTestThreadPriority performanceTestThreadPriority;
   ScopedControlledBackendFactory controlledBackendFactory;
   std::cout << std::fixed << std::setprecision(3);
   const std::filesystem::path fixtureRoot =

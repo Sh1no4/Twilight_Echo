@@ -36,10 +36,8 @@ import {
 } from '../utils/playbackQueueVirtualization.ts'
 import { findPlaybackFallbackTrack } from '../utils/playbackFallback.ts'
 import { findProviderRematchCandidate } from '../utils/libraryRepair.ts'
-import {
-  resolveLyricsWithSources,
-  type LyricResolverSource
-} from '../utils/lyricSourceResolution.ts'
+import { resolveLyricsWithSources } from '../utils/lyricSourceResolution.ts'
+import type { LyricResolverSource } from '../utils/lyricSourceResolution.ts'
 import { resolverLyricsInput } from '../utils/managedLyricsSource.ts'
 import { useLyricsManagement } from './lyricsManagement.ts'
 import {

@@ -3,11 +3,18 @@ export type GithubAssetLike = {
   size?: number
   browser_download_url?: string
   content_type?: string
+  digest?: string
+}
+
+export type GithubReleaseLike = {
+  tag_name?: string
+  draft?: boolean
 }
 
 const WINDOWS_SETUP_RE = /setup\.exe$/i
 const WINDOWS_EXE_RE = /\.exe$/i
 const SHA256_HEX_RE = /\b[a-f0-9]{64}\b/i
+const SHA256_ASSET_DIGEST_RE = /^sha256:([a-f0-9]{64})$/i
 
 export function pickWindowsAsset(assets: GithubAssetLike[]): GithubAssetLike | null {
   const named = assets.filter(
@@ -17,6 +24,23 @@ export function pickWindowsAsset(assets: GithubAssetLike[]): GithubAssetLike | n
   if (setup) return setup
   const exe = named.find((asset) => WINDOWS_EXE_RE.test(asset.name || ''))
   return exe || null
+}
+
+export function pickLatestAvailableRelease<T extends GithubReleaseLike>(
+  releases: readonly T[]
+): T | null {
+  return (
+    releases.find(
+      (release) =>
+        release.draft !== true &&
+        typeof release.tag_name === 'string' &&
+        release.tag_name.trim().length > 0
+    ) ?? null
+  )
+}
+
+export function extractAssetDigestSha256(digest?: string): string | undefined {
+  return digest?.trim().match(SHA256_ASSET_DIGEST_RE)?.[1]?.toLowerCase()
 }
 
 export function extractChecksumFromBody(body: string, assetName: string): string | undefined {

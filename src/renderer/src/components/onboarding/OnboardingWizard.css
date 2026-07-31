@@ -1854,3 +1854,58 @@ body.te-no-blur .onb-back-enter-from,
 body.te-no-blur .onb-back-leave-to {
   filter: none !important;
 }
+
+html[data-density='compact'] .onb-stage {
+  gap: 12px;
+  padding-top: 16px;
+  padding-bottom: 10px;
+}
+
+html[data-density='compact'] .onb-theme-row,
+html[data-density='compact'] .onb-swatch-row {
+  gap: 10px;
+}
+
+html[data-density='compact'] .onb-theme-chip {
+  gap: 6px;
+  padding: 10px 16px 8px;
+}
+
+html[data-density='compact'] .onb-segmented {
+  padding: 4px;
+}
+
+html[data-density='compact'] .onb-segmented > button {
+  padding: 6px 16px;
+}
+
+html[data-density='compact'] .onb-bg-row {
+  gap: 8px;
+}
+
+html[data-density='compact'] .onb-bg-swatch {
+  height: 28px;
+}
+
+html[data-density='comfortable'] .onb-stage {
+  gap: 26px;
+  padding-top: 34px;
+  padding-bottom: 24px;
+}
+
+html[data-density='comfortable'] .onb-theme-chip {
+  gap: 10px;
+  padding: 14px 18px 12px;
+}
+
+html[data-density='comfortable'] .onb-segmented {
+  padding: 6px;
+}
+
+html[data-density='comfortable'] .onb-segmented > button {
+  padding: 10px 20px;
+}
+
+html[data-density='comfortable'] .onb-bg-swatch {
+  height: 34px;
+}

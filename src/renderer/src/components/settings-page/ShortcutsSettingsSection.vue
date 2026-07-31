@@ -18,7 +18,7 @@ function onToggle(): void {
 <template>
   <section id="shortcuts" class="glass-card preview-section">
     <div class="section-title-row">
-      <i class="pi pi-keyboard"></i>
+      <i class="pi pi-key"></i>
       <h2>快捷键</h2>
     </div>
     <div class="setting-list">

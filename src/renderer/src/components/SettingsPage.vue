@@ -1975,7 +1975,7 @@ onBeforeUnmount(() => {
                   <strong>完整重扫</strong>
                   <span
                     >显式重新解析全部本地文件的 metadata 与封面；可暂停或取消。同目录 CUE：单音频 +
-                    唯一 `.cue`，≤2 MiB，UTF-8/GBK/GB18030；拆轨失败时保留整轨并写主进程日志。</span
+                    唯一 `.cue`，≤2 MiB，UTF-8/GBK/GB18030。</span
                   >
                 </div>
                 <div class="library-scan-panel" aria-live="polite">

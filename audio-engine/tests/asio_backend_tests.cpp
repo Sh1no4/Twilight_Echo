@@ -1,5 +1,7 @@
 #include "../output/asio/AsioBackend.h"
 #include "../output/asio/MockAsioHost.h"
+#include "../output/asio/AsioRenderUtils.h"
+#include "../output/asio/abi/AsioAbi.h"
 
 #include <algorithm>
 #ifdef NDEBUG
@@ -41,6 +43,22 @@ std::unique_ptr<MockAsioHost> makeHost() {
   auto host = std::make_unique<MockAsioHost>();
   host->devices.push_back(makeMockAsioDevice("asio:mock", {44100, 48000, 96000}, 2));
   return host;
+}
+
+void testAsioBooleanSemantics() {
+  assert(!asio_abi::asioBoolIsTrue(asio_abi::kAsioFalse));
+  assert(asio_abi::asioBoolIsTrue(asio_abi::kAsioTrue));
+  assert(asio_abi::asioBoolIsTrue(static_cast<asio_abi::AsioBool>(0x71C42890U)));
+}
+
+void testAsioNativeDsdTransportRate() {
+  const AudioFormat dsd64 = sourceFormat(2822400, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
+  assert(asio::transportSampleRate(dsd64) == 352800);
+  assert(asio::semanticSampleRate(AudioSampleFormat::DsdInt8Lsb1, 352800) == 2822400);
+
+  const AudioFormat pcm = sourceFormat(48000, 24, 2, AudioSampleFormat::Int24Interleaved);
+  assert(asio::transportSampleRate(pcm) == 48000);
+  assert(asio::semanticSampleRate(AudioSampleFormat::Int24Interleaved, 48000) == 48000);
 }
 
 int16_t readInt16(const std::vector<uint8_t>& bytes) {
@@ -100,6 +118,17 @@ std::string extractFunctionBody(const std::string& source, const std::string& si
   }
   assert(false);
   return {};
+}
+
+void testAsioDriverActivationRequestsDriverClsid() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "output" / "asio" / "windows" / "AsioDriverSession.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string activationBody = extractFunctionBody(source, "bool AsioDriverSession::open(");
+
+  assert(activationBody.find("CLSCTX_INPROC_SERVER,\n            clsid,") != std::string::npos);
+  assert(activationBody.find("CLSCTX_INPROC_SERVER,\n            IID_IUnknown,") == std::string::npos);
 }
 
 void testAsioRenderCallbackDoesNotResizeScratchBuffers() {
@@ -419,6 +448,41 @@ void testNativeDsdRuntimeProven() {
   assert(!info.resampled);
 }
 
+void testNativeDsdRuntimeDiscoveryWithoutCatalogCapability() {
+  auto host = std::make_unique<MockAsioHost>();
+  auto device = makeMockAsioDevice("asio:native-runtime-probe", {48000}, 2);
+  device.outputChannels = 0;
+  host->devices.push_back(device);
+  auto* rawHost = host.get();
+  rawHost->channelFormats = {AudioSampleFormat::DsdInt8Lsb1, AudioSampleFormat::DsdInt8Lsb1};
+
+  AsioBackend backend(std::move(host));
+  std::string error;
+  const AudioFormat request = sourceFormat(2822400, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
+  assert(backend.open("asio:native-runtime-probe", request, &error));
+  assert(rawHost->lastOpenConfig.format.sampleRate == request.sampleRate);
+  assert(rawHost->lastOpenConfig.format.channelCount == request.channelCount);
+  assert(rawHost->lastOpenConfig.format.bitDepth == request.bitDepth);
+  assert(rawHost->lastOpenConfig.format.sampleFormat == request.sampleFormat);
+  assert(backend.startTyped(
+      [](PcmBlock& block) {
+        std::memset(block.data, 0x69, block.byteSize);
+        return block.frames;
+      },
+      [](float*, size_t frames) { return frames; },
+      nullptr,
+      &error));
+  rawHost->triggerBufferSwitch(0);
+
+  const NativeDsdRuntimeFacts facts = backend.nativeDsdRuntimeFacts();
+  assert(facts.state == NativeDsdRuntimeFactState::Proven);
+  assert(facts.explicitlyCapable);
+  assert(facts.actualDsdRate == 2822400);
+  const OutputInfo info = backend.outputInfo();
+  assert(info.driverNativeDsdCapable);
+  assert(info.actualChannels == 2);
+}
+
 void testNativeDsdUnderrunWarmupCallbacks() {
   MockAsioHost::DsdProfile profile;
   profile.nativeDsdCapable = true;
@@ -592,6 +656,25 @@ void testActualOutputFormats() {
     assert(!info.outputPerfect);
     assert(!info.pcmPassthrough);
   }
+}
+
+void testRejectsUnsupportedChannelDescriptor() {
+  auto host = makeHost();
+  auto* rawHost = host.get();
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("asio:mock", sourceFormat(48000, 32), &error));
+
+  AsioChannelFormat bigEndian;
+  bigEndian.logicalFormat = AudioSampleFormat::Int32Interleaved;
+  bigEndian.containerBits = 32;
+  bigEndian.validBits = 32;
+  bigEndian.littleEndian = false;
+  rawHost->channelDescriptors = {bigEndian, bigEndian};
+
+  assert(!backend.start([](float*, size_t) { return 0; }, nullptr, &error));
+  assert(error == "unsupported_asio_sample_type");
+  assert(backend.outputInfo().perfectReasonCode == "unsupported_asio_sample_type");
 }
 
 void testActualOutputFormatRefreshAfterBuffers() {
@@ -1005,6 +1088,9 @@ void testRealAsioSmokeOptIn() {
 }  // namespace
 
 int main() {
+  testAsioBooleanSemantics();
+  testAsioNativeDsdTransportRate();
+  testAsioDriverActivationRequestsDriverClsid();
   testAsioRenderCallbackDoesNotResizeScratchBuffers();
   testAsioRenderCallbackDoesNotBlockOnBackendMutex();
   testAsioRenderCallbackDoesNotCopyStringDiagnostics();
@@ -1018,6 +1104,7 @@ int main() {
   testDopRuntimeFactsMismatchWhenActualFormatDiffers();
   testNativeDsdCapabilityProfile();
   testNativeDsdRuntimeProven();
+  testNativeDsdRuntimeDiscoveryWithoutCatalogCapability();
   testNativeDsdUnderrunWarmupCallbacks();
   testNativeDsdRejectsUnsupportedRate();
   testNativeDsdRuntimeSampleTypeMismatch();
@@ -1025,6 +1112,7 @@ int main() {
   testChannelCounts();
   testLifecycleAndPlaybackInfo();
   testActualOutputFormats();
+  testRejectsUnsupportedChannelDescriptor();
   testActualOutputFormatRefreshAfterBuffers();
   testBufferSizeMatrix();
   testPacking();

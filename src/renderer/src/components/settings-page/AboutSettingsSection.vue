@@ -74,11 +74,6 @@ function progressLabel(): string {
         <h3>Twilight Echo</h3>
         <span>Version {{ appVersion || '—' }}</span>
         <p>一款专为发烧友打造的现代级桌面音乐枢纽，支持海量本地高解析度音频与插件化流媒体扩展。</p>
-        <p class="about-honesty">
-          默认软件音量 70% 保护听感；Shared 模式会经系统混音。Source Exact + Output Perfect + Unity
-          100% + 独占/直通 才是 bit-perfect。当前发布以 Windows 验证为主；macOS / Linux
-          原生输出路径尚未作为发布门禁验证。
-        </p>
       </div>
     </div>
 

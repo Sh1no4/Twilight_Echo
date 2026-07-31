@@ -28,8 +28,8 @@ pnpm run build
 - Electron audio service crash 后先把 native playback 标记为 stopped；service ready 后只恢复后端、设备、输出配置、原生 DSP 插件链、统一 DSP state 和队列，不自动续播，避免在崩溃恢复时产生非用户触发的播放。恢复顺序固定为 `SetDspPluginChain -> ApplyDspState(revision, payload) -> LoadQueue`；EQ/ReplayGain/crossfeed/convolver/balance/output stage 不再并行调用 legacy setter 覆盖统一事务。
 - `ApplyDspState` 先在 control thread 上编译隔离的 active/preload 候选，全部成功且 retired-generation 容量可用后才提交配置、graph JSON、gapless/preload 状态和 RT graph 所有权。render callback 通过 epoch ACK 切换 graph，control thread 只回收已 ACK 且不再被 current/preload 引用的代际，最多保留 8 代。`GetDspGraphStatus.revision` 是 UI pending/applied/failed 的外部 revision ACK；generic playback config revision 只作为其它控制共享的单调计数。
 - BPM/loudness 完整文件解码运行在独立 `audioAnalysisService` utility-process pool，绝不进入播放 `audioEngineService` 的 RPC 队列。主进程 analysis client 负责有界优先级队列、aging、等待 deadline、高优先级 admission、并发上限、独立 watchdog 与取消；取消或超时只替换对应 analysis worker，不重启或阻塞播放 service。cache commit 与取消并发时使用 generation 屏障和精确值条件删除，避免取消结果落缓存或删除后继写入。
-- ASIO SDK 不入仓库；缺失时构建通过，并通过 capabilities/后端列表报告不可用。
-- 真实设备 smoke 是 opt-in：没有 ASIO SDK、目标平台工具链或真实设备时跳过，不阻塞默认 CI。
+- ASIO 兼容层不携带 SDK，只在 Windows x64 构建中编译；没有 `TWILIGHT_EXPERIMENTAL_ASIO_ABI=1` 时后端列表不暴露驱动。
+- 真实设备 smoke 是 opt-in：没有目标平台工具链或真实设备时跳过，不阻塞默认 CI。
 
 ## sourceExact / outputPerfect 策略
 

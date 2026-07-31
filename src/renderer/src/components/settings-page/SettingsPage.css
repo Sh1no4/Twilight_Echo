@@ -3011,3 +3011,75 @@ html[data-te-motion='full'] .signal-line.active::before {
   color: #b91c1c;
   font-size: 12px;
 }
+
+html[data-density='compact'] .settings-preview-stack {
+  gap: 14px;
+  padding-bottom: 32px;
+}
+
+html[data-density='compact'] .settings-command-bar {
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+html[data-density='compact'] .settings-search-box {
+  min-height: 40px;
+  padding-inline: 14px;
+}
+
+html[data-density='compact'] .preview-section {
+  padding: 20px;
+}
+
+html[data-density='compact'] .section-title-row {
+  margin-bottom: 14px;
+}
+
+html[data-density='compact'] .section-block + .section-block {
+  margin-top: 20px;
+}
+
+html[data-density='compact'] .setting-item {
+  min-height: 50px;
+  padding: 10px 12px;
+}
+
+html[data-density='compact'] .setting-copy {
+  gap: 2px;
+}
+
+html[data-density='comfortable'] .settings-preview-stack {
+  gap: 26px;
+  padding-bottom: 60px;
+}
+
+html[data-density='comfortable'] .settings-command-bar {
+  gap: 18px;
+  padding: 20px 22px;
+}
+
+html[data-density='comfortable'] .settings-search-box {
+  min-height: 52px;
+  padding-inline: 22px;
+}
+
+html[data-density='comfortable'] .preview-section {
+  padding: 34px 32px 30px;
+}
+
+html[data-density='comfortable'] .section-title-row {
+  margin-bottom: 26px;
+}
+
+html[data-density='comfortable'] .section-block + .section-block {
+  margin-top: 36px;
+}
+
+html[data-density='comfortable'] .setting-item {
+  min-height: 68px;
+  padding: 18px 20px;
+}
+
+html[data-density='comfortable'] .setting-copy {
+  gap: 6px;
+}

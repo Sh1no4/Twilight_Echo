@@ -1,0 +1,37 @@
+{
+  "contractVersion": 2,
+  "pointerSize": 8,
+  "functionPointerSize": 8,
+  "sizes": {
+    "AsioBool": 4,
+    "AsioBufferInfo": 24,
+    "AsioClockSource": 48,
+    "AsioChannelInfo": 52,
+    "AsioIoFormat": 512,
+    "AsioTimeInfo": 40,
+    "AsioTimeCode": 88,
+    "AsioTime": 144,
+    "AsioCallbacks": 32
+  },
+  "alignments": {
+    "AsioBufferInfo": 8,
+    "AsioClockSource": 4,
+    "AsioChannelInfo": 4,
+    "AsioIoFormat": 4,
+    "AsioTimeInfo": 8,
+    "AsioTimeCode": 8,
+    "AsioTime": 8,
+    "AsioCallbacks": 8
+  },
+  "offsets": {
+    "AsioBufferInfo.channelNum": 4,
+    "AsioBufferInfo.buffers": 8,
+    "AsioClockSource.name": 16,
+    "AsioChannelInfo.type": 16,
+    "AsioChannelInfo.name": 20,
+    "AsioIoFormat.formatType": 0,
+    "AsioIoFormat.reserved": 4,
+    "AsioTimeInfo.samplePosition": 8,
+    "AsioTimeInfo.systemTime": 16
+  }
+}

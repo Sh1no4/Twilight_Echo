@@ -56,6 +56,7 @@ const DEVICE_OPTIONS: AudioDeviceOption[] = [
     id: 'asio:studio',
     label: 'Studio ASIO',
     name: 'Studio ASIO',
+    backend: 'asio',
     isDefault: false,
     supportsExclusive: true,
     pathKind: 'asio',
@@ -2340,6 +2341,55 @@ test('ASIO output config uses the native applied buffer and capability facts', a
   assert.deepEqual(asioDevice?.dopCarrierFormats, ['int24-in32'])
   assert.equal(asioDevice?.capabilityVersion, 3)
   assertPlaybackMirrorsOutputInfo(info)
+})
+
+test('ASIO legacy display ids migrate only when the catalog has a unique canonical CLSID id', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const canonicalId = 'asio:{12345678-1234-1234-1234-1234567890ab}'
+  const canonicalDevice: AudioDeviceOption = {
+    ...DEVICE_OPTIONS[2],
+    id: canonicalId,
+    backend: 'asio'
+  }
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'asio',
+      audioDevice: 'asio:Studio ASIO'
+    },
+    {
+      nativeBinding,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => [DEVICE_OPTIONS[0], canonicalDevice]
+    }
+  )
+
+  const state = await manager.getAudioOutputState()
+
+  assert.equal(state.device, canonicalId)
+  assert.equal(
+    state.deviceOptions.some((device) => device.id === 'asio:Studio ASIO'),
+    false
+  )
+
+  const ambiguousManager = new AudioEngineManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'asio',
+      audioDevice: 'asio:Studio ASIO'
+    },
+    {
+      nativeBinding: new FakeNativeBinding(),
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => [
+        DEVICE_OPTIONS[0],
+        canonicalDevice,
+        { ...canonicalDevice, id: 'asio:{abcdefab-cdef-cdef-cdef-abcdefabcdef}' }
+      ]
+    }
+  )
+
+  assert.equal((await ambiguousManager.getAudioOutputState()).device, 'auto')
 })
 
 test('audio device options expose runtime-probed DSD support states without forcing boolean support', async () => {

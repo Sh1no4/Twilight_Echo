@@ -8,6 +8,7 @@ import { app, shell } from 'electron'
 import { compareVersions } from '../core/settings.ts'
 import { runtime } from '../core/runtime.ts'
 import {
+  GITHUB_API_RELEASES_URL,
   GITHUB_API_LATEST_RELEASE_URL,
   GITHUB_OWNER,
   GITHUB_REPO,
@@ -20,7 +21,9 @@ import type {
   AppUpdateProgress
 } from '../../shared/appUpdate.ts'
 import {
+  extractAssetDigestSha256,
   extractChecksumFromBody,
+  pickLatestAvailableRelease,
   pickWindowsAsset,
   SHA256_HEX_RE,
   type GithubAssetLike
@@ -33,6 +36,7 @@ type GithubRelease = {
   html_url?: string
   body?: string
   assets?: GithubAsset[]
+  draft?: boolean
 }
 
 type ResolvedAsset = {
@@ -69,6 +73,8 @@ async function resolveChecksum(
   signal?: AbortSignal
 ): Promise<string | undefined> {
   const assetName = asset.name || ''
+  const fromAssetDigest = extractAssetDigestSha256(asset.digest)
+  if (fromAssetDigest) return fromAssetDigest
   const fromBody = extractChecksumFromBody(release.body || '', assetName)
   if (fromBody) return fromBody
 
@@ -99,19 +105,39 @@ async function resolveChecksum(
   }
 }
 
-async function fetchLatestRelease(signal?: AbortSignal): Promise<GithubRelease> {
+async function fetchReleaseList(signal?: AbortSignal): Promise<GithubRelease[]> {
+  const response = await fetch(GITHUB_API_RELEASES_URL, {
+    headers: GITHUB_HEADERS,
+    signal
+  })
+  if (!response.ok) throw new Error(`GitHub Releases API HTTP ${response.status}`)
+  const releases = await response.json()
+  if (!Array.isArray(releases)) throw new Error('GitHub Releases API returned an invalid response')
+  return releases as GithubRelease[]
+}
+
+async function fetchLatestRelease(signal?: AbortSignal): Promise<GithubRelease | null> {
   const response = await fetch(GITHUB_API_LATEST_RELEASE_URL, {
     headers: GITHUB_HEADERS,
     signal
   })
-  if (!response.ok) throw new Error(`GitHub API HTTP ${response.status}`)
-  return (await response.json()) as GithubRelease
+  if (response.ok) return (await response.json()) as GithubRelease
+  if (response.status === 404) {
+    return pickLatestAvailableRelease(await fetchReleaseList(signal))
+  }
+  throw new Error(`GitHub API HTTP ${response.status}`)
 }
 
 export async function checkForAppUpdate(): Promise<AppUpdateCheckResult> {
   const currentVersion = app.getVersion()
   try {
     const release = await fetchLatestRelease()
+    if (!release) {
+      lastResolved = null
+      lastReleaseUrl = RELEASES_URL
+      lastVersion = ''
+      return { hasUpdate: false, currentVersion }
+    }
     const latestTag = (release.tag_name || '').replace(/^v/, '')
     if (!latestTag) {
       return { hasUpdate: false, currentVersion }
@@ -260,8 +286,7 @@ export async function downloadAppUpdate(): Promise<AppUpdateDownloadResult> {
       return { ok: false, error: `下载失败：HTTP ${response.status}` }
     }
 
-    const totalBytes =
-      Number(response.headers.get('content-length') || 0) || asset.size || 0
+    const totalBytes = Number(response.headers.get('content-length') || 0) || asset.size || 0
     let receivedBytes = 0
     const hash = createHash('sha256')
     const nodeStream = Readable.fromWeb(response.body as import('node:stream/web').ReadableStream)
@@ -455,4 +480,3 @@ export function getAppUpdateMeta(): {
     repo: GITHUB_REPO
   }
 }
-

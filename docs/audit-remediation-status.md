@@ -38,13 +38,13 @@ The source checklist remains authoritative.
 | TE-4.6  | Lyrics timing and manual management                      | `audit_te46_final_after_ci`  | verified          | `checkpoint-te46-2026-07-25`: `pnpm run test:lyrics-management` 64/64, Node/Web `typecheck` green on `feature/login-profile-redesign` post-release-UX HEAD. Lyrics/LRC/CAS/UI chain and required-CI wiring remain intact; counts supersede earlier 39/39 snapshot. |
 | TE-4.7  | Offline pinning and downloads                            | `audit_te43_v2`              | verified          | Independent recovery re-audit accepted the durable per-download publish journal, fsync/rename/hash/state/cleanup ordering, process-crash restoration at four real filesystem points, strict immediate-child/symlink/path/identity validation, and same-ID isolation. Offline 18/18, original audit repro, feature gates 7/7, Node/Web typecheck, full lint, and diff-check passed; prior offline/native/UI/CI evidence remains intact. |
 | TE-4.8  | CUE support                                              | `audit_te48_after_pregap`    | verified          | Independent final audit accepted strict encoding/path parsing, INDEX00 versus virtual PREGAP semantics, cueRange scan/queue/session/restore propagation, sibling CUE add/edit/remove rescans, logical seek/duration, same-source transition, PCM/DoP/Native-DSD pregap output, gapless/crossfade isolation, ReplayGain, and native fail-closed validation. Cue 32/32, audio 220/220, playback 217/217, app 111/111, MinGW build/staging and CTest 21/21, Node/Web typecheck, lint, production build, budgets, and diff-check passed. |
-| Phase 5 | Release, dependencies, signing, updates, platform status | `phase5_hygiene`             | external evidence | `checkpoint-19-remediation-gate`: pinned audit 0 blocking findings, audit-runner integration 8/8, release policy 15/15, lint/typecheck/build, native 21/21. Signed release artifacts, GitHub branch protection, and real-device smoke require external evidence                                                              |
+| Phase 5 | Release, dependencies, updates, platform status          | `phase5_hygiene`             | verified          | Personal-project Windows releases are intentionally unsigned and publish an SHA-256 companion. Pinned audit, release-integrity policy, lint/typecheck/build, native gates, updater flow, packaging branding, and checksum generation are automated; GitHub branch protection and real-device smoke remain external evidence. |
 
 ## Evidence Rules
 
 - `implemented` requires complete behavior and root-cause regression tests.
 - `verified` requires the task-specific tests plus lint/typecheck/build gates relevant to the change.
-- Hardware smoke, code-signing identity, and GitHub branch protection require real external evidence;
+- Hardware smoke and GitHub branch protection require real external evidence;
   mock or source-regex assertions do not satisfy those rows.
 - Agent completion reports are inputs, not acceptance. The coordinator reruns or independently
   inspects each claimed result before changing a row to `verified`.

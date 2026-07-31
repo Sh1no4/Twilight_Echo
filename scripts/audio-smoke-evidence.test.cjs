@@ -392,6 +392,27 @@ test('audio smoke evidence can merge multiple smoke summary files', () => {
   }
 })
 
+test('audio smoke evidence accepts UTF-16 LE smoke JSON from Windows PowerShell redirection', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-audio-evidence-utf16-test-'))
+  try {
+    const inputPath = path.join(dir, 'asio.json')
+    const json = JSON.stringify({
+      device: { name: 'Studio ASIO' },
+      results: [{ ok: true, label: 'ASIO PCM smoke', backend: 'asio' }]
+    })
+    fs.writeFileSync(inputPath, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(json, 'utf16le')]))
+
+    const entries = readEntriesFromInputs([inputPath])
+
+    assert.equal(entries.length, 1)
+    assert.equal(entries[0].surface, 'ASIO')
+    assert.equal(entries[0].status, 'pass')
+    assert.equal(entries[0].artifact, inputPath)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('audio smoke evidence CLI can read a directory of smoke JSON summaries', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-audio-evidence-dir-test-'))
   const outputDir = path.join(dir, 'out')

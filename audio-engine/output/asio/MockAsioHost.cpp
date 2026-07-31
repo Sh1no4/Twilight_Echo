@@ -41,6 +41,46 @@ int bitDepthForFormat(AudioSampleFormat format) {
   }
 }
 
+AsioChannelFormat channelFormatFor(AudioSampleFormat format) {
+  AsioChannelFormat descriptor;
+  descriptor.logicalFormat = format;
+  switch (format) {
+    case AudioSampleFormat::DsdInt8Lsb1:
+      descriptor.containerBits = 8;
+      descriptor.validBits = 1;
+      descriptor.dsdPacking = AsioDsdPacking::Lsb1;
+      break;
+    case AudioSampleFormat::DsdInt8Msb1:
+      descriptor.containerBits = 8;
+      descriptor.validBits = 1;
+      descriptor.dsdPacking = AsioDsdPacking::Msb1;
+      break;
+    case AudioSampleFormat::DsdInt8Ner8:
+      descriptor.containerBits = 8;
+      descriptor.validBits = 8;
+      descriptor.dsdPacking = AsioDsdPacking::Ner8;
+      break;
+    case AudioSampleFormat::Int16Interleaved:
+      descriptor.containerBits = 16;
+      descriptor.validBits = 16;
+      break;
+    case AudioSampleFormat::Int24Interleaved:
+      descriptor.containerBits = 24;
+      descriptor.validBits = 24;
+      break;
+    case AudioSampleFormat::Int24In32Interleaved:
+      descriptor.containerBits = 32;
+      descriptor.validBits = 24;
+      descriptor.validBitsAreMostSignificant = true;
+      break;
+    case AudioSampleFormat::Int32Interleaved:
+    case AudioSampleFormat::Float32Interleaved:
+    default:
+      break;
+  }
+  return descriptor;
+}
+
 }  // namespace
 
 std::vector<AsioDeviceInfo> MockAsioHost::enumerateDevices() {
@@ -138,6 +178,13 @@ AudioSampleFormat MockAsioHost::outputSampleFormat(long channel) const {
     return AudioSampleFormat::Float32Interleaved;
   }
   return channelFormats[static_cast<size_t>(channel)];
+}
+
+AsioChannelFormat MockAsioHost::outputChannelFormat(long channel) const {
+  if (channel >= 0 && static_cast<size_t>(channel) < channelDescriptors.size()) {
+    return channelDescriptors[static_cast<size_t>(channel)];
+  }
+  return channelFormatFor(outputSampleFormat(channel));
 }
 
 bool MockAsioHost::outputReady() {

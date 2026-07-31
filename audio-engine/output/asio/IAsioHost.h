@@ -18,6 +18,22 @@ enum class AsioHostEvent {
   BufferFailure
 };
 
+enum class AsioDsdPacking : uint8_t {
+  None,
+  Lsb1,
+  Msb1,
+  Ner8
+};
+
+struct AsioChannelFormat {
+  AudioSampleFormat logicalFormat = AudioSampleFormat::Float32Interleaved;
+  uint8_t containerBits = 32;
+  uint8_t validBits = 32;
+  bool littleEndian = true;
+  bool validBitsAreMostSignificant = false;
+  AsioDsdPacking dsdPacking = AsioDsdPacking::None;
+};
+
 struct AsioDeviceInfo {
   std::string id;
   std::string name;
@@ -75,6 +91,7 @@ class IAsioHost {
 
   virtual void* outputBuffer(long channel, long bufferIndex) = 0;
   virtual AudioSampleFormat outputSampleFormat(long channel) const = 0;
+  virtual AsioChannelFormat outputChannelFormat(long channel) const = 0;
   virtual bool outputReady() = 0;
 };
 

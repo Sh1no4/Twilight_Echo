@@ -35,9 +35,18 @@ import {
   type ThemePerformanceOperation,
   type ThemePerformanceSnapshot
 } from '../utils/themePerformance'
+import type { AppSettings } from '../types/settings'
 
 const STYLE_ID = 'twilight-theme-runtime'
 const EPOCH_ISO = new Date(0).toISOString()
+const SETTINGS_ACCENT_COLORS: Readonly<Record<string, string>> = Object.freeze({
+  violet: '#8b5cf6',
+  blue: '#2563eb',
+  emerald: '#10b981',
+  rose: '#e11d48',
+  amber: '#f59e0b',
+  slate: '#334155'
+})
 const themePerformanceRecorder = createThemePerformanceRecorder()
 const themePerformance = ref<ThemePerformanceSnapshot>(themePerformanceRecorder.snapshot())
 
@@ -62,24 +71,55 @@ let adaptiveCoverObjectUrl = ''
 let adaptiveMediaSequence = 0
 let toneRefreshTimer: number | null = null
 let lastAppliedTone: ThemeTone | null = null
+let lightAccentColor = 'blue'
+let darkAccentColor = 'amber'
+let themePreference: AppSettings['theme'] = 'system'
 
 function resolveTone(): ThemeTone {
   return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'pureWhite'
 }
 
-function resolveThemeMode(theme: string): ThemeTone {
+function resolveThemeMode(theme: AppSettings['theme']): ThemeTone {
   if (theme === 'dark') return 'dark'
   if (theme === 'pureWhite') return 'pureWhite'
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'pureWhite'
 }
 
+function applySettingsThemeMode(theme: AppSettings['theme']): void {
+  const tone = resolveThemeMode(theme)
+  document.documentElement.dataset.theme = tone
+  document.documentElement.dataset.themePreference = theme
+  document.documentElement.style.colorScheme = tone === 'dark' ? 'dark' : 'light'
+  themePreference = theme
+}
+
+function cacheSettingsAppearance(
+  settings: Pick<AppSettings, 'accentColor' | 'lightAccentColor' | 'darkAccentColor' | 'uiDensity'>
+): void {
+  lightAccentColor = settings.lightAccentColor || settings.accentColor || 'blue'
+  darkAccentColor = settings.darkAccentColor || settings.accentColor || 'amber'
+  document.documentElement.dataset.density = settings.uiDensity
+}
+
+function resolveSettingsAccentColor(color: string): string {
+  return SETTINGS_ACCENT_COLORS[color] ?? color.trim()
+}
+
+function applySettingsAccentColor(tone: ThemeTone, variables: Record<string, string>): void {
+  const color = resolveSettingsAccentColor(tone === 'dark' ? darkAccentColor : lightAccentColor)
+  const background =
+    variables['--te-app-bg'] ?? TWILIGHT_DEFAULT_THEME.variants[tone].tokens['surface.app']
+  Object.assign(
+    variables,
+    themeTokensToCssVariables(createThemeAccentTokenOverrides(color, tone, background))
+  )
+}
+
 function applyBootstrapThemeMode(
   bootstrap: Awaited<ReturnType<typeof window.api.settings.get>>
 ): void {
-  const tone = resolveThemeMode(bootstrap.settings.theme)
-  document.documentElement.dataset.theme = tone
-  document.documentElement.dataset.themePreference = bootstrap.settings.theme
-  document.documentElement.style.colorScheme = tone === 'dark' ? 'dark' : 'light'
+  applySettingsThemeMode(bootstrap.settings.theme)
+  cacheSettingsAppearance(bootstrap.settings)
 }
 
 export async function bootstrapThemeRuntime(): Promise<void> {
@@ -120,7 +160,11 @@ function setupThemeListeners(): void {
     systemTone.value = tone
     queueMicrotask(() => void applyActiveTheme(false))
   })
-  window.api.settings.onChanged(() => {
+  window.api.settings.onChanged((next) => {
+    if (next.settings.theme !== themePreference) {
+      applySettingsThemeMode(next.settings.theme)
+    }
+    cacheSettingsAppearance(next.settings)
     queueMicrotask(() => void applyActiveTheme(true))
   })
   window.api.plugins.onChanged(() => {
@@ -257,6 +301,7 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
       applyProfileModeVariables(modes, tone, resolvedTokens, variables)
     }
   }
+  applySettingsAccentColor(tone, variables)
   const root = Object.entries({ ...themeShellLayoutToCssVariables(shellLayout), ...variables })
     .map(([name, value]) => `  ${name}: ${value} !important;`)
     .join('\n')

@@ -5,7 +5,7 @@ project(TwilightAudioEngine VERSION 0.1.0 LANGUAGES CXX)
 option(TAE_BUILD_NAPI "Build the Node-API bridge" OFF)
 option(TAE_BUILD_TESTS "Build Twilight Audio Engine tests" ON)
 option(TAE_ENABLE_WASAPI "Enable the Windows WASAPI backend" ON)
-option(TAE_ENABLE_ASIO "Enable optional ASIO backend when the SDK is available" ON)
+option(TAE_ENABLE_ASIO "Enable the Windows x64 ASIO compatibility backend" ON)
 option(TAE_ENABLE_COREAUDIO "Enable the macOS CoreAudio backend" ON)
 option(TAE_ENABLE_ALSA "Enable the Linux ALSA backend" ON)
 
@@ -15,18 +15,14 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(TAE_ASIO_SDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ASIOSDK")
 set(TAE_WASAPI_AVAILABLE OFF)
 set(TAE_ASIO_AVAILABLE OFF)
 set(TAE_COREAUDIO_AVAILABLE OFF)
 set(TAE_ALSA_AVAILABLE OFF)
-if(WIN32 AND TAE_ENABLE_ASIO)
-  if(EXISTS "${TAE_ASIO_SDK_DIR}/common/asio.h" AND EXISTS "${TAE_ASIO_SDK_DIR}/host/asiodrivers.cpp")
-    set(TAE_ASIO_AVAILABLE ON)
-  else()
-    message(WARNING "ASIO SDK not found at ${TAE_ASIO_SDK_DIR}; ASIO backend will be disabled.")
-    set(TAE_ENABLE_ASIO OFF CACHE BOOL "Enable optional ASIO backend when the SDK is available" FORCE)
-  endif()
+if(WIN32 AND TAE_ENABLE_ASIO AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+  set(TAE_ASIO_AVAILABLE ON)
+elseif(WIN32 AND TAE_ENABLE_ASIO)
+  message(WARNING "ASIO compatibility backend is supported only in Windows x64 builds.")
 endif()
 if(WIN32 AND TAE_ENABLE_WASAPI)
   set(TAE_WASAPI_AVAILABLE ON)
@@ -165,24 +161,13 @@ if(TAE_ASIO_AVAILABLE)
     output/asio/AsioBackend.cpp
     output/asio/DeviceCapabilityCache.cpp
     output/asio/RealAsioHost.cpp
-  )
-  set(TAE_ASIO_SDK_SOURCES
-    "${TAE_ASIO_SDK_DIR}/common/asio.cpp"
-    "${TAE_ASIO_SDK_DIR}/host/asiodrivers.cpp"
-    "${TAE_ASIO_SDK_DIR}/host/pc/asiolist.cpp"
-  )
-  set_source_files_properties(${TAE_ASIO_SDK_SOURCES} PROPERTIES
-    COMPILE_DEFINITIONS "interface=struct"
-    COMPILE_OPTIONS "-include;unknwn.h"
+    output/asio/windows/AsioCallbackRouter.cpp
+    output/asio/windows/AsioControlThread.cpp
+    output/asio/windows/AsioDriverCatalog.cpp
+    output/asio/windows/AsioDriverSession.cpp
   )
   target_compile_definitions(twilight_audio_engine PRIVATE TAE_ENABLE_ASIO=1)
-  target_include_directories(twilight_audio_engine PRIVATE
-    "${TAE_ASIO_SDK_DIR}/common"
-    "${TAE_ASIO_SDK_DIR}/host"
-    "${TAE_ASIO_SDK_DIR}/host/pc"
-  )
-  target_sources(twilight_audio_engine PRIVATE ${TAE_ASIO_SDK_SOURCES})
-  target_link_libraries(twilight_audio_engine PRIVATE ole32 uuid winmm)
+  target_link_libraries(twilight_audio_engine PRIVATE ole32 uuid advapi32 user32)
 endif()
 
 if(TAE_COREAUDIO_AVAILABLE)
@@ -241,7 +226,7 @@ endif()
 
 message(STATUS "Twilight Audio Engine feature summary:")
 message(STATUS "  WASAPI: ${TAE_WASAPI_AVAILABLE}")
-message(STATUS "  ASIO: ${TAE_ASIO_AVAILABLE} (SDK: ${TAE_ASIO_SDK_DIR})")
+message(STATUS "  ASIO compatibility backend: ${TAE_ASIO_AVAILABLE}")
 message(STATUS "  CoreAudio: ${TAE_COREAUDIO_AVAILABLE}")
 if(TAE_ALSA_AVAILABLE)
   message(STATUS "  ALSA: ${TAE_ALSA_AVAILABLE} (libraries: ${ALSA_LIBRARIES})")
@@ -487,15 +472,33 @@ if(TAE_BUILD_TESTS)
   target_include_directories(twilight_asio_backend_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   if(TAE_ASIO_AVAILABLE)
     target_compile_definitions(twilight_asio_backend_tests PRIVATE TAE_ENABLE_ASIO=1)
-    target_include_directories(twilight_asio_backend_tests PRIVATE
-      "${TAE_ASIO_SDK_DIR}/common"
-      "${TAE_ASIO_SDK_DIR}/host"
-      "${TAE_ASIO_SDK_DIR}/host/pc"
+    target_sources(twilight_asio_backend_tests PRIVATE
+      output/asio/windows/AsioCallbackRouter.cpp
+      output/asio/windows/AsioControlThread.cpp
+      output/asio/windows/AsioDriverCatalog.cpp
+      output/asio/windows/AsioDriverSession.cpp
     )
-    target_sources(twilight_asio_backend_tests PRIVATE ${TAE_ASIO_SDK_SOURCES})
-    target_link_libraries(twilight_asio_backend_tests PRIVATE ole32 uuid winmm)
+    target_link_libraries(twilight_asio_backend_tests PRIVATE ole32 uuid advapi32 user32)
   endif()
   add_test(NAME twilight_asio_backend_unit COMMAND twilight_asio_backend_tests)
+
+  if(TAE_ASIO_AVAILABLE)
+    add_executable(twilight_asio_abi_checks output/asio/abi/AsioAbiChecks.cpp)
+    target_include_directories(twilight_asio_abi_checks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(twilight_asio_abi_checks PRIVATE ole32 uuid)
+    add_test(NAME twilight_asio_abi_checks COMMAND twilight_asio_abi_checks)
+
+    add_executable(twilight_asio_abi_manifest output/asio/abi/AsioAbiManifest.cpp)
+    target_include_directories(twilight_asio_abi_manifest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(twilight_asio_abi_manifest PRIVATE ole32 uuid)
+    add_test(NAME twilight_asio_abi_manifest COMMAND twilight_asio_abi_manifest)
+
+    add_executable(twilight_asio_abi_cross_dll_tests tests/asio_abi_cross_dll_tests.cpp)
+    target_include_directories(twilight_asio_abi_cross_dll_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(twilight_asio_abi_cross_dll_tests PRIVATE ole32 uuid)
+    add_test(NAME twilight_asio_abi_cross_dll COMMAND twilight_asio_abi_cross_dll_tests)
+    set_tests_properties(twilight_asio_abi_cross_dll PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
 
   add_executable(twilight_output_backend_tests
     tests/output_backend_tests.cpp
@@ -508,13 +511,13 @@ if(TAE_BUILD_TESTS)
   target_include_directories(twilight_output_backend_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   if(TAE_ASIO_AVAILABLE)
     target_compile_definitions(twilight_output_backend_tests PRIVATE TAE_ENABLE_ASIO=1)
-    target_include_directories(twilight_output_backend_tests PRIVATE
-      "${TAE_ASIO_SDK_DIR}/common"
-      "${TAE_ASIO_SDK_DIR}/host"
-      "${TAE_ASIO_SDK_DIR}/host/pc"
+    target_sources(twilight_output_backend_tests PRIVATE
+      output/asio/windows/AsioCallbackRouter.cpp
+      output/asio/windows/AsioControlThread.cpp
+      output/asio/windows/AsioDriverCatalog.cpp
+      output/asio/windows/AsioDriverSession.cpp
     )
-    target_sources(twilight_output_backend_tests PRIVATE ${TAE_ASIO_SDK_SOURCES})
-    target_link_libraries(twilight_output_backend_tests PRIVATE ole32 uuid winmm)
+    target_link_libraries(twilight_output_backend_tests PRIVATE ole32 uuid advapi32 user32)
   endif()
   add_test(NAME twilight_output_backend_unit COMMAND twilight_output_backend_tests)
 
@@ -541,6 +544,7 @@ if(TAE_BUILD_TESTS)
     dsp/FftSpectrumAnalyzer.cpp
     dsp/KissFftAdapter.cpp
     dsp/ParametricEqProcessor.cpp
+    dsp/PcmToDsdModulator.cpp
     dsp/ReplayGainProcessor.cpp
     dsp/WsolaResampler.cpp
     dsp/Vst3BridgeProcessor.cpp
@@ -608,6 +612,7 @@ if(TAE_BUILD_TESTS)
     dsp/FftSpectrumAnalyzer.cpp
     dsp/KissFftAdapter.cpp
     dsp/ParametricEqProcessor.cpp
+    dsp/PcmToDsdModulator.cpp
     dsp/ReplayGainProcessor.cpp
     dsp/WsolaResampler.cpp
     dsp/Vst3BridgeProcessor.cpp

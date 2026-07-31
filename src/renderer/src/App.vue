@@ -166,9 +166,9 @@ function handleCoverClick(rect: { x: number; y: number; w: number; h: number }):
 }
 
 function enterStreamingLogin(): void {
-  // First entry can land on library; later re-entries keep the mounted page state.
+  // First entry starts on home; later re-entries keep the mounted page state.
   if (!streamingPageMounted.value) {
-    streamingInitialTab.value = 'library'
+    streamingInitialTab.value = 'home'
   }
   enterStreamingMode()
   if (!ncmLoggedIn.value) {
@@ -217,7 +217,7 @@ async function handleOnboardingFinish(result: OnboardingFinishResult): Promise<v
 
 function handleLoginSuccess(): void {
   if (loginInitialProviderId.value === 'ncm') {
-    streamingInitialTab.value = 'library'
+    streamingInitialTab.value = 'home'
   }
   closeLoginPage()
 }

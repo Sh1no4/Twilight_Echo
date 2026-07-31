@@ -11,31 +11,42 @@ function read(relativePath) {
   return fs.readFileSync(path.join(root, relativePath), 'utf8')
 }
 
-test('release configuration does not advertise a placeholder auto-updater and requires Windows signing', () => {
+test('release configuration is intentionally unsigned and does not advertise a placeholder updater', () => {
   const builder = read('electron-builder.yml')
-  const releaseBuilder = read('electron-builder.release-win.yml')
   assert.doesNotMatch(builder, /example\.com\/auto-updates/)
   assert.doesNotMatch(builder, /^publish:/m)
   assert.match(builder, /^win:\s*$/m)
   assert.doesNotMatch(builder, /^\s+forceCodeSigning:/m)
-  assert.match(releaseBuilder, /^\s+forceCodeSigning:\s*true\s*$/m)
   assert.match(builder, /^\s+signAndEditExecutable:\s*false\s*$/m)
-  assert.match(releaseBuilder, /^\s+signAndEditExecutable:\s*true\s*$/m)
+  assert.equal(fs.existsSync(path.join(root, 'electron-builder.release-win.yml')), false)
 })
 
-test('Windows packaging strips copied native binaries while signed releases stay fail-closed', () => {
+test('Windows packaging strips copied native binaries while unsigned releases stay fail-closed', () => {
   const afterPack = read('scripts/after-pack-windows.cjs')
   const packageBuild = read('scripts/build-app-package.cjs')
   const releaseBuild = read('scripts/build-windows-release.cjs')
+  const lifecycle = read('src/main/app/lifecycle.ts')
   assert.match(afterPack, /process\.env\.TWILIGHT_RELEASE_BUILD === '1'/)
   assert.match(afterPack, /process\.env\.TWILIGHT_PACKAGE_STRIP === '1'/)
+  assert.match(afterPack, /--set-icon/)
+  assert.match(afterPack, /FileDescription/)
+  assert.match(afterPack, /ProductName/)
   assert.match(packageBuild, /TWILIGHT_PACKAGE_STRIP: '1'/)
-  assert.match(releaseBuild, /TWILIGHT_RELEASE_SIGNING_THUMBPRINT is required/)
+  assert.match(packageBuild, /verifyWindowsAppBranding/)
+  assert.match(releaseBuild, /CSC_IDENTITY_AUTO_DISCOVERY: 'false'/)
   assert.match(releaseBuild, /TWILIGHT_RELEASE_BUILD: '1'/)
-  assert.match(releaseBuild, /electron-builder\.release-win\.yml/)
+  assert.match(releaseBuild, /electron-builder\.yml/)
+  assert.doesNotMatch(releaseBuild, /--require-signature/)
+  assert.match(releaseBuild, /verifyWindowsAppBranding/)
+  assert.match(releaseBuild, /verifyPackagedDependencyClosure/)
   assert.match(releaseBuild, /findInstaller/)
   assert.match(releaseBuild, /createHash\('sha256'\)/)
   assert.match(releaseBuild, /\.sha256/)
+  assert.ok(lifecycle.indexOf("app.setName('TwilightEcho')") < lifecycle.indexOf('app.whenReady()'))
+  assert.ok(
+    lifecycle.indexOf("electronApp.setAppUserModelId('com.TwilightEcho.music')") <
+      lifecycle.indexOf('app.whenReady()')
+  )
 })
 
 test('release packaging writes an SHA-256 companion file for the installer', async () => {
@@ -44,7 +55,7 @@ test('release packaging writes an SHA-256 companion file for the installer', asy
     const installer = path.join(root, 'TwilightEcho-1.0.1-setup.exe')
     fs.writeFileSync(installer, 'twilight-release')
     const { writeInstallerChecksum } = require('./build-windows-release.cjs')
-    const checksumPath = await writeInstallerChecksum(root)
+    const checksumPath = await writeInstallerChecksum(installer)
     assert.equal(checksumPath, `${installer}.sha256`)
     const expected = createHash('sha256').update('twilight-release').digest('hex')
     assert.equal(
@@ -56,7 +67,7 @@ test('release packaging writes an SHA-256 companion file for the installer', asy
   }
 })
 
-test('development packages use maximum compression without a missing NSIS include', () => {
+test('Windows packages use maximum compression', () => {
   const builder = read('electron-builder.yml')
   assert.match(builder, /^compression:\s*maximum\s*$/m)
   assert.match(builder, /^electronLanguages:\s*\n\s+- zh-CN\s*\n\s+- zh-TW\s*\n\s+- en-US\s*$/m)
@@ -74,6 +85,7 @@ test('update checks download GitHub release installers without electron-updater'
     projectUrls,
     /GITHUB_API_LATEST_RELEASE_URL = `https:\/\/api\.github\.com\/repos\/\$\{GITHUB_OWNER\}\/\$\{GITHUB_REPO\}\/releases\/latest`/
   )
+  assert.match(projectUrls, /GITHUB_API_RELEASES_URL/)
   assert.match(projectUrls, /RELEASES_URL = `\$\{GITHUB_URL\}\/releases`/)
   assert.match(updater, /checkForAppUpdate/)
   assert.match(updater, /downloadAppUpdate/)
@@ -84,6 +96,8 @@ test('update checks download GitHub release installers without electron-updater'
   assert.match(service, /shell\.openPath/)
   assert.match(service, /createHash\('sha256'\)/)
   assert.match(service, /error: 'no-checksum'/)
+  assert.match(service, /pickLatestAvailableRelease/)
+  assert.match(service, /extractAssetDigestSha256/)
   assert.match(service, /GitHub Release 未提供 Windows 安装包的 SHA-256 校验和/)
   const settingsTypes = read('src/renderer/src/components/settings-page/types.ts')
   const about = read('src/renderer/src/components/settings-page/AboutSettingsSection.vue')
