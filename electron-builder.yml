@@ -73,22 +73,12 @@ mac:
 dmg:
   artifactName: ${name}-${version}.${ext}
 linux:
-  # deb is assembled deterministically by scripts/build-linux-deb.cjs
-  # (electron-builder's bundled fpm needs legacy libcrypt.so.1).
   target:
     - AppImage
-    - tar.gz
-  maintainer: Twilight Echo Developers <dev@twilight-echo.app>
-  vendor: Twilight Echo
-  category: AudioVideo
-  synopsis: Local and streaming music player with lyrics and DSP
-  description: >-
-    Twilight Echo is a cross-platform music player for local libraries and
-    NetEase Cloud Music streaming, featuring synchronized and word-level
-    lyrics, an integrated DSP rack / equalizer, and high-resolution audio
-    playback (including DSD).
-deb:
-  artifactName: ${name}-${version}.${ext}
+    - snap
+    - deb
+  maintainer: electronjs.org
+  category: Utility
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false
