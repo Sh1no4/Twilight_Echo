@@ -2500,7 +2500,7 @@ export const TWILIGHT_DEFAULT_THEME: ThemeDocumentV1 = Object.freeze({
       fontSize: 32,
       fontWeight: 700,
       color: '#ffffff',
-      highlightColor: '#FFD700',
+      highlightColor: '#3b82f6',
       backgroundColor: '#000000',
       backgroundOpacity: 30,
       shadow: true,

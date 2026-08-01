@@ -19,13 +19,18 @@ test('background settings updates are applied optimistically and protected from 
 
 test('first-use appearance defaults to blue accents and bilingual desktop lyrics', () => {
   const rendererSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
-  const mainSource = readFileSync(new URL('../../../main/core/settings.ts', import.meta.url), 'utf8')
+  const mainSource = readFileSync(
+    new URL('../../../main/core/settings.ts', import.meta.url),
+    'utf8'
+  )
   const themeSource = readFileSync(new URL('./useThemeStore.ts', import.meta.url), 'utf8')
 
   for (const source of [rendererSource, mainSource]) {
     assert.match(source, /lightAccentColor: 'blue'/)
     assert.match(source, /darkAccentColor: 'blue'/)
     assert.match(source, /layout: 'bilingual'/)
+    assert.match(source, /highlightColor: '#3b82f6'/)
+    assert.match(source, /lineOffset: 0/)
   }
   assert.match(themeSource, /let lightAccentColor = 'blue'/)
   assert.match(themeSource, /let darkAccentColor = 'blue'/)

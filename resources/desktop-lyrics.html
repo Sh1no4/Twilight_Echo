@@ -454,7 +454,7 @@
     var shadow = settings.shadow ? '0 0 ' + settings.shadowBlur + 'px ' + settings.shadowColor : 'none';
     var lineOffset = typeof settings.lineOffset === 'number' && isFinite(settings.lineOffset)
       ? settings.lineOffset
-      : 48;
+      : 0;
 
     // Bilingual: row0 = original of current line, row1 = translation of current line.
     if (layout === 'bilingual') {

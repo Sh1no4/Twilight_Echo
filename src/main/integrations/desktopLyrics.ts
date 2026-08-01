@@ -115,11 +115,10 @@ function createDesktopLyricsWindow(): void {
     }
   )
 
-  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    runtime.desktopLyricsWindow.loadFile(join(__dirname, '../../resources/desktop-lyrics.html'))
-  } else {
-    runtime.desktopLyricsWindow.loadFile(join(__dirname, '../../resources/desktop-lyrics.html'))
-  }
+  const desktopLyricsHtml = is.dev
+    ? join(__dirname, '../../resources/desktop-lyrics.html')
+    : join(__dirname, '../renderer/desktop-lyrics.html')
+  runtime.desktopLyricsWindow.loadFile(desktopLyricsHtml)
 }
 
 export function showDesktopLyrics(): void {

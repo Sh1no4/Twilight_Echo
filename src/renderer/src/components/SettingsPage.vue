@@ -4770,11 +4770,11 @@ onBeforeUnmount(() => {
                   min="-200"
                   max="200"
                   step="1"
-                  :value="settings.desktopLyrics.lineOffset ?? 48"
+                  :value="settings.desktopLyrics.lineOffset ?? 0"
                   @input="updateDl('lineOffset', Number(($event.target as HTMLInputElement).value))"
                 />
                 <EditableRangeValue
-                  :value="settings.desktopLyrics.lineOffset ?? 48"
+                  :value="settings.desktopLyrics.lineOffset ?? 0"
                   :min="-200"
                   :max="200"
                   suffix="px"

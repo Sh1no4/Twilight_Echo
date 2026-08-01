@@ -148,6 +148,31 @@ test('desktop lyrics window is destroyed on quit so the process can exit', () =>
   )
 })
 
+test('desktop lyrics uses the built renderer asset in packaged builds', () => {
+  const integrationSource = readFileSync(
+    new URL('../../../main/integrations/desktopLyrics.ts', import.meta.url),
+    'utf8'
+  )
+  const securitySource = readFileSync(
+    new URL('../../../main/security/electronSecurity.ts', import.meta.url),
+    'utf8'
+  )
+  const viteSource = readFileSync(
+    new URL('../../../../electron.vite.config.ts', import.meta.url),
+    'utf8'
+  )
+  const builderSource = readFileSync(
+    new URL('../../../../electron-builder.yml', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(integrationSource, /is\.dev[\s\S]*\.\.\/\.\.\/resources\/desktop-lyrics\.html/)
+  assert.match(integrationSource, /\.\.\/renderer\/desktop-lyrics\.html/)
+  assert.match(securitySource, /\(\?:resources\|renderer\)\\\/desktop-lyrics/)
+  assert.match(viteSource, /publicDir: resolve\('resources'\)/)
+  assert.match(builderSource, /- out\/\*\*/)
+})
+
 test('desktop lyrics html falls back to untimed plain lyrics', () => {
   const source = readFileSync(
     new URL('../../../../resources/desktop-lyrics.html', import.meta.url),
@@ -198,7 +223,8 @@ test('desktop lyrics html applies configurable lineOffset stagger', () => {
 
   assert.match(source, /settings\.lineOffset/)
   assert.match(source, /translateX\(' \+ rowOffsetX/)
-  assert.match(settingsSource, /lineOffset: 48/)
+  assert.match(settingsSource, /highlightColor: '#3b82f6'/)
+  assert.match(settingsSource, /lineOffset: 0/)
   assert.match(settingsSource, /lineOffset: clampNumber\(d\.lineOffset, -200, 200/)
 })
 

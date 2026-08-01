@@ -217,7 +217,7 @@ export const RESET_DESKTOP_LYRICS: DesktopLyricsSettings = {
   fontFamily: 'system',
   fontWeight: 700,
   color: '#ffffff',
-  highlightColor: '#FFD700',
+  highlightColor: '#3b82f6',
   bgColor: '#000000',
   bgOpacity: 30,
   align: 'center',
@@ -234,5 +234,5 @@ export const RESET_DESKTOP_LYRICS: DesktopLyricsSettings = {
   alwaysOnTop: true,
   clickThrough: false,
   maxLines: 2,
-  lineOffset: 48
+  lineOffset: 0
 }

@@ -195,7 +195,7 @@ const fallbackSettings: AppSettings = {
     fontFamily: 'system',
     fontWeight: 700,
     color: '#ffffff',
-    highlightColor: '#FFD700',
+    highlightColor: '#3b82f6',
     bgColor: '#000000',
     bgOpacity: 30,
     align: 'center',
@@ -212,7 +212,7 @@ const fallbackSettings: AppSettings = {
     alwaysOnTop: true,
     clickThrough: false,
     maxLines: 2,
-    lineOffset: 48
+    lineOffset: 0
   },
   miniPlayer: cloneMiniPlayerSettings(DEFAULT_MINI_PLAYER_SETTINGS),
   proxyMode: 'auto',

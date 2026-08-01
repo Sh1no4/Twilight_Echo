@@ -107,7 +107,7 @@ function isAppDocumentUrl(url: string): boolean {
 }
 
 function isDesktopLyricsDocumentUrl(url: string): boolean {
-  return /\/resources\/desktop-lyrics\.html(?:[#?].*)?$/i.test(url)
+  return /\/(?:resources|renderer)\/desktop-lyrics\.html(?:[#?].*)?$/i.test(url)
 }
 
 function isAudioVisualizerDocumentUrl(url: string): boolean {
