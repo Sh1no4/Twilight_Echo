@@ -58,3 +58,9 @@ export interface LocalLibraryRestoreResult {
   library: LocalMusicLibraryDocument
   restoredFilePaths: string[]
 }
+
+export interface LocalLibraryResetResult {
+  library: LocalMusicLibraryDocument
+  removedTrackIds: string[]
+  removedFilePaths: string[]
+}

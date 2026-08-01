@@ -51,10 +51,11 @@ export function createLocalLibraryScanPlan(options: {
   if (options.completeIdentitySnapshot) {
     for (const known of options.knownIdentities) {
       const key = normalizeLibraryFilePath(known.filePath)
-      if (!identitiesByPath.has(key)) removed.add(known.filePath)
+      if (!identitiesByPath.has(key) || excludedPaths.has(key)) removed.add(known.filePath)
     }
     for (const knownTrackPath of options.knownTrackPaths) {
-      if (!identitiesByPath.has(normalizeLibraryFilePath(knownTrackPath))) {
+      const key = normalizeLibraryFilePath(knownTrackPath)
+      if (!identitiesByPath.has(key) || excludedPaths.has(key)) {
         removed.add(knownTrackPath)
       }
     }

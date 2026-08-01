@@ -272,6 +272,7 @@ export function useMusicStore(): {
   handleLibraryChange: (change: LibraryChange | undefined) => Promise<void>
   startStartupLibraryScan: () => Promise<LocalLibraryScanUpdate>
   startFullLibraryScan: () => Promise<LocalLibraryScanUpdate>
+  resetLibrary: () => Promise<number>
   pauseLibraryScan: () => Promise<boolean>
   resumeLibraryScan: () => Promise<boolean>
   cancelLibraryScan: () => Promise<boolean>
@@ -630,6 +631,20 @@ export function useMusicStore(): {
     const update = await window.api.library.scanFull()
     applyLibraryScanUpdate(update)
     return update
+  }
+
+  async function resetLibrary(): Promise<number> {
+    const result = await window.api.library.reset()
+    libraryMetadataEnrichmentQueue?.cancel()
+    pendingMetadataEnrichmentUpdates.clear()
+    metadataEnrichmentFlushScheduled = false
+    libraryRevision = result.library.revision
+    excludedTracks.value = result.library.exclusions
+    setTracks([])
+    rebuildDerivedCollections()
+    libraryRepairReport.value = null
+    notifyLocalTracksUnavailable(result.removedTrackIds, result.removedFilePaths)
+    return result.removedTrackIds.length
   }
 
   async function pauseLibraryScan(): Promise<boolean> {
@@ -1934,6 +1949,7 @@ export function useMusicStore(): {
     libraryMetadataEnrichmentStatus,
     startStartupLibraryScan,
     startFullLibraryScan,
+    resetLibrary,
     pauseLibraryScan,
     resumeLibraryScan,
     cancelLibraryScan,

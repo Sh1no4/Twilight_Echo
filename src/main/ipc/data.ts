@@ -47,7 +47,10 @@ import { registerWindowIpc } from './windowIpc.ts'
 import { registerShellIpc } from './shellIpc.ts'
 import { registerDiscordIpc } from './discordIpc.ts'
 import { registerAppIpc } from './appIpc.ts'
-import { synchronizeLocalLibraryFileIndexRevision } from '../library/fileIndex.ts'
+import {
+  resetLocalLibraryFileIndex,
+  synchronizeLocalLibraryFileIndexRevision
+} from '../library/fileIndex.ts'
 import type { LocalLibraryScanRunner } from '../library/libraryScanServiceClient.ts'
 import {
   MAX_MUSIC_LIBRARY_BYTES,
@@ -73,6 +76,7 @@ import type {
   LocalLibraryRemoveRequest,
   LocalLibraryRemoveResult,
   LocalLibraryRemovalMode,
+  LocalLibraryResetResult,
   LocalLibraryRestoreRequest,
   LocalLibrarySnapshotInput,
   LocalLibraryTrackSelection,
@@ -460,10 +464,8 @@ export function setupDataIpc(): void {
     enqueueTransaction: enqueueMusicLibraryTransaction,
     loadDocument: () => loadMusicLibraryForTransaction(MUSIC_LIBRARY_FILE),
     persistDocument: (document) => persistMusicLibraryDocument(MUSIC_LIBRARY_FILE, document),
-    resolveRoots: async (folders) => {
-      const requested = Array.from(new Set([...folders, ...runtime.appSettings.libraryFolders]))
-      return await filterAuthorizedLibraryRoots(requested)
-    },
+    resolveRoots: async () =>
+      await filterAuthorizedLibraryRoots(runtime.appSettings.libraryFolders),
     getCoverCacheDir,
     watcherDebounceMs: runtime.libraryWatcherDebounceMs
   })
@@ -654,6 +656,33 @@ export function setupDataIpc(): void {
         result.library = loaded.document
       }
       return result
+    })
+  })
+
+  ipcMain.handle('library:reset', async (event): Promise<LocalLibraryResetResult> => {
+    assertTrustedIpcSender(event, 'library reset IPC')
+    return await enqueueMusicLibraryTransaction(async () => {
+      const loaded = loadMusicLibraryForTransaction(MUSIC_LIBRARY_FILE)
+      const removedTrackIds = loaded.document.tracks.flatMap((track) => {
+        if (!track || typeof track !== 'object' || Array.isArray(track)) return []
+        const id = (track as Record<string, unknown>).id
+        return typeof id === 'string' && id ? [id] : []
+      })
+      const removedFilePaths = loaded.document.tracks.flatMap((track) => {
+        if (!track || typeof track !== 'object' || Array.isArray(track)) return []
+        const filePath = (track as Record<string, unknown>).filePath
+        return typeof filePath === 'string' && filePath ? [filePath] : []
+      })
+      const nextDocument: LocalMusicLibraryDocument = {
+        version: 2,
+        revision: loaded.document.revision + 1,
+        tracks: [],
+        folders: loaded.document.folders,
+        exclusions: loaded.document.exclusions
+      }
+      persistMusicLibraryDocument(MUSIC_LIBRARY_FILE, nextDocument)
+      resetLocalLibraryFileIndex(MUSIC_LIBRARY_FILE, nextDocument.revision)
+      return { library: nextDocument, removedTrackIds, removedFilePaths }
     })
   })
 

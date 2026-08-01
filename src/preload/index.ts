@@ -22,6 +22,7 @@ import type {
   LibraryChange,
   LocalLibraryRemoveRequest,
   LocalLibraryRemoveResult,
+  LocalLibraryResetResult,
   LocalLibraryRestoreRequest,
   LocalLibraryRestoreResult,
   LocalLibraryTagRestoreRequest,
@@ -506,6 +507,7 @@ const api = {
       ipcRenderer.invoke('library:removeTracks', request),
     restoreExclusions: (request: LocalLibraryRestoreRequest): Promise<LocalLibraryRestoreResult> =>
       ipcRenderer.invoke('library:restoreExclusions', request),
+    reset: (): Promise<LocalLibraryResetResult> => ipcRenderer.invoke('library:reset'),
     ...duplicateDetectionApi,
     writeTags: (request: LocalLibraryTagWriteRequest): Promise<LocalLibraryTagWriteResult> =>
       ipcRenderer.invoke('library:writeTags', request),

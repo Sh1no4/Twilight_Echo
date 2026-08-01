@@ -90,6 +90,13 @@ export function synchronizeLocalLibraryFileIndexRevision(
   })
 }
 
+export function resetLocalLibraryFileIndex(libraryFilePath: string, libraryRevision: number): void {
+  persistLocalLibraryFileIndex(libraryFilePath, {
+    ...createEmptyLocalLibraryFileIndex(libraryRevision),
+    updatedAt: new Date().toISOString()
+  })
+}
+
 export function normalizeLocalLibraryFileIndex(value: unknown): LocalLibraryFileIndexDocument {
   const record = isRecord(value) ? value : {}
   const entries = Array.isArray(record.entries) ? record.entries : []

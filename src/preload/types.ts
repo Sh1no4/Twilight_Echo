@@ -56,6 +56,7 @@ export type {
   LocalLibraryMutationFailure,
   LocalLibraryRemoveRequest,
   LocalLibraryRemoveResult,
+  LocalLibraryResetResult,
   LocalLibraryRemovalMode,
   LocalLibraryRestoreRequest,
   LocalLibraryRestoreResult,

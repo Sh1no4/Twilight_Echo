@@ -24,6 +24,7 @@ import type {
 import type {
   LocalLibraryRemoveRequest,
   LocalLibraryRemoveResult,
+  LocalLibraryResetResult,
   LocalLibraryRestoreRequest,
   LocalLibraryRestoreResult,
   LocalLibrarySnapshotInput,
@@ -1425,6 +1426,7 @@ interface WindowAPI {
   library: DuplicateDetectionReadApi & {
     removeTracks: (request: LocalLibraryRemoveRequest) => Promise<LocalLibraryRemoveResult>
     restoreExclusions: (request: LocalLibraryRestoreRequest) => Promise<LocalLibraryRestoreResult>
+    reset: () => Promise<LocalLibraryResetResult>
     writeTags: (request: LocalLibraryTagWriteRequest) => Promise<LocalLibraryTagWriteResult>
     restoreTags: (request: LocalLibraryTagRestoreRequest) => Promise<LocalLibraryTagRestoreResult>
     scanStartup: () => Promise<LocalLibraryScanUpdate>

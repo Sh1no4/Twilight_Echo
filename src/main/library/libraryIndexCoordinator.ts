@@ -217,18 +217,48 @@ export class LocalLibraryIndexCoordinator extends EventEmitter {
         })
         const roots = await this.options.resolveRoots(snapshot.document.folders)
         if (roots.length === 0 && mode !== 'watch') {
-          const current = await this.options.enqueueTransaction(async () => {
-            const document = this.options.loadDocument().document
+          const committed = await this.options.enqueueTransaction(async () => {
+            const current = this.options.loadDocument().document
+            const currentRoots = await this.options.resolveRoots(current.folders)
+            if (
+              current.revision !== snapshot.document.revision ||
+              !sameRootSet(roots, currentRoots)
+            ) {
+              return { drifted: true as const, library: current, removedFilePaths: [] }
+            }
+
+            const removedFilePaths = collectTrackPaths(current)
+            const changed = current.tracks.length > 0 || current.folders.length > 0
+            const nextDocument = changed
+              ? {
+                  ...current,
+                  revision: current.revision + 1,
+                  tracks: [],
+                  folders: currentRoots
+                }
+              : current
+            if (changed) this.options.persistDocument(nextDocument)
+            else replaceActiveLibraryExclusions(nextDocument.exclusions)
+            persistLocalLibraryFileIndex(this.options.libraryFilePath, {
+              version: 1,
+              libraryRevision: nextDocument.revision,
+              updatedAt: this.now().toISOString(),
+              entries: []
+            })
             return {
-              document,
-              roots: await this.options.resolveRoots(document.folders)
+              drifted: false as const,
+              library: nextDocument,
+              removedFilePaths
             }
           })
-          if (!sameRootSet(roots, current.roots)) {
+          if (committed.drifted) {
             if (attempt + 1 < MAX_RECONCILE_ATTEMPTS) continue
             throw new Error('Local library roots changed repeatedly while the scan was reconciling')
           }
-          const result = completeNoopResult(job.id, mode, current.document)
+          const result = {
+            ...completeNoopResult(job.id, mode, committed.library),
+            removedFilePaths: committed.removedFilePaths
+          }
           this.setStatus({ state: 'completed' })
           return result
         }

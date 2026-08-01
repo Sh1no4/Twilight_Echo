@@ -174,12 +174,15 @@ const {
   libraryScanProgress,
   libraryMetadataEnrichmentStatus,
   startFullLibraryScan,
+  resetLibrary,
   pauseLibraryScan,
   resumeLibraryScan,
   cancelLibraryScan,
   cancelLibraryMetadataEnrichment
 } = useMusicStore()
 const libraryScanCommandError = ref('')
+const libraryResetPending = ref(false)
+const libraryResetMessage = ref('')
 const libraryWatcherStatus = ref<LibraryWatcherStatusSnapshot | null>(null)
 let libraryWatcherStatusTimer: number | null = null
 
@@ -273,6 +276,28 @@ async function runFullLibraryScan(): Promise<void> {
     await startFullLibraryScan()
   } catch (error) {
     libraryScanCommandError.value = scanCommandErrorMessage(error)
+  }
+}
+
+async function resetLocalLibrary(): Promise<void> {
+  libraryScanCommandError.value = ''
+  libraryResetMessage.value = ''
+  if (
+    !window.confirm(
+      '将清空本地媒体库索引和当前界面中的全部本地曲目。\n\n不会删除磁盘上的音乐文件，也不会删除播放列表；之后可通过“完整重扫”重新建立媒体库。\n\n确定重置吗？'
+    )
+  ) {
+    return
+  }
+
+  libraryResetPending.value = true
+  try {
+    const removedCount = await resetLibrary()
+    libraryResetMessage.value = `媒体库已重置，已从索引移除 ${removedCount} 首曲目；磁盘文件未删除。`
+  } catch (error) {
+    libraryScanCommandError.value = scanCommandErrorMessage(error)
+  } finally {
+    libraryResetPending.value = false
   }
 }
 
@@ -1987,6 +2012,9 @@ onBeforeUnmount(() => {
                   ></progress>
                   <span class="library-scan-copy">{{ libraryScanProgressText }}</span>
                   <span class="library-scan-copy">{{ libraryMetadataEnrichmentText }}</span>
+                  <span v-if="libraryResetMessage" class="library-scan-copy success-copy">
+                    {{ libraryResetMessage }}
+                  </span>
                   <span v-if="libraryScanCommandError" class="library-scan-error">
                     {{ libraryScanCommandError }}
                   </span>
@@ -2022,6 +2050,15 @@ onBeforeUnmount(() => {
                       @click="cancelActiveLibraryScan"
                     >
                       取消
+                    </button>
+                    <button
+                      type="button"
+                      class="danger-soft-button"
+                      data-testid="settings-library-reset"
+                      :disabled="libraryScanIsActive || libraryResetPending"
+                      @click="resetLocalLibrary"
+                    >
+                      {{ libraryResetPending ? '重置中…' : '重置库' }}
                     </button>
                     <button
                       v-if="libraryMetadataEnrichmentIsActive"

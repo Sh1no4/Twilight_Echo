@@ -83,6 +83,22 @@ test('exclusions are rechecked before planning metadata work', () => {
   assert.equal(plan.skippedUnchanged, 1)
 })
 
+test('complete snapshots remove persisted tracks that became excluded', () => {
+  const excluded = identity('C:\\music\\excluded.flac', 1, 1)
+  const kept = identity('C:\\music\\kept.flac', 2, 2)
+  const plan = createLocalLibraryScanPlan({
+    mode: 'full',
+    identities: [excluded, kept],
+    knownIdentities: [excluded, kept],
+    knownTrackPaths: [excluded.filePath, kept.filePath],
+    excludedPaths: [excluded.filePath],
+    completeIdentitySnapshot: true
+  })
+
+  assert.deepEqual(plan.removedFilePaths, [excluded.filePath])
+  assert.deepEqual(plan.parseFilePaths, [kept.filePath])
+})
+
 test('complete snapshots infer removals while partial watcher batches remove only explicit paths', () => {
   const present = identity('C:\\music\\present.flac', 1, 1)
   const missing = identity('C:\\music\\missing.flac', 2, 2)
