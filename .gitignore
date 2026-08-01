@@ -129,6 +129,9 @@ electron.vite.config.[0-9]*.mjs
 # Original font files (backup, WOFF2 versions are used)
 resources/font/_originals/
 
+# Local design prototype output (never publish)
+outputs/
+
 # Local packaging / signing artifacts
 *.cer
 *.crt
