@@ -1,22 +1,10 @@
 import { shell, type IpcMain } from 'electron'
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
 import { resolveAuthorizedOpenPath, resolveAuthorizedShowItemPath } from '../security/localPaths.ts'
+import { isSafeExternalUrl } from '../security/externalUrl.ts'
 import { normalizeIpcString } from '../security/ipcValidation.ts'
 
-const MAX_EXTERNAL_URL_LENGTH = 8192
 const MAX_LOCAL_PATH_LENGTH = 4096
-
-function isSafeExternalUrl(url: unknown): url is string {
-  if (typeof url !== 'string') return false
-  if (Buffer.byteLength(url, 'utf-8') > MAX_EXTERNAL_URL_LENGTH) return false
-  if (/[\0\r\n]/.test(url)) return false
-  try {
-    const parsed = new URL(url)
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:'
-  } catch {
-    return false
-  }
-}
 
 function isSafeLocalPath(path: unknown): path is string {
   if (typeof path !== 'string') return false

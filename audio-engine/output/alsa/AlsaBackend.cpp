@@ -576,6 +576,18 @@ bool AlsaBackend::open(const std::string& deviceId, const AudioFormat& requested
   impl_->deviceName = "ALSA " + impl_->deviceId;
 
   int code = impl_->host ? impl_->host->pcmOpen(impl_->deviceId, true) : -1;
+  // PipeWire 主机上 ALSA "default" 常被 dmix 配置破坏（snd_pcm_open 返回 ENOENT）。
+  // 回退到常见命名 PCM（pipewire → pulse），保证原生引擎在桌面 Linux 可用。
+  if (code < 0 && impl_->deviceId == "default") {
+    for (const char* fallback : {"pipewire", "pulse"}) {
+      if (impl_->host && impl_->host->pcmOpen(fallback, true) == 0) {
+        impl_->deviceId = fallback;
+        impl_->deviceName = "ALSA " + std::string(fallback);
+        code = 0;
+        break;
+      }
+    }
+  }
   if (code < 0) {
     if (error) *error = impl_->alsaError("无法打开 ALSA PCM 输出", code);
     impl_->diagnostics.lastError = error ? *error : "无法打开 ALSA PCM 输出";

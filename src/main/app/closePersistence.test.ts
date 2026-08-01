@@ -97,3 +97,20 @@ test('retry keeps one close attempt while the next persistence write is in fligh
   assert.equal(closeCalls, 1)
   assert.equal(persistenceRequests, 2)
 })
+
+test('force closes the window even when persistence keeps failing (escape hatch)', async () => {
+  let closeCalls = 0
+
+  const result = await closeOnlyAfterRendererPersistence({
+    requestPersistence: async () => {
+      throw new Error('persistence keeps failing')
+    },
+    close: () => {
+      closeCalls += 1
+    },
+    showFailure: async () => 'force'
+  })
+
+  assert.equal(result, 'closed')
+  assert.equal(closeCalls, 1)
+})

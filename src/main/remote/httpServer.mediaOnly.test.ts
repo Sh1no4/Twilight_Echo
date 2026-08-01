@@ -64,3 +64,13 @@ test('player queue skip re-casts while a cast session is active', () => {
   )
   assert.match(playerStoreSource, /!castTargetUsn\.value && nativePlaybackActive/)
 })
+
+test('remote HTTP server no longer uses CORS wildcard and caps SSE clients', () => {
+  // S2: CORS 只回显同源/回环 Origin，不再无条件 `*`。
+  assert.match(httpServerSource, /teCorsOrigin/)
+  assert.match(httpServerSource, /resolveAllowedOrigin\(/)
+  assert.doesNotMatch(httpServerSource, /'access-control-allow-origin': '\*'/)
+  // S3: SSE 长连接上限。
+  assert.match(httpServerSource, /sseMaxClients/)
+  assert.match(httpServerSource, /too_many_event_connections/)
+})

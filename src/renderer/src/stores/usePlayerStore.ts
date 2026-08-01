@@ -1366,7 +1366,9 @@ async function syncNativeQueueState(snapshot: NativeQueueStateSnapshot): Promise
   if (!synchronized.applied) return
   const preparedQueue = synchronized.prepared
   if (!preparedQueue) {
-    await nativeQueueRevisionFence.runLatest(snapshot.revision, () => stopNativeAudio())
+    // 不要因为队列重同步失败就停掉正在播放的引擎：停止会让主进程误判
+    // “播放结束”（单曲队列 queueIndex>=len-1 恒真）→ 渲染层自动切歌/重播。
+    // 保持现有播放不变，让 loadAndPlay 走正常的“不可用→回退”路径。
     return
   }
   nativeQueueDelegated = preparedQueue.delegated
@@ -3041,6 +3043,17 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
       return
     }
     patchTrackInQueues(track)
+    // resolvePlayTarget 只改写了传入的 track 对象，而 active currentTrack 是
+    // 激活时的拷贝；若不回写，后续队列重同步（如切换播放模式）会因取不到
+    // source 而误判“当前曲目不支持原生播放”→ stopNativeAudio → 误触发切歌。
+    if (currentTrack.value && currentTrack.value.id === track.id) {
+      currentTrack.value = {
+        ...currentTrack.value,
+        streamUrl: track.streamUrl ?? currentTrack.value.streamUrl,
+        filePath: track.filePath ?? currentTrack.value.filePath,
+        streamQuality: track.streamQuality ?? currentTrack.value.streamQuality
+      }
+    }
     setNativePlaybackInfoIntent(loadToken, track, playTarget)
     const useNativePlayback = shouldUseNativePlayback(track, playTarget)
 

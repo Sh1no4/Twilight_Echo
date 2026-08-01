@@ -98,6 +98,7 @@ const {
   dismissAudioEngineRecoveryNotice,
   formatTime,
   setUnityVolume,
+  toggleMute,
   configureSleepTimer,
   cancelSleepTimer,
   setAudioProcessing,
@@ -439,13 +440,19 @@ function clampVolume(value: number): number {
 
 function onVolumeWheel(event: WheelEvent): void {
   event.preventDefault()
-  if (!volumeOpen.value) {
-    volumeOpen.value = true
-    playlistOpen.value = false
-    moreOpen.value = false
-  }
+  // I2: 滚轮只调音量，不再自动弹开音量抽屉（避免悬停误触弹出面板）。
+  // 抽屉已打开时保持打开，便于看到滑杆反馈。
   const step = event.shiftKey ? 0.01 : 0.04
   volume.value = clampVolume(volume.value + (event.deltaY < 0 ? step : -step))
+}
+
+/** I1：点击音量图标 = 静音/恢复；抽屉打开时点击则收起抽屉（不误触静音）。 */
+function onVolumeButtonClick(): void {
+  if (volumeOpen.value) {
+    closeFloatingPanels()
+    return
+  }
+  toggleMute()
 }
 
 function onSleepTimerSelectValue(value: string): void {
@@ -476,7 +483,7 @@ const {
   moreOpen,
   floatingPanelOpen,
   dismissFloatingPanels,
-  toggleVolume,
+  closeFloatingPanels,
   togglePlaylist,
   toggleMore
 } = useFloatingPanels(playerBarShellRef)
@@ -1412,7 +1419,7 @@ onMounted(() => {
             :class="{ active: volumeOpen }"
             title="音量"
             aria-label="音量"
-            @click="toggleVolume"
+            @click="onVolumeButtonClick"
           >
             <i :class="muted || volume <= 0.001 ? 'pi pi-volume-off' : 'pi pi-volume-up'"></i>
           </button>
