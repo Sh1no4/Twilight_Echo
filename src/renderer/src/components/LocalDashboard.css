@@ -59,8 +59,11 @@
 }
 
 .home button {
-  color: inherit;
   font: inherit;
+}
+
+.home button:not(.empty-cta) {
+  color: inherit;
 }
 
 /* ── Ambient wash ───────────────────────────────────────────────────── */
@@ -397,14 +400,16 @@
   z-index: 1;
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  justify-content: center;
+  min-width: 192px;
   height: 48px;
   margin-top: 32px;
   padding: 0 28px;
   border: none;
   border-radius: 999px;
   background: var(--home-ink);
-  color: var(--home-card);
+  color: var(--te-neutral-50, #fafafa);
+  -webkit-text-fill-color: currentColor;
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
@@ -413,6 +418,17 @@
     transform var(--te-motion-hover) var(--te-ease-soft),
     box-shadow var(--te-motion-hover),
     background var(--te-motion-hover);
+}
+
+.empty-cta-content {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: inherit;
+  -webkit-text-fill-color: currentColor;
 }
 
 .empty-cta:hover {

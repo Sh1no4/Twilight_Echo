@@ -21,6 +21,22 @@ test('dashboard primary transport keeps its icon visible on the ink surface', ()
   assert.match(styles, /\.transport-button\.transport-play\s*\{[\s\S]*?color:\s*var\(--home-card\)/)
 })
 
+test('dashboard empty-state CTA keeps its content visible on the ink surface', () => {
+  const source = readFileSync(new URL('./LocalDashboard.vue', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('./LocalDashboard.css', import.meta.url), 'utf8')
+
+  assert.match(source, /class="empty-cta-content"[\s\S]*?添加音乐库文件夹/)
+  assert.match(styles, /\.home button:not\(\.empty-cta\)\s*\{[\s\S]*?color:\s*inherit/)
+  assert.match(
+    styles,
+    /\.empty-cta\s*\{[\s\S]*?background:\s*var\(--home-ink\);[\s\S]*?color:\s*var\(--te-neutral-50, #fafafa\);[\s\S]*?-webkit-text-fill-color:\s*currentColor/
+  )
+  assert.match(
+    styles,
+    /\.empty-cta-content\s*\{[\s\S]*?color:\s*inherit;[\s\S]*?-webkit-text-fill-color:\s*currentColor/
+  )
+})
+
 test('dashboard renders the resolved DSP graph from source through the output stage', () => {
   const source = readFileSync(new URL('./LocalDashboard.vue', import.meta.url), 'utf8')
   const styles = readFileSync(new URL('./LocalDashboard.css', import.meta.url), 'utf8')

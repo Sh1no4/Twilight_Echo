@@ -836,8 +836,10 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
           添加本地音乐文件夹后，封面、专辑与听歌足迹会自动在这里生长成你的唱片房间。
         </p>
         <button type="button" class="empty-cta" @click="emit('open-library-settings')">
-          <i class="ph ph-folder-simple-plus"></i>
-          添加音乐库文件夹
+          <span class="empty-cta-content">
+            <i class="ph ph-folder-simple-plus" aria-hidden="true"></i>
+            <span>添加音乐库文件夹</span>
+          </span>
         </button>
         <div class="empty-chips" aria-hidden="true">
           <span><i class="ph ph-folder-simple-plus"></i> 批量扫描</span>
