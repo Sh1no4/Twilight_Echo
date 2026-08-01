@@ -2330,6 +2330,16 @@ async function ensureCurrentTrackLyricsLoaded(
           })
           return result.best?.syncedLyrics ?? result.best?.plainLyrics ?? null
         }
+      : undefined,
+    // LRCLIB does not carry translations. When the online fallback supplied
+    // the original lyrics, try the provider path once more just for the
+    // NetEase tlyric translation; a miss simply keeps the layer hidden.
+    loadOnlineTranslation: canLoadOnlineLyrics
+      ? async () => {
+          await syncPluginProviders()
+          const lyrics = await useMediaProviders().resolveLyrics(resolverTrack)
+          return lyrics?.translatedLyrics ?? null
+        }
       : undefined
   })
   // Bound async lyric fetches so the now-playing pane cannot stick on "加载歌词…".

@@ -18,6 +18,12 @@ export interface ResolveLyricsWithSourcesOptions {
   translationSource?: LyricResolverSource
   /** Final fallback when embedded/local/provider all miss. */
   loadOnlineLyrics?: () => Promise<string | null>
+  /**
+   * Companion translation lookup for the online fallback (e.g. NetEase
+   * tlyric). Called only when online lyrics were applied and no translation
+   * is available yet; a miss keeps the translation layer hidden.
+   */
+  loadOnlineTranslation?: () => Promise<string | null>
 }
 
 export async function resolveLyricsWithSources(
@@ -97,6 +103,15 @@ export async function resolveLyricsWithSources(
     if (onlineLyrics) {
       lyrics = onlineLyrics
       lyricsSource = 'online'
+      if (!translatedLyrics && options.loadOnlineTranslation) {
+        const onlineTranslation = normalizeLyricValue(
+          await loadOptionalLyrics(options.loadOnlineTranslation)
+        )
+        if (onlineTranslation) {
+          translatedLyrics = onlineTranslation
+          translatedLyricsSource = 'online'
+        }
+      }
     }
   }
 
