@@ -8,8 +8,11 @@ export default defineConfig(
   {
     ignores: [
       '**/node_modules/**',
+      '**/.workbuddy/**',
       '**/dist/**',
+      '**/dist.*/**',
       '**/out/**',
+      '**/out-*/**',
       '**/build/**',
       '**/output/**',
       '**/coverage/**',

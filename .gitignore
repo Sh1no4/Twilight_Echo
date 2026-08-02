@@ -133,6 +133,12 @@ resources/font/_originals/
 outputs/
 
 # Local packaging / signing artifacts
+/dist-release-*/
+/dist.pre-unpack-*/
+/out-cloud-validation-*/
+/out-package-*/
+/out-release-*/
+/out-strip-quarantine-*/
 *.cer
 *.crt
 *.p7b
