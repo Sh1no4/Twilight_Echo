@@ -9,6 +9,7 @@ import { getWindowBackgroundColor } from '../audio/state'
 import { installAudioDeviceHotplugWatcher } from '../audio/deviceHotplug'
 import { destroyDesktopLyrics } from '../integrations/desktopLyrics'
 import { ClosePersistenceAttemptGate } from './closePersistence.ts'
+import { isSafeExternalUrl } from '../security/externalUrl.ts'
 import type { RendererClosePersistenceOutcome } from '../../shared/closePersistence.ts'
 
 const PLAYBACK_SESSION_SAVE_TIMEOUT_MS = 1800
@@ -82,7 +83,7 @@ function closeMainWindowAfterSuccessfulPersistence(win: BrowserWindow): void {
 async function showClosePersistenceFailure(
   win: BrowserWindow,
   error: Error
-): Promise<'retry' | 'cancel'> {
+): Promise<'retry' | 'cancel' | 'force'> {
   console.error('[persistence] Window close cancelled because renderer persistence failed:', error)
   try {
     const response = await dialog.showMessageBox(win, {
@@ -90,12 +91,15 @@ async function showClosePersistenceFailure(
       title: 'Twilight Echo could not save your changes',
       message: 'The window remains open so your playlist changes are not silently lost.',
       detail: error.message,
-      buttons: ['Retry close', 'Keep window open'],
+      buttons: ['Retry close', 'Keep window open', 'Quit without saving'],
       defaultId: 0,
       cancelId: 1,
       noLink: true
     })
-    return response.response === 0 ? 'retry' : 'cancel'
+    // I3: 提供“仍然退出”逃生出口，避免保存持续失败时对话框循环卡住。
+    if (response.response === 0) return 'retry'
+    if (response.response === 2) return 'force'
+    return 'cancel'
   } catch (dialogError) {
     console.error('[persistence] Failed to present the cancelled-close dialog:', dialogError)
     return 'cancel'
@@ -192,14 +196,7 @@ export function createWindow(): void {
   }
 }
 
-function isSafeExternalUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url)
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:'
-  } catch {
-    return false
-  }
-}
+// S4：外部跳转默认仅放行 https:（共享实现见 security/externalUrl.ts）
 
 function isAllowedAppNavigation(url: string): boolean {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {

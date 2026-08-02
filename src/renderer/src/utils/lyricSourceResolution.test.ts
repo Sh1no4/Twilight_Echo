@@ -236,3 +236,86 @@ test('lyric resolution does not overwrite local lyrics with provider wordLyrics'
   assert.equal(result.lyrics, '[00:01.00]Local lyric')
   assert.equal(result.lyricsSource, 'local')
 })
+
+test('online fallback can attach a companion translation from the provider path', async () => {
+  let translationCalls = 0
+  const result = await resolveLyricsWithSources({
+    track: localTrack,
+    loadLocalLyrics: async () => null,
+    loadProviderLyrics: async () => ({ lyrics: null, translatedLyrics: null }),
+    loadOnlineLyrics: async () => '[00:01.00]Online lyric',
+    loadOnlineTranslation: async () => {
+      translationCalls++
+      return '[00:01.00]Online translation'
+    }
+  })
+
+  assert.equal(translationCalls, 1)
+  assert.equal(result.lyrics, '[00:01.00]Online lyric')
+  assert.equal(result.lyricsSource, 'online')
+  assert.equal(result.translatedLyrics, '[00:01.00]Online translation')
+  assert.equal(result.translatedLyricsSource, 'online')
+})
+
+test('online fallback keeps translation hidden when companion lookup misses', async () => {
+  let translationCalls = 0
+  const result = await resolveLyricsWithSources({
+    track: localTrack,
+    loadLocalLyrics: async () => null,
+    loadProviderLyrics: async () => ({ lyrics: null, translatedLyrics: null }),
+    loadOnlineLyrics: async () => '[00:01.00]Online lyric',
+    loadOnlineTranslation: async () => {
+      translationCalls++
+      return null
+    }
+  })
+
+  assert.equal(translationCalls, 1)
+  assert.equal(result.lyrics, '[00:01.00]Online lyric')
+  assert.equal(result.lyricsSource, 'online')
+  assert.equal(result.translatedLyrics, null)
+  assert.equal(result.translatedLyricsSource, null)
+})
+
+test('online companion translation is not fetched when no online lyrics were found', async () => {
+  let translationCalls = 0
+  const result = await resolveLyricsWithSources({
+    track: localTrack,
+    loadLocalLyrics: async () => null,
+    loadProviderLyrics: async () => ({ lyrics: null, translatedLyrics: null }),
+    loadOnlineLyrics: async () => null,
+    loadOnlineTranslation: async () => {
+      translationCalls++
+      return '[00:01.00]Should not be used'
+    }
+  })
+
+  assert.equal(translationCalls, 0)
+  assert.equal(result.lyrics, null)
+  assert.equal(result.translatedLyrics, null)
+})
+
+test('online companion translation does not overwrite an existing translation', async () => {
+  let translationCalls = 0
+  const result = await resolveLyricsWithSources({
+    track: {
+      ...localTrack,
+      lyrics: '[00:01.00]Embedded lyric',
+      translatedLyrics: '[00:01.00]Embedded translation',
+      lyricsSource: 'embedded',
+      translatedLyricsSource: 'embedded'
+    },
+    loadLocalLyrics: async () => '[00:01.00]Local lyric',
+    loadProviderLyrics: async () => ({ lyrics: null, translatedLyrics: null }),
+    loadOnlineLyrics: async () => '[00:01.00]Online lyric',
+    loadOnlineTranslation: async () => {
+      translationCalls++
+      return '[00:01.00]Should not overwrite'
+    }
+  })
+
+  assert.equal(translationCalls, 0)
+  assert.equal(result.lyrics, '[00:01.00]Embedded lyric')
+  assert.equal(result.translatedLyrics, '[00:01.00]Embedded translation')
+  assert.equal(result.translatedLyricsSource, 'embedded')
+})

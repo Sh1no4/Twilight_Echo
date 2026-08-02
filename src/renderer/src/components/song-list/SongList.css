@@ -1077,44 +1077,17 @@
 
 .track-row:hover {
   background: transparent;
-  transform: translateX(2px) scale(1.012);
-  box-shadow: 0 16px 38px rgba(86, 70, 160, 0.08);
-  filter: saturate(1.02);
+  /* U2: 无位移、无大阴影、无动画描边，仅保留静态细描边 */
+  box-shadow: inset 0 0 0 1px var(--te-library-row-hover-border, rgba(124, 77, 255, 0.22));
+  filter: none;
   z-index: 3;
 }
 
+/* U2: 关闭 hover 的玻璃层与动画渐变描边（pointer-border-pulse / border-gradient-flow） */
 .track-row:hover::before,
 .track-row:hover::after {
-  opacity: 1;
-}
-
-.track-row:hover::before {
-  background-size: 220% 100%;
-  animation: hover-gradient-flow 4s linear infinite;
-}
-
-.track-row:hover::after {
-  background:
-    radial-gradient(
-      circle 92px at var(--track-pointer-x) var(--track-pointer-y),
-      rgba(124, 77, 255, 0.4) 0%,
-      rgba(34, 211, 238, 0.3) 34%,
-      rgba(255, 126, 182, 0.24) 55%,
-      transparent 76%
-    ),
-    linear-gradient(
-      90deg,
-      rgba(124, 77, 255, 0.22),
-      rgba(34, 211, 238, 0.16),
-      rgba(255, 126, 182, 0.18),
-      rgba(124, 77, 255, 0.22)
-    );
-  background-size:
-    100% 100%,
-    260% 100%;
-  animation:
-    pointer-border-pulse 1.7s ease-in-out infinite,
-    border-gradient-flow 2.8s linear infinite;
+  opacity: 0;
+  animation: none !important;
 }
 .track-row:hover td {
   border-bottom-color: transparent;
@@ -1142,10 +1115,9 @@
 }
 
 .track-playing {
-  background: transparent !important;
-  box-shadow: 0 20px 48px rgba(124, 77, 255, 0.12);
-  transform: translateX(2px) scale(1.026);
-  z-index: 4;
+  background: var(--te-playing-row-bg, rgba(124, 77, 255, 0.08)) !important;
+  box-shadow: inset 0 0 0 1px rgba(124, 77, 255, 0.28);
+  z-index: 1;
 }
 .track-playing td {
   border-bottom-color: transparent !important;
@@ -1904,9 +1876,8 @@
 /* Playing + selected: keep playing border, drop selected glass conflict */
 .track-row.track-selected.track-playing {
   background: transparent;
-  transform: translateX(2px) scale(1.026);
-  box-shadow: 0 20px 48px rgba(124, 77, 255, 0.12);
-  z-index: 4;
+  box-shadow: inset 0 0 0 1px rgba(124, 77, 255, 0.28);
+  z-index: 1;
 }
 
 .track-row.track-selected.track-playing::before {
@@ -1925,10 +1896,9 @@
 }
 
 .track-row.track-selected.track-playing:hover {
-  transform: translateX(2px) scale(1.026);
-  box-shadow: 0 20px 48px rgba(124, 77, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(124, 77, 255, 0.28);
   filter: none;
-  z-index: 4;
+  z-index: 1;
 }
 
 :global(html[data-theme='dark'] .track-select-box) {

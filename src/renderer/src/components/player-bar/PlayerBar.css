@@ -68,6 +68,42 @@
   align-items: center;
 }
 
+.volume-button-group {
+  display: flex;
+  align-items: center;
+}
+
+.volume-drawer-toggle {
+  display: flex;
+  width: 18px;
+  height: 32px;
+  margin-left: -4px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #888;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.volume-drawer-toggle:hover,
+.volume-drawer-toggle.active {
+  background: color-mix(in srgb, var(--accent-color, #2563eb) 12%, transparent);
+  color: var(--accent-color, #2563eb);
+}
+
+.player-bar-glass .volume-drawer-toggle {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.player-bar-glass .volume-drawer-toggle:hover,
+.player-bar-glass .volume-drawer-toggle.active {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--accent-color, #1a73e8);
+}
+
 .sleep-timer-select {
   max-width: 120px;
   min-height: 30px;
@@ -2295,11 +2331,11 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   border-radius: 16px;
   border: 1px solid var(--hifi-line);
   background: var(--hifi-card);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 :deep(.hifi-panel-glass .hifi-meta) {
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 
 :deep(.hifi-meta span) {
@@ -2336,7 +2372,7 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   border-radius: 16px;
   border: 1px solid var(--hifi-line);
   background: var(--hifi-card);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
   overflow: hidden;
 }
 
@@ -2391,7 +2427,7 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   border-radius: 18px;
   background: var(--hifi-card);
   color: var(--hifi-ink);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
   cursor: pointer;
   text-align: left;
   transition:
@@ -2438,9 +2474,9 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 }
 
 :deep(.hifi-toggle-card:hover:not(:disabled)) {
-  transform: translateY(-2px);
+  transform: none;
   border-color: color-mix(in srgb, var(--hifi-accent) 24%, transparent);
-  box-shadow: 0 16px 32px var(--hifi-glow);
+  box-shadow: 0 2px 6px var(--hifi-glow);
 }
 
 :deep(.hifi-toggle-card.on) {
@@ -2453,7 +2489,7 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
     var(--hifi-card);
   border-color: color-mix(in srgb, var(--hifi-accent) 30%, transparent);
   box-shadow:
-    0 14px 28px var(--hifi-glow),
+    0 2px 8px var(--hifi-glow),
     inset 0 1px 0 rgba(255, 255, 255, 0.45);
 }
 

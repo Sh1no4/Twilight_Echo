@@ -796,6 +796,7 @@ html[data-te-motion='full'] .toggle-switch.active::after {
   align-items: center;
   justify-content: space-between;
   gap: 24px;
+  margin-top: 16px; /* 与上方分割线拉开间距 */
   padding: 0;
   border: 0;
   background: transparent;
@@ -1845,6 +1846,32 @@ html[data-te-motion='full'] .swatch.active {
     background var(--te-motion-hover) var(--te-ease-soft),
     box-shadow var(--te-motion-hover) var(--te-ease-soft),
     translate var(--te-motion-hover) var(--te-ease-soft);
+}
+
+/* 歌词显示样式：控件独占整行，滑块组自动拉伸/换行，避免标签与数值挤在一起 */
+.lyric-style-item {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.lyric-style-item .inline-controls {
+  width: 100%;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  row-gap: 10px;
+  column-gap: 14px;
+}
+
+.lyric-style-item .range-pill {
+  flex: 1 1 240px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.lyric-style-item .range-pill .range-input {
+  flex: 1 1 90px;
+  min-width: 70px;
 }
 
 .range-pill:focus-within {

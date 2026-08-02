@@ -98,6 +98,7 @@ const {
   dismissAudioEngineRecoveryNotice,
   formatTime,
   setUnityVolume,
+  toggleMute,
   configureSleepTimer,
   cancelSleepTimer,
   setAudioProcessing,
@@ -439,13 +440,15 @@ function clampVolume(value: number): number {
 
 function onVolumeWheel(event: WheelEvent): void {
   event.preventDefault()
-  if (!volumeOpen.value) {
-    volumeOpen.value = true
-    playlistOpen.value = false
-    moreOpen.value = false
-  }
+  // I2: 滚轮只调音量，不再自动弹开音量抽屉（避免悬停误触弹出面板）。
+  // 抽屉已打开时保持打开，便于看到滑杆反馈。
   const step = event.shiftKey ? 0.01 : 0.04
   volume.value = clampVolume(volume.value + (event.deltaY < 0 ? step : -step))
+}
+
+/** I1：点击音量图标只切换静音；相邻按钮负责打开音量抽屉。 */
+function onVolumeButtonClick(): void {
+  toggleMute()
 }
 
 function onSleepTimerSelectValue(value: string): void {
@@ -1407,15 +1410,28 @@ onMounted(() => {
               </button>
             </div>
           </Transition>
-          <button
-            class="icon-btn"
-            :class="{ active: volumeOpen }"
-            title="音量"
-            aria-label="音量"
-            @click="toggleVolume"
-          >
-            <i :class="muted || volume <= 0.001 ? 'pi pi-volume-off' : 'pi pi-volume-up'"></i>
-          </button>
+          <div class="volume-button-group">
+            <button
+              class="icon-btn"
+              :class="{ active: muted || volume <= 0.001 }"
+              title="静音/恢复"
+              aria-label="静音/恢复"
+              :aria-pressed="muted || volume <= 0.001"
+              @click="onVolumeButtonClick"
+            >
+              <i :class="muted || volume <= 0.001 ? 'pi pi-volume-off' : 'pi pi-volume-up'"></i>
+            </button>
+            <button
+              class="volume-drawer-toggle"
+              :class="{ active: volumeOpen }"
+              title="打开音量控制"
+              aria-label="打开音量控制"
+              :aria-expanded="volumeOpen"
+              @click="toggleVolume"
+            >
+              <i class="pi pi-angle-up"></i>
+            </button>
+          </div>
         </div>
 
         <button

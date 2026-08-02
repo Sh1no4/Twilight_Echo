@@ -3,7 +3,7 @@ export type ClosePersistenceAttempt = 'closed' | 'cancelled' | 'retry'
 export interface ClosePersistenceCoordinatorOptions {
   requestPersistence(): Promise<void>
   close(): void
-  showFailure(error: Error): Promise<'retry' | 'cancel'>
+  showFailure(error: Error): Promise<'retry' | 'cancel' | 'force'>
 }
 
 export class ClosePersistenceAttemptGate {
@@ -43,7 +43,13 @@ export async function closeOnlyAfterRendererPersistence(
   } catch (error) {
     const message =
       error instanceof Error ? error.message : String(error || 'Unknown persistence error')
-    return (await options.showFailure(new Error(message))) === 'retry' ? 'retry' : 'cancelled'
+    const choice = await options.showFailure(new Error(message))
+    // 'force'：用户选择“仍然退出”，不再重试保存，直接关闭窗口（逃生出口）。
+    if (choice === 'force') {
+      options.close()
+      return 'closed'
+    }
+    return choice === 'retry' ? 'retry' : 'cancelled'
   }
 
   options.close()

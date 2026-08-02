@@ -4152,7 +4152,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <hr />
-            <div class="setting-item">
+            <div class="setting-item lyric-style-item">
               <div class="setting-copy">
                 <strong>歌词显示样式 (Lyrics Style)</strong>
                 <span>翻译对齐方式、字号及未播放行暗度。</span>

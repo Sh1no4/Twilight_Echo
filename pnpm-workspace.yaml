@@ -8,6 +8,12 @@ overrides:
   postcss: 8.5.18
   qs: 6.15.2
   uuid: 11.1.1
+  # S8: CVE-2026-12590 — body-parser invalid `limit` 静默禁用请求体大小校验。
+  # express@4 依赖 1.x 线，express@5 依赖 2.x 线，分别钉到修复版本。
+  body-parser@1.20.5: 1.20.6
+  body-parser@2.2.2: 2.3.0
+  # electron-builder 需要识别 Electron 43 的 ABI（@electron/rebuild → node-abi）
+  node-abi: 4.33.0
 
 # discord-rpc presence uses IPC only (no OS protocol client). Its optional register-scheme
 # fallback is an exotic native dependency for non-Electron runtimes, so omit it.

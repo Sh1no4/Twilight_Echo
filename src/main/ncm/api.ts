@@ -1,4 +1,5 @@
 import { app, BrowserWindow, session, shell, ipcMain } from 'electron'
+import { isSafeExternalUrl } from '../security/externalUrl.ts'
 import { join } from 'path'
 import { existsSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
@@ -97,7 +98,9 @@ export async function collectNcmOfficialCookie(partition: string): Promise<strin
 }
 
 export async function openNcmOfficialLogin(): Promise<string> {
-  const partition = `persist:twilight-ncm-login-${Date.now()}`
+  // 内存分区（去掉 persist: 前缀）：登录 Cookie 只存活于登录窗口会话期间，不落盘到 userData/Partitions。
+  // 登录完成后 Cookie 已通过 collectNcmOfficialCookie 取回，会话随之销毁。
+  const partition = `twilight-ncm-login-${Date.now()}`
   const ses = session.fromPartition(partition)
   await ses.clearStorageData().catch(() => undefined)
 
@@ -239,14 +242,8 @@ function normalizeNcmSongId(songId: unknown): number {
   return normalized
 }
 
-function isSafeExternalUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url)
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:'
-  } catch {
-    return false
-  }
-}
+// S4：登录窗外部跳转仅放行 https:（http: 如需放行须显式传域名白名单）
+// 共享实现见 src/main/security/externalUrl.ts
 
 export async function setupNcmApi(): Promise<void> {
   try {
