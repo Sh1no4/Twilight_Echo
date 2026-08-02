@@ -16,9 +16,9 @@ test('graphic equalizer preamp and band sliders support 0.1 dB adjustments', () 
 })
 
 test('theme modes change only equalizer presentation and use stable chart classes', () => {
-  assert.equal(source.match(/class="equalizer-spectrum-line"/g)?.length, 2)
-  assert.equal(source.match(/class="equalizer-spectrum-area"/g)?.length, 2)
-  assert.match(source, /class="frequency-guide"/)
+  assert.equal(source.match(/class="equalizer-spectrum-line"/g)?.length, 1)
+  assert.equal(source.match(/class="equalizer-spectrum-area"/g)?.length, 1)
+  assert.match(source, /ParametricEqWorkspace/)
   assert.match(source, /data-te-equalizer-panel='tinted'/)
   assert.match(source, /data-te-equalizer-slider='solid'/)
   assert.match(source, /data-te-equalizer-knob='dot'/)
@@ -41,6 +41,53 @@ test('OPRA compensation is reflected in the plotted response curve', () => {
   assert.match(source, /mode: displayEqMode\.value/)
 })
 
+test('DSP chart splits manual, OPRA, and effective total response curves', () => {
+  assert.match(
+    source,
+    /const manualResponsePath = computed\([\s\S]*?computeCompositeResponse\(audioProcessing\.value\.eqBands, audioProcessing\.value\.eqPreamp/
+  )
+  assert.match(
+    source,
+    /const opraResponsePath = computed\([\s\S]*?computeCompositeResponse\([\s\S]*?headphoneCompensation\.value\.bands,[\s\S]*?headphoneCompensation\.value\.preampDb/
+  )
+  assert.match(source, /class="equalizer-manual-response-line"/)
+  assert.match(source, /class="equalizer-opra-response-line"/)
+  assert.equal(source.match(/>总 DSP 合成<\/span>/g)?.length, 1)
+  assert.match(source, /:response-path="responsePath"/)
+})
+
+test('OPRA estimated source deviation is explicitly non-measured and excludes preamp', () => {
+  assert.match(
+    source,
+    /computeEstimatedSourceDeviation\(headphoneCompensation\.value\.bands, responseOptions\.value\)/
+  )
+  assert.match(source, /class="equalizer-estimated-deviation-line"/)
+  assert.equal(source.match(/相对隐含目标 0 dB · 非实测/g)?.length, 1)
+  assert.match(source, /排除前级增益，不代表实测频响/)
+})
+
+test('AutoEq CSV import switches to a distinct measured headphone response view', () => {
+  assert.match(source, /window\.api\.audioEngine\.importFrequencyResponse\(\)/)
+  assert.match(source, /type ResponseView = 'dsp' \| 'headphone'/)
+  assert.equal(source.match(/>\s*DSP 响应\s*<\/button>/g)?.length, 2)
+  assert.equal(source.match(/>\s*耳机频响\s*<\/button>/g)?.length, 2)
+  assert.match(source, /源频响偏差（实测）/)
+  assert.match(source, /目标曲线（0 dB）/)
+  assert.match(source, /预计校正后频响/)
+})
+
+test('headphone comparison uses target-relative measured data and excludes digital preamp', () => {
+  assert.match(source, /computeTargetRelativeFrequencyResponse\(/)
+  assert.match(
+    source,
+    /computeCompositeResponse\(displayEqBands\.value, 0,[\s\S]*?mode: displayEqMode\.value/
+  )
+  assert.match(source, /class="equalizer-measured-source-line"/)
+  assert.match(source, /class="equalizer-target-response-line"/)
+  assert.match(source, /class="equalizer-corrected-acoustic-line"/)
+  assert.match(source, /排除数字前级 · 非校正后实测/)
+})
+
 test('resetting the EQ keeps OPRA stacked in the DSP scene equalizer node', () => {
   assert.match(
     source,
@@ -58,4 +105,34 @@ test('applying or disabling OPRA re-syncs the DSP scene', () => {
 
 test('OPRA-stacked scene bands never overwrite the manual editor state', () => {
   assert.match(source, /if \(opraCompensationEnabled\.value\) return/)
+})
+
+test('parametric editor exposes direct manipulation and throttled DSP commits', () => {
+  assert.match(source, /import ParametricEqWorkspace/)
+  assert.match(source, /@add="addBand"/)
+  assert.match(source, /@preview="stageBandPatch"/)
+  assert.match(source, /@commit="commitStagedBands"/)
+  assert.match(source, /@delete="deleteBand"/)
+  assert.match(source, /@toggle="toggleBandEnabled"/)
+  assert.match(source, /window\.requestAnimationFrame/)
+  assert.match(source, /runEqApply/)
+})
+
+test('parametric page gives the analyzer a compact instrument-style hierarchy', () => {
+  assert.match(source, /class="tab-pane active parametric-pane"/)
+  assert.match(source, /class="parametric-page-header"/)
+  assert.match(source, />DSP \/ EQUALIZATION</)
+  assert.match(source, />32 BAND · REAL-TIME</)
+  assert.match(source, /class="parametric-toolbar-label">ANALYZER SOURCE/)
+  assert.match(source, /\.parametric-pane \{[\s\S]*?gap: 10px/)
+  assert.match(source, /\.parametric-toolbar-card \{[\s\S]*?border-radius: 8px/)
+  assert.match(source, /@media \(max-width: 620px\)/)
+})
+
+test('parametric editor reuses native player visualization data and cleans up animation work', () => {
+  assert.match(source, /const \{ visualizationData, isPlaying \} = playerStore/)
+  assert.match(source, /spectrumToPath\(smoothedSpectrum/)
+  assert.match(source, /watch\(\[spectrumVisible, responseView, isPlaying\]/)
+  assert.match(source, /onBeforeUnmount/)
+  assert.match(source, /cancelAnimationFrame\(spectrumAnimationFrame\)/)
 })

@@ -494,7 +494,10 @@ const { playTrack, startPersonalizedStream, appendPersonalizedStreamTracks, form
   playbackStore
 
 function playCloudSong(song: import('../stores/useNcmStore.ts').NcmCloudSong): void {
-  playTrack(song.track, cloudSongs.value.map((item) => item.track))
+  playTrack(
+    song.track,
+    cloudSongs.value.map((item) => item.track)
+  )
 }
 
 function playAllCloudSongs(): void {
@@ -1768,27 +1771,41 @@ const {
   isSelected,
   clearSelection,
   getSelectedTracks,
-  ensureContextSelection
+  selectOnly
 } = multiSelect
+
+function isStreamingTrackFavorited(track: Track): boolean {
+  if (track.ncmSongId != null) return isTrackLiked(track.ncmSongId)
+  return musicStore.isFavoriteTrack(track)
+}
 
 const selectionAllFavorited = computed(() => {
   const selected = getSelectedTracks()
-  if (selected.length === 0) return false
-  return selected.every((track) => {
-    if (track.ncmSongId != null) return isTrackLiked(track.ncmSongId)
-    return musicStore.isFavoriteTrack(track)
-  })
+  return selected.length > 0 && selected.every(isStreamingTrackFavorited)
 })
-
-const selectionActionLabel = computed(() =>
-  selectedCount.value > 1 ? ` (${selectedCount.value})` : ''
-)
 
 const showStreamingContextMenu = ref(false)
 const streamingContextMenuX = ref(0)
 const streamingContextMenuY = ref(0)
 const showStreamingPlaylistSubmenu = ref(false)
 const streamingContextMenuTrack = ref<Track | null>(null)
+const streamingContextUsesSelection = computed(() => {
+  const track = streamingContextMenuTrack.value
+  return !!track && isSelected(track.id) && selectedCount.value > 0
+})
+const streamingContextActionTracks = computed(() => {
+  const track = streamingContextMenuTrack.value
+  if (!track) return []
+  return streamingContextUsesSelection.value ? getSelectedTracks() : [track]
+})
+const streamingContextActionCount = computed(() => streamingContextActionTracks.value.length)
+const streamingContextActionLabel = computed(() =>
+  streamingContextActionCount.value > 1 ? ` (${streamingContextActionCount.value})` : ''
+)
+const streamingContextAllFavorited = computed(() => {
+  const tracks = streamingContextActionTracks.value
+  return tracks.length > 0 && tracks.every(isStreamingTrackFavorited)
+})
 
 function closeStreamingContextMenu(): void {
   showStreamingContextMenu.value = false
@@ -1798,10 +1815,9 @@ function closeStreamingContextMenu(): void {
 
 useEscapeToClose(showStreamingContextMenu, closeStreamingContextMenu)
 
-function onStreamingTrackContextMenu(track: Track, index: number, event: MouseEvent): void {
+function onStreamingTrackContextMenu(track: Track, _index: number, event: MouseEvent): void {
   event.preventDefault()
   event.stopPropagation()
-  ensureContextSelection(track, index)
   streamingContextMenuTrack.value = track
   streamingContextMenuX.value = event.clientX
   streamingContextMenuY.value = event.clientY
@@ -1829,25 +1845,29 @@ async function handleContextPlayTrack(): Promise<void> {
 }
 
 async function handleContextFavorite(): Promise<void> {
+  const tracks = streamingContextActionTracks.value
   closeStreamingContextMenu()
-  await handleStreamingBatchFavorite()
+  await favoriteStreamingTracks(tracks)
 }
 
 function handleContextAddToPlaylist(): void {
+  const tracks = streamingContextActionTracks.value
   closeStreamingContextMenu()
-  openAddToNcmPlaylistDialog(getSelectedTracks())
+  openAddToNcmPlaylistDialog(tracks)
 }
 
 function handleContextCreatePlaylist(): void {
+  const tracks = streamingContextActionTracks.value
   closeStreamingContextMenu()
-  openCreateNcmPlaylistDialog(getSelectedTracks())
+  openCreateNcmPlaylistDialog(tracks)
 }
 
 async function handleContextAddToOwnedPlaylist(
   playlist: MediaProviderPlaylistSummary
 ): Promise<void> {
+  const tracks = streamingContextActionTracks.value
   closeStreamingContextMenu()
-  addToNcmPlaylistTracks.value = getSelectedTracks().filter(
+  addToNcmPlaylistTracks.value = tracks.filter(
     (track) => track.ncmSongId != null && Number.isFinite(track.ncmSongId) && track.ncmSongId > 0
   )
   if (addToNcmPlaylistTracks.value.length === 0) {
@@ -1858,8 +1878,9 @@ async function handleContextAddToOwnedPlaylist(
 }
 
 async function handleContextRemoveFromPlaylist(): Promise<void> {
+  const tracks = streamingContextActionTracks.value
   closeStreamingContextMenu()
-  await handleStreamingBatchDelete()
+  await removeStreamingTracks(tracks)
 }
 
 async function handleContextLikeTrack(): Promise<void> {
@@ -1887,7 +1908,7 @@ const contextMenuCanLike = computed(
   () =>
     !isExternalActive.value &&
     streamingContextMenuTrack.value?.ncmSongId != null &&
-    selectedCount.value <= 1
+    streamingContextActionCount.value === 1
 )
 
 onMounted(() => {
@@ -1905,17 +1926,18 @@ async function playTrackFromCurrentDetail(track: Track): Promise<void> {
 }
 
 function onTrackClick(track: Track, index: number, event?: MouseEvent): void {
-  if (event && (event.shiftKey || event.ctrlKey || event.metaKey)) {
-    multiSelect.onRowClick(track, index, event)
+  if (!event) return
+  const result = multiSelect.onRowClick(track, index, event)
+  if (result !== 'play') return
+  if (settingsStore.settings.value.trackActivationMode === 'doubleClick') {
+    selectOnly(track.id, index)
     return
-  }
-  if (event) {
-    multiSelect.onRowClick(track, index, event)
   }
   void playTrackFromCurrentDetail(track)
 }
 
 function playDetailTrack(track: Track, _index: number): void {
+  clearSelection()
   void playTrackFromCurrentDetail(track)
 }
 
@@ -2093,21 +2115,31 @@ function onSocialCollectionClick(item: {
 }
 
 function onSearchTrackClickWithSelect(track: Track, event: MouseEvent): void {
-  const index = searchResults.value.findIndex((item) => item.id === track.id)
-  const result = multiSelect.onRowClick(track, Math.max(0, index), event)
-  if (result === 'play') {
-    onSearchTrackClick(track)
+  if (event.type === 'click' && event.detail > 1) return
+  const index = Math.max(
+    0,
+    searchResults.value.findIndex((item) => item.id === track.id)
+  )
+  const result = multiSelect.onRowClick(track, index, event)
+  if (result !== 'play') return
+  if (
+    settingsStore.settings.value.trackActivationMode === 'doubleClick' &&
+    event.type !== 'dblclick'
+  ) {
+    selectOnly(track.id, index)
+    return
   }
+  clearSelection()
+  onSearchTrackClick(track)
 }
 
-async function handleStreamingBatchFavorite(): Promise<void> {
-  const selected = getSelectedTracks()
-  if (selected.length === 0) return
-  const allLiked = selectionAllFavorited.value
+async function favoriteStreamingTracks(tracks: Track[]): Promise<void> {
+  if (tracks.length === 0) return
+  const allLiked = tracks.every(isStreamingTrackFavorited)
   const actionLabel = allLiked ? '取消收藏' : '收藏'
   let succeeded = 0
   let failed = 0
-  for (const track of selected) {
+  for (const track of tracks) {
     if (track.ncmSongId != null) {
       if (likingTracks.value.has(track.ncmSongId)) continue
       likingTracks.value = new Set([...likingTracks.value, track.ncmSongId])
@@ -2134,9 +2166,13 @@ async function handleStreamingBatchFavorite(): Promise<void> {
       kind: 'error',
       message: `${actionLabel}完成 ${succeeded}/${succeeded + failed} 首，${failed} 首失败`
     })
-  } else if (selected.length > 1) {
+  } else if (tracks.length > 1) {
     pushNotice({ kind: 'success', message: `已${actionLabel} ${succeeded} 首歌曲` })
   }
+}
+
+async function handleStreamingBatchFavorite(): Promise<void> {
+  await favoriteStreamingTracks(getSelectedTracks())
 }
 
 const showCreateNcmPlaylistDialog = ref(false)
@@ -2302,8 +2338,7 @@ async function confirmAddTracksToNcmPlaylist(
   }
 }
 
-async function handleStreamingBatchDelete(): Promise<void> {
-  const selected = getSelectedTracks()
+async function removeStreamingTracks(selected: Track[]): Promise<void> {
   if (selected.length === 0) return
 
   if (canMutateCurrentNcmPlaylist.value && currentDetail.value?.type === 'playlist') {
@@ -2385,6 +2420,10 @@ async function handleStreamingBatchDelete(): Promise<void> {
   } catch (error) {
     setStreamingBatchRemovalError(friendlyStreamingError(error, '移除曲目失败'))
   }
+}
+
+async function handleStreamingBatchDelete(): Promise<void> {
+  await removeStreamingTracks(getSelectedTracks())
 }
 
 function handleStreamingBatchAddToPlaylist(): void {
@@ -2932,6 +2971,7 @@ onMounted(async () => {
             :search-loading="searchLoading"
             :search-error="searchError"
             :current-track="currentTrack"
+            :track-activation-mode="settingsStore.settings.value.trackActivationMode"
             :liking-tracks="likingTracks"
             :is-track-liked="isTrackLiked"
             :format-time="formatTime"
@@ -3090,6 +3130,7 @@ onMounted(async () => {
                 :track-count-label="detailTrackCountLabel"
                 :tracks="detailTracks"
                 :current-track-id="currentTrack?.id ?? null"
+                :track-activation-mode="settingsStore.settings.value.trackActivationMode"
                 :is-external="isExternalActive"
                 :loading="detailLoading && detailTracks.length === 0"
                 :has-selection="hasSelection"
@@ -3141,6 +3182,7 @@ onMounted(async () => {
               :active-tab="socialStageKind === 'artist' ? activeArtistTab : ''"
               :tracks="detailTracks"
               :current-track-id="currentTrack?.id ?? null"
+              :track-activation-mode="settingsStore.settings.value.trackActivationMode"
               :is-external="isExternalActive"
               :has-selection="hasSelection"
               :selected-count="selectedCount"
@@ -3252,9 +3294,10 @@ onMounted(async () => {
           @keydown.enter.prevent="handleContextFavorite"
           @keydown.space.prevent="handleContextFavorite"
         >
-          <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
+          <i :class="streamingContextAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
           <span>
-            {{ selectionAllFavorited ? '取消收藏' : '加入收藏' }}{{ selectionActionLabel }}
+            {{ streamingContextAllFavorited ? '取消收藏' : '加入收藏'
+            }}{{ streamingContextActionLabel }}
           </span>
         </div>
         <div
@@ -3277,7 +3320,7 @@ onMounted(async () => {
           @mouseleave="showStreamingPlaylistSubmenu = false"
         >
           <i class="pi pi-plus"></i>
-          <span>添加到歌单{{ selectionActionLabel }}</span>
+          <span>添加到歌单{{ streamingContextActionLabel }}</span>
           <i class="pi pi-chevron-right submenu-icon"></i>
           <div v-if="showStreamingPlaylistSubmenu" class="submenu">
             <div
@@ -3333,7 +3376,7 @@ onMounted(async () => {
           @keydown.space.prevent="handleContextRemoveFromPlaylist"
         >
           <i class="pi pi-minus-circle"></i>
-          <span>从歌单移除{{ selectionActionLabel }}</span>
+          <span>从歌单移除{{ streamingContextActionLabel }}</span>
         </div>
       </div>
     </Teleport>

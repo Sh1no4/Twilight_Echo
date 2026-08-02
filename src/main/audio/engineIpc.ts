@@ -1,4 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { readFile, stat } from 'node:fs/promises'
+import { release } from 'node:os'
 import { join } from 'path'
 import { runtime } from '../core/runtime'
 import { sleepTimerService } from '../sleepTimer.ts'
@@ -29,6 +31,13 @@ import {
 } from '../dsp/dspProfileArchive.ts'
 import { Vst3CatalogService } from '../dsp/vst3Catalog.ts'
 import { rendererFallbackAllowed } from './nativeBinding.ts'
+import { importFrequencyResponseFromDialog } from './importFrequencyResponse.ts'
+import {
+  AudioDiagnosticRecorder,
+  collectDsdPcmBlockers,
+  createPlaybackDiagnosticEvent,
+  type AudioDiagnosticSnapshot
+} from './audioDiagnostics.ts'
 import {
   persistAudioOutputState,
   persistAudioOutputConfig,
@@ -58,6 +67,9 @@ import {
 const MAX_AUDIO_QUEUE_ITEMS = 5000
 const MAX_AUDIO_SOURCE_LENGTH = 8192
 const MAX_AUDIO_DEVICE_LENGTH = 512
+
+let audioDiagnosticRecorder: AudioDiagnosticRecorder | null = null
+let lastAudioDiagnosticPlaybackSignature = ''
 
 const DSP_ASSET_KINDS: DspAssetKind[] = [
   'impulseResponse',
@@ -218,6 +230,145 @@ async function quarantineActiveVst3Nodes(reason: string): Promise<void> {
   runtime.audioEngineManager?.refreshDspGraph()
 }
 
+function initializeAudioDiagnostics(): AudioDiagnosticRecorder {
+  const recorder = new AudioDiagnosticRecorder({
+    directory: join(app.getPath('logs'), 'audio'),
+    environment: {
+      appName: app.getName(),
+      appVersion: app.getVersion(),
+      packaged: app.isPackaged,
+      platform: process.platform,
+      architecture: process.arch,
+      osRelease: release(),
+      locale: app.getLocale(),
+      processVersions: {
+        electron: process.versions.electron,
+        chrome: process.versions.chrome,
+        node: process.versions.node,
+        modules: process.versions.modules
+      }
+    }
+  })
+  recorder.record('session-start', {
+    selectedOutput: {
+      output: runtime.appSettings.audioOutput,
+      device: runtime.appSettings.audioDevice,
+      exclusiveMode: runtime.appSettings.audioExclusiveMode
+    },
+    outputConfig: runtime.appSettings.audioOutputConfig,
+    configuredProcessing: runtime.appSettings.audioProcessing,
+    effectiveProcessing: getEffectiveAudioProcessing(),
+    headphoneCompensation: summarizeHeadphoneCompensation()
+  })
+  return recorder
+}
+
+function summarizeHeadphoneCompensation(): Record<string, unknown> {
+  const compensation = runtime.appSettings.headphoneCompensation
+  return {
+    enabled: compensation.enabled,
+    productId: compensation.productId,
+    productName: compensation.productName,
+    vendorName: compensation.vendorName,
+    eqId: compensation.eqId,
+    preampDb: compensation.preampDb,
+    bandCount: compensation.bands.length
+  }
+}
+
+function recordPlaybackDiagnostic(
+  info: Awaited<ReturnType<AudioEngineManager['getPlaybackInfo']>>
+): void {
+  const engine = runtime.audioEngineManager
+  const recorder = audioDiagnosticRecorder
+  if (!engine || !recorder) return
+  try {
+    const details = createPlaybackDiagnosticEvent({
+      playback: info,
+      processing: getEffectiveAudioProcessing(),
+      outputConfig: engine.getOutputConfig(),
+      sceneState: engine.getDspSceneState(),
+      selectedOutput: {
+        output: runtime.appSettings.audioOutput,
+        device: runtime.appSettings.audioDevice,
+        exclusiveMode: runtime.appSettings.audioExclusiveMode
+      }
+    })
+    const signatureDetails = { ...details, position: 0 }
+    const signature = JSON.stringify(signatureDetails)
+    if (signature === lastAudioDiagnosticPlaybackSignature) return
+    lastAudioDiagnosticPlaybackSignature = signature
+    const warning = info.isDsd && info.dsdMode === 'pcm'
+    recorder.record('playback-state', details, warning ? 'warning' : 'info')
+  } catch (error) {
+    recorder.record(
+      'diagnostic-collection-failed',
+      { phase: 'playback-state', message: error instanceof Error ? error.message : String(error) },
+      'error'
+    )
+  }
+}
+
+async function captureAudioDiagnosticSnapshot(): Promise<AudioDiagnosticSnapshot> {
+  const engine = requireAudioEngine()
+  const configuredProcessing = runtime.appSettings.audioProcessing
+  const effectiveProcessing = getEffectiveAudioProcessing()
+  const outputConfig = engine.getOutputConfig()
+  const dspSceneState = engine.getDspSceneState()
+  const playback = await captureDiagnosticValue(() => engine.getPlaybackInfo())
+  const outputState = await captureDiagnosticValue(() => engine.getAudioOutputState())
+  const dspGraphStatus = await captureDiagnosticValue(() => engine.getDspGraphStatus())
+  const diagnosis = isPlaybackInfo(playback)
+    ? {
+        dsdPcmFallback: playback.isDsd && playback.dsdMode === 'pcm',
+        perfectReasonCode: playback.perfectReasonCode,
+        perfectReason: playback.perfectReason,
+        blockers: collectDsdPcmBlockers({
+          playback,
+          processing: effectiveProcessing,
+          outputConfig,
+          sceneState: dspSceneState
+        }),
+        nativeDsdRuntimeState: playback.outputInfo.nativeDsdRuntimeState,
+        nativeDsdRuntimeReason: playback.outputInfo.nativeDsdRuntimeReason
+      }
+    : { unavailable: true }
+  return {
+    playback,
+    outputState,
+    outputConfig,
+    outputConfigApplyStatus: engine.getOutputConfigApplyStatus(),
+    configuredProcessing,
+    effectiveProcessing,
+    headphoneCompensation: summarizeHeadphoneCompensation(),
+    dspSceneState,
+    dspGraphStatus,
+    diagnosis
+  }
+}
+
+async function captureDiagnosticValue<T>(
+  read: () => T | Promise<T>
+): Promise<T | { error: string }> {
+  try {
+    return await read()
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+function isPlaybackInfo(
+  value: unknown
+): value is Awaited<ReturnType<AudioEngineManager['getPlaybackInfo']>> {
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    'outputInfo' in value &&
+    'volume' in value &&
+    'state' in value
+  )
+}
+
 export async function setupAudioEngineIpc(): Promise<void> {
   let initialAudioProcessing = getEffectiveAudioProcessing()
   try {
@@ -266,6 +417,8 @@ export async function setupAudioEngineIpc(): Promise<void> {
   await registerManagedVst3SearchPaths((await runtime.vst3Catalog.getState()).searchPaths)
   runtime.audioEngineManager.refreshDspGraph()
   await reconcileDspAssetReferences()
+  audioDiagnosticRecorder = initializeAudioDiagnostics()
+  lastAudioDiagnosticPlaybackSignature = ''
 
   runtime.audioEngineManager.on('property-change', ({ name, data }) => {
     runtime.mainWindow?.webContents.send('audioEngine:property-change', { name, data })
@@ -273,6 +426,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
   })
 
   runtime.audioEngineManager.on('end-file', ({ reason }) => {
+    audioDiagnosticRecorder?.record('end-file', { reason })
     runtime.mainWindow?.webContents.send('audioEngine:end-file', { reason })
     void runtime.pluginManager?.broadcastEvent('audioEngine:end-file', { reason })
   })
@@ -280,6 +434,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
   registerNativeSleepTimerBoundaries(runtime.audioEngineManager, sleepTimerService)
 
   runtime.audioEngineManager.on('start-file', () => {
+    audioDiagnosticRecorder?.record('start-file')
     runtime.mainWindow?.webContents.send('audioEngine:start-file')
     void runtime.pluginManager?.broadcastEvent('audioEngine:start-file', null)
   })
@@ -289,11 +444,13 @@ export async function setupAudioEngineIpc(): Promise<void> {
   })
 
   runtime.audioEngineManager.on('error', (err: Error) => {
+    audioDiagnosticRecorder?.record('engine-error', { message: err.message }, 'error')
     console.error('[音频引擎]', err.message)
     runtime.mainWindow?.webContents.send('audioEngine:error', err.message)
   })
 
   runtime.audioEngineManager.on('audio-service-crash', ({ reason }) => {
+    audioDiagnosticRecorder?.record('audio-service-crash', { reason }, 'error')
     console.error('[音频服务]', reason)
     runtime.mainWindow?.webContents.send('audioEngine:service-crash', { reason })
     runtime.mainWindow?.webContents.send('audioEngine:error', `音频服务已重启：${reason}`)
@@ -302,30 +459,44 @@ export async function setupAudioEngineIpc(): Promise<void> {
   })
 
   runtime.audioEngineManager.on('audio-service-ready', (event) => {
+    audioDiagnosticRecorder?.record('audio-service-ready', event)
     runtime.mainWindow?.webContents.send('audioEngine:service-ready', event)
     void runtime.pluginManager?.broadcastEvent('audioEngine:service-ready', event)
   })
 
+  runtime.audioEngineManager.on('audio-service-stderr', ({ message }) => {
+    audioDiagnosticRecorder?.record('audio-service-stderr', { message }, 'warning')
+  })
+
+  runtime.audioEngineManager.on('audio-service-stdout', ({ message }) => {
+    audioDiagnosticRecorder?.record('audio-service-stdout', { message })
+  })
+
   runtime.audioEngineManager.on('audio-device-options-changed', ({ reason }) => {
+    audioDiagnosticRecorder?.record('device-options-changed', { reason })
     runtime.mainWindow?.webContents.send('audioEngine:device-options-changed', { reason })
   })
 
   runtime.audioEngineManager.on('ready', () => {
+    audioDiagnosticRecorder?.record('engine-ready')
     runtime.mainWindow?.webContents.send('audioEngine:ready')
     void runtime.pluginManager?.broadcastEvent('audioEngine:ready', null)
   })
 
   runtime.audioEngineManager.on('playback-info', (info) => {
+    recordPlaybackDiagnostic(info)
     runtime.mainWindow?.webContents.send('audioEngine:playback-info', info)
     void runtime.pluginManager?.broadcastEvent('player:playback-info', info)
     broadcastPlayerLifecycleEvents(info)
   })
 
   runtime.audioEngineManager.on('config-applied', (event) => {
+    audioDiagnosticRecorder?.record('output-config-applied', event)
     runtime.mainWindow?.webContents.send('audioEngine:config-applied', event)
   })
 
   runtime.audioEngineManager.on('loudnorm-status', (event) => {
+    audioDiagnosticRecorder?.record('loudnorm-status', event)
     runtime.mainWindow?.webContents.send('audioEngine:loudnorm-status', event)
   })
 
@@ -356,12 +527,36 @@ export async function setupAudioEngineIpc(): Promise<void> {
 
   ipcMain.handle('audioEngine:play', async (_event, source: string, startTime?: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
-    return await requireAudioEngine().play(
-      await resolveAuthorizedPlaybackSource(
-        normalizeIpcString(source, 'audio source', MAX_AUDIO_SOURCE_LENGTH)
-      ),
-      normalizeFiniteNumber(startTime, 'start time', 0, 0, Number.MAX_SAFE_INTEGER)
+    const authorizedSource = await resolveAuthorizedPlaybackSource(
+      normalizeIpcString(source, 'audio source', MAX_AUDIO_SOURCE_LENGTH)
     )
+    const normalizedStartTime = normalizeFiniteNumber(
+      startTime,
+      'start time',
+      0,
+      0,
+      Number.MAX_SAFE_INTEGER
+    )
+    audioDiagnosticRecorder?.record('play-requested', {
+      source: authorizedSource,
+      startTime: normalizedStartTime
+    })
+    try {
+      const result = await requireAudioEngine().play(authorizedSource, normalizedStartTime)
+      audioDiagnosticRecorder?.record(
+        'play-result',
+        result,
+        result.nativeStarted ? 'info' : 'warning'
+      )
+      return result
+    } catch (error) {
+      audioDiagnosticRecorder?.record(
+        'play-failed',
+        { message: error instanceof Error ? error.message : String(error) },
+        'error'
+      )
+      throw error
+    }
   })
 
   ipcMain.handle('audioEngine:isHtmlAudioFallbackAllowed', async (event) => {
@@ -383,14 +578,19 @@ export async function setupAudioEngineIpc(): Promise<void> {
 
   ipcMain.handle('audioEngine:setVolume', async (_event, volume: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
-    await requireAudioEngine().setVolume(normalizeFiniteNumber(volume, 'volume', 1, 0, 1))
+    const normalizedVolume = normalizeFiniteNumber(volume, 'volume', 1, 0, 1)
+    await requireAudioEngine().setVolume(normalizedVolume)
+    audioDiagnosticRecorder?.record('volume-changed', {
+      volume: normalizedVolume,
+      unity: Math.abs(normalizedVolume - 1) <= 0.001
+    })
   })
 
   ipcMain.handle('audioEngine:setPlaybackRate', async (_event, rate: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
-    await requireAudioEngine().setPlaybackRate(
-      normalizeFiniteNumber(rate, 'playback rate', 1, 0.5, 2)
-    )
+    const normalizedRate = normalizeFiniteNumber(rate, 'playback rate', 1, 0.5, 2)
+    await requireAudioEngine().setPlaybackRate(normalizedRate)
+    audioDiagnosticRecorder?.record('playback-rate-changed', { playbackRate: normalizedRate })
   })
 
   ipcMain.handle(
@@ -398,11 +598,8 @@ export async function setupAudioEngineIpc(): Promise<void> {
     async (_event, startSeconds: unknown, endSeconds: unknown) => {
       assertTrustedIpcSender(_event, 'audio engine IPC')
       const start =
-        typeof startSeconds === 'number' && Number.isFinite(startSeconds)
-          ? startSeconds
-          : -1
-      const end =
-        typeof endSeconds === 'number' && Number.isFinite(endSeconds) ? endSeconds : -1
+        typeof startSeconds === 'number' && Number.isFinite(startSeconds) ? startSeconds : -1
+      const end = typeof endSeconds === 'number' && Number.isFinite(endSeconds) ? endSeconds : -1
       return await requireAudioEngine().setLoopRange(start, end)
     }
   )
@@ -438,6 +635,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     const state = await requireAudioEngine().setExclusiveMode(enabled === true)
     persistAudioOutputState(state)
+    audioDiagnosticRecorder?.record('exclusive-mode-changed', state)
     return state
   })
 
@@ -453,6 +651,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
       normalizeOptionalIpcString(device, 'audio device', MAX_AUDIO_DEVICE_LENGTH)
     )
     persistAudioOutputState(state)
+    audioDiagnosticRecorder?.record('audio-output-changed', state)
     return state
   })
 
@@ -462,6 +661,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
       normalizeIpcString(device, 'audio device', MAX_AUDIO_DEVICE_LENGTH)
     )
     persistAudioOutputState(state)
+    audioDiagnosticRecorder?.record('audio-device-changed', state)
     return state
   })
 
@@ -472,6 +672,11 @@ export async function setupAudioEngineIpc(): Promise<void> {
     await engine.setOutputConfig(normalized)
     const applied = engine.getOutputConfig()
     persistAudioOutputConfig(applied)
+    audioDiagnosticRecorder?.record('output-config-changed', {
+      requested: normalized,
+      applied,
+      applyStatus: engine.getOutputConfigApplyStatus()
+    })
     return applied
   })
 
@@ -504,6 +709,11 @@ export async function setupAudioEngineIpc(): Promise<void> {
         ...settings
       })
       await persistAndApplyAudioProcessingState(normalized)
+      audioDiagnosticRecorder?.record('audio-processing-changed', {
+        configured: runtime.appSettings.audioProcessing,
+        effective: getEffectiveAudioProcessing(),
+        headphoneCompensation: summarizeHeadphoneCompensation()
+      })
       return runtime.appSettings.audioProcessing
     }
   )
@@ -604,6 +814,24 @@ export async function setupAudioEngineIpc(): Promise<void> {
       : await dialog.showOpenDialog(options)
     if (result.canceled || result.filePaths.length === 0) return null
     return await importCorrectionProfileFile(result.filePaths[0], requireDspAssets())
+  })
+
+  ipcMain.handle('audioEngine:importFrequencyResponse', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
+    const win = BrowserWindow.getFocusedWindow() ?? runtime.mainWindow
+    const options: Electron.OpenDialogOptions = {
+      title: '导入 AutoEq 耳机频响 CSV',
+      properties: ['openFile'],
+      filters: [{ name: 'AutoEq CSV', extensions: ['csv'] }]
+    }
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options)
+    return await importFrequencyResponseFromDialog(
+      result,
+      async (filePath) => await readFile(filePath, 'utf-8'),
+      async (filePath) => (await stat(filePath)).size
+    )
   })
 
   ipcMain.handle('audioEngine:getDspCorrectionProfile', async (event, assetId: unknown) => {
@@ -868,6 +1096,27 @@ export async function setupAudioEngineIpc(): Promise<void> {
   ipcMain.handle('audioEngine:getPlaybackInfo', async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     return await requireAudioEngine().getPlaybackInfo()
+  })
+
+  ipcMain.handle('audioEngine:exportDiagnostics', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
+    const recorder = audioDiagnosticRecorder
+    if (!recorder) throw new Error('音频诊断记录器尚未初始化')
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const win = BrowserWindow.getFocusedWindow() ?? runtime.mainWindow
+    const options: Electron.SaveDialogOptions = {
+      title: '导出音频诊断日志',
+      defaultPath: `TwilightEcho-audio-diagnostics-${timestamp}.json`,
+      filters: [{ name: 'Twilight Echo Audio Diagnostics', extensions: ['json'] }]
+    }
+    const result = win
+      ? await dialog.showSaveDialog(win, options)
+      : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return { filePath: null }
+    recorder.record('diagnostic-export-requested')
+    const snapshot = await captureAudioDiagnosticSnapshot()
+    await recorder.exportReport(result.filePath, snapshot)
+    return { filePath: result.filePath }
   })
 
   ipcMain.handle('audioEngine:getSpectrumData', async (_event, points?: number) => {

@@ -5,6 +5,7 @@ import { useUnifiedMusicSearch } from '../app/useUnifiedMusicSearch'
 import { syncPluginProviders, useMediaProviders } from '../providers'
 import { useMusicStore } from '../stores/useMusicStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
+import { useSettingsStore } from '../stores/useSettingsStore'
 import { usePlaybackBookmarks } from '../stores/playbackBookmarks'
 import { useProviderStore } from '../stores/useProviderStore'
 import { getRecentTracks, useListeningStatsStore } from '../stores/useListeningStatsStore'
@@ -93,6 +94,7 @@ const {
   setFavoriteTracks
 } = useMusicStore()
 const playbackStore = usePlayerStore()
+const settingsStore = useSettingsStore()
 const { currentTrack } = playbackStore
 const { playTrack, playTrackFromPosition, setPlayMode } = playbackStore
 const playbackBookmarks = usePlaybackBookmarks()
@@ -381,6 +383,22 @@ const currentPlaylistName = computed(() => {
 })
 
 const isPlaylistDetail = computed(() => currentPlaylistName.value !== null)
+const isAlbumDetail = computed(
+  () => props.category === 'albums' && props.filter?.startsWith('album:') === true
+)
+
+function trackListNumber(track: Track, visibleIndex: number): number {
+  if (
+    isAlbumDetail.value &&
+    typeof track.trackNumber === 'number' &&
+    Number.isFinite(track.trackNumber) &&
+    track.trackNumber > 0
+  ) {
+    return track.trackNumber
+  }
+  return visibleRange.value.start + visibleIndex + 1
+}
+
 const currentPlaylist = computed(() =>
   currentPlaylistName.value
     ? (playlists.value.find((playlist) => playlist.name === currentPlaylistName.value) ?? null)
@@ -536,7 +554,11 @@ const currentGridItems = computed<GridItem[]>(() => {
   return []
 })
 
-function onRowDblClick(track: Track): void {
+function onRowDblClick(track: Track, event: MouseEvent): void {
+  const target = event.target as HTMLElement
+  if (target.closest('.btn-remove') || target.closest('.track-select-checkbox')) return
+  if (settingsStore.settings.value.trackActivationMode !== 'doubleClick') return
+  clearSelection()
   playTrack(track, displayTracks.value)
 }
 
@@ -732,8 +754,6 @@ const {
   newPlaylistName,
   onContextMenu,
   handleOpenFolder,
-  handleAddToPlaylist,
-  handleRemoveFromCurrentPlaylist,
   canRematchSelectedTrack,
   handleRematchTrack,
   canRematchMetadataSelectedTrack,
@@ -743,7 +763,6 @@ const {
   openCreatePlaylistDialog,
   handleCreatePlaylist,
   completeCreatePlaylistDialog,
-  handleCreatePlaylistFromMenu,
   handleDeletePlaylist,
   closeContextMenu
 } = useSongListContextMenu({
@@ -799,9 +818,9 @@ const {
   hasSelection,
   isSelected,
   clearSelection,
+  selectOnly,
   toggle,
-  getSelectedTracks,
-  ensureContextSelection
+  getSelectedTracks
 } = multiSelect
 
 const {
@@ -843,10 +862,15 @@ function onRowClick(track: Track, indexInVisible: number, event: MouseEvent): vo
   const target = event.target as HTMLElement
   if (target.closest('.btn-remove')) return
   if (target.closest('.track-select-checkbox')) return
-  const result = multiSelect.onRowClick(track, absoluteIndex(indexInVisible), event)
-  if (result === 'play') {
-    playTrack(track, displayTracks.value)
+  if (event.detail > 1) return
+  const index = absoluteIndex(indexInVisible)
+  const result = multiSelect.onRowClick(track, index, event)
+  if (result !== 'play') return
+  if (settingsStore.settings.value.trackActivationMode === 'doubleClick') {
+    selectOnly(track.id, index)
+    return
   }
+  playTrack(track, displayTracks.value)
 }
 
 function onTrackSelectToggle(track: Track, indexInVisible: number, event: Event): void {
@@ -854,8 +878,7 @@ function onTrackSelectToggle(track: Track, indexInVisible: number, event: Event)
   toggle(track.id, absoluteIndex(indexInVisible))
 }
 
-function onTrackContextMenu(event: MouseEvent, track: Track, indexInVisible: number): void {
-  ensureContextSelection(track, absoluteIndex(indexInVisible))
+function onTrackContextMenu(event: MouseEvent, track: Track): void {
   onContextMenu(event, track)
 }
 
@@ -864,25 +887,49 @@ function customizeLibraryAppearance(): void {
   emit('customizeAppearance')
 }
 
-const selectionActionLabel = computed(() =>
-  selectedCount.value > 1 ? ` (${selectedCount.value})` : ''
+const contextUsesSelection = computed(
+  () => !!selectedTrack.value && isSelected(selectedTrack.value.id) && selectedCount.value > 0
+)
+const contextActionTracks = computed(() =>
+  contextUsesSelection.value
+    ? getSelectedTracks()
+    : selectedTrack.value
+      ? [selectedTrack.value]
+      : []
+)
+const contextActionCount = computed(() => contextActionTracks.value.length)
+const contextActionLabel = computed(() =>
+  contextActionCount.value > 1 ? ` (${contextActionCount.value})` : ''
+)
+const contextAllFavorited = computed(() => {
+  const targets = contextActionTracks.value
+  return targets.length > 0 && targets.every((track) => isFavoriteTrack(track))
+})
+const contextLocalTrackCount = computed(
+  () => selectLocalLibraryActionTracks(contextActionTracks.value).length
+)
+const contextLocalActionLabel = computed(() =>
+  contextLocalTrackCount.value > 1 ? ` (${contextLocalTrackCount.value})` : ''
 )
 
+const selectionActionTracks = computed(() => getSelectedTracks())
 const selectionAllFavorited = computed(() => {
-  const selected = getSelectedTracks()
+  const selected = selectionActionTracks.value
   return selected.length > 0 && selected.every((track) => isFavoriteTrack(track))
 })
-
 const selectedLocalTrackCount = computed(
-  () => selectLocalLibraryActionTracks(getSelectedTracks()).length
+  () => selectLocalLibraryActionTracks(selectionActionTracks.value).length
 )
 const localSelectionActionLabel = computed(() =>
   selectedLocalTrackCount.value > 1 ? ` (${selectedLocalTrackCount.value})` : ''
 )
 
-async function runLocalLibraryRemoval(mode: 'library' | 'trash'): Promise<void> {
+async function runLocalLibraryRemoval(
+  mode: 'library' | 'trash',
+  actionTracks: Track[] = selectionActionTracks.value
+): Promise<void> {
   if (libraryMutationPending.value) return
-  const selected = selectLocalLibraryActionTracks(getSelectedTracks())
+  const selected = selectLocalLibraryActionTracks(actionTracks)
   if (selected.length === 0) return
   if (
     mode === 'library' &&
@@ -947,37 +994,45 @@ function formatExcludedAt(value: string): string {
   return Number.isFinite(timestamp) && timestamp > 0 ? new Date(timestamp).toLocaleString() : ''
 }
 
-function handleBatchRemoveFromPlaylist(): void {
+function removeActionTracksFromCurrentPlaylist(actionTracks: Track[]): void {
   const playlistName = currentPlaylistName.value
-  if (!playlistName) return
+  if (!playlistName || actionTracks.length === 0) return
   removeTracksFromPlaylist(
     playlistName,
-    getSelectedTracks().map((track) => track.id)
+    actionTracks.map((track) => track.id)
   )
   clearSelection()
   closeContextMenu()
 }
 
-function handleBatchFavorite(): void {
-  const selected = getSelectedTracks()
-  if (selected.length === 0) return
-  if (selected.every((track) => isFavoriteTrack(track))) {
-    setFavoriteTracks(selected, false)
+function handleBatchRemoveFromPlaylist(): void {
+  removeActionTracksFromCurrentPlaylist(selectionActionTracks.value)
+}
+
+function favoriteActionTracks(actionTracks: Track[]): void {
+  if (actionTracks.length === 0) return
+  if (actionTracks.every((track) => isFavoriteTrack(track))) {
+    setFavoriteTracks(actionTracks, false)
   } else {
-    setFavoriteTracks(selected, true)
+    setFavoriteTracks(actionTracks, true)
   }
   closeContextMenu()
 }
 
-function handleBatchAddToPlaylist(playlistName: string): void {
-  addTracksToPlaylist(playlistName, getSelectedTracks())
+function handleBatchFavorite(): void {
+  favoriteActionTracks(selectionActionTracks.value)
+}
+
+function addActionTracksToPlaylist(playlistName: string, actionTracks: Track[]): void {
+  if (actionTracks.length === 0) return
+  addTracksToPlaylist(playlistName, actionTracks)
   closeContextMenu()
 }
 
-function handleBatchCreatePlaylistFromMenu(): void {
-  const selected = getSelectedTracks()
-  pendingBatchCreateTracks.value = selected
-  openCreatePlaylistDialog(selected[0])
+function handleBatchCreatePlaylistFromMenu(actionTracks: Track[]): void {
+  if (actionTracks.length === 0) return
+  pendingBatchCreateTracks.value = actionTracks
+  openCreatePlaylistDialog(actionTracks[0])
 }
 
 function dismissCreatePlaylistDialog(): void {
@@ -1000,45 +1055,32 @@ function handleConfirmCreatePlaylist(): void {
 }
 
 function handleContextRemoveFromLibrary(): void {
-  void runLocalLibraryRemoval('library')
+  void runLocalLibraryRemoval('library', contextActionTracks.value)
 }
 
 function handleContextMoveToTrash(): void {
-  void runLocalLibraryRemoval('trash')
+  void runLocalLibraryRemoval('trash', contextActionTracks.value)
 }
 
 function handleContextRemoveFromPlaylist(): void {
-  if (selectedCount.value > 1) {
-    handleBatchRemoveFromPlaylist()
-    return
-  }
-  handleRemoveFromCurrentPlaylist()
-  clearSelection()
+  removeActionTracksFromCurrentPlaylist(contextActionTracks.value)
 }
 
 function handleContextFavorite(): void {
-  handleBatchFavorite()
+  favoriteActionTracks(contextActionTracks.value)
 }
 
 function handleContextAddToPlaylist(playlistName: string): void {
-  if (selectedCount.value > 1) {
-    handleBatchAddToPlaylist(playlistName)
-    return
-  }
-  handleAddToPlaylist(playlistName)
+  addActionTracksToPlaylist(playlistName, contextActionTracks.value)
 }
 
 function handleContextCreatePlaylist(): void {
-  if (selectedCount.value > 1) {
-    handleBatchCreatePlaylistFromMenu()
-    return
-  }
-  handleCreatePlaylistFromMenu()
+  handleBatchCreatePlaylistFromMenu(contextActionTracks.value)
 }
 
 const canContinueFromBookmark = computed(() => {
   const track = selectedTrack.value
-  if (!track || selectedCount.value > 1) return false
+  if (!track || contextActionCount.value > 1) return false
   return (
     !!playbackBookmarks.resumeBookmarkFor(track) || playbackBookmarks.bookmarksFor(track).length > 0
   )
@@ -1933,8 +1975,8 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
             <table class="track-table">
               <thead>
                 <tr>
-                  <th class="col-cover-header"></th>
                   <th class="col-index">#</th>
+                  <th class="col-cover-header"></th>
                   <th class="col-info">标题</th>
                   <th class="col-album">专辑</th>
                   <th class="col-duration">时长</th>
@@ -1964,13 +2006,19 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   :style="{ height: rowHeight - 4 + 'px', display: 'flex' }"
                   :draggable="isPlaylistDetail"
                   @click="onRowClick(track, Number(index), $event)"
-                  @dblclick="onRowDblClick(track)"
+                  @dblclick="onRowDblClick(track, $event)"
                   @dragstart="handlePlaylistDragStart($event, track)"
                   @dragover.prevent
                   @drop="handlePlaylistDrop($event, track)"
                   @pointermove="onRowPointerMove"
-                  @contextmenu="onTrackContextMenu($event, track, Number(index))"
+                  @contextmenu="onTrackContextMenu($event, track)"
                 >
+                  <td class="col-index">
+                    <span v-if="currentTrack?.id === track.id" class="playing-indicator">
+                      <ThemeIcon icon-slot="library.playing" />
+                    </span>
+                    <span v-else>{{ trackListNumber(track, Number(index)) }}</span>
+                  </td>
                   <td class="col-cover">
                     <div class="track-cover-cell" :class="{ 'has-selection': hasSelection }">
                       <label
@@ -2001,14 +2049,6 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                         <ThemeIcon icon-slot="library.empty" />
                       </div>
                     </div>
-                  </td>
-                  <td class="col-index">
-                    <span v-if="currentTrack?.id === track.id" class="playing-indicator">
-                      <ThemeIcon icon-slot="library.playing" />
-                    </span>
-                    <span v-else>{{
-                      track.trackNumber ?? visibleRange.start + Number(index) + 1
-                    }}</span>
                   </td>
                   <td class="col-info">
                     <div class="track-title-row">
@@ -2062,22 +2102,22 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 @click.stop
               >
                 <div
-                  v-if="selectedLocalTrackCount > 0"
+                  v-if="contextLocalTrackCount > 0"
                   class="menu-item"
                   data-te-interactive
                   @click="handleContextRemoveFromLibrary"
                 >
                   <i class="pi pi-minus-circle"></i>
-                  <span>从音乐库移除{{ localSelectionActionLabel }}</span>
+                  <span>从音乐库移除{{ contextLocalActionLabel }}</span>
                 </div>
                 <div
-                  v-if="selectedLocalTrackCount > 0"
+                  v-if="contextLocalTrackCount > 0"
                   class="menu-item danger"
                   data-te-interactive
                   @click="handleContextMoveToTrash"
                 >
                   <i class="pi pi-trash"></i>
-                  <span>移到回收站{{ localSelectionActionLabel }}</span>
+                  <span>移到回收站{{ contextLocalActionLabel }}</span>
                 </div>
                 <div
                   v-if="isPlaylistDetail"
@@ -2086,17 +2126,17 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   @click="handleContextRemoveFromPlaylist"
                 >
                   <i class="pi pi-minus-circle"></i>
-                  <span>从歌单移除{{ selectionActionLabel }}</span>
+                  <span>从歌单移除{{ contextActionLabel }}</span>
                 </div>
                 <div class="menu-item" data-te-interactive @click="handleContextFavorite">
-                  <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
+                  <i :class="contextAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
                   <span
-                    >{{ selectionAllFavorited ? '取消收藏' : '加入收藏'
-                    }}{{ selectionActionLabel }}</span
+                    >{{ contextAllFavorited ? '取消收藏' : '加入收藏'
+                    }}{{ contextActionLabel }}</span
                   >
                 </div>
                 <div
-                  v-if="canRematchSelectedTrack && selectedCount <= 1"
+                  v-if="canRematchSelectedTrack && contextActionCount <= 1"
                   class="menu-item"
                   data-te-interactive
                   @click="handleRematchTrack"
@@ -2105,7 +2145,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   <span>重新匹配音源</span>
                 </div>
                 <div
-                  v-if="canRematchMetadataSelectedTrack && selectedCount <= 1"
+                  v-if="canRematchMetadataSelectedTrack && contextActionCount <= 1"
                   class="menu-item"
                   data-te-interactive
                   @click="handleRematchMetadata"
@@ -2114,7 +2154,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   <span>重新匹配流媒体元数据</span>
                 </div>
                 <div
-                  v-if="canClearMetadataMatchSelectedTrack && selectedCount <= 1"
+                  v-if="canClearMetadataMatchSelectedTrack && contextActionCount <= 1"
                   class="menu-item"
                   data-te-interactive
                   @click="handleClearMetadataMatch"
@@ -2123,7 +2163,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   <span>取消流媒体匹配</span>
                 </div>
                 <div
-                  v-if="selectedCount <= 1"
+                  v-if="contextActionCount <= 1"
                   class="menu-item"
                   data-te-interactive
                   @click="handleOpenFolder"
@@ -2146,7 +2186,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   @mouseleave="showPlaylistSubmenu = false"
                 >
                   <i class="pi pi-plus"></i>
-                  <span>加入到歌单{{ selectionActionLabel }}</span>
+                  <span>加入到歌单{{ contextActionLabel }}</span>
                   <i class="pi pi-chevron-right submenu-icon"></i>
 
                   <div v-if="showPlaylistSubmenu" class="submenu">

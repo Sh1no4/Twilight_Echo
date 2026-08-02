@@ -136,24 +136,14 @@ test('selectAll and clearSelection', () => {
   assert.equal(multi.hasSelection.value, false)
 })
 
-test('ensureContextSelection keeps multi-selection when target already selected', () => {
+test('multi-select API does not expose a right-click selection mutator', () => {
   const tracks = ref(makeTracks(4))
   const multi = withScope(() => useTrackMultiSelect({ tracks }))
-  multi.onRowClick(tracks.value[0], 0, {
-    shiftKey: false,
-    ctrlKey: true,
-    metaKey: false
-  } as MouseEvent)
-  multi.onRowClick(tracks.value[2], 2, {
-    shiftKey: false,
-    ctrlKey: true,
-    metaKey: false
-  } as MouseEvent)
-  multi.ensureContextSelection(tracks.value[0], 0)
-  assert.equal(multi.selectedCount.value, 2)
-  multi.ensureContextSelection(tracks.value[3], 3)
-  assert.equal(multi.selectedCount.value, 1)
-  assert.equal(multi.isSelected('t3'), true)
+  multi.toggle(tracks.value[0].id, 0)
+  multi.toggle(tracks.value[2].id, 2)
+
+  assert.equal('ensureContextSelection' in multi, false)
+  assert.deepEqual(multi.getSelectedTrackIds().sort(), ['t0', 't2'])
 })
 
 test('getSelectedTracks preserves list order', () => {

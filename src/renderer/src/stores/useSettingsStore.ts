@@ -85,6 +85,7 @@ const fallbackSettings: AppSettings = {
   closeToTray: false,
   onboardingCompleted: false,
   startupHomePage: 'local',
+  trackActivationMode: 'singleClick',
   theme: 'system',
   pluginThemeId: null,
   activeTheme: { kind: 'builtin', id: 'builtin:twilight-echo-default' },

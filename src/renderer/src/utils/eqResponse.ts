@@ -257,6 +257,23 @@ export function computeCompositeResponse(
   return frequencies.map((frequency, index) => ({ frequency, db: totals[index] }))
 }
 
+/**
+ * Estimated source deviation relative to the unknown target that produced a
+ * correction profile. This is the inverse of the correction filters only:
+ * digital preamp/headroom is intentionally excluded because it is not an
+ * acoustic property. The result is an estimate, not measured source response.
+ */
+export function computeEstimatedSourceDeviation(
+  correctionBands: EqualizerBand[],
+  options: EqResponseOptions = {}
+): EqResponsePoint[] {
+  const correction = computeCompositeResponse(correctionBands, 0, {
+    ...options,
+    mode: 'parametric'
+  })
+  return correction.map((point) => ({ frequency: point.frequency, db: -point.db }))
+}
+
 export interface AutoPreampOptions extends EqResponseOptions {
   /** Safety margin subtracted below the highest boost. */
   marginDb?: number

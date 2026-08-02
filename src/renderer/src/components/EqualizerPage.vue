@@ -1,14 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAudioOutputDspStore } from '../stores/useAudioOutputDspStore'
+import { usePlayerStore } from '../stores/usePlayerStore'
+import ParametricEqWorkspace from './equalizer/ParametricEqWorkspace.vue'
 import {
   EQ_RESPONSE_DEFAULT_SAMPLE_RATE,
   computeAutoPreampDb,
   computeBandResponse,
   computeCompositeResponse,
+  computeEstimatedSourceDeviation,
   isBandActive
 } from '@renderer/utils/eqResponse'
+import { computeTargetRelativeFrequencyResponse } from '../../../shared/frequencyResponse.ts'
+import type { ImportedFrequencyResponse } from '../../../shared/frequencyResponse.ts'
+import { createParametricBand, spectrumToPath } from '@renderer/utils/parametricEqInteraction'
 import type {
   AppSettings,
   AudioEqPreset,
@@ -25,6 +31,8 @@ const emit = defineEmits<{
 }>()
 
 type EqualizerTab = EqMode
+type ResponseView = 'dsp' | 'headphone'
+type EqApplyFeedback = 'idle' | 'editing' | 'applying' | 'applied' | 'failed'
 type OpraProfile = Awaited<ReturnType<typeof window.api.opra.search>>[number]
 type OpraCatalogStatus = Awaited<ReturnType<typeof window.api.opra.getStatus>>
 
@@ -139,7 +147,9 @@ const tabs: { key: EqualizerTab; label: string; icon: string; desc: string }[] =
 ]
 
 const audioOutputDspStore = useAudioOutputDspStore()
-const { audioProcessing, outputInfo } = storeToRefs(audioOutputDspStore)
+const playerStore = usePlayerStore()
+const { audioProcessing, outputInfo, audioEngineReady } = storeToRefs(audioOutputDspStore)
+const { visualizationData, isPlaying } = playerStore
 const { setAudioProcessing } = audioOutputDspStore
 
 const autoPreampStorageKey = 'twilight-echo:eq-auto-preamp:v1'
@@ -152,6 +162,10 @@ const saving = ref(false)
 const presetMenuOpen = ref(false)
 const filterMenuOpen = ref(false)
 const selectedBandIndex = ref(0)
+const eqApplyFeedback = ref<EqApplyFeedback>('idle')
+const eqApplyError = ref('')
+const spectrumVisible = ref(true)
+const spectrumPath = ref('')
 const opraQuery = ref('')
 const opraResults = ref<OpraProfile[]>([])
 const opraStatus = ref<OpraCatalogStatus | null>(null)
@@ -160,6 +174,14 @@ const opraRefreshing = ref(false)
 const opraApplyingEqId = ref('')
 const opraError = ref('')
 let opraSearchTimer: number | null = null
+let pendingBandFrame = 0
+let pendingBandIndex = -1
+let pendingBandPatch: Partial<EqualizerBand> | null = null
+let applyFeedbackTimer: number | null = null
+let spectrumAnimationFrame = 0
+const SPECTRUM_ATTACK = 0.42
+const SPECTRUM_RELEASE = 0.18
+let smoothedSpectrum: number[] = []
 
 const userPresets = computed(() => appSettings.value?.audioEqPresets ?? [])
 const headphoneCompensation = computed<HeadphoneCompensationSettings>(
@@ -203,19 +225,22 @@ const displayEqBands = computed(() =>
 const selectedBand = computed(
   () => audioProcessing.value.eqBands[selectedBandIndex.value] ?? audioProcessing.value.eqBands[0]
 )
-
-const responsePath = computed(() =>
-  responsePoints.value
-    .map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x.toFixed(2)},${point.y.toFixed(2)}`)
-    .join(' ')
-)
-const responseFillPath = computed(() => {
-  if (responsePoints.value.length === 0) return ''
-  const first = responsePoints.value[0]
-  const last = responsePoints.value[responsePoints.value.length - 1]
-  const zero = gainToY(0)
-  return `${responsePath.value} L${last.x.toFixed(2)},${zero.toFixed(2)} L${first.x.toFixed(2)},${zero.toFixed(2)} Z`
+const eqApplyStatusText = computed(() => {
+  if (eqApplyFeedback.value === 'editing') return '正在编辑'
+  if (eqApplyFeedback.value === 'applying') return '正在同步 DSP'
+  if (eqApplyFeedback.value === 'applied') return 'DSP 已同步'
+  if (eqApplyFeedback.value === 'failed') return 'DSP 同步失败'
+  if (!audioProcessing.value.eqEnabled) return '均衡器已旁路'
+  return audioEngineReady.value ? 'DSP 就绪' : '音频引擎未就绪'
 })
+
+const responseView = ref<ResponseView>('dsp')
+const importedFrequencyResponse = ref<ImportedFrequencyResponse | null>(null)
+const frequencyResponseImporting = ref(false)
+const frequencyResponseError = ref('')
+const showManualResponse = ref(true)
+const showOpraResponse = ref(true)
+const showOpraEstimatedDeviation = ref(true)
 
 // Display reference rate: use the actual device output rate when known so the
 // plotted curve matches the coefficients the engine builds for that rate.
@@ -225,29 +250,100 @@ const responseSampleRate = computed(() => {
   return rate > 0 ? rate : EQ_RESPONSE_DEFAULT_SAMPLE_RATE
 })
 
-// Exact RBJ biquad response (same math as ParametricEqProcessor.cpp), computed
-// only when bands / preamp / mode change — never per frame.
-const responsePoints = computed(() => {
-  const response = computeCompositeResponse(displayEqBands.value, displayEqPreamp.value, {
-    sampleRate: responseSampleRate.value,
-    mode: displayEqMode.value,
-    pointCount: 257,
-    minFrequency: graphMinFrequency,
-    maxFrequency: graphMaxFrequency
+const responseOptions = computed(() => ({
+  sampleRate: responseSampleRate.value,
+  pointCount: 257,
+  minFrequency: graphMinFrequency,
+  maxFrequency: graphMaxFrequency
+}))
+
+function responseToPath(response: { frequency: number; db: number }[]): string {
+  return response
+    .map((point, index) => {
+      const x = frequencyToX(point.frequency)
+      const y = gainToY(clampNumber(point.db, graphMinGain, graphMaxGain, 0))
+      return `${index === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`
+    })
+    .join(' ')
+}
+
+// Exact RBJ biquad responses (same math as ParametricEqProcessor.cpp). Keep
+// each processing contribution separate while retaining the effective total.
+const manualResponsePath = computed(() =>
+  responseToPath(
+    computeCompositeResponse(audioProcessing.value.eqBands, audioProcessing.value.eqPreamp, {
+      ...responseOptions.value,
+      mode: audioProcessing.value.eqMode
+    })
+  )
+)
+const opraResponsePath = computed(() =>
+  opraCompensationEnabled.value
+    ? responseToPath(
+        computeCompositeResponse(
+          headphoneCompensation.value.bands,
+          headphoneCompensation.value.preampDb,
+          { ...responseOptions.value, mode: 'parametric' }
+        )
+      )
+    : ''
+)
+const opraEstimatedDeviationPath = computed(() =>
+  opraCompensationEnabled.value
+    ? responseToPath(
+        computeEstimatedSourceDeviation(headphoneCompensation.value.bands, responseOptions.value)
+      )
+    : ''
+)
+const effectiveDspResponse = computed(() =>
+  computeCompositeResponse(displayEqBands.value, displayEqPreamp.value, {
+    ...responseOptions.value,
+    mode: displayEqMode.value
   })
-  return response.map((point) => ({
-    x: frequencyToX(point.frequency),
-    y: gainToY(clampNumber(point.db, graphMinGain, graphMaxGain, 0))
-  }))
+)
+const responsePath = computed(() => responseToPath(effectiveDspResponse.value))
+const acousticDspResponse = computed(() =>
+  computeCompositeResponse(displayEqBands.value, 0, {
+    ...responseOptions.value,
+    mode: displayEqMode.value
+  })
+)
+const acousticResponse = computed(() => {
+  const imported = importedFrequencyResponse.value
+  if (!imported) return null
+  return computeTargetRelativeFrequencyResponse(
+    imported,
+    acousticDspResponse.value,
+    acousticDspResponse.value.map((point) => point.frequency)
+  )
+})
+const measuredSourcePath = computed(() =>
+  acousticResponse.value ? responseToPath(acousticResponse.value.sourceDeviation) : ''
+)
+const targetResponsePath = computed(() =>
+  acousticResponse.value ? responseToPath(acousticResponse.value.target) : ''
+)
+const correctedAcousticPath = computed(() =>
+  acousticResponse.value ? responseToPath(acousticResponse.value.correctedDeviation) : ''
+)
+const responseFillPath = computed(() => {
+  if (!responsePath.value) return ''
+  const zero = gainToY(0).toFixed(2)
+  return `${responsePath.value} L100,${zero} L0,${zero} Z`
+})
+const parametricResponseFillPath = computed(() => {
+  if (!responsePath.value) return ''
+  return `${responsePath.value} L100,100 L0,100 Z`
 })
 
-// Faint per-band curves rendered under the composite (active bands only).
+// Preserve the source band index so interactive control points, colors, and
+// curves stay aligned even when inactive bands are omitted from processing.
 const bandResponsePaths = computed(() => {
   const mode = audioProcessing.value.eqMode
   const sampleRate = responseSampleRate.value
-  const paths: string[] = []
-  for (const band of audioProcessing.value.eqBands) {
-    if (!isBandActive(band, mode)) continue
+  const paths: { index: number; path: string }[] = []
+  audioProcessing.value.eqBands.forEach((band, index) => {
+    if (!isBandActive(band, mode)) return
     const response = computeBandResponse(band, {
       sampleRate,
       mode,
@@ -255,16 +351,17 @@ const bandResponsePaths = computed(() => {
       minFrequency: graphMinFrequency,
       maxFrequency: graphMaxFrequency
     })
-    paths.push(
-      response
-        .map((point, index) => {
+    paths.push({
+      index,
+      path: response
+        .map((point, pointIndex) => {
           const x = frequencyToX(point.frequency)
           const y = gainToY(clampNumber(point.db, graphMinGain, graphMaxGain, 0))
-          return `${index === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`
+          return `${pointIndex === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`
         })
         .join(' ')
-    )
-  }
+    })
+  })
   return paths
 })
 
@@ -509,40 +606,201 @@ async function updateAudioProcessing(patch: Partial<AudioProcessingSettings>): P
   }
 }
 
-async function updateEqBand(index: number, patch: Partial<EqualizerBand>): Promise<void> {
-  const bands = cloneBands(audioProcessing.value.eqBands)
-  if (!bands[index]) return
-  bands[index] = {
-    ...bands[index],
+function patchBand(
+  bands: EqualizerBand[],
+  index: number,
+  patch: Partial<EqualizerBand>
+): EqualizerBand[] {
+  const next = cloneBands(bands)
+  if (!next[index]) return next
+  next[index] = {
+    ...next[index],
     ...patch,
     frequency:
       patch.frequency !== undefined
-        ? clampNumber(patch.frequency, 20, 24000, bands[index].frequency)
-        : bands[index].frequency,
+        ? clampNumber(patch.frequency, 20, 24000, next[index].frequency)
+        : next[index].frequency,
     gain:
       patch.gain !== undefined
         ? clampNumber(
             patch.gain,
             audioProcessing.value.eqMode === 'parametric' ? -24 : -12,
             audioProcessing.value.eqMode === 'parametric' ? 24 : 12,
-            bands[index].gain
+            next[index].gain
           )
-        : bands[index].gain,
+        : next[index].gain,
     q:
       patch.q !== undefined
         ? clampNumber(
             patch.q,
             audioProcessing.value.eqMode === 'parametric' ? 0.1 : 0.25,
             audioProcessing.value.eqMode === 'parametric' ? 20 : 8,
-            bands[index].q
+            next[index].q
           )
-        : bands[index].q,
+        : next[index].q,
     filterType:
       patch.filterType !== undefined
         ? normalizeFilterType(patch.filterType)
-        : bands[index].filterType
+        : next[index].filterType
   }
-  await updateAudioProcessing({ eqBands: bands })
+  return next
+}
+
+async function updateEqBand(index: number, patch: Partial<EqualizerBand>): Promise<void> {
+  const bands = patchBand(audioProcessing.value.eqBands, index, patch)
+  if (!bands[index]) return
+  await runEqApply(() => updateAudioProcessing({ eqBands: bands }))
+}
+
+function clearApplyFeedbackTimer(): void {
+  if (applyFeedbackTimer === null) return
+  window.clearTimeout(applyFeedbackTimer)
+  applyFeedbackTimer = null
+}
+
+async function runEqApply(action: () => Promise<void>): Promise<void> {
+  clearApplyFeedbackTimer()
+  eqApplyFeedback.value = 'applying'
+  eqApplyError.value = ''
+  try {
+    await action()
+    eqApplyFeedback.value = 'applied'
+    applyFeedbackTimer = window.setTimeout(() => {
+      eqApplyFeedback.value = 'idle'
+      applyFeedbackTimer = null
+    }, 1400)
+  } catch (error) {
+    eqApplyFeedback.value = 'failed'
+    eqApplyError.value = error instanceof Error ? error.message : String(error)
+  }
+}
+
+function stageBandPatch(index: number, patch: Partial<EqualizerBand>): void {
+  if (!audioProcessing.value.eqBands[index]) return
+  pendingBandIndex = index
+  pendingBandPatch = { ...(pendingBandPatch ?? {}), ...patch }
+  eqApplyFeedback.value = 'editing'
+  if (pendingBandFrame !== 0) return
+  pendingBandFrame = window.requestAnimationFrame(() => {
+    pendingBandFrame = 0
+    if (pendingBandIndex < 0 || !pendingBandPatch) return
+    const bands = patchBand(audioProcessing.value.eqBands, pendingBandIndex, pendingBandPatch)
+    pendingBandIndex = -1
+    pendingBandPatch = null
+    audioProcessing.value = {
+      ...audioProcessing.value,
+      eqBands: bands,
+      eqEnabled: true,
+      dspEnabled: true
+    }
+    if (appSettings.value) {
+      appSettings.value = { ...appSettings.value, audioProcessing: audioProcessing.value }
+    }
+  })
+}
+
+async function commitStagedBands(): Promise<void> {
+  if (pendingBandFrame !== 0) {
+    window.cancelAnimationFrame(pendingBandFrame)
+    pendingBandFrame = 0
+    if (pendingBandIndex >= 0 && pendingBandPatch) {
+      const bands = patchBand(audioProcessing.value.eqBands, pendingBandIndex, pendingBandPatch)
+      audioProcessing.value = {
+        ...audioProcessing.value,
+        eqBands: bands,
+        eqEnabled: true,
+        dspEnabled: true
+      }
+    }
+    pendingBandIndex = -1
+    pendingBandPatch = null
+  }
+  const bands = cloneBands(audioProcessing.value.eqBands)
+  await runEqApply(() => updateAudioProcessing({ eqBands: bands }))
+}
+
+async function addBand(frequency: number, gain: number): Promise<void> {
+  const bands = [
+    ...cloneBands(audioProcessing.value.eqBands),
+    createParametricBand(frequency, gain)
+  ]
+  selectedBandIndex.value = bands.length - 1
+  await runEqApply(() => updateAudioProcessing({ eqMode: 'parametric', eqBands: bands }))
+}
+
+async function deleteBand(index = selectedBandIndex.value): Promise<void> {
+  const bands = cloneBands(audioProcessing.value.eqBands)
+  if (!bands[index]) return
+  bands.splice(index, 1)
+  selectedBandIndex.value = Math.max(0, Math.min(index, bands.length - 1))
+  await runEqApply(() => updateAudioProcessing({ eqBands: bands }))
+}
+
+async function toggleBandEnabled(index = selectedBandIndex.value): Promise<void> {
+  const band = audioProcessing.value.eqBands[index]
+  if (!band) return
+  await updateEqBand(index, { enabled: band.enabled === false })
+}
+
+function onEqualizerKeydown(event: KeyboardEvent): void {
+  if (activeTab.value !== 'parametric') return
+  const target = event.target as HTMLElement | null
+  if (target?.matches('input, select, textarea, [contenteditable="true"]')) return
+  if ((event.key === 'Delete' || event.key === 'Backspace') && selectedBand.value) {
+    event.preventDefault()
+    void deleteBand()
+  }
+  if (event.key.toLowerCase() === 'b' && selectedBand.value) {
+    event.preventDefault()
+    void toggleBandEnabled()
+  }
+}
+
+function updateSpectrumPath(): void {
+  spectrumAnimationFrame = 0
+  const data = visualizationData.value
+  if (!spectrumVisible.value || !data.active || data.spectrum.length < 2) {
+    spectrumPath.value = ''
+    smoothedSpectrum = []
+    return
+  }
+  if (smoothedSpectrum.length !== data.spectrum.length) {
+    smoothedSpectrum = Array.from(data.spectrum, (value) => clampNumber(value, 0, 1, 0))
+  } else {
+    data.spectrum.forEach((value, index) => {
+      const target = clampNumber(value, 0, 1, 0)
+      const speed = target > smoothedSpectrum[index] ? SPECTRUM_ATTACK : SPECTRUM_RELEASE
+      smoothedSpectrum[index] += (target - smoothedSpectrum[index]) * speed
+    })
+  }
+  spectrumPath.value = spectrumToPath(smoothedSpectrum, data.sampleRate || responseSampleRate.value)
+}
+
+function scheduleSpectrumPathUpdate(): void {
+  if (spectrumAnimationFrame !== 0) return
+  spectrumAnimationFrame = window.requestAnimationFrame(updateSpectrumPath)
+}
+
+async function importFrequencyResponse(): Promise<void> {
+  if (frequencyResponseImporting.value) return
+  frequencyResponseImporting.value = true
+  frequencyResponseError.value = ''
+  try {
+    const imported = await window.api.audioEngine.importFrequencyResponse()
+    if (!imported) return
+    importedFrequencyResponse.value = imported
+    responseView.value = 'headphone'
+  } catch (err) {
+    frequencyResponseError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    frequencyResponseImporting.value = false
+  }
+}
+
+function clearFrequencyResponse(): void {
+  importedFrequencyResponse.value = null
+  frequencyResponseError.value = ''
+  responseView.value = 'dsp'
 }
 
 async function loadOpraStatus(): Promise<void> {
@@ -728,6 +986,11 @@ async function selectFilterType(filterType: EqualizerFilterType): Promise<void> 
   await updateEqBand(selectedBandIndex.value, { filterType })
 }
 
+function selectFilterForBand(index: number, filterType: EqualizerFilterType): void {
+  selectedBandIndex.value = index
+  void selectFilterType(filterType)
+}
+
 function selectBand(index: number): void {
   selectedBandIndex.value = index
   filterMenuOpen.value = false
@@ -783,6 +1046,13 @@ onMounted(() => {
   void loadOpraStatus()
 })
 
+onBeforeUnmount(() => {
+  if (opraSearchTimer !== null) window.clearTimeout(opraSearchTimer)
+  clearApplyFeedbackTimer()
+  if (pendingBandFrame !== 0) window.cancelAnimationFrame(pendingBandFrame)
+  if (spectrumAnimationFrame !== 0) window.cancelAnimationFrame(spectrumAnimationFrame)
+})
+
 // Keep the compensated preamp in sync when bands change through paths that
 // bypass updateAudioProcessing (preset apply on load, external scene edits).
 watch(autoPreampTargetDb, () => {
@@ -796,10 +1066,18 @@ watch(opraQuery, () => {
     void searchOpraProfiles()
   }, 250)
 })
+
+watch(
+  () => visualizationData.value,
+  () => scheduleSpectrumPathUpdate(),
+  { deep: false }
+)
+
+watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpdate())
 </script>
 
 <template>
-  <div class="eq-page">
+  <div class="eq-page" @keydown="onEqualizerKeydown">
     <button
       type="button"
       class="eq-back-button"
@@ -1046,6 +1324,102 @@ watch(opraQuery, () => {
           </section>
 
           <section class="chart-card">
+            <div class="response-view-toolbar">
+              <div class="response-view-switch" aria-label="响应视图">
+                <button
+                  type="button"
+                  :class="{ active: responseView === 'dsp' }"
+                  :aria-pressed="responseView === 'dsp'"
+                  @click="responseView = 'dsp'"
+                >
+                  DSP 响应
+                </button>
+                <button
+                  type="button"
+                  :disabled="!importedFrequencyResponse"
+                  :class="{ active: responseView === 'headphone' }"
+                  :aria-pressed="responseView === 'headphone'"
+                  @click="responseView = 'headphone'"
+                >
+                  耳机频响
+                </button>
+              </div>
+              <div class="frequency-response-actions">
+                <span v-if="importedFrequencyResponse" class="frequency-response-source">
+                  {{ importedFrequencyResponse.sourceName }} ·
+                  {{
+                    importedFrequencyResponse.sourceColumn === 'smoothed' ? '平滑测量' : '原始测量'
+                  }}
+                </span>
+                <span v-if="frequencyResponseError" class="frequency-response-error">
+                  {{ frequencyResponseError }}
+                </span>
+                <button
+                  type="button"
+                  class="frequency-response-import"
+                  :disabled="frequencyResponseImporting"
+                  @click="importFrequencyResponse"
+                >
+                  {{ frequencyResponseImporting ? '导入中' : '导入 AutoEq CSV' }}
+                </button>
+                <button
+                  v-if="importedFrequencyResponse"
+                  type="button"
+                  class="frequency-response-clear"
+                  @click="clearFrequencyResponse"
+                >
+                  清除
+                </button>
+              </div>
+            </div>
+            <div
+              v-if="responseView === 'headphone'"
+              class="response-legend acoustic"
+              aria-label="耳机频响曲线图例"
+            >
+              <span class="response-legend-item measured"><i></i>源频响偏差（实测）</span>
+              <span class="response-legend-item target"><i></i>目标曲线（0 dB）</span>
+              <span class="response-legend-item corrected"><i></i>预计校正后频响</span>
+              <span class="response-estimate-note"
+                >M(f) + 当前滤波器 − T(f) · 排除数字前级 · 非校正后实测</span
+              >
+            </div>
+            <div v-if="responseView === 'dsp'" class="response-legend" aria-label="频响曲线图例">
+              <span class="response-legend-item total"><i></i>总 DSP 合成</span>
+              <button
+                type="button"
+                class="response-legend-item manual"
+                :class="{ muted: !showManualResponse }"
+                :aria-pressed="showManualResponse"
+                @click="showManualResponse = !showManualResponse"
+              >
+                <i></i>手动 EQ（含前级）
+              </button>
+              <button
+                v-if="opraCompensationEnabled"
+                type="button"
+                class="response-legend-item opra"
+                :class="{ muted: !showOpraResponse }"
+                :aria-pressed="showOpraResponse"
+                @click="showOpraResponse = !showOpraResponse"
+              >
+                <i></i>OPRA 校正（含前级）
+              </button>
+              <button
+                v-if="opraCompensationEnabled"
+                type="button"
+                class="response-legend-item estimated"
+                :class="{ muted: !showOpraEstimatedDeviation }"
+                :aria-pressed="showOpraEstimatedDeviation"
+                title="OPRA 滤波器响应的反向估算；排除前级增益，不代表实测频响"
+                @click="showOpraEstimatedDeviation = !showOpraEstimatedDeviation"
+              >
+                <i></i>估算源偏差
+              </button>
+              <span v-if="opraCompensationEnabled" class="response-estimate-note"
+                >相对隐含目标 0 dB · 非实测</span
+              >
+            </div>
             <div class="svg-container">
               <div class="chart-labels-y">
                 <span
@@ -1067,7 +1441,7 @@ watch(opraQuery, () => {
               <div
                 v-for="(band, idx) in audioProcessing.eqBands"
                 :key="'point-' + idx"
-                v-show="!isGainDisabled(band)"
+                v-show="responseView === 'dsp' && !isGainDisabled(band)"
                 class="chart-point"
                 :style="{
                   left: frequencyToX(band.frequency) + '%',
@@ -1108,19 +1482,67 @@ watch(opraQuery, () => {
                   class="grid-line"
                 />
                 <path
-                  v-for="(bandPath, bandPathIndex) in bandResponsePaths"
-                  :key="'band-curve-' + bandPathIndex"
-                  class="equalizer-band-line"
-                  :d="bandPath"
+                  v-if="responseView === 'headphone' && measuredSourcePath"
+                  class="equalizer-measured-source-line"
+                  :d="measuredSourcePath"
                   fill="none"
                   vector-effect="non-scaling-stroke"
                 />
                 <path
+                  v-if="responseView === 'headphone' && targetResponsePath"
+                  class="equalizer-target-response-line"
+                  :d="targetResponsePath"
+                  fill="none"
+                  vector-effect="non-scaling-stroke"
+                />
+                <path
+                  v-if="responseView === 'headphone' && correctedAcousticPath"
+                  class="equalizer-corrected-acoustic-line"
+                  :d="correctedAcousticPath"
+                  fill="none"
+                  vector-effect="non-scaling-stroke"
+                />
+                <path
+                  v-for="bandPath in responseView === 'dsp' ? bandResponsePaths : []"
+                  :key="'band-curve-' + bandPath.index"
+                  class="equalizer-band-line"
+                  :d="bandPath.path"
+                  fill="none"
+                  vector-effect="non-scaling-stroke"
+                />
+                <path
+                  v-if="
+                    responseView === 'dsp' &&
+                    showOpraEstimatedDeviation &&
+                    opraEstimatedDeviationPath
+                  "
+                  class="equalizer-estimated-deviation-line"
+                  :d="opraEstimatedDeviationPath"
+                  fill="none"
+                  vector-effect="non-scaling-stroke"
+                />
+                <path
+                  v-if="responseView === 'dsp' && showManualResponse"
+                  class="equalizer-manual-response-line"
+                  :d="manualResponsePath"
+                  fill="none"
+                  vector-effect="non-scaling-stroke"
+                />
+                <path
+                  v-if="responseView === 'dsp' && showOpraResponse && opraResponsePath"
+                  class="equalizer-opra-response-line"
+                  :d="opraResponsePath"
+                  fill="none"
+                  vector-effect="non-scaling-stroke"
+                />
+                <path
+                  v-if="responseView === 'dsp'"
                   class="equalizer-spectrum-area"
                   :d="responseFillPath"
                   fill="url(#fillGradient)"
                 />
                 <path
+                  v-if="responseView === 'dsp'"
                   class="equalizer-spectrum-line"
                   :d="responsePath"
                   fill="none"
@@ -1208,191 +1630,99 @@ watch(opraQuery, () => {
           </section>
         </div>
 
-        <div v-else-if="activeTab === 'parametric'" class="tab-pane active">
-          <header class="eq-header">
-            <div class="eq-title">
-              <h1>参数均衡器</h1>
-              <p>精确控制每个波段的中心频率、增益和品质因数（Q值）。</p>
+        <div v-else-if="activeTab === 'parametric'" class="tab-pane active parametric-pane">
+          <header class="parametric-page-header">
+            <div class="parametric-page-title">
+              <span class="parametric-eyebrow">DSP / EQUALIZATION</span>
+              <div>
+                <h1>参数均衡器</h1>
+                <p>精确控制中心频率、增益与 Q，并实时写入当前 DSP Scene。</p>
+              </div>
+            </div>
+            <div class="parametric-context-status" aria-label="参数均衡器工作模式">
+              <span class="context-status-dot"></span>
+              <span>32 BAND · REAL-TIME</span>
             </div>
           </header>
 
-          <section class="chart-card">
-            <div class="svg-container">
-              <div class="chart-labels-y">
-                <span
-                  v-for="gain in [...gainTicks].reverse()"
-                  :key="'py-' + gain"
-                  :class="{ zero: gain === 0 }"
-                  >{{ gain > 0 ? '+' + gain : gain }}</span
+          <section class="parametric-toolbar-card" aria-label="分析器数据视图">
+            <span class="parametric-toolbar-label">ANALYZER SOURCE</span>
+            <div class="response-view-toolbar">
+              <div class="response-view-switch" aria-label="响应视图">
+                <button
+                  type="button"
+                  :class="{ active: responseView === 'dsp' }"
+                  :aria-pressed="responseView === 'dsp'"
+                  @click="responseView = 'dsp'"
                 >
-              </div>
-              <div class="chart-labels-x">
-                <span
-                  v-for="freq in frequencyTicks"
-                  :key="'px-' + freq"
-                  :style="{ left: frequencyToX(freq) + '%' }"
-                  >{{ formatFrequency(freq) }}</span
+                  DSP 响应
+                </button>
+                <button
+                  type="button"
+                  :disabled="!importedFrequencyResponse"
+                  :class="{ active: responseView === 'headphone' }"
+                  :aria-pressed="responseView === 'headphone'"
+                  @click="responseView = 'headphone'"
                 >
+                  耳机频响
+                </button>
               </div>
-
-              <div
-                v-if="selectedBand"
-                class="chart-point"
-                :style="{
-                  left: frequencyToX(selectedBand.frequency) + '%',
-                  top: gainToY(selectedBand.gain) + '%',
-                  borderColor: '#6366f1',
-                  width: '12px',
-                  height: '12px',
-                  boxShadow: '0 0 10px rgba(99,102,241,0.5)'
-                }"
-              ></div>
-
-              <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-                <defs>
-                  <linearGradient id="curveGradientP" x1="0" y1="0" x2="1" y2="0">
-                    <stop offset="0%" stop-color="#6366f1" />
-                    <stop offset="50%" stop-color="#22d3ee" />
-                    <stop offset="100%" stop-color="#ec4899" />
-                  </linearGradient>
-                  <linearGradient id="fillGradientP" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stop-color="#6366f1" stop-opacity="0.25" />
-                    <stop offset="100%" stop-color="#22d3ee" stop-opacity="0.0" />
-                  </linearGradient>
-                </defs>
-                <line
-                  v-for="gain in gainTicks"
-                  :key="'pgl-' + gain"
-                  x1="0"
-                  x2="100"
-                  :y1="gainToY(gain)"
-                  :y2="gainToY(gain)"
-                  class="grid-line"
-                  :class="{ zero: gain === 0 }"
-                />
-                <line
-                  v-for="freq in frequencyTicks"
-                  :key="'pfl-' + freq"
-                  :x1="frequencyToX(freq)"
-                  :x2="frequencyToX(freq)"
-                  y1="0"
-                  y2="100"
-                  class="grid-line"
-                />
-                <line
-                  v-if="selectedBand"
-                  class="frequency-guide"
-                  :x1="frequencyToX(selectedBand.frequency)"
-                  :x2="frequencyToX(selectedBand.frequency)"
-                  y1="0"
-                  y2="100"
-                  stroke="#6366f1"
-                  stroke-width="2px"
-                  stroke-dasharray="4 4"
-                  vector-effect="non-scaling-stroke"
-                />
-
-                <path
-                  v-for="(bandPath, bandPathIndex) in bandResponsePaths"
-                  :key="'pband-curve-' + bandPathIndex"
-                  class="equalizer-band-line"
-                  :d="bandPath"
-                  fill="none"
-                  vector-effect="non-scaling-stroke"
-                />
-                <path
-                  class="equalizer-spectrum-area"
-                  :d="responseFillPath"
-                  fill="url(#fillGradientP)"
-                />
-                <path
-                  class="equalizer-spectrum-line"
-                  :d="responsePath"
-                  fill="none"
-                  stroke="url(#curveGradientP)"
-                  stroke-width="3px"
-                  vector-effect="non-scaling-stroke"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
-              </svg>
+              <div class="frequency-response-actions">
+                <span v-if="importedFrequencyResponse" class="frequency-response-source">
+                  {{ importedFrequencyResponse.sourceName }} ·
+                  {{
+                    importedFrequencyResponse.sourceColumn === 'smoothed' ? '平滑测量' : '原始测量'
+                  }}
+                </span>
+                <span v-if="frequencyResponseError" class="frequency-response-error">
+                  {{ frequencyResponseError }}
+                </span>
+                <button
+                  type="button"
+                  class="frequency-response-import"
+                  :disabled="frequencyResponseImporting"
+                  @click="importFrequencyResponse"
+                >
+                  {{ frequencyResponseImporting ? '导入中' : '导入 AutoEq CSV' }}
+                </button>
+                <button
+                  v-if="importedFrequencyResponse"
+                  type="button"
+                  class="frequency-response-clear"
+                  @click="clearFrequencyResponse"
+                >
+                  清除
+                </button>
+              </div>
             </div>
           </section>
 
-          <section class="band-selector">
-            <button
-              v-for="(band, idx) in audioProcessing.eqBands"
-              :key="'btab-' + idx"
-              class="band-tab"
-              :class="{ active: selectedBandIndex === idx }"
-              @click="selectBand(idx)"
-            >
-              {{ formatFrequency(band.frequency) }}
-            </button>
-          </section>
-
-          <section v-if="selectedBand" class="parameter-card">
-            <div class="param-group">
-              <label>频率 FREQ (Hz)</label>
-              <input
-                type="number"
-                min="20"
-                max="24000"
-                :value="Math.round(selectedBand.frequency)"
-                @change="
-                  updateEqBand(selectedBandIndex, {
-                    frequency: Number(($event.target as HTMLInputElement).value)
-                  })
-                "
-              />
-            </div>
-            <div class="param-group">
-              <label>滤波器类型</label>
-              <select
-                :value="selectedBand.filterType"
-                @change="
-                  selectFilterType(
-                    ($event.target as HTMLSelectElement).value as EqualizerFilterType
-                  )
-                "
-              >
-                <option v-for="filter in filterTypes" :key="filter.value" :value="filter.value">
-                  {{ filter.label }}
-                </option>
-              </select>
-            </div>
-            <div class="param-group">
-              <label>品质因数 Q</label>
-              <input
-                type="number"
-                step="0.1"
-                min="0.1"
-                max="20"
-                :value="selectedBand.q"
-                @input="
-                  updateEqBand(selectedBandIndex, {
-                    q: Number(($event.target as HTMLInputElement).value)
-                  })
-                "
-              />
-            </div>
-            <div class="param-group">
-              <label>增益 GAIN (dB)</label>
-              <input
-                type="number"
-                step="0.5"
-                min="-24"
-                max="24"
-                :value="selectedBand.gain"
-                :disabled="isGainDisabled(selectedBand)"
-                @input="
-                  updateEqBand(selectedBandIndex, {
-                    gain: Number(($event.target as HTMLInputElement).value)
-                  })
-                "
-              />
-            </div>
-          </section>
+          <ParametricEqWorkspace
+            :bands="audioProcessing.eqBands"
+            :selected-index="selectedBandIndex"
+            :filter-types="filterTypes"
+            :response-view="responseView"
+            :response-path="responsePath"
+            :response-fill-path="parametricResponseFillPath"
+            :spectrum-path="spectrumPath"
+            :spectrum-visible="spectrumVisible"
+            :measured-source-path="measuredSourcePath"
+            :target-response-path="targetResponsePath"
+            :corrected-acoustic-path="correctedAcousticPath"
+            :band-response-paths="bandResponsePaths"
+            :eq-enabled="audioProcessing.eqEnabled"
+            :status="eqApplyStatusText"
+            :status-state="eqApplyFeedback"
+            :error="eqApplyError"
+            @select="selectBand"
+            @add="addBand"
+            @preview="stageBandPatch"
+            @commit="commitStagedBands"
+            @delete="deleteBand"
+            @toggle="toggleBandEnabled"
+            @filter="selectFilterForBand"
+            @toggle-spectrum="spectrumVisible = !spectrumVisible"
+          />
         </div>
       </main>
     </div>
@@ -1994,6 +2324,150 @@ watch(opraQuery, () => {
 }
 
 /* Detailed SVG Chart Area */
+.parametric-pane {
+  gap: 10px;
+}
+
+.parametric-page-header {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 0 2px;
+}
+
+.parametric-page-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.parametric-eyebrow,
+.parametric-toolbar-label,
+.parametric-context-status {
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.parametric-eyebrow {
+  flex: 0 0 auto;
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--te-primary-500) 24%, var(--te-card-border));
+  border-radius: 5px;
+  color: var(--te-primary-500);
+  background: color-mix(in srgb, var(--te-primary-500) 7%, transparent);
+}
+
+.parametric-page-title h1 {
+  margin: 0 0 2px;
+  font-size: 17px;
+  font-weight: 760;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.parametric-page-title p {
+  overflow: hidden;
+  color: var(--te-neutral-500);
+  font-size: 11px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parametric-context-status {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--te-neutral-500);
+  font-variant-numeric: tabular-nums;
+}
+
+.context-status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--te-success-500);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--te-success-500) 62%, transparent);
+}
+
+.parametric-toolbar-card {
+  min-height: 38px;
+  padding: 5px 7px 5px 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--te-card-border) 76%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--te-card-bg) 50%, transparent);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--te-neutral-50) 3%, transparent);
+}
+
+.parametric-toolbar-label {
+  flex: 0 0 auto;
+  color: var(--te-neutral-500);
+}
+
+.parametric-toolbar-card .response-view-toolbar {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  gap: 6px 12px;
+}
+
+.parametric-toolbar-card .response-view-switch {
+  padding: 2px;
+  border-color: color-mix(in srgb, var(--te-card-border) 76%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--te-neutral-900) 5%, transparent);
+}
+
+.parametric-toolbar-card .response-view-switch button,
+.parametric-toolbar-card .frequency-response-import,
+.parametric-toolbar-card .frequency-response-clear {
+  min-height: 25px;
+  border-radius: 4px;
+  padding: 5px 9px;
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.parametric-toolbar-card .response-view-switch button.active {
+  color: var(--te-neutral-100);
+  background: color-mix(in srgb, var(--te-neutral-900) 88%, var(--te-primary-500));
+  box-shadow: none;
+}
+
+.parametric-toolbar-card .frequency-response-actions {
+  gap: 6px;
+}
+
+.parametric-toolbar-card .frequency-response-source,
+.parametric-toolbar-card .frequency-response-error {
+  overflow: hidden;
+  max-width: min(30vw, 320px);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parametric-toolbar-card .frequency-response-import {
+  border: 1px solid color-mix(in srgb, var(--te-primary-500) 32%, transparent);
+  color: var(--te-primary-500);
+  background: color-mix(in srgb, var(--te-primary-500) 7%, transparent);
+}
+
+.parametric-toolbar-card .frequency-response-clear {
+  border: 1px solid color-mix(in srgb, var(--te-card-border) 68%, transparent);
+}
+
 .chart-card {
   background: var(--te-card-bg);
   border-radius: 20px;
@@ -2001,6 +2475,134 @@ watch(opraQuery, () => {
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.03);
   border: 1px solid var(--te-card-border);
   position: relative;
+}
+.response-view-toolbar {
+  margin: -2px 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.response-view-switch {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 10px;
+  background: var(--te-neutral-100);
+}
+.response-view-switch button,
+.frequency-response-import,
+.frequency-response-clear {
+  appearance: none;
+  border: 0;
+  border-radius: 7px;
+  padding: 6px 10px;
+  background: transparent;
+  color: var(--te-neutral-600);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.response-view-switch button.active {
+  background: var(--te-card-bg);
+  color: var(--te-primary-500);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+}
+.response-view-switch button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+.frequency-response-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.frequency-response-source {
+  color: var(--te-neutral-500);
+  font-size: 11px;
+}
+.frequency-response-error {
+  max-width: 360px;
+  color: var(--te-danger-soft-fg);
+  font-size: 11px;
+}
+.frequency-response-import {
+  background: var(--te-primary-500);
+  color: var(--te-neutral-50);
+}
+.frequency-response-import:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+.frequency-response-clear {
+  color: var(--te-neutral-500);
+}
+.response-legend {
+  min-height: 28px;
+  margin: -2px 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: var(--te-neutral-600);
+  font-size: 11px;
+}
+.response-legend-item {
+  appearance: none;
+  border: 0;
+  padding: 2px 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+button.response-legend-item {
+  cursor: pointer;
+}
+.response-legend-item.muted {
+  opacity: 0.38;
+}
+.response-legend-item i {
+  display: inline-block;
+  width: 20px;
+  height: 0;
+  border-top: 2px solid var(--te-neutral-500);
+}
+.response-legend-item.total i {
+  border-top-width: 3px;
+  border-color: var(--te-primary-500);
+}
+.response-legend-item.manual i {
+  border-color: var(--te-info-soft-fg);
+}
+.response-legend-item.opra i {
+  border-color: var(--te-favorite-500);
+}
+.response-legend-item.estimated i {
+  border-color: var(--te-warning-500);
+  border-top-style: dashed;
+}
+.response-legend-item.measured i {
+  border-color: var(--te-info-soft-fg);
+}
+.response-legend-item.target i {
+  border-color: var(--te-neutral-500);
+  border-top-style: dashed;
+}
+.response-legend-item.corrected i {
+  border-color: var(--te-success-500);
+  border-top-width: 3px;
+}
+.response-estimate-note {
+  color: var(--te-neutral-500);
+  white-space: nowrap;
 }
 .svg-container {
   width: 100%;
@@ -2025,6 +2627,41 @@ svg {
   stroke: var(--te-primary-500);
   stroke-width: 1px;
   opacity: 0.18;
+}
+.equalizer-manual-response-line,
+.equalizer-opra-response-line,
+.equalizer-estimated-deviation-line,
+.equalizer-measured-source-line,
+.equalizer-target-response-line,
+.equalizer-corrected-acoustic-line {
+  stroke-width: 1.6px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.82;
+}
+.equalizer-manual-response-line {
+  stroke: var(--te-info-soft-fg);
+}
+.equalizer-opra-response-line {
+  stroke: var(--te-favorite-500);
+}
+.equalizer-estimated-deviation-line {
+  stroke: var(--te-warning-500);
+  stroke-dasharray: 5 4;
+  opacity: 0.9;
+}
+.equalizer-measured-source-line {
+  stroke: var(--te-info-soft-fg);
+}
+.equalizer-target-response-line {
+  stroke: var(--te-neutral-500);
+  stroke-dasharray: 6 4;
+  opacity: 0.85;
+}
+.equalizer-corrected-acoustic-line {
+  stroke: var(--te-success-500);
+  stroke-width: 2.6px;
+  opacity: 0.95;
 }
 .grid-line.zero {
   stroke: rgba(15, 23, 42, 0.15);
@@ -2285,7 +2922,73 @@ svg {
   max-width: 400px;
   line-height: 1.6;
 }
+
+@media (max-width: 900px) {
+  .parametric-page-title p {
+    max-width: 44vw;
+  }
+
+  .parametric-toolbar-card {
+    align-items: flex-start;
+  }
+
+  .parametric-toolbar-card .response-view-toolbar {
+    align-items: flex-start;
+  }
+
+  .parametric-toolbar-card .frequency-response-source,
+  .parametric-toolbar-card .frequency-response-error {
+    max-width: 220px;
+  }
+}
+
+@media (max-width: 620px) {
+  .parametric-pane {
+    gap: 8px;
+  }
+
+  .parametric-page-header {
+    align-items: flex-start;
+  }
+
+  .parametric-eyebrow,
+  .parametric-context-status,
+  .parametric-toolbar-label {
+    display: none;
+  }
+
+  .parametric-page-title h1 {
+    font-size: 15px;
+  }
+
+  .parametric-page-title p {
+    max-width: none;
+    white-space: normal;
+  }
+
+  .parametric-toolbar-card {
+    padding: 5px;
+  }
+
+  .parametric-toolbar-card .response-view-toolbar,
+  .parametric-toolbar-card .frequency-response-actions {
+    width: 100%;
+  }
+
+  .parametric-toolbar-card .frequency-response-actions {
+    justify-content: flex-start;
+  }
+
+  .parametric-toolbar-card .frequency-response-source,
+  .parametric-toolbar-card .frequency-response-error {
+    order: 3;
+    width: 100%;
+    max-width: none;
+  }
+}
+
 :global(html[data-te-equalizer-panel] .eq-page .opra-panel),
+:global(html[data-te-equalizer-panel] .eq-page .parametric-toolbar-card),
 :global(html[data-te-equalizer-panel] .eq-page .chart-card),
 :global(html[data-te-equalizer-panel] .eq-page .sliders-board),
 :global(html[data-te-equalizer-panel] .eq-page .band-selector),
@@ -2297,6 +3000,7 @@ svg {
 }
 
 :global(html[data-te-equalizer-panel='tinted'] .eq-page .opra-panel),
+:global(html[data-te-equalizer-panel='tinted'] .eq-page .parametric-toolbar-card),
 :global(html[data-te-equalizer-panel='tinted'] .eq-page .chart-card),
 :global(html[data-te-equalizer-panel='tinted'] .eq-page .sliders-board),
 :global(html[data-te-equalizer-panel='tinted'] .eq-page .band-selector),
@@ -2306,6 +3010,7 @@ svg {
 }
 
 :global(html[data-te-equalizer-panel='glass'] .eq-page .opra-panel),
+:global(html[data-te-equalizer-panel='glass'] .eq-page .parametric-toolbar-card),
 :global(html[data-te-equalizer-panel='glass'] .eq-page .chart-card),
 :global(html[data-te-equalizer-panel='glass'] .eq-page .sliders-board),
 :global(html[data-te-equalizer-panel='glass'] .eq-page .band-selector),
@@ -2314,6 +3019,22 @@ svg {
   background: color-mix(in srgb, var(--te-equalizer-panel-bg) 68%, transparent);
   backdrop-filter: blur(18px) saturate(140%);
   -webkit-backdrop-filter: blur(18px) saturate(140%);
+}
+
+:global(html[data-te-equalizer-panel] .eq-page .parametric-toolbar-card) {
+  border-color: color-mix(in srgb, var(--te-equalizer-panel-border) 76%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--te-equalizer-panel-bg) 46%, transparent);
+}
+
+:global(html[data-te-equalizer-panel='tinted'] .eq-page .parametric-toolbar-card) {
+  background: color-mix(in srgb, var(--te-equalizer-panel-bg) 72%, var(--te-primary-500));
+}
+
+:global(html[data-te-equalizer-panel='glass'] .eq-page .parametric-toolbar-card) {
+  background: color-mix(in srgb, var(--te-equalizer-panel-bg) 42%, transparent);
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
 }
 
 :global(html[data-te-equalizer-slider] .eq-page .slider-track) {

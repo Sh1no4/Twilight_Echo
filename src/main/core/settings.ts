@@ -36,6 +36,7 @@ import type {
   ProxyMode,
   SettingsSnapshot,
   StartupHomePage,
+  TrackActivationMode,
   StreamingAudioCachePolicy,
   UiDensity
 } from './types'
@@ -104,6 +105,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   closeToTray: false,
   onboardingCompleted: false,
   startupHomePage: 'local',
+  trackActivationMode: 'singleClick',
   theme: 'system',
   pluginThemeId: null,
   activeTheme: { kind: 'builtin', id: 'builtin:twilight-echo-default' },
@@ -304,6 +306,10 @@ export function normalizeNcmPlaybackQuality(value: unknown): NcmPlaybackQuality 
 
 export function normalizeStartupHomePage(value: unknown): StartupHomePage {
   return value === 'streaming' ? 'streaming' : 'local'
+}
+
+export function normalizeTrackActivationMode(value: unknown): TrackActivationMode {
+  return value === 'doubleClick' ? 'doubleClick' : 'singleClick'
 }
 
 export function normalizeStreamingAudioCachePolicy(value: unknown): StreamingAudioCachePolicy {
@@ -651,6 +657,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     closeToTray,
     onboardingCompleted: settings.onboardingCompleted === true,
     startupHomePage: normalizeStartupHomePage(settings.startupHomePage),
+    trackActivationMode: normalizeTrackActivationMode(settings.trackActivationMode),
     theme: normalizeAppTheme(settings.theme),
     pluginThemeId:
       activeTheme.kind === 'plugin' ? `${activeTheme.pluginId}:${activeTheme.themeId}` : null,

@@ -28,6 +28,7 @@ const props = withDefaults(
     trackCountLabel: string
     tracks: Track[]
     currentTrackId?: string | null
+    trackActivationMode?: 'singleClick' | 'doubleClick'
     isExternal?: boolean
     loading?: boolean
     showFollow?: boolean
@@ -60,6 +61,7 @@ const props = withDefaults(
     description: '',
     intro: '',
     icon: 'pi pi-list',
+    trackActivationMode: 'singleClick',
     isExternal: false,
     loading: false,
     showFollow: false,
@@ -157,6 +159,7 @@ function onRowActivate(track: Track, index: number, event: MouseEvent): void {
 
 function onRowDblClick(track: Track, index: number, event: MouseEvent): void {
   event.preventDefault()
+  if (props.trackActivationMode !== 'doubleClick') return
   emit('playTrack', track, index)
 }
 

@@ -173,6 +173,83 @@ test('startup home page setting is persisted and selectable from general setting
   assert.match(settingsPageSource, /流媒体主页/)
 })
 
+test('track activation mode is persisted across layers and applied to all track lists', () => {
+  const mainTypes = readFileSync(new URL('../../../main/core/types.ts', import.meta.url), 'utf8')
+  const mainSettings = readFileSync(
+    new URL('../../../main/core/settings.ts', import.meta.url),
+    'utf8'
+  )
+  const preloadTypes = readFileSync(new URL('../../../preload/types.ts', import.meta.url), 'utf8')
+  const preloadDts = readFileSync(new URL('../../../preload/index.d.ts', import.meta.url), 'utf8')
+  const rendererTypes = readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8')
+  const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
+  const settingsPageSource = readSettingsPageSources()
+  const songListSource = readFileSync(
+    new URL('../components/SongList.vue', import.meta.url),
+    'utf8'
+  )
+  const streamingPageSource = readFileSync(
+    new URL('../components/StreamingPage.vue', import.meta.url),
+    'utf8'
+  )
+  const streamingSearchSource = readFileSync(
+    new URL('../components/StreamingSearch.vue', import.meta.url),
+    'utf8'
+  )
+  const streamingDetailSource = readFileSync(
+    new URL('../components/streaming-page/StreamingDetailStage.vue', import.meta.url),
+    'utf8'
+  )
+  const streamingSocialSource = readFileSync(
+    new URL('../components/streaming-page/StreamingSocialStage.vue', import.meta.url),
+    'utf8'
+  )
+  const multiSelectSource = readFileSync(
+    new URL('../components/song-list/useTrackMultiSelect.ts', import.meta.url),
+    'utf8'
+  )
+
+  for (const source of [mainTypes, preloadTypes, rendererTypes]) {
+    assert.match(source, /export type TrackActivationMode = 'singleClick' \| 'doubleClick'/)
+    assert.match(source, /trackActivationMode: TrackActivationMode/)
+  }
+  assert.match(preloadDts, /type TrackActivationMode = 'singleClick' \| 'doubleClick'/)
+  assert.match(preloadDts, /trackActivationMode: TrackActivationMode/)
+  assert.match(mainSettings, /trackActivationMode: 'singleClick'/)
+  assert.match(
+    mainSettings,
+    /export function normalizeTrackActivationMode\(value: unknown\): TrackActivationMode \{\s*return value === 'doubleClick' \? 'doubleClick' : 'singleClick'\s*\}/
+  )
+  assert.match(
+    mainSettings,
+    /trackActivationMode: normalizeTrackActivationMode\(settings\.trackActivationMode\)/
+  )
+  assert.match(storeSource, /trackActivationMode: 'singleClick'/)
+  assert.match(settingsPageSource, /trackActivationModeOptions/)
+  assert.match(settingsPageSource, /单击播放/)
+  assert.match(settingsPageSource, /双击播放/)
+  assert.match(settingsPageSource, /歌曲列表播放方式/)
+  assert.match(songListSource, /trackActivationMode === 'doubleClick'/)
+  assert.match(songListSource, /@dblclick="onRowDblClick\(track, \$event\)"/)
+  assert.match(streamingPageSource, /trackActivationMode === 'doubleClick'/)
+  assert.ok(
+    (streamingPageSource.match(/:track-activation-mode=/g) ?? []).length >= 3,
+    'search, detail, and social streaming track lists must receive the setting'
+  )
+  for (const source of [streamingSearchSource, streamingDetailSource, streamingSocialSource]) {
+    assert.match(source, /trackActivationMode/)
+    assert.match(source, /@dblclick/)
+  }
+  assert.doesNotMatch(multiSelectSource, /ensureContextSelection/)
+  assert.doesNotMatch(songListSource, /ensureContextSelection/)
+  assert.doesNotMatch(streamingPageSource, /ensureContextSelection/)
+  assert.match(songListSource, /function onTrackContextMenu\([\s\S]*?onContextMenu\(event, track\)/)
+  assert.match(
+    streamingPageSource,
+    /function onStreamingTrackContextMenu\([\s\S]*?streamingContextMenuTrack\.value = track/
+  )
+})
+
 test('audio settings expose advanced replaygain, fft, crossfeed, and real loudnorm option', () => {
   const settingsTypes = readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8')
   const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')

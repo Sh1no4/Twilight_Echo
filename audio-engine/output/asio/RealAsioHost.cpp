@@ -213,7 +213,8 @@ std::string enumerateAsioDevicesJson() {
   for (const auto& device : createRealAsioHost()->enumerateDevices()) {
     if (!first) json << ',';
     first = false;
-    json << "{\"id\":\"" << jsonEscape(device.id) << "\",\"name\":\"" << jsonEscape(device.name)
+    json << "{\"id\":\"" << jsonEscape(device.id) << "\",\"label\":\"" << jsonEscape(device.name)
+         << "\",\"name\":\"" << jsonEscape(device.name)
          << "\",\"backend\":\"asio\",\"isDefault\":" << (device.isDefault ? "true" : "false") << '}';
   }
   json << ']';

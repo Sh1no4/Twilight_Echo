@@ -13,6 +13,7 @@ import type {
   PlaybackResumeMode,
   SacdProgramMode,
   StartupHomePage,
+  TrackActivationMode,
   StreamingAudioCachePolicy,
   UiDensity
 } from '../../types/settings'
@@ -84,6 +85,15 @@ export const ncmPlaybackQualityOptions: { value: NcmPlaybackQuality; label: stri
 export const startupHomePageOptions: { value: StartupHomePage; label: string; icon: string }[] = [
   { value: 'local', label: '本地音乐主页', icon: 'pi pi-home' },
   { value: 'streaming', label: '流媒体主页', icon: 'pi pi-compass' }
+]
+
+export const trackActivationModeOptions: {
+  value: TrackActivationMode
+  label: string
+  icon: string
+}[] = [
+  { value: 'singleClick', label: '单击播放', icon: 'pi pi-bolt' },
+  { value: 'doubleClick', label: '双击播放', icon: 'pi pi-clone' }
 ]
 
 export const bufferSizeOptions = [
@@ -181,7 +191,7 @@ export const SETTINGS_SEARCH_INDEX: Array<{
     section: 'general',
     title: '媒体库与启动',
     terms:
-      '常规 扫描 文件夹 监控 网易云 SMTC Discord 启动 托盘 代理 插件设置 备份 恢复 远程 遥控 PIN DLNA 投送 局域网'
+      '常规 扫描 文件夹 监控 网易云 SMTC Discord 启动 托盘 代理 插件设置 备份 恢复 远程 遥控 PIN DLNA 投送 局域网 操作习惯 单击播放 双击播放 右键菜单'
   },
   {
     section: 'playback',

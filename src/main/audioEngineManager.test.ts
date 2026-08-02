@@ -4483,6 +4483,44 @@ test('getAudioOutputState can use injected device options without native enumera
   assert.equal(state.deviceOptions[2].capabilityVersion, 3)
 })
 
+test('native ASIO device names become labels and stale selected devices stay out of the list', async () => {
+  const canonicalAsioId = 'asio:{6b3ba606-8664-4426-8994-0f1d9d12a345}'
+  const nativeBinding = new FakeNativeBinding(undefined, [
+    DEVICE_OPTIONS[0],
+    {
+      id: canonicalAsioId,
+      label: '',
+      name: 'FiiO ASIO Driver',
+      backend: 'asio',
+      isDefault: false,
+      pathKind: 'asio'
+    }
+  ])
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'asio',
+      audioDevice: 'asio:{stale-device}'
+    },
+    {
+      nativeBinding,
+      scheduler: TEST_SCHEDULER
+    }
+  )
+
+  const state = await manager.getAudioOutputState()
+
+  assert.equal(state.device, 'auto')
+  assert.equal(
+    state.deviceOptions.find((device) => device.id === canonicalAsioId)?.label,
+    'FiiO ASIO Driver'
+  )
+  assert.equal(
+    state.deviceOptions.some((device) => device.id === 'asio:{stale-device}'),
+    false
+  )
+})
+
 test('getAudioOutputState reuses native device options within the output state cache window', async () => {
   const nativeBinding = new FakeNativeBinding()
   const manager = new AudioEngineManager(

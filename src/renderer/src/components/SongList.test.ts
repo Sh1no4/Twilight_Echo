@@ -277,3 +277,21 @@ test('library playback controls render below the table header', () => {
   assert.ok(tableHeaderEnd > tableHeaderStart)
   assert.ok(playActionsIndex > tableHeaderEnd)
 })
+
+test('track table places the list number before artwork and reserves metadata track numbers for album details', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  const table = source.slice(source.indexOf('<table class="track-table">'))
+  const header = table.slice(table.indexOf('<thead>'), table.indexOf('</thead>'))
+  const row = table.slice(
+    table.indexOf('<tr\n                  v-for='),
+    table.indexOf('</tr>', table.indexOf('<tr\n                  v-for='))
+  )
+
+  assert.ok(header.indexOf('class="col-index"') < header.indexOf('class="col-cover-header"'))
+  assert.ok(row.indexOf('class="col-index"') < row.indexOf('class="col-cover"'))
+  assert.match(source, /const isAlbumDetail = computed\(/)
+  assert.match(source, /isAlbumDetail\.value[\s\S]*track\.trackNumber/)
+  assert.match(source, /return visibleRange\.value\.start \+ visibleIndex \+ 1/)
+  assert.match(row, /trackListNumber\(track, Number\(index\)\)/)
+  assert.doesNotMatch(row, /track\.trackNumber\s*\?\?/)
+})

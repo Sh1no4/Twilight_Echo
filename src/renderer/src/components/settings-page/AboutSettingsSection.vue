@@ -28,6 +28,7 @@ const emit = defineEmits<{
   cancelUpdateDownload: []
   installUpdate: []
   openReleasePage: []
+  exportAudioDiagnostics: []
 }>()
 
 function openExternal(url: string): void {
@@ -248,6 +249,9 @@ function progressLabel(): string {
     <hr />
 
     <div class="about-links">
+      <button type="button" @click="emit('exportAudioDiagnostics')">
+        <i class="pi pi-file-export"></i> 导出音频诊断
+      </button>
       <button type="button" @click="openGithub"><i class="pi pi-github"></i> GitHub</button>
       <button type="button" @click="openChangelog"><i class="pi pi-file-o"></i> 更新日志</button>
       <button type="button" @click="openHomepage"><i class="pi pi-heart-fill"></i> 开源致谢</button>

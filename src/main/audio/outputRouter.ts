@@ -527,7 +527,7 @@ export class OutputRouter {
   getAudioDeviceOptions(): AudioDeviceOption[] {
     const injectedDevices = this.deviceOptionsProvider?.()
     if (Array.isArray(injectedDevices) && injectedDevices.length > 0) {
-      return normalizeAudioDeviceOptions(injectedDevices, this.device)
+      return normalizeAudioDeviceOptions(injectedDevices)
     }
     const now = this.scheduler.now()
     const cached = this.lastAudioDeviceOptionsCache
@@ -558,7 +558,7 @@ export class OutputRouter {
     } catch {
       // Fall through to the stable default device.
     }
-    const normalizedDevices = normalizeAudioDeviceOptions(nativeDevices, this.device)
+    const normalizedDevices = normalizeAudioDeviceOptions(nativeDevices)
     return normalizedDevices.length > 0 ? normalizedDevices : [{ ...DEFAULT_AUDIO_DEVICE_OPTION }]
   }
 

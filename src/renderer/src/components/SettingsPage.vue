@@ -15,6 +15,7 @@ import {
   playbackResumeOptions,
   ncmPlaybackQualityOptions,
   startupHomePageOptions,
+  trackActivationModeOptions,
   bufferSizeOptions,
   routingModeOptions,
   pcmToDsdModeOptions,
@@ -73,6 +74,7 @@ import type {
   PlayerShortcutStatus,
   PlaybackResumeMode,
   StartupHomePage,
+  TrackActivationMode,
   AppBackgroundSettings,
   SacdProgramMode,
   StreamingAudioCachePolicy,
@@ -900,6 +902,11 @@ function setStartupHomePage(startupHomePage: StartupHomePage): void {
   void updateSettings({ startupHomePage })
 }
 
+function setTrackActivationMode(trackActivationMode: TrackActivationMode): void {
+  if (settings.value.trackActivationMode === trackActivationMode) return
+  void updateSettings({ trackActivationMode })
+}
+
 function setPlaybackResumeModeFromSelect(event: Event): void {
   setPlaybackResumeMode((event.target as HTMLSelectElement).value as PlaybackResumeMode)
 }
@@ -1543,6 +1550,16 @@ async function installUpdate(): Promise<void> {
 function openReleasePage(): void {
   const url = releaseUrl.value || 'https://github.com/asenyarzc-cpu/Twilight_Echo/releases'
   void window.api?.shell?.openExternal?.(url)
+}
+
+async function exportAudioDiagnostics(): Promise<void> {
+  try {
+    const result = await window.api.audioEngine.exportDiagnostics()
+    if (!result.filePath) return
+    window.alert(`音频诊断日志已导出：\n${result.filePath}\n\n请将此 JSON 文件发给开发者。`)
+  } catch (error) {
+    window.alert(error instanceof Error ? error.message : '导出音频诊断日志失败')
+  }
 }
 
 function toggleClipGuard(): void {
@@ -2204,6 +2221,30 @@ onBeforeUnmount(() => {
                     {{ remoteStatus.lastError }}
                   </span>
                   <span v-if="remoteStatusError" class="remote-error">{{ remoteStatusError }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <h3>操作习惯 (Interaction)</h3>
+            <div class="setting-list">
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>歌曲列表播放方式</strong>
+                  <span>选择普通左键单击还是双击播放；右键始终只打开菜单，不改变选中状态。</span>
+                </div>
+                <div class="segmented-control">
+                  <button
+                    v-for="option in trackActivationModeOptions"
+                    :key="option.value"
+                    type="button"
+                    :class="{ active: settings.trackActivationMode === option.value }"
+                    @click="setTrackActivationMode(option.value)"
+                  >
+                    <i :class="option.icon"></i>
+                    {{ option.label }}
+                  </button>
                 </div>
               </div>
             </div>
@@ -5075,6 +5116,7 @@ onBeforeUnmount(() => {
           @cancel-update-download="cancelUpdateDownload"
           @install-update="installUpdate"
           @open-release-page="openReleasePage"
+          @export-audio-diagnostics="exportAudioDiagnostics"
         />
       </div>
     </div>

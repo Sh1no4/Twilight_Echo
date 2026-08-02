@@ -394,7 +394,14 @@ export class AudioEngineManager extends EventEmitter {
       service.on('crash', (reason: string) => this.handleAudioServiceCrash(reason))
       service.on('ready', () => this.handleAudioServiceReady())
       service.on('error-log', (message: string) => {
-        if (message.trim()) console.warn('[音频服务]', message.trim())
+        const normalized = message.trim()
+        if (!normalized) return
+        console.warn('[音频服务]', normalized)
+        this.emit('audio-service-stderr', { message: normalized })
+      })
+      service.on('log', (message: string) => {
+        const normalized = message.trim()
+        if (normalized) this.emit('audio-service-stdout', { message: normalized })
       })
       this.audioServiceBinding = service
       return service
