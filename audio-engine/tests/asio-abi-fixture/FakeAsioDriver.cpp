@@ -116,9 +116,10 @@ class FakeAsioDriver final : public AsioDriver {
   }
 
   AsioError canSampleRate(AsioSampleRate sampleRate) override {
-    const AsioSampleRate supportedRate =
-        ioFormat_ == kAsioIoFormatDsd ? 352800.0 : 48000.0;
-    return sampleRate == supportedRate ? kAsioOk : -1;
+    if (ioFormat_ == kAsioIoFormatDsd) {
+      return sampleRate == 2822400.0 || sampleRate == 22579200.0 ? kAsioOk : -1;
+    }
+    return sampleRate == 48000.0 ? kAsioOk : -1;
   }
 
   AsioError getSampleRate(AsioSampleRate* sampleRate) override {

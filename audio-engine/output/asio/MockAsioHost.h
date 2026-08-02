@@ -40,7 +40,9 @@ class MockAsioHost final : public IAsioHost {
   int stopCalls = 0;
   int closeCalls = 0;
   int createBuffersCalls = 0;
+  mutable int outputChannelFormatCalls = 0;
   int outputReadyCalls = 0;
+  int failOutputReadyCount = 0;
   int failOpenCount = 0;
   int failDriverInitCount = 0;
   int failDriverOpenCount = 0;

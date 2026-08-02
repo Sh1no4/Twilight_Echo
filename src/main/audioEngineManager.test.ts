@@ -286,6 +286,52 @@ test('playback fanout signature changes when config revisions advance', () => {
   )
 })
 
+test('playback fanout signature publishes canonical output-perfect transitions', () => {
+  const before = makePlaybackInfo({
+    state: 'playing',
+    source: 'pcm-192k.flac',
+    sourceSampleRate: 192000,
+    decodedSampleRate: 192000,
+    outputInfo: makeOutputInfo({
+      supportsOutputPerfect: true,
+      sourceExact: false,
+      pcmPassthrough: false,
+      outputPerfect: false,
+      outputSampleRate: 192000,
+      actualSampleRate: 192000
+    })
+  })
+  const afterOutputInfo = makeOutputInfo({
+    ...before.outputInfo,
+    supportsOutputPerfect: true,
+    sourceExact: true,
+    pcmPassthrough: true,
+    outputPerfect: true,
+    outputSampleRate: 192000,
+    actualSampleRate: 192000,
+    perfectReason: '',
+    perfectReasonCode: ''
+  })
+  const after = makePlaybackInfo({
+    ...before,
+    sourceExact: true,
+    pcmPassthrough: true,
+    outputPerfect: true,
+    perfectReason: '',
+    perfectReasonCode: '',
+    outputInfo: afterOutputInfo
+  })
+
+  assertPlaybackMirrorsOutputInfo(after)
+  assert.equal(after.sourceExact, true)
+  assert.equal(after.pcmPassthrough, true)
+  assert.equal(after.outputPerfect, true)
+  assert.notEqual(
+    createPlaybackInfoFanoutSignature(before, true),
+    createPlaybackInfoFanoutSignature(after, true)
+  )
+})
+
 test('playback fanout signature ignores native tick position changes', () => {
   const info = makePlaybackInfo({
     state: 'playing',
@@ -2078,6 +2124,69 @@ test('setExclusiveMode refreshes backend facts immediately', async () => {
   assert.equal(info.outputInfo.exclusive, true)
   assert.equal(info.outputInfo.supportsOutputPerfect, true)
   assert.equal(info.outputInfo.perfectReasonCode, '')
+  assertPlaybackMirrorsOutputInfo(info)
+})
+
+test('getPlaybackInfo preserves canonical 192 kHz PCM output-perfect facts', async () => {
+  const outputInfo = makeOutputInfo({
+    backend: 'asio',
+    actualBackend: 'asio',
+    exclusive: true,
+    accessMode: 'exclusive',
+    devicePathKind: 'asio',
+    deviceName: 'asio:studio',
+    actualDeviceName: 'Studio ASIO',
+    supportsOutputPerfect: true,
+    sourceExact: true,
+    pcmPassthrough: true,
+    outputPerfect: true,
+    resampled: false,
+    outputSampleRate: 192000,
+    outputBitDepth: 24,
+    actualSampleRate: 192000,
+    actualBitDepth: 24,
+    actualChannels: 2,
+    actualOutputFormat: 'int24',
+    perfectReason: '',
+    perfectReasonCode: ''
+  })
+  const nativeBinding = new FakeNativeBinding({
+    state: 'playing',
+    source: 'pcm-192k.flac',
+    codec: 'flac',
+    sourceSampleRate: 192000,
+    sourceBitDepth: 24,
+    decodedSampleRate: 192000,
+    decodedBitDepth: 24,
+    decodedChannels: 2,
+    decodedSampleFormat: 'int24',
+    outputInfo
+  })
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'asio',
+      audioDevice: 'asio:studio'
+    },
+    nativeBinding
+  )
+  const managerState = manager as unknown as {
+    nativePlaybackActive: boolean
+    nativeOutputRouteSynced: boolean
+  }
+  managerState.nativePlaybackActive = true
+  managerState.nativeOutputRouteSynced = true
+
+  const info = await manager.getPlaybackInfo()
+
+  assert.equal(info.outputInfo.sourceExact, true)
+  assert.equal(info.outputInfo.pcmPassthrough, true)
+  assert.equal(info.outputInfo.outputPerfect, true)
+  assert.equal(info.outputInfo.resampled, false)
+  assert.equal(info.outputInfo.outputSampleRate, 192000)
+  assert.equal(info.sourceExact, true)
+  assert.equal(info.pcmPassthrough, true)
+  assert.equal(info.outputPerfect, true)
   assertPlaybackMirrorsOutputInfo(info)
 })
 

@@ -281,10 +281,18 @@ void testPcmPassthroughRequiresExactFormat() {
   const AudioFormat float32 = pcm(48000, 32, 2, AudioSampleFormat::Float32Interleaved);
   const AudioFormat int24 = pcm(48000, 24, 2, AudioSampleFormat::Int24Interleaved);
   const AudioFormat int24In32 = pcm(48000, 24, 2, AudioSampleFormat::Int24In32Interleaved);
+  const AudioFormat pcm192k = pcm(192000, 24, 2, AudioSampleFormat::Int24Interleaved);
+  const AudioFormat pcm192kIn32 = pcm(192000, 24, 2, AudioSampleFormat::Int24In32Interleaved);
+  const AudioFormat pcm192kFloat = pcm(192000, 32, 2, AudioSampleFormat::Float32Interleaved);
+  const AudioFormat pcm192kSixChannels = pcm(192000, 24, 6, AudioSampleFormat::Int24Interleaved);
 
   assert(pcmFormatsExactMatch(float32, float32));
   assert(!pcmFormatsExactMatch(float32, int24));
   assert(!pcmFormatsExactMatch(int24, int24In32));
+  assert(pcmFormatsExactMatch(pcm192k, pcm192k));
+  assert(!pcmFormatsExactMatch(pcm192k, pcm192kIn32));
+  assert(!pcmFormatsExactMatch(pcm192k, pcm192kFloat));
+  assert(!pcmFormatsExactMatch(pcm192k, pcm192kSixChannels));
 
   auto floatToInt = baseEvaluation();
   floatToInt.decodedFormat = float32;
@@ -669,6 +677,21 @@ void testDsdHighRateFallbackReason() {
   assert(result.perfectReason == "DSD256 currently falls back to PCM");
 }
 
+void testDsd512ForcedPcmPreservesExplicitFallbackReason() {
+  auto dsd = baseEvaluation();
+  dsd.sourceFormat = pcm(22579200, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
+  dsd.sourceDsd = true;
+  dsd.dsdMode = DsdMode::Pcm;
+  dsd.dsdRate = 512;
+  dsd.backendPerfectReason = "DSD output mode forced PCM";
+
+  const PerfectResult result = evaluatePerfect(dsd);
+  assert(!result.sourceExact);
+  assert(!result.outputPerfect);
+  assert(result.perfectReasonCode == "dsd_output_mode_pcm");
+  assert(result.perfectReason == "DSD output mode forced PCM");
+}
+
 void testUnsupportedDsdRateRejectsDopPerfect() {
   auto dop = baseEvaluation();
   dop.sourceFormat = pcm(45158400, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
@@ -719,6 +742,7 @@ int main() {
   testDsdProcessingFallbackReason();
   testDsdDopRoutingSemanticChangeUsesRoutingFallbackCode();
   testDsdHighRateFallbackReason();
+  testDsd512ForcedPcmPreservesExplicitFallbackReason();
   testUnsupportedDsdRateRejectsDopPerfect();
   return 0;
 }

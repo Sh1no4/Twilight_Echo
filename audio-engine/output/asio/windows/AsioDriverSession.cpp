@@ -161,9 +161,9 @@ struct AsioDriverSession::State final : AsioCallbackTarget {
       if (error) *error = "Native DSD configuration requires a raw DSD format";
       return false;
     }
-    const int transportRate = asio::transportSampleRate(format);
-    if (transportRate <= 0) {
-      if (error) *error = "Native DSD requested an invalid ASIO transport sample rate";
+    const int driverRate = asio::driverSampleRate(format);
+    if (driverRate <= 0) {
+      if (error) *error = "Native DSD requested an invalid ASIO semantic sample rate";
       return false;
     }
 
@@ -213,13 +213,13 @@ struct AsioDriverSession::State final : AsioCallbackTarget {
     traceAsioDriverCall("after Native DSD verify I/O format");
 
     traceAsioDriverCall("before Native DSD sample rate negotiation");
-    if (driver->canSampleRate(static_cast<double>(transportRate)) != asio_abi::kAsioOk) {
-      if (error) *error = "ASIO driver rejected the Native DSD transport sample rate";
+    if (driver->canSampleRate(static_cast<double>(driverRate)) != asio_abi::kAsioOk) {
+      if (error) *error = "ASIO driver rejected the Native DSD semantic sample rate";
       return false;
     }
     sampleRateRestoreRequired = true;
-    if (driver->setSampleRate(static_cast<double>(transportRate)) != asio_abi::kAsioOk) {
-      if (error) *error = "ASIO driver could not switch to the Native DSD transport sample rate";
+    if (driver->setSampleRate(static_cast<double>(driverRate)) != asio_abi::kAsioOk) {
+      if (error) *error = "ASIO driver could not switch to the Native DSD semantic sample rate";
       return false;
     }
     traceAsioDriverCall("after Native DSD sample rate negotiation");
@@ -364,8 +364,8 @@ bool AsioDriverSession::open(const AsioOpenConfig& config, AsioOpenResult* resul
         const bool nativeDsdRequested = isDsdSampleFormat(config.format.sampleFormat);
         if (nativeDsdRequested && !state->configureNativeDsd(config.format, &outcome.error)) return outcome;
 
-        const int transportRate = asio::transportSampleRate(config.format);
-        const double requestedRate = static_cast<double>(transportRate);
+        const int driverRate = asio::driverSampleRate(config.format);
+        const double requestedRate = static_cast<double>(driverRate);
         traceAsioDriverCall("before sample rate negotiation");
         if (requestedRate <= 0 ||
             (!nativeDsdRequested && (state->driver->canSampleRate(requestedRate) != asio_abi::kAsioOk ||
@@ -430,17 +430,13 @@ bool AsioDriverSession::open(const AsioOpenConfig& config, AsioOpenResult* resul
         outcome.result.driverName = driverName.data();
         outcome.result.driverVersion = state->driver->getDriverVersion();
         const AudioSampleFormat actualSampleFormat = state->channelFormats.front().logicalFormat;
-        const int semanticRate = asio::semanticSampleRate(actualSampleFormat, static_cast<int>(roundedRate));
-        if (semanticRate <= 0) {
-          outcome.error = "ASIO driver returned an invalid DSD transport sample rate";
-          return outcome;
-        }
-        if (nativeDsdRequested && semanticRate != config.format.sampleRate) {
-          outcome.error = "ASIO driver returned a Native DSD rate different from the requested stream";
+        const int actualSemanticRate = static_cast<int>(roundedRate);
+        if (nativeDsdRequested && actualSemanticRate != config.format.sampleRate) {
+          outcome.error = "ASIO driver returned a Native DSD semantic rate different from the requested stream";
           return outcome;
         }
         outcome.result.actualFormat = config.format;
-        outcome.result.actualFormat.sampleRate = semanticRate;
+        outcome.result.actualFormat.sampleRate = actualSemanticRate;
         outcome.result.actualFormat.sampleFormat = actualSampleFormat;
         outcome.result.actualFormat.bitDepth = bitDepthForFormat(outcome.result.actualFormat.sampleFormat);
         outcome.result.bufferSizeFrames = state->bufferSize;

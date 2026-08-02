@@ -2,7 +2,7 @@ const { existsSync, readdirSync, readFileSync } = require('node:fs')
 const { join, relative, resolve } = require('node:path')
 const { spawnSync } = require('node:child_process')
 
-const IGNORED_DIRECTORIES = new Set(['.git', 'node_modules', 'build', 'dist', 'out'])
+const IGNORED_DIRECTORIES = new Set(['.git', '.workbuddy', 'node_modules', 'build', 'dist', 'out'])
 const TEXT_EXTENSIONS = new Set([
   '.c',
   '.cc',
@@ -64,11 +64,15 @@ function findForbiddenAsioSdkReferences(root, files = collectFiles(root)) {
 }
 
 function findForbiddenAsioSdkHistory(root, spawn = spawnSync) {
-  const result = spawn('git', ['log', '--all', '--name-only', '--format='], {
-    cwd: root,
-    encoding: 'utf8',
-    windowsHide: true
-  })
+  const result = spawn(
+    'git',
+    ['-c', `safe.directory=${resolve(root)}`, 'log', '--all', '--name-only', '--format='],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      windowsHide: true
+    }
+  )
   if (result?.error || result?.status !== 0) {
     return [
       `unable to inspect Git history: ${result?.error?.message || `git exited ${result?.status ?? 'unknown'}`}`
@@ -102,6 +106,7 @@ if (require.main === module) {
 module.exports = {
   FORBIDDEN_CONTENT,
   FORBIDDEN_PATHS,
+  IGNORED_DIRECTORIES,
   findForbiddenAsioSdkHistory,
   findForbiddenAsioSdkReferences,
   verifyAsioSdkFree

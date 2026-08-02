@@ -51,6 +51,9 @@ class AsioBackend final : public IOutputBackend {
   long chooseBufferSize(const AsioDeviceInfo& device) const;
   int routedOutputChannels(const AsioDeviceInfo& device, int sourceChannels) const;
   void renderBuffer(long bufferIndex);
+  void notifyOutputReady() noexcept;
+  void recordRenderUnderrun() noexcept;
+  void recordRenderBufferDrop() noexcept;
   void queueRecoveryFromHostCallback(AsioHostEvent event, std::string message);
   void recoveryWorkerLoop();
   void joinRecoveryThread();
@@ -89,16 +92,33 @@ class AsioBackend final : public IOutputBackend {
   bool actualOutputFormatObserved_ = false;
   bool actualOutputChannelFormatsMatch_ = true;
   bool nativeDsdTypedCallbackMissing_ = false;
-  bool firstNativeDsdBufferObserved_ = false;
-  size_t firstNativeDsdInspectedBytes_ = 0;
-  uint8_t firstNativeDsdIdleByte_ = 0;
-  uint64_t firstNativeDsdHash_ = 0;
+  std::atomic<bool> firstNativeDsdBufferClaimed_{false};
+  std::atomic<bool> firstNativeDsdBufferObserved_{false};
+  std::atomic<size_t> firstNativeDsdInspectedBytes_{0};
+  std::atomic<uint8_t> firstNativeDsdIdleByte_{0};
+  std::atomic<uint64_t> firstNativeDsdHash_{0};
   std::atomic<bool> running_{false};
   std::atomic<bool> stopRequested_{false};
+  // Immutable for the lifetime of a started host session. The driver callback
+  // reads these directly and never contends with status polling/recovery locks.
+  RenderCallback renderCallbackSession_;
+  TypedRenderCallback typedCallbackSession_;
+  OutputConfig renderOutputConfigSession_;
+  AudioFormat renderOutputFormatSession_;
+  AudioFormat renderOpenFormatSession_;
+  long renderBufferSizeFramesSession_ = 0;
+  bool renderChannelFormatsMatchSession_ = true;
+  std::vector<AsioChannelFormat> renderChannelFormatsSession_;
   std::vector<float> renderScratch_;
   std::vector<uint8_t> typedRenderScratch_;
   std::chrono::high_resolution_clock::time_point lastRenderTime_{};
   uint32_t renderCallbacksSeen_ = 0;
+  std::atomic<uint64_t> pendingRenderUnderruns_{0};
+  std::atomic<uint64_t> pendingRenderBufferDrops_{0};
+  std::atomic<uint64_t> pendingDsdShortReads_{0};
+  std::atomic<uint64_t> pendingDsdIdleFrames_{0};
+  std::atomic<bool> outputReadyEnabled_{true};
+  std::atomic<bool> pendingNativeDsdTypedCallbackMissing_{false};
 };
 
 bool asioBackendAvailable();

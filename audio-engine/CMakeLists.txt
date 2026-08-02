@@ -14,6 +14,9 @@ set(TAE_NODE_INCLUDE_DIR "" CACHE PATH "Path to Node-API headers")
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+if(MSVC)
+  add_compile_options(/utf-8)
+endif()
 
 set(TAE_WASAPI_AVAILABLE OFF)
 set(TAE_ASIO_AVAILABLE OFF)
@@ -100,6 +103,7 @@ else()
 endif()
 
 if(WIN32)
+  add_compile_definitions(WIN32_LEAN_AND_MEAN NOMINMAX)
   target_compile_definitions(twilight_audio_engine PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
   set_target_properties(twilight_audio_engine PROPERTIES
     OUTPUT_NAME "twilight-audio-engine"

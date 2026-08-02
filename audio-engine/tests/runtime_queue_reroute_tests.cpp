@@ -798,6 +798,11 @@ bool formatLooksPcmTrackRequest(const AudioFormat& format) {
   return format.sampleRate == 44100 && format.channelCount == 2 && format.bitDepth == 24;
 }
 
+bool formatLooksPcm192kTrackRequest(const AudioFormat& format) {
+  return format.sampleRate == 192000 && format.channelCount == 2 && format.bitDepth == 24 &&
+         format.sampleFormat == AudioSampleFormat::Int24Interleaved;
+}
+
 bool formatLooksDsdPcmFallbackRequest(const AudioFormat& format, int sampleRate = 176400) {
   return format.sampleRate == sampleRate && format.channelCount == 2 && format.bitDepth == 32 &&
          format.sampleFormat == AudioSampleFormat::Float32Interleaved;
@@ -1271,7 +1276,10 @@ TrackProfile buildTrackProfile(const std::string& source) {
   }
 
   profile.stream.codec = "flac";
-  profile.stream.sourceFormat = makePcmFormat(44100, 2, 24, AudioSampleFormat::Int24Interleaved);
+  profile.stream.sourceFormat =
+      source.find("pcm-192k") != std::string::npos
+          ? makePcmFormat(192000, 2, 24, AudioSampleFormat::Int24Interleaved)
+          : makePcmFormat(44100, 2, 24, AudioSampleFormat::Int24Interleaved);
   profile.stream.decodedFormat = profile.stream.sourceFormat;
   profile.defaultOutput = profile.stream.decodedFormat;
   profile.totalFrames = 65536;
@@ -1756,6 +1764,61 @@ void testPcmTypedPassthroughIsOutputPerfect() {
   assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"\"");
 }
 
+void testPcm192kTypedPassthroughIsOutputPerfect() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.play("pcm-192k-typed-passthrough.flac", 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+  pumpBackend(backend, 2, 128);
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  assert(formatLooksPcm192kTrackRequest(snapshots.front().requestedFormat));
+  assert(formatLooksPcm192kTrackRequest(snapshots.front().openedFormat));
+  assert(snapshots.front().typedStarted);
+  assert(snapshots.front().typedRenderCalls > 0);
+  assert(snapshots.front().floatRenderCalls == 0);
+  assertLatestPlaybackContains(engine, "\"sourceSampleRate\":192000");
+  assertLatestPlaybackContains(engine, "\"decodedSampleRate\":192000");
+  assertLatestPlaybackContains(engine, "\"outputSampleRate\":192000");
+  assertLatestPlaybackContains(engine, "\"decodedBitDepth\":24");
+  assertLatestPlaybackContains(engine, "\"decodedChannels\":2");
+  assertLatestPlaybackContains(engine, "\"decodedSampleFormat\":\"int24\"");
+  assertLatestPlaybackContains(engine, "\"sourceExact\":true");
+  assertLatestPlaybackContains(engine, "\"pcmPassthrough\":true");
+  assertLatestPlaybackContains(engine, "\"outputPerfect\":true");
+  assertLatestPlaybackContains(engine, "\"resampled\":false");
+}
+
+void testPcmExactFormatWithoutTypedRuntimeIsNotPassthrough() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.setOutputBackend("wasapi") == TAE_RESULT_OK);
+  assert(engine.play("pcm-192k-shared-output.flac", 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+  pumpBackend(backend, 2, 128);
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  assert(formatLooksPcm192kTrackRequest(snapshots.front().requestedFormat));
+  assert(formatLooksPcm192kTrackRequest(snapshots.front().openedFormat));
+  assert(snapshots.front().typedStarted);
+  assert(snapshots.front().typedRenderCalls == 0);
+  assert(snapshots.front().floatRenderCalls > 0);
+  assertLatestPlaybackContains(engine, "\"sourceSampleRate\":192000");
+  assertLatestPlaybackContains(engine, "\"outputSampleRate\":192000");
+  assertLatestPlaybackContains(engine, "\"pcmPassthrough\":false");
+  assertLatestPlaybackContains(engine, "\"outputPerfect\":false");
+}
+
 void testPcmTypedPassthroughKeepsTypedPathDuringTransientDecoderLag() {
   EngineHarness harness;
   auto& engine = harness.engine();
@@ -2107,6 +2170,25 @@ void testDsd256StartsOnWasapiExclusiveDop() {
   assertLatestPlaybackContains(engine, "\"dsdRate\":256");
 }
 
+void testDsd512StartsOnWasapiExclusiveDop() {
+  EngineHarness harness("twilight-phase6d-runtime-reroute-dsd512-dop.dsf", kDsd512Rate);
+  auto& engine = harness.engine();
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  assert(formatLooksDopCarrier(snapshots.front().requestedFormat));
+  assert(snapshots.front().requestedFormat.sampleRate == 1411200);
+  assert(snapshots.front().requestedFormat.bitDepth == 24);
+  assert(snapshots.front().requestedFormat.sampleFormat == AudioSampleFormat::Int24Interleaved);
+  assertLatestPlaybackContains(engine, "\"isDsd\":true");
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"dop\"");
+  assertLatestPlaybackContains(engine, "\"dsdRate\":512");
+  assertLatestPlaybackContains(engine, "\"outputPerfect\":true");
+}
+
 void testDsd256StartsOnAsioNativeDsd() {
   EngineHarness harness("twilight-phase6d-runtime-reroute-dsd256.dsf", kDsd256Rate);
   auto& engine = harness.engine();
@@ -2164,6 +2246,27 @@ void testDsd512StartsOnAsioNativeDsd() {
   assertLatestPlaybackContains(engine, "\"dsdRate\":512");
   assertLatestPlaybackContains(engine, "\"nativeDsdRuntimeState\":\"proven\"");
   assertLatestPlaybackContains(engine, "\"outputPerfect\":true");
+}
+
+void testDsd512ForcedPcmUsesExplicitFallbackRate() {
+  EngineHarness harness("twilight-phase6d-runtime-reroute-dsd512-pcm.dsf", kDsd512Rate);
+  auto& engine = harness.engine();
+  assert(engine.setOutputBackend("asio") == TAE_RESULT_OK);
+  assert(engine.setDspConfig("{\"dsdOutputMode\":\"pcm\"}") == TAE_RESULT_OK);
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  assertFormatLooksDsdPcmFallbackRequest(snapshots.front().requestedFormat, 1411200);
+  assert(snapshots.front().requestedFormat.sampleFormat == AudioSampleFormat::Float32Interleaved);
+  assertLatestPlaybackContains(engine, "\"isDsd\":true");
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+  assertLatestPlaybackContains(engine, "\"dsdRate\":512");
+  assertLatestPlaybackContains(engine, "\"outputPerfect\":false");
+  assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"dsd_output_mode_pcm\"");
+  assertLatestPlaybackContains(engine, "\"perfectReason\":\"DSD output mode forced PCM\"");
 }
 
 void testSacdIsoTrackUsesAsioNativeDsd() {
@@ -3087,6 +3190,8 @@ int main() {
   testDsd64StartsOnDop();
   testPcmTypedPassthroughKeepsTypedPathDuringTransientDecoderLag();
   testPcmTypedPassthroughIsOutputPerfect();
+  testPcm192kTypedPassthroughIsOutputPerfect();
+  testPcmExactFormatWithoutTypedRuntimeIsNotPassthrough();
   testOutputStartWaitsForFirstDecodedFrames();
   testOutputStartDoesNotWaitForPrerollTimeoutAtEof();
   testBackendRenderErrorIsReportedThroughLastError();
@@ -3103,9 +3208,11 @@ int main() {
   testAsioNativeDsdAndDopFailureFallsBackToPcm();
   testAsioNativeDsdUnsupportedAndDopFailureFallsBackToPcm();
   testDsd256StartsOnWasapiExclusiveDop();
+  testDsd512StartsOnWasapiExclusiveDop();
   testDsd256StartsOnAsioNativeDsd();
   testNativeDsdPositionUsesBitSampleFrames();
   testDsd512StartsOnAsioNativeDsd();
+  testDsd512ForcedPcmUsesExplicitFallbackRate();
   testSacdIsoTrackUsesAsioNativeDsd();
   testSacdIsoTrackFallsBackToPcmWhenProcessingActive();
   testDopMismatchFallsBackWithStableCode();

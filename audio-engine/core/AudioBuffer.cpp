@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <thread>
 
 namespace twilight::audio {
 namespace {
@@ -34,6 +35,43 @@ size_t pcmBlockFrameCapacity(const PcmBlock& block, size_t bytesPerFrame) {
 
 }  // namespace
 
+bool AudioBuffer::tryBeginRead() noexcept {
+  uint32_t state = readerState_.load(std::memory_order_acquire);
+  while ((state & kControlResetBit) == 0) {
+    if (readerState_.compare_exchange_weak(
+            state,
+            state + 1,
+            std::memory_order_acquire,
+            std::memory_order_relaxed)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void AudioBuffer::endRead() noexcept {
+  readerState_.fetch_sub(1, std::memory_order_release);
+}
+
+void AudioBuffer::beginControlReset() {
+  uint32_t expected = 0;
+  while (!readerState_.compare_exchange_weak(
+      expected,
+      kControlResetBit,
+      std::memory_order_acq_rel,
+      std::memory_order_acquire)) {
+    expected = 0;
+    std::this_thread::yield();
+  }
+}
+
+void AudioBuffer::endControlReset() {
+  readerState_.store(0, std::memory_order_release);
+  producerWakeEpoch_.fetch_add(1, std::memory_order_release);
+  producerWakeEpoch_.notify_all();
+  notEmpty_.notify_all();
+}
+
 void AudioBuffer::reset(int channels, size_t capacityFrames) {
   AudioFormat format;
   format.sampleRate = 0;
@@ -44,58 +82,48 @@ void AudioBuffer::reset(int channels, size_t capacityFrames) {
 }
 
 void AudioBuffer::reset(const AudioFormat& format, size_t capacityFrames) {
-  std::lock_guard lock(mutex_);
-  format_ = format;
-  format_.channelCount = std::max(1, format_.channelCount);
-  if (format_.bitDepth <= 0) format_.bitDepth = effectivePcmBitDepth(format_);
-  channels_ = format_.channelCount;
-  capacityFrames_ = std::max<size_t>(1, capacityFrames);
-  bytesPerFrame_ = audioFormatBytesPerFrame(format_);
-  if (bytesPerFrame_ == 0) {
-    format_.sampleFormat = AudioSampleFormat::Float32Interleaved;
-    format_.bitDepth = 32;
-    bytesPerFrame_ = sizeof(float) * static_cast<size_t>(channels_);
+  beginControlReset();
+  AudioFormat normalized = format;
+  normalized.channelCount = std::max(1, normalized.channelCount);
+  if (normalized.bitDepth <= 0) normalized.bitDepth = effectivePcmBitDepth(normalized);
+  size_t bytesPerFrame = audioFormatBytesPerFrame(normalized);
+  if (bytesPerFrame == 0) {
+    normalized.sampleFormat = AudioSampleFormat::Float32Interleaved;
+    normalized.bitDepth = 32;
+    bytesPerFrame = sizeof(float) * static_cast<size_t>(normalized.channelCount);
   }
+
+  capacityFrames_ = std::max<size_t>(1, capacityFrames);
+  bytesPerFrame_ = bytesPerFrame;
   resetStorageForAudioBuffer(data_, capacityFrames_ * bytesPerFrame_);
-  readFrame_ = 0;
-  writeFrame_ = 0;
-  availableFrames_ = 0;
-  sampleRateSnapshot_.store(format_.sampleRate, std::memory_order_relaxed);
-  channelSnapshot_.store(channels_, std::memory_order_relaxed);
-  bitDepthSnapshot_.store(format_.bitDepth, std::memory_order_relaxed);
-  sampleFormatSnapshot_.store(static_cast<int>(format_.sampleFormat), std::memory_order_relaxed);
-  availableFramesSnapshot_.store(0, std::memory_order_relaxed);
-  notFull_.notify_all();
-  notEmpty_.notify_all();
+  readPosition_.store(0, std::memory_order_relaxed);
+  writePosition_.store(0, std::memory_order_relaxed);
+  sampleRateSnapshot_.store(normalized.sampleRate, std::memory_order_relaxed);
+  channelSnapshot_.store(normalized.channelCount, std::memory_order_relaxed);
+  bitDepthSnapshot_.store(normalized.bitDepth, std::memory_order_relaxed);
+  sampleFormatSnapshot_.store(static_cast<int>(normalized.sampleFormat), std::memory_order_relaxed);
+  endControlReset();
 }
 
 void AudioBuffer::clear() {
-  std::lock_guard lock(mutex_);
-  readFrame_ = 0;
-  writeFrame_ = 0;
-  availableFrames_ = 0;
-  if (!data_.empty()) {
-    std::fill(data_.begin(), data_.end(), 0);
-  }
-  availableFramesSnapshot_.store(0, std::memory_order_relaxed);
-  notFull_.notify_all();
+  beginControlReset();
+  readPosition_.store(0, std::memory_order_relaxed);
+  writePosition_.store(0, std::memory_order_relaxed);
+  endControlReset();
 }
 
 void AudioBuffer::notifyAll() {
-  notFull_.notify_all();
+  producerWakeEpoch_.fetch_add(1, std::memory_order_release);
+  producerWakeEpoch_.notify_all();
   notEmpty_.notify_all();
 }
 
 size_t AudioBuffer::writeBlocking(const float* data, size_t frames, const std::atomic<bool>& running) {
   if (!data || frames == 0) return 0;
-  AudioFormat format;
-  {
-    std::lock_guard lock(mutex_);
-    format = format_;
-  }
-  if (format.sampleFormat != AudioSampleFormat::Float32Interleaved) return 0;
+  const AudioFormat formatSnapshot = format();
+  if (formatSnapshot.sampleFormat != AudioSampleFormat::Float32Interleaved) return 0;
   PcmBlock block;
-  block.format = format;
+  block.format = formatSnapshot;
   block.data = reinterpret_cast<uint8_t*>(const_cast<float*>(data));
   block.frames = frames;
   block.byteSize = frames * audioFormatBytesPerFrame(block.format);
@@ -105,32 +133,39 @@ size_t AudioBuffer::writeBlocking(const float* data, size_t frames, const std::a
 size_t AudioBuffer::writeBlocking(const PcmBlock& block, const std::atomic<bool>& running) {
   if (!block.data || block.frames == 0) return 0;
   const size_t sourceBytesPerFrame = audioFormatBytesPerFrame(block.format);
-  if (sourceBytesPerFrame == 0) return 0;
+  if (sourceBytesPerFrame == 0 || sourceBytesPerFrame != bytesPerFrame_ ||
+      !bufferFormatsCompatible(block.format, format())) {
+    return 0;
+  }
   const size_t sourceFrames = std::min(block.frames, pcmBlockFrameCapacity(block, sourceBytesPerFrame));
   if (sourceFrames == 0) return 0;
+
   size_t written = 0;
-  while (written < sourceFrames && running.load()) {
-    std::unique_lock lock(mutex_);
-    if (!bufferFormatsCompatible(block.format, format_)) return written;
-    notFull_.wait(lock, [&] {
-      return availableFrames_ < capacityFrames_ || !running.load();
-    });
-    if (!running.load()) break;
-    if (!bufferFormatsCompatible(block.format, format_)) return written;
+  while (written < sourceFrames && running.load(std::memory_order_acquire)) {
+    if ((readerState_.load(std::memory_order_acquire) & kControlResetBit) != 0) return written;
+    const size_t write = writePosition_.load(std::memory_order_relaxed);
+    const size_t read = readPosition_.load(std::memory_order_acquire);
+    const size_t used = write - read;
+    const size_t free = used < capacityFrames_ ? capacityFrames_ - used : 0;
+    if (free == 0) {
+      const uint64_t wakeEpoch = producerWakeEpoch_.load(std::memory_order_acquire);
+      const size_t currentWrite = writePosition_.load(std::memory_order_relaxed);
+      const size_t currentRead = readPosition_.load(std::memory_order_acquire);
+      if (currentWrite - currentRead >= capacityFrames_ && running.load(std::memory_order_acquire) &&
+          (readerState_.load(std::memory_order_acquire) & kControlResetBit) == 0) {
+        producerWakeEpoch_.wait(wakeEpoch, std::memory_order_acquire);
+      }
+      continue;
+    }
 
-    const size_t writable = std::min(sourceFrames - written, contiguousWritableFramesLocked());
-    if (writable == 0) continue;
-
-    const size_t dstOffset = writeFrame_ * bytesPerFrame_;
-    const size_t srcOffset = written * sourceBytesPerFrame;
-    const size_t byteCount = writable * bytesPerFrame_;
-    std::memcpy(data_.data() + dstOffset, block.data + srcOffset, byteCount);
-
-    writeFrame_ = (writeFrame_ + writable) % capacityFrames_;
-    availableFrames_ += writable;
-    availableFramesSnapshot_.store(availableFrames_, std::memory_order_relaxed);
-    written += writable;
-    lock.unlock();
+    const size_t writeIndex = write % capacityFrames_;
+    const size_t contiguous = std::min({sourceFrames - written, free, capacityFrames_ - writeIndex});
+    std::memcpy(
+        data_.data() + writeIndex * bytesPerFrame_,
+        block.data + written * sourceBytesPerFrame,
+        contiguous * bytesPerFrame_);
+    writePosition_.store(write + contiguous, std::memory_order_release);
+    written += contiguous;
     notEmpty_.notify_one();
   }
   return written;
@@ -138,28 +173,18 @@ size_t AudioBuffer::writeBlocking(const PcmBlock& block, const std::atomic<bool>
 
 size_t AudioBuffer::read(float* data, size_t frames) {
   if (!data || frames == 0) return 0;
-  std::unique_lock lock(mutex_, std::try_to_lock);
-  if (!lock.owns_lock()) {
-    const int channels = std::max(1, channelSnapshot_.load(std::memory_order_relaxed));
-    std::fill(data, data + frames * static_cast<size_t>(std::max(1, channels)), 0.0f);
-    return 0;
-  }
-  AudioFormat format = format_;
-  const int channels = channels_;
-  if (format.sampleFormat != AudioSampleFormat::Float32Interleaved) {
-    std::fill(data, data + frames * static_cast<size_t>(std::max(1, channels)), 0.0f);
+  const AudioFormat formatSnapshot = format();
+  const int channels = std::max(1, formatSnapshot.channelCount);
+  if (formatSnapshot.sampleFormat != AudioSampleFormat::Float32Interleaved) {
+    std::fill(data, data + frames * static_cast<size_t>(channels), 0.0f);
     return 0;
   }
   PcmBlock block;
-  block.format = format;
+  block.format = formatSnapshot;
   block.data = reinterpret_cast<uint8_t*>(data);
   block.frames = frames;
   block.byteSize = frames * audioFormatBytesPerFrame(block.format);
-  const size_t targetBytesPerFrame = audioFormatBytesPerFrame(block.format);
-  const size_t read = readLocked(block, targetBytesPerFrame);
-  lock.unlock();
-  notFull_.notify_one();
-  return read;
+  return read(block);
 }
 
 size_t AudioBuffer::read(PcmBlock& block) {
@@ -176,44 +201,47 @@ size_t AudioBuffer::read(PcmBlock& block) {
   }
   PcmBlock boundedBlock = block;
   boundedBlock.frames = targetFrames;
-  std::unique_lock lock(mutex_, std::try_to_lock);
-  if (!lock.owns_lock()) {
+
+  if (!tryBeginRead()) {
     zeroBlockFrames(boundedBlock, 0, boundedBlock.frames, targetBytesPerFrame);
     return 0;
   }
-  const size_t read = readLocked(boundedBlock, targetBytesPerFrame);
-  lock.unlock();
-  notFull_.notify_one();
+
+  const size_t read = readFrames(boundedBlock, targetBytesPerFrame);
+  endRead();
+  if (read > 0) {
+    producerWakeEpoch_.fetch_add(1, std::memory_order_release);
+    producerWakeEpoch_.notify_one();
+  }
   return read;
 }
 
-size_t AudioBuffer::readLocked(PcmBlock& block, size_t targetBytesPerFrame) {
-  if (!bufferFormatsCompatible(block.format, format_)) {
-    zeroBlockFrames(block, 0, block.frames, targetBytesPerFrame);
-    return 0;
-  }
-  if (availableFrames_ == 0 || capacityFrames_ == 0 || channels_ <= 0) {
+size_t AudioBuffer::readFrames(PcmBlock& block, size_t targetBytesPerFrame) {
+  if (targetBytesPerFrame != bytesPerFrame_ || !bufferFormatsCompatible(block.format, format()) ||
+      capacityFrames_ == 0) {
     zeroBlockFrames(block, 0, block.frames, targetBytesPerFrame);
     return 0;
   }
 
-  size_t read = 0;
-  while (read < block.frames && availableFrames_ > 0) {
-    const size_t readable = std::min(block.frames - read, contiguousReadableFramesLocked());
-    const size_t dstOffset = read * targetBytesPerFrame;
-    const size_t srcOffset = readFrame_ * bytesPerFrame_;
-    const size_t byteCount = readable * bytesPerFrame_;
-    std::memcpy(block.data + dstOffset, data_.data() + srcOffset, byteCount);
-
-    readFrame_ = (readFrame_ + readable) % capacityFrames_;
-    availableFrames_ -= readable;
-    availableFramesSnapshot_.store(availableFrames_, std::memory_order_relaxed);
-    read += readable;
+  size_t read = readPosition_.load(std::memory_order_relaxed);
+  const size_t write = writePosition_.load(std::memory_order_acquire);
+  size_t readable = std::min(block.frames, write - read);
+  size_t copied = 0;
+  while (copied < readable) {
+    const size_t readIndex = read % capacityFrames_;
+    const size_t contiguous = std::min(readable - copied, capacityFrames_ - readIndex);
+    std::memcpy(
+        block.data + copied * targetBytesPerFrame,
+        data_.data() + readIndex * bytesPerFrame_,
+        contiguous * bytesPerFrame_);
+    read += contiguous;
+    copied += contiguous;
   }
-  if (read < block.frames) {
-    zeroBlockFrames(block, read, block.frames - read, targetBytesPerFrame);
+  readPosition_.store(read, std::memory_order_release);
+  if (copied < block.frames) {
+    zeroBlockFrames(block, copied, block.frames - copied, targetBytesPerFrame);
   }
-  return read;
+  return copied;
 }
 
 size_t AudioBuffer::waitForAvailableFrames(
@@ -222,58 +250,38 @@ size_t AudioBuffer::waitForAvailableFrames(
     const std::atomic<bool>& running,
     const std::atomic<bool>& eof) const {
   if (targetFrames == 0) return 0;
-  std::unique_lock lock(mutex_);
   const auto ready = [&] {
-    return availableFrames_ >= targetFrames || !running.load() || eof.load();
+    return availableFrames() >= targetFrames || !running.load(std::memory_order_acquire) ||
+           eof.load(std::memory_order_acquire);
   };
-  if (timeout.count() <= 0) {
-    return availableFrames_;
-  }
+  if (timeout.count() <= 0) return availableFrames();
+  std::unique_lock lock(waitMutex_);
   notEmpty_.wait_for(lock, timeout, ready);
-  return availableFrames_;
+  return availableFrames();
 }
 
 size_t AudioBuffer::availableFrames() const {
-  std::unique_lock lock(mutex_, std::try_to_lock);
-  if (!lock.owns_lock()) return availableFramesSnapshot_.load(std::memory_order_relaxed);
-  return availableFrames_;
+  const size_t write = writePosition_.load(std::memory_order_acquire);
+  const size_t read = readPosition_.load(std::memory_order_acquire);
+  return write - read;
 }
 
 size_t AudioBuffer::freeFrames() const {
-  std::lock_guard lock(mutex_);
-  return capacityFrames_ - availableFrames_;
+  const size_t available = availableFrames();
+  return available < capacityFrames_ ? capacityFrames_ - available : 0;
 }
 
 int AudioBuffer::channels() const {
-  std::lock_guard lock(mutex_);
-  return channels_;
+  return channelSnapshot_.load(std::memory_order_relaxed);
 }
 
 AudioFormat AudioBuffer::format() const {
-  std::unique_lock lock(mutex_, std::try_to_lock);
-  if (!lock.owns_lock()) {
-    AudioFormat snapshot;
-    snapshot.sampleRate = sampleRateSnapshot_.load(std::memory_order_relaxed);
-    snapshot.channelCount = channelSnapshot_.load(std::memory_order_relaxed);
-    snapshot.bitDepth = bitDepthSnapshot_.load(std::memory_order_relaxed);
-    snapshot.sampleFormat =
-        static_cast<AudioSampleFormat>(sampleFormatSnapshot_.load(std::memory_order_relaxed));
-    return snapshot;
-  }
-  return format_;
-}
-
-size_t AudioBuffer::contiguousWritableFramesLocked() const {
-  if (availableFrames_ >= capacityFrames_) return 0;
-  const size_t free = capacityFrames_ - availableFrames_;
-  const size_t untilEnd = capacityFrames_ - writeFrame_;
-  return std::min(free, untilEnd);
-}
-
-size_t AudioBuffer::contiguousReadableFramesLocked() const {
-  if (availableFrames_ == 0) return 0;
-  const size_t untilEnd = capacityFrames_ - readFrame_;
-  return std::min(availableFrames_, untilEnd);
+  AudioFormat snapshot;
+  snapshot.sampleRate = sampleRateSnapshot_.load(std::memory_order_relaxed);
+  snapshot.channelCount = channelSnapshot_.load(std::memory_order_relaxed);
+  snapshot.bitDepth = bitDepthSnapshot_.load(std::memory_order_relaxed);
+  snapshot.sampleFormat = static_cast<AudioSampleFormat>(sampleFormatSnapshot_.load(std::memory_order_relaxed));
+  return snapshot;
 }
 
 }  // namespace twilight::audio

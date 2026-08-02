@@ -12,6 +12,13 @@
 
 namespace twilight::audio {
 
+// Single-producer/single-consumer decoded-audio ring buffer.
+//
+// The decoder is the only writer and the platform render callback is the only
+// reader while a stream is running. Reset/clear are control-path operations and
+// are only called after the decoder writer has stopped. The reader never takes
+// a mutex: a short producer copy must not turn into a complete audio callback
+// of silence.
 class AudioBuffer {
  public:
   AudioBuffer() = default;
@@ -37,26 +44,37 @@ class AudioBuffer {
   AudioFormat format() const;
 
  private:
-  size_t readLocked(PcmBlock& block, size_t targetBytesPerFrame);
-  size_t contiguousWritableFramesLocked() const;
-  size_t contiguousReadableFramesLocked() const;
+  size_t readFrames(PcmBlock& block, size_t targetBytesPerFrame);
+  bool tryBeginRead() noexcept;
+  void endRead() noexcept;
+  void beginControlReset();
+  void endControlReset();
 
-  mutable std::mutex mutex_;
-  mutable std::condition_variable notFull_;
+  // waitMutex_/notEmpty_ are only used for bounded control-path preroll waits.
+  // A full-buffer decoder parks on producerWakeEpoch_ via C++20 atomic wait so
+  // the realtime consumer can wake it without a mutex or a lost notification.
+  mutable std::mutex waitMutex_;
   mutable std::condition_variable notEmpty_;
+  std::atomic<uint64_t> producerWakeEpoch_{0};
   std::vector<uint8_t> data_;
-  AudioFormat format_;
   size_t bytesPerFrame_ = 0;
   size_t capacityFrames_ = 0;
-  size_t readFrame_ = 0;
-  size_t writeFrame_ = 0;
-  size_t availableFrames_ = 0;
-  int channels_ = 0;
+
+  // Monotonic SPSC cursors. Producer publishes writePosition_ after copying;
+  // consumer publishes readPosition_ after copying.
+  std::atomic<size_t> readPosition_{0};
+  std::atomic<size_t> writePosition_{0};
+
+  // Reset/clear may resize or invalidate storage. The high bit closes the
+  // reader gate atomically with reader registration; low bits count in-flight
+  // reads. This avoids a check-then-increment race with control-path reset.
+  static constexpr uint32_t kControlResetBit = uint32_t{1} << 31;
+  std::atomic<uint32_t> readerState_{0};
+
   std::atomic<int> sampleRateSnapshot_{0};
   std::atomic<int> channelSnapshot_{1};
   std::atomic<int> bitDepthSnapshot_{32};
   std::atomic<int> sampleFormatSnapshot_{static_cast<int>(AudioSampleFormat::Float32Interleaved)};
-  std::atomic<size_t> availableFramesSnapshot_{0};
 };
 
 }  // namespace twilight::audio

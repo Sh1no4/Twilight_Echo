@@ -129,16 +129,14 @@ inline size_t bytesPerSample(const AsioChannelFormat& format) {
   return static_cast<size_t>(format.containerBits / 8);
 }
 
-inline int transportSampleRate(const AudioFormat& format) {
+inline int driverSampleRate(const AudioFormat& format) {
+  return format.sampleRate > 0 ? format.sampleRate : 0;
+}
+
+inline int callbackFrameRate(const AudioFormat& format) {
   if (format.sampleRate <= 0) return 0;
   if (!isDsdSampleFormat(format.sampleFormat)) return format.sampleRate;
   return format.sampleRate % 8 == 0 ? format.sampleRate / 8 : 0;
-}
-
-inline int semanticSampleRate(AudioSampleFormat format, int transportRate) {
-  if (transportRate <= 0) return 0;
-  if (!isDsdSampleFormat(format)) return transportRate;
-  return transportRate <= std::numeric_limits<int>::max() / 8 ? transportRate * 8 : 0;
 }
 
 inline uint8_t reverseBits(uint8_t value) {

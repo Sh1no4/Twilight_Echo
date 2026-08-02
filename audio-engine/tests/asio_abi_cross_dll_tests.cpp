@@ -151,9 +151,16 @@ int main() {
       driver->future(kFutureGetIoFormat, &activeIoFormat) == kAsioOk &&
           activeIoFormat.formatType == kAsioIoFormatDsd,
       "Native DSD I/O format verification differs");
-  passed &= expect(driver->canSampleRate(352800.0) == kAsioOk, "Native DSD transport rate was rejected");
-  passed &= expect(driver->setSampleRate(352800.0) == kAsioOk, "Native DSD transport rate set failed");
-  passed &= expect(driver->getSampleRate(&sampleRate) == kAsioOk && sampleRate == 352800.0, "Native DSD transport rate differs");
+  passed &= expect(driver->canSampleRate(2822400.0) == kAsioOk, "DSD64 semantic rate was rejected");
+  passed &= expect(driver->setSampleRate(2822400.0) == kAsioOk, "DSD64 semantic rate set failed");
+  passed &= expect(
+      driver->getSampleRate(&sampleRate) == kAsioOk && sampleRate == 2822400.0,
+      "DSD64 semantic rate differs");
+  passed &= expect(driver->canSampleRate(22579200.0) == kAsioOk, "DSD512 semantic rate was rejected");
+  passed &= expect(driver->setSampleRate(22579200.0) == kAsioOk, "DSD512 semantic rate set failed");
+  passed &= expect(
+      driver->getSampleRate(&sampleRate) == kAsioOk && sampleRate == 22579200.0,
+      "DSD512 semantic rate differs");
 
   std::array<AsioClockSource, 1> clocks{};
   int32_t clockCount = static_cast<int32_t>(clocks.size());
@@ -188,7 +195,7 @@ int main() {
   passed &= expect(buffers[0].buffers[0] && buffers[0].buffers[1] && buffers[1].buffers[0] && buffers[1].buffers[1], "driver did not supply both buffer pairs");
   passed &= expect(driver->start() == kAsioOk, "start failed");
   passed &= expect(
-      callbackState.bufferSwitches == 1 && callbackState.rateChanges == 1 && callbackState.latestSampleRate == 352800.0 &&
+      callbackState.bufferSwitches == 1 && callbackState.rateChanges == 1 && callbackState.latestSampleRate == 22579200.0 &&
           callbackState.engineVersionMessages == 1 &&
           callbackState.resetMessages == 1 && callbackState.timeInfoSwitches == 1,
       "callbacks did not cross the DLL boundary");

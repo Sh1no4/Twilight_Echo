@@ -23,6 +23,10 @@ const {
   validateMingwCTestRegistration,
   validateMingwToolchain
 } = require('./audio-engine-toolchain.cjs')
+const {
+  prepareAsioMsvcNinjaToolchain,
+  resolveAsioMsvcBuildDirectory
+} = require('./asio-msvc-toolchain.cjs')
 
 function createExistsSync(paths) {
   const existing = new Set(paths.map((entry) => entry.replaceAll('\\', '/').toLowerCase()))
@@ -50,6 +54,71 @@ function createGnuPatchSpawnSync() {
     )
   )
 }
+
+test('prepares a deterministic MSVC and Ninja environment for the ASIO ABI fixture', () => {
+  const installRoot = 'E:/tools/vs2022-buildtools'
+  const msvcVersion = '14.44.35207'
+  const sdkRoot = 'C:/Program Files (x86)/Windows Kits/10'
+  const sdkVersion = '10.0.26100.0'
+  const existing = [
+    `${installRoot}/Common7/Tools/VsDevCmd.bat`,
+    `${installRoot}/VC/Tools/MSVC`,
+    `${installRoot}/VC/Tools/MSVC/${msvcVersion}/bin/Hostx64/x64/cl.exe`,
+    `${installRoot}/VC/Tools/MSVC/${msvcVersion}/bin/Hostx64/x64/link.exe`,
+    `${installRoot}/VC/Tools/MSVC/${msvcVersion}/include/cstddef`,
+    `${installRoot}/VC/Tools/MSVC/${msvcVersion}/lib/x64/msvcrt.lib`,
+    `${installRoot}/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe`,
+    `${installRoot}/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe`,
+    `${sdkRoot}/bin/${sdkVersion}/x64/rc.exe`,
+    `${sdkRoot}/bin/${sdkVersion}/x64/mt.exe`,
+    `${sdkRoot}/Include/${sdkVersion}/um/Windows.h`,
+    `${sdkRoot}/Lib/${sdkVersion}/um/x64/kernel32.lib`,
+    `${installRoot}/VC/Tools/MSVC/${msvcVersion}/include`,
+    `${sdkRoot}/Include/${sdkVersion}/ucrt`,
+    `${sdkRoot}/Include/${sdkVersion}/shared`,
+    `${sdkRoot}/Include/${sdkVersion}/um`,
+    `${sdkRoot}/Include/${sdkVersion}/winrt`,
+    `${sdkRoot}/Include/${sdkVersion}/cppwinrt`,
+    `${installRoot}/VC/Tools/MSVC/${msvcVersion}/lib/x64`,
+    `${sdkRoot}/Lib/${sdkVersion}/ucrt/x64`,
+    `${sdkRoot}/Lib/${sdkVersion}/um/x64`,
+    `${sdkRoot}/UnionMetadata/${sdkVersion}`,
+    `${sdkRoot}/References/${sdkVersion}`
+  ]
+  const result = prepareAsioMsvcNinjaToolchain({
+    env: {
+      TAE_ASIO_MSVC_INSTALL_ROOT: installRoot,
+      'ProgramFiles(x86)': 'C:/Program Files (x86)',
+      PATH: 'C:/Windows/System32'
+    },
+    exists: createExistsSync(existing),
+    readDirectories: (path) => {
+      if (String(path).replaceAll('\\', '/').endsWith('/VC/Tools/MSVC')) {
+        return [{ name: msvcVersion, isDirectory: () => true }]
+      }
+      if (String(path).replaceAll('\\', '/').endsWith('/Windows Kits/10/Include')) {
+        return [{ name: sdkVersion, isDirectory: () => true }]
+      }
+      return []
+    }
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.msvcVersion, msvcVersion)
+  assert.equal(result.sdkVersion, sdkVersion)
+  assert.match(result.environment.PATH, /Hostx64\\x64/)
+  assert.match(result.environment.INCLUDE, /MSVC\\14\.44\.35207\\include/)
+  assert.match(result.environment.LIB, /Windows Kits\\10\\Lib\\10\.0\.26100\.0\\um\\x64/)
+  assert.match(result.cmakePath, /CMake\\bin\\cmake\.exe$/)
+  assert.match(result.ninjaPath, /CMake\\Ninja\\ninja\.exe$/)
+})
+
+test('uses the MSVC Ninja build directory by default for ASIO ABI fixtures', () => {
+  assert.match(
+    resolveAsioMsvcBuildDirectory({}, 'C:/repo'),
+    /audio-engine\\build\\asio-msvc-ninja-x64$/
+  )
+})
 
 test('rejects a missing MinGW toolchain environment before CMake configures', () => {
   const result = validateMingwToolchain({

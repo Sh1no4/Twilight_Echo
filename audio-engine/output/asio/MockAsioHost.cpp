@@ -190,6 +190,7 @@ AudioSampleFormat MockAsioHost::outputSampleFormat(long channel) const {
 }
 
 AsioChannelFormat MockAsioHost::outputChannelFormat(long channel) const {
+  ++outputChannelFormatCalls;
   if (channel >= 0 && static_cast<size_t>(channel) < channelDescriptors.size()) {
     return channelDescriptors[static_cast<size_t>(channel)];
   }
@@ -198,6 +199,10 @@ AsioChannelFormat MockAsioHost::outputChannelFormat(long channel) const {
 
 bool MockAsioHost::outputReady() {
   ++outputReadyCalls;
+  if (failOutputReadyCount > 0) {
+    --failOutputReadyCount;
+    return false;
+  }
   return true;
 }
 

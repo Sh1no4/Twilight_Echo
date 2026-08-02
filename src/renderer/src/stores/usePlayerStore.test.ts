@@ -41,6 +41,45 @@ function extractInternalFunctionBody(source: string, functionName: string): stri
   assert.fail(`${functionName} body should close`)
 }
 
+test('native output-perfect facts stay canonical from store normalization to PlayerBar', () => {
+  const storeSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const playerBarSource = readFileSync(new URL('../components/PlayerBar.vue', import.meta.url), 'utf8')
+  const normalize = extractInternalFunctionBody(storeSource, 'normalizeNativePlaybackInfo')
+  const apply = extractInternalFunctionBody(storeSource, 'applyNativePlaybackInfo')
+  const canonicalSourceExact = extractInternalFunctionBody(playerBarSource, 'canonicalSourceExact')
+  const canonicalOutputPerfect = extractInternalFunctionBody(playerBarSource, 'canonicalOutputPerfect')
+
+  assert.match(normalize, /const canonicalOutput = info\.outputInfo/)
+  assert.match(normalize, /const sourceExact = canonicalOutput\?\.sourceExact === true/)
+  assert.match(normalize, /const outputPerfect = canonicalOutput\?\.outputPerfect === true/)
+  assert.match(
+    normalize,
+    /const pcmPassthrough = canonicalOutput\s*\? canonicalOutput\.pcmPassthrough === true\s*:\s*info\.pcmPassthrough === true/
+  )
+  assert.match(normalize, /outputInfo:\s*\{[\s\S]*sourceExact,[\s\S]*outputPerfect,[\s\S]*pcmPassthrough/)
+  assert.match(normalize, /sourceExact,[\s\S]*outputPerfect,[\s\S]*pcmPassthrough/)
+  assert.match(apply, /const normalizedInfo = normalizeNativePlaybackInfo\(info\)/)
+  assert.match(apply, /playbackInfo\.value = normalizedInfo/)
+  assert.match(
+    storeSource,
+    /const outputInfo = computed<NativeOutputInfo \| null>\(\(\) => playbackInfo\.value\?\.outputInfo \?\? null\)/
+  )
+
+  assert.match(canonicalSourceExact, /outputInfo\.value\?\.sourceExact === true/)
+  assert.match(canonicalOutputPerfect, /outputInfo\.value\?\.outputPerfect === true/)
+  assert.doesNotMatch(canonicalSourceExact, /sampleRate|SampleRate/)
+  assert.doesNotMatch(canonicalOutputPerfect, /sampleRate|SampleRate/)
+  assert.match(playerBarSource, /label: 'Output Perfect',[\s\S]*tone: outputPerfect \? 'success'/)
+  assert.match(
+    playerBarSource,
+    /if \(outputInfo\.value\?\.resampled\)[\s\S]*label: 'Resampled',[\s\S]*tone: 'warning'/
+  )
+  assert.match(
+    playerBarSource,
+    /canonicalSourceExact\(\) && canonicalOutputPerfect\(\)[\s\S]*\? 'Bit Perfect'/
+  )
+})
+
 test('usePlayerStore does not register reactive side effects per caller', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const body = extractFunctionBody(source, 'usePlayerStore')

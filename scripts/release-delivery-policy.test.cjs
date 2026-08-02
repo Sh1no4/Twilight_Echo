@@ -110,7 +110,10 @@ test('update checks download GitHub release installers without electron-updater'
 
 test('release docs keep non-Windows audio backends explicitly unverified', () => {
   const readme = read('README.md')
-  assert.match(readme, /macOS：走 CoreAudio，原生引擎仍在验证中/)
-  assert.match(readme, /Linux：走 ALSA，原生引擎仍在验证中/)
+  assert.match(readme, /macOS 与 Linux 后端已有实现，但尚未达到正式发布验证标准/)
+  assert.match(
+    readme,
+    /CoreAudio 与 ALSA 后端已存在，但目前没有经过与 Windows 同等级别的发布和真实设备验证/
+  )
   assert.doesNotMatch(readme, /macOS 与 Linux 的原生音频引擎仍在验证阶段（代码已 release-ready/)
 })

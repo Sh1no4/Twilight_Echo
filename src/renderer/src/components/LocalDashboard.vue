@@ -599,7 +599,7 @@ const dspOutputStages = computed<DspRouteStage[]>(() => {
       enabled: true,
       active: srcActive,
       state: srcActive ? 'active' : 'bypassed',
-      stateLabel: srcActive ? '实时转换' : 'Native 直通',
+      stateLabel: srcActive ? '实时转换' : 'SRC 旁路',
       detail: `${RESAMPLER_LABELS[config.resamplerQuality]} · ${srcDetail}`
     },
     {

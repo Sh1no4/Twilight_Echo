@@ -3459,7 +3459,9 @@ bool AudioPipeline::updatePerfectLocked() {
   evaluation.nativeDspActive = dspStatus_.nativeDspActive;
   evaluation.crossfadeActive = dspStatus_.crossfadeActive || dspConfig_.crossfadeSeconds > 0.0001;
   evaluation.routingMode = outputConfig_.routingMode;
-  evaluation.pcmPassthrough = pcmFormatsExactMatch(evaluation.decodedFormat, evaluation.outputFormat) && !backendResampled;
+  evaluation.pcmPassthrough =
+      !stream_.isDsd && typedPassthroughActive_ &&
+      pcmFormatsExactMatch(evaluation.decodedFormat, evaluation.outputFormat) && !backendResampled;
   const PerfectResult result = evaluatePerfect(evaluation);
   dspActive_ = result.processingActive;
   outputPerfect_ = result.outputPerfect;

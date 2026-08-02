@@ -84,6 +84,7 @@ std::string lowerText(std::string value) {
 
 std::string dsdPcmFallbackReasonCode(const std::string& backendReason) {
   const std::string reason = lowerText(backendReason);
+  if (reason.find("output mode forced pcm") != std::string::npos) return "dsd_output_mode_pcm";
   if (reason.find("dop carrier mismatch") != std::string::npos) return "dop_carrier_mismatch";
   if (reason.find("passthrough") != std::string::npos || reason.find("prove") != std::string::npos) {
     return "dop_passthrough_unproven";
@@ -410,7 +411,8 @@ PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation) {
     } else if (result.processingActive) {
       result.perfectReasonCode = "dsd_processing_pcm_fallback";
       result.perfectReason = "DSD processing active; falling back to PCM";
-    } else if (evaluation.dsdMode == DsdMode::Pcm && evaluation.dsdRate >= 256) {
+    } else if (evaluation.dsdMode == DsdMode::Pcm && evaluation.dsdRate >= 256 &&
+               evaluation.backendPerfectReason.empty()) {
       result.perfectReasonCode = "dsd_high_rate_pcm_fallback";
       result.perfectReason = "DSD" + std::to_string(evaluation.dsdRate) + " currently falls back to PCM";
     } else {

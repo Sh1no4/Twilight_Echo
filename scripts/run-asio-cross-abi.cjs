@@ -7,9 +7,9 @@ const {
   resolveMingwEnvironment
 } = require('./audio-engine-toolchain.cjs')
 const {
+  prepareAsioMsvcNinjaToolchain,
   resolveAsioMsvcBuildDirectory,
-  resolveAsioMsvcEnvironment,
-  validateAsioMsvcToolchain
+  resolveAsioMsvcEnvironment
 } = require('./asio-msvc-toolchain.cjs')
 const { verifyAsioAbiManifests } = require('./verify-asio-abi-manifest.cjs')
 
@@ -26,7 +26,7 @@ if (process.platform !== 'win32') {
 }
 
 const msvcEnvironment = resolveAsioMsvcEnvironment()
-const msvcToolchain = validateAsioMsvcToolchain({ env: msvcEnvironment })
+const msvcToolchain = prepareAsioMsvcNinjaToolchain({ env: msvcEnvironment })
 if (!msvcToolchain.ok) {
   console.error(msvcToolchain.message)
   process.exit(1)
@@ -36,23 +36,23 @@ mkdirSync(msvcBuildDir, { recursive: true })
 const fixtureSource = join(root, 'audio-engine', 'tests', 'asio-abi-fixture')
 if (
   run(
-    'cmake',
+    msvcToolchain.cmakePath,
     [
       '-S',
       fixtureSource,
       '-B',
       msvcBuildDir,
       '-G',
-      'Visual Studio 17 2022',
-      '-A',
-      'x64',
-      `-DCMAKE_GENERATOR_INSTANCE=${msvcToolchain.installRoot}`
+      'Ninja',
+      `-DCMAKE_MAKE_PROGRAM=${msvcToolchain.ninjaPath}`,
+      '-DCMAKE_BUILD_TYPE=Release',
+      `-DCMAKE_RC_COMPILER=${msvcToolchain.rcPath}`
     ],
-    msvcEnvironment
+    msvcToolchain.environment
   ) !== 0
 )
   process.exit(1)
-if (run('cmake', ['--build', msvcBuildDir, '--config', 'Release'], msvcEnvironment) !== 0)
+if (run(msvcToolchain.cmakePath, ['--build', msvcBuildDir], msvcToolchain.environment) !== 0)
   process.exit(1)
 
 const mingwEnvironment = resolveMingwEnvironment()
@@ -80,8 +80,8 @@ if (
 if (run('cmake', ['--build', mingwLayout.buildDir], mingwPreflight.environment) !== 0)
   process.exit(1)
 
-const msvcManifest = join(msvcBuildDir, 'Release', 'twilight_asio_abi_manifest.exe')
-const fakeDriver = join(msvcBuildDir, 'Release', 'twilight_asio_fake_driver.dll')
+const msvcManifest = join(msvcBuildDir, 'twilight_asio_abi_manifest.exe')
+const fakeDriver = join(msvcBuildDir, 'twilight_asio_fake_driver.dll')
 const mingwManifest = join(mingwLayout.buildDir, 'twilight_asio_abi_manifest.exe')
 for (const artifact of [msvcManifest, fakeDriver, mingwManifest]) {
   if (!existsSync(artifact)) {

@@ -390,10 +390,16 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
     actualOutputFormatObserved_ = false;
     actualOutputChannelFormatsMatch_ = true;
     nativeDsdTypedCallbackMissing_ = false;
-    firstNativeDsdBufferObserved_ = false;
-    firstNativeDsdInspectedBytes_ = 0;
-    firstNativeDsdIdleByte_ = 0;
-    firstNativeDsdHash_ = 0;
+    pendingRenderUnderruns_.store(0, std::memory_order_relaxed);
+    pendingRenderBufferDrops_.store(0, std::memory_order_relaxed);
+    pendingDsdShortReads_.store(0, std::memory_order_relaxed);
+    pendingDsdIdleFrames_.store(0, std::memory_order_relaxed);
+    pendingNativeDsdTypedCallbackMissing_.store(false, std::memory_order_relaxed);
+    firstNativeDsdBufferClaimed_.store(false, std::memory_order_relaxed);
+    firstNativeDsdBufferObserved_.store(false, std::memory_order_relaxed);
+    firstNativeDsdInspectedBytes_.store(0, std::memory_order_relaxed);
+    firstNativeDsdIdleByte_.store(0, std::memory_order_relaxed);
+    firstNativeDsdHash_.store(0, std::memory_order_relaxed);
     outputInfo_ = {};
     outputInfo_.exclusive = true;
     outputInfo_.accessMode = "exclusive";
@@ -578,7 +584,7 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
     diagnostics_.validBits = 1;
     diagnostics_.blockAlign = outputFormat_.channelCount;
     diagnostics_.semanticSampleRate = outputFormat_.sampleRate;
-    diagnostics_.transportSampleRate = asio::transportSampleRate(outputFormat_);
+    diagnostics_.transportSampleRate = asio::callbackFrameRate(outputFormat_);
     diagnostics_.typedRawPath = true;
     diagnostics_.processingBypassed = true;
     outputInfo_.diagnostics = diagnostics_;
@@ -661,9 +667,21 @@ void AsioBackend::close() {
   stop();
   if (host_) host_->close();
   std::lock_guard lock(mutex_);
+  const uint64_t pendingUnderruns = pendingRenderUnderruns_.exchange(0, std::memory_order_relaxed);
+  const uint64_t pendingBufferDrops = pendingRenderBufferDrops_.exchange(0, std::memory_order_relaxed);
+  diagnostics_.lifetimeUnderrunCount += pendingUnderruns;
+  diagnostics_.lifetimeBufferDropCount += pendingBufferDrops;
   callback_ = nullptr;
   typedCallback_ = nullptr;
   eventCallback_ = nullptr;
+  renderCallbackSession_ = nullptr;
+  typedCallbackSession_ = nullptr;
+  renderOutputConfigSession_ = {};
+  renderOutputFormatSession_ = {};
+  renderOpenFormatSession_ = {};
+  renderBufferSizeFramesSession_ = 0;
+  renderChannelFormatsMatchSession_ = true;
+  renderChannelFormatsSession_.clear();
   renderScratch_.clear();
   typedRenderScratch_.clear();
   lastRenderTime_ = {};
@@ -674,10 +692,15 @@ void AsioBackend::close() {
   actualOutputFormatObserved_ = false;
   actualOutputChannelFormatsMatch_ = true;
   nativeDsdTypedCallbackMissing_ = false;
-  firstNativeDsdBufferObserved_ = false;
-  firstNativeDsdInspectedBytes_ = 0;
-  firstNativeDsdIdleByte_ = 0;
-  firstNativeDsdHash_ = 0;
+  pendingRenderUnderruns_.store(0, std::memory_order_relaxed);
+  pendingRenderBufferDrops_.store(0, std::memory_order_relaxed);
+  pendingDsdShortReads_.store(0, std::memory_order_relaxed);
+  pendingDsdIdleFrames_.store(0, std::memory_order_relaxed);
+  pendingNativeDsdTypedCallbackMissing_.store(false, std::memory_order_relaxed);
+  firstNativeDsdBufferObserved_.store(false, std::memory_order_relaxed);
+  firstNativeDsdInspectedBytes_.store(0, std::memory_order_relaxed);
+  firstNativeDsdIdleByte_.store(0, std::memory_order_relaxed);
+  firstNativeDsdHash_.store(0, std::memory_order_relaxed);
   opened_ = false;
 }
 
@@ -691,13 +714,22 @@ OutputInfo AsioBackend::outputInfo() const {
   info.deviceRecovered = deviceRecovered_;
   info.recoveryCount = recoveryCount_;
   info.diagnostics = diagnostics_;
-  if (firstNativeDsdBufferObserved_) {
+  const uint64_t pendingUnderruns = pendingRenderUnderruns_.load(std::memory_order_relaxed);
+  const uint64_t pendingBufferDrops = pendingRenderBufferDrops_.load(std::memory_order_relaxed);
+  info.diagnostics.sessionUnderrunCount += pendingUnderruns;
+  info.diagnostics.lifetimeUnderrunCount += pendingUnderruns;
+  info.diagnostics.sessionBufferDropCount += pendingBufferDrops;
+  info.diagnostics.lifetimeBufferDropCount += pendingBufferDrops;
+  info.diagnostics.dsdShortReadCount += pendingDsdShortReads_.load(std::memory_order_relaxed);
+  info.diagnostics.dsdIdleFrameCount += pendingDsdIdleFrames_.load(std::memory_order_relaxed);
+  if (firstNativeDsdBufferObserved_.load(std::memory_order_acquire)) {
     info.diagnostics.firstBufferSummary = nativeDsdBufferSummary(
-        firstNativeDsdInspectedBytes_,
-        firstNativeDsdIdleByte_,
-        firstNativeDsdHash_);
+        firstNativeDsdInspectedBytes_.load(std::memory_order_relaxed),
+        firstNativeDsdIdleByte_.load(std::memory_order_relaxed),
+        firstNativeDsdHash_.load(std::memory_order_acquire));
   }
-  if (nativeDsdTypedCallbackMissing_) {
+  if (nativeDsdTypedCallbackMissing_ ||
+      pendingNativeDsdTypedCallbackMissing_.load(std::memory_order_acquire)) {
     const std::string reason = "ASIO Native DSD render requires a typed raw DSD callback";
     info.perfectReasonCode = "native_dsd_typed_callback_missing";
     info.perfectReason = reason;
@@ -900,9 +932,14 @@ bool AsioBackend::createAndStartHost(std::string* error) {
     return false;
   }
   {
-    std::lock_guard lock(mutex_);
     const int outputChannels = std::max(1, openConfig_.format.channelCount);
-    const AsioChannelFormat firstChannelFormat = host_->outputChannelFormat(0);
+    std::vector<AsioChannelFormat> channelFormats;
+    channelFormats.reserve(static_cast<size_t>(outputChannels));
+    for (int channel = 0; channel < outputChannels; ++channel) {
+      channelFormats.push_back(host_->outputChannelFormat(channel));
+    }
+    const AsioChannelFormat firstChannelFormat = channelFormats.front();
+    std::lock_guard lock(mutex_);
     if (!asio::isSupportedChannelFormat(firstChannelFormat)) {
       if (error) *error = "unsupported_asio_sample_type";
       ++diagnostics_.sessionBufferDropCount;
@@ -917,7 +954,7 @@ bool AsioBackend::createAndStartHost(std::string* error) {
     const AudioSampleFormat firstActualSampleFormat = firstChannelFormat.logicalFormat;
     bool uniformActualSampleFormat = true;
     for (int channel = 1; channel < outputChannels; ++channel) {
-      const AsioChannelFormat channelFormat = host_->outputChannelFormat(channel);
+      const AsioChannelFormat& channelFormat = channelFormats[static_cast<size_t>(channel)];
       if (!asio::isSupportedChannelFormat(channelFormat) ||
           !asio::channelFormatsMatch(channelFormat, firstChannelFormat)) {
         uniformActualSampleFormat = false;
@@ -949,6 +986,15 @@ bool AsioBackend::createAndStartHost(std::string* error) {
     if (typedCallback_ && typedBytesPerFrame > 0) {
       typedRenderScratch_.resize(callbackFrames * typedBytesPerFrame);
     }
+    renderCallbackSession_ = callback_;
+    typedCallbackSession_ = typedCallback_;
+    renderOutputConfigSession_ = outputConfig_;
+    renderOutputFormatSession_ = outputFormat_;
+    renderOpenFormatSession_ = openConfig_.format;
+    renderBufferSizeFramesSession_ = bufferSizeFrames_;
+    renderChannelFormatsMatchSession_ = actualOutputChannelFormatsMatch_;
+    renderChannelFormatsSession_ = std::move(channelFormats);
+    outputReadyEnabled_.store(true, std::memory_order_relaxed);
     if (outputInfo_.resampled && outputInfo_.perfectReason.empty()) {
       outputInfo_.perfectReasonCode = isNativeDsdRequest(openConfig_.format) ? "native_dsd_format_mismatch"
                                                                              : "pcm_converted";
@@ -1010,62 +1056,47 @@ bool AsioBackend::createAndStartHost(std::string* error) {
   return true;
 }
 
-void AsioBackend::renderBuffer(long bufferIndex) {
-  RenderCallback callback;
-  TypedRenderCallback typedCallback;
-  OutputConfig outputConfig;
-  AudioFormat outputFormat;
-  bool actualOutputChannelFormatsMatch = false;
-  const auto fillOutputSilence = [&]() {
-    const int outputChannels = std::max(1, openConfig_.format.channelCount);
-    const size_t frames = static_cast<size_t>(std::max<long>(1, bufferSizeFrames_));
-    for (int channel = 0; channel < outputChannels; ++channel) {
-      auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
-      if (!output) continue;
-      const AsioChannelFormat channelFormat = host_->outputChannelFormat(channel);
-      const int silenceByte = isDsdSampleFormat(channelFormat.logicalFormat)
-                                  ? asio::nativeDsdIdleByte(channelFormat.logicalFormat)
-                                  : 0;
-      std::memset(output, silenceByte, frames * asio::bytesPerSample(channelFormat));
-    }
-  };
-  {
-    std::unique_lock lock(mutex_, std::try_to_lock);
-    if (!lock.owns_lock()) {
-      fillOutputSilence();
-      host_->outputReady();
-      return;
-    }
-    callback = callback_;
-    typedCallback = typedCallback_;
-    outputConfig = outputConfig_;
-    outputFormat = outputFormat_;
-    actualOutputChannelFormatsMatch = actualOutputChannelFormatsMatch_;
+void AsioBackend::notifyOutputReady() noexcept {
+  if (!outputReadyEnabled_.load(std::memory_order_relaxed)) return;
+  if (!host_->outputReady()) {
+    outputReadyEnabled_.store(false, std::memory_order_relaxed);
   }
+}
+
+void AsioBackend::recordRenderUnderrun() noexcept {
+  pendingRenderUnderruns_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void AsioBackend::recordRenderBufferDrop() noexcept {
+  pendingRenderBufferDrops_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void AsioBackend::renderBuffer(long bufferIndex) {
+  const RenderCallback& callback = renderCallbackSession_;
+  const TypedRenderCallback& typedCallback = typedCallbackSession_;
+  const OutputConfig& outputConfig = renderOutputConfigSession_;
+  const AudioFormat& outputFormat = renderOutputFormatSession_;
   const int sourceChannels = std::max(1, outputFormat.channelCount);
-  const int outputChannels = std::max(1, openConfig_.format.channelCount);
-  const size_t frames = static_cast<size_t>(std::max<long>(1, bufferSizeFrames_));
-  const bool nativeDsdOutput = isNativeDsdRequest(openConfig_.format) || isDsdSampleFormat(outputFormat.sampleFormat);
+  const int outputChannels = std::max(1, renderOpenFormatSession_.channelCount);
+  const size_t frames = static_cast<size_t>(std::max<long>(1, renderBufferSizeFramesSession_));
+  const bool actualOutputChannelFormatsMatch = renderChannelFormatsMatchSession_;
+  const bool nativeDsdOutput =
+      isNativeDsdRequest(renderOpenFormatSession_) || isDsdSampleFormat(outputFormat.sampleFormat);
 
   const auto now = std::chrono::high_resolution_clock::now();
   const uint32_t callbacksSeen = renderCallbacksSeen_++;
   static constexpr uint32_t kUnderrunWarmupCallbacks = 2;
+  bool callbackDeadlineMissed = false;
   if (callbacksSeen >= kUnderrunWarmupCallbacks && lastRenderTime_.time_since_epoch().count() > 0) {
     const double elapsedMs = std::chrono::duration<double, std::milli>(now - lastRenderTime_).count();
     const double expectedMs = static_cast<double>(frames) * 1000.0 / asioCallbackFrameRate(outputFormat);
-    if (expectedMs > 0 && elapsedMs > expectedMs * 1.5) {
-      std::unique_lock lock(mutex_, std::try_to_lock);
-      if (lock.owns_lock()) {
-        ++diagnostics_.sessionUnderrunCount;
-        ++diagnostics_.lifetimeUnderrunCount;
-      }
-    }
+    callbackDeadlineMissed = expectedMs > 0 && elapsedMs > expectedMs * 1.5;
   }
   lastRenderTime_ = now;
 
   if (typedCallback && outputConfig.routingMode == ChannelRoutingMode::Auto && sourceChannels == outputChannels &&
-      actualOutputChannelFormatsMatch &&
-      host_->outputChannelFormat(0).logicalFormat == outputFormat.sampleFormat &&
+      actualOutputChannelFormatsMatch && !renderChannelFormatsSession_.empty() &&
+      renderChannelFormatsSession_.front().logicalFormat == outputFormat.sampleFormat &&
       audioFormatBytesPerFrame(outputFormat) > 0) {
     const size_t bytesPerFrame = audioFormatBytesPerFrame(outputFormat);
     const size_t typedByteCount = frames * bytesPerFrame;
@@ -1078,22 +1109,23 @@ void AsioBackend::renderBuffer(long bufferIndex) {
       const size_t rendered = typedCallback(block);
       if (rendered > 0) {
         const size_t renderedFrames = std::min(rendered, frames);
-        if (nativeDsdOutput) {
-          std::unique_lock lock(mutex_, std::try_to_lock);
-          if (lock.owns_lock() && !firstNativeDsdBufferObserved_) {
-            uint64_t hash = 1469598103934665603ULL;
-            const size_t inspected = std::min<size_t>(renderedFrames * bytesPerFrame, 512);
-            for (size_t i = 0; i < inspected; ++i) {
-              hash ^= typedRenderScratch_[i];
-              hash *= 1099511628211ULL;
-            }
-            firstNativeDsdInspectedBytes_ = inspected;
-            firstNativeDsdIdleByte_ = asio::nativeDsdIdleByte(outputFormat.sampleFormat);
-            firstNativeDsdHash_ = hash;
-            firstNativeDsdBufferObserved_ = true;
+        if (nativeDsdOutput &&
+            !firstNativeDsdBufferClaimed_.exchange(true, std::memory_order_acq_rel)) {
+          uint64_t hash = 1469598103934665603ULL;
+          const size_t inspected = std::min<size_t>(renderedFrames * bytesPerFrame, 512);
+          for (size_t i = 0; i < inspected; ++i) {
+            hash ^= typedRenderScratch_[i];
+            hash *= 1099511628211ULL;
           }
+          firstNativeDsdInspectedBytes_.store(inspected, std::memory_order_relaxed);
+          firstNativeDsdIdleByte_.store(
+              asio::nativeDsdIdleByte(outputFormat.sampleFormat),
+              std::memory_order_relaxed);
+          firstNativeDsdHash_.store(hash, std::memory_order_relaxed);
+          firstNativeDsdBufferObserved_.store(true, std::memory_order_release);
         }
         if (renderedFrames < frames) {
+          recordRenderUnderrun();
           const uint8_t idleByte = nativeDsdOutput
                                        ? asio::nativeDsdIdleByte(outputFormat.sampleFormat)
                                        : 0;
@@ -1102,17 +1134,16 @@ void AsioBackend::renderBuffer(long bufferIndex) {
               idleByte,
               (frames - renderedFrames) * bytesPerFrame);
           if (nativeDsdOutput) {
-            std::unique_lock lock(mutex_, std::try_to_lock);
-            if (lock.owns_lock()) {
-              ++diagnostics_.dsdShortReadCount;
-              diagnostics_.dsdIdleFrameCount += frames - renderedFrames;
-            }
+            pendingDsdShortReads_.fetch_add(1, std::memory_order_relaxed);
+            pendingDsdIdleFrames_.fetch_add(frames - renderedFrames, std::memory_order_relaxed);
           }
         }
+        if (callbackDeadlineMissed && renderedFrames == frames) recordRenderUnderrun();
         for (int channel = 0; channel < outputChannels; ++channel) {
           auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
           if (!output) continue;
-          const AsioChannelFormat channelFormat = host_->outputChannelFormat(channel);
+          if (static_cast<size_t>(channel) >= renderChannelFormatsSession_.size()) continue;
+          const AsioChannelFormat& channelFormat = renderChannelFormatsSession_[static_cast<size_t>(channel)];
           if (channelFormat.logicalFormat != outputFormat.sampleFormat ||
               !asio::isSupportedChannelFormat(channelFormat)) {
             continue;
@@ -1125,17 +1156,19 @@ void AsioBackend::renderBuffer(long bufferIndex) {
               channelFormat,
               output);
         }
-        host_->outputReady();
+        notifyOutputReady();
         return;
       }
     }
   }
 
   if (nativeDsdOutput) {
+    if (callbackDeadlineMissed) recordRenderUnderrun();
     for (int channel = 0; channel < outputChannels; ++channel) {
       auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
       if (!output) continue;
-      const AsioChannelFormat channelFormat = host_->outputChannelFormat(channel);
+      if (static_cast<size_t>(channel) >= renderChannelFormatsSession_.size()) continue;
+      const AsioChannelFormat& channelFormat = renderChannelFormatsSession_[static_cast<size_t>(channel)];
       const AudioSampleFormat sampleFormat = channelFormat.logicalFormat;
       if (!isDsdSampleFormat(sampleFormat)) continue;
       std::memset(
@@ -1143,43 +1176,46 @@ void AsioBackend::renderBuffer(long bufferIndex) {
           asio::nativeDsdIdleByte(sampleFormat),
           frames * asio::bytesPerSample(channelFormat));
     }
-    {
-      std::unique_lock lock(mutex_, std::try_to_lock);
-      if (lock.owns_lock()) {
-        ++diagnostics_.sessionBufferDropCount;
-        ++diagnostics_.lifetimeBufferDropCount;
-        nativeDsdTypedCallbackMissing_ = true;
-        ++diagnostics_.dsdShortReadCount;
-        diagnostics_.dsdIdleFrameCount += frames;
-      }
-    }
-    host_->outputReady();
+    recordRenderBufferDrop();
+    pendingNativeDsdTypedCallbackMissing_.store(true, std::memory_order_release);
+    pendingDsdShortReads_.fetch_add(1, std::memory_order_relaxed);
+    pendingDsdIdleFrames_.fetch_add(frames, std::memory_order_relaxed);
+    notifyOutputReady();
     return;
   }
 
   const size_t samples = frames * static_cast<size_t>(sourceChannels);
   if (renderScratch_.size() < samples) {
+    recordRenderBufferDrop();
     for (int channel = 0; channel < outputChannels; ++channel) {
       auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
       if (!output) continue;
-      std::memset(output, 0, frames * asio::bytesPerSample(host_->outputChannelFormat(channel)));
+      if (static_cast<size_t>(channel) >= renderChannelFormatsSession_.size()) continue;
+      std::memset(
+          output,
+          0,
+          frames * asio::bytesPerSample(renderChannelFormatsSession_[static_cast<size_t>(channel)]));
     }
-    host_->outputReady();
+    notifyOutputReady();
     return;
   }
   const size_t renderedFrames = callback ? std::min(callback(renderScratch_.data(), frames), frames) : 0;
   if (renderedFrames < frames) {
+    recordRenderUnderrun();
     const size_t renderedSamples = renderedFrames * static_cast<size_t>(sourceChannels);
     std::fill(
         renderScratch_.begin() + static_cast<std::ptrdiff_t>(renderedSamples),
         renderScratch_.begin() + static_cast<std::ptrdiff_t>(samples),
         0.0f);
+  } else if (callbackDeadlineMissed) {
+    recordRenderUnderrun();
   }
 
   for (int channel = 0; channel < outputChannels; ++channel) {
     auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
     if (!output) continue;
-    const AsioChannelFormat channelFormat = host_->outputChannelFormat(channel);
+    if (static_cast<size_t>(channel) >= renderChannelFormatsSession_.size()) continue;
+    const AsioChannelFormat& channelFormat = renderChannelFormatsSession_[static_cast<size_t>(channel)];
     asio::writePackedChannelFromFloatScratch(
         renderScratch_.data(),
         frames,
@@ -1189,7 +1225,7 @@ void AsioBackend::renderBuffer(long bufferIndex) {
         channelFormat,
         output);
   }
-  host_->outputReady();
+  notifyOutputReady();
 }
 
 void AsioBackend::queueRecoveryFromHostCallback(AsioHostEvent event, std::string message) {

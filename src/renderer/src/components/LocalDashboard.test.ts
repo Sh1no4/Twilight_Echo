@@ -45,6 +45,8 @@ test('dashboard renders the resolved DSP graph from source through the output st
   assert.match(source, /getDspGraphStatus\(\)/)
   assert.match(source, /dspSceneState\.value\.graph\.nodes/)
   assert.match(source, /type: 'resampler'/)
+  assert.match(source, /stateLabel: srcActive \? '实时转换' : 'SRC 旁路'/)
+  assert.doesNotMatch(source, /stateLabel: srcActive \? '实时转换' : 'Native 直通'/)
   assert.match(source, /type: 'dither'/)
   assert.match(source, /type: 'safetyClamp'/)
   assert.match(source, /v-for="stage in dspRouteStages"/)

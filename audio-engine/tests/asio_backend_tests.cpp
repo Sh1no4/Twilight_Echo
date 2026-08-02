@@ -51,14 +51,18 @@ void testAsioBooleanSemantics() {
   assert(asio_abi::asioBoolIsTrue(static_cast<asio_abi::AsioBool>(0x71C42890U)));
 }
 
-void testAsioNativeDsdTransportRate() {
+void testAsioNativeDsdSampleRateSemantics() {
   const AudioFormat dsd64 = sourceFormat(2822400, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
-  assert(asio::transportSampleRate(dsd64) == 352800);
-  assert(asio::semanticSampleRate(AudioSampleFormat::DsdInt8Lsb1, 352800) == 2822400);
+  assert(asio::driverSampleRate(dsd64) == 2822400);
+  assert(asio::callbackFrameRate(dsd64) == 352800);
+
+  const AudioFormat dsd512 = sourceFormat(22579200, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
+  assert(asio::driverSampleRate(dsd512) == 22579200);
+  assert(asio::callbackFrameRate(dsd512) == 2822400);
 
   const AudioFormat pcm = sourceFormat(48000, 24, 2, AudioSampleFormat::Int24Interleaved);
-  assert(asio::transportSampleRate(pcm) == 48000);
-  assert(asio::semanticSampleRate(AudioSampleFormat::Int24Interleaved, 48000) == 48000);
+  assert(asio::driverSampleRate(pcm) == 48000);
+  assert(asio::callbackFrameRate(pcm) == 48000);
 }
 
 int16_t readInt16(const std::vector<uint8_t>& bytes) {
@@ -151,8 +155,26 @@ void testAsioRenderCallbackDoesNotBlockOnBackendMutex() {
   const std::string renderBody = extractFunctionBody(source, "void AsioBackend::renderBuffer(long bufferIndex)");
 
   assert(!renderBody.empty());
-  assert(renderBody.find("mutex_") != std::string::npos);
-  assert(renderBody.find("std::lock_guard lock(mutex_)") == std::string::npos);
+  assert(renderBody.find("mutex_") == std::string::npos);
+  assert(renderBody.find("std::lock_guard") == std::string::npos);
+  assert(renderBody.find("std::unique_lock") == std::string::npos);
+  assert(renderBody.find("std::try_to_lock") == std::string::npos);
+}
+
+void testAsioRenderCallbackUsesImmutableSessionSnapshots() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "output" / "asio" / "AsioBackend.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string renderBody = extractFunctionBody(source, "void AsioBackend::renderBuffer(long bufferIndex)");
+
+  assert(renderBody.find("renderCallbackSession_") != std::string::npos);
+  assert(renderBody.find("typedCallbackSession_") != std::string::npos);
+  assert(renderBody.find("renderOutputConfigSession_") != std::string::npos);
+  assert(renderBody.find("renderOutputFormatSession_") != std::string::npos);
+  assert(renderBody.find("renderChannelFormatsSession_") != std::string::npos);
+  assert(renderBody.find("host_->outputChannelFormat") == std::string::npos);
+  assert(renderBody.find("callback = callback_") == std::string::npos);
+  assert(renderBody.find("typedCallback = typedCallback_") == std::string::npos);
 }
 
 void testAsioRenderCallbackDoesNotCopyStringDiagnostics() {
@@ -744,6 +766,37 @@ void testLifecycleAndPlaybackInfo() {
   assert(rawHost->stopCalls >= 1);
 }
 
+void testCloseOpenRestartUsesFreshSessionSnapshot() {
+  auto host = makeHost();
+  auto* rawHost = host.get();
+  AsioBackend backend(std::move(host));
+  std::string error;
+
+  assert(backend.open("asio:mock", sourceFormat(48000, 32), &error));
+  assert(backend.start([](float* output, size_t frames) {
+    std::fill(output, output + frames * 2, 0.25f);
+    return frames;
+  }, nullptr, &error));
+  rawHost->triggerBufferSwitch(0);
+  float first = 0.0f;
+  std::memcpy(&first, rawHost->channelBuffers[0].buffers[0].data(), sizeof(first));
+  assert(first == 0.25f);
+
+  backend.close();
+  assert(backend.open("asio:mock", sourceFormat(48000, 32), &error));
+  assert(backend.start([](float* output, size_t frames) {
+    std::fill(output, output + frames * 2, -0.5f);
+    return frames;
+  }, nullptr, &error));
+  rawHost->triggerBufferSwitch(1);
+  float second = 0.0f;
+  std::memcpy(&second, rawHost->channelBuffers[0].buffers[1].data(), sizeof(second));
+  assert(second == -0.5f);
+  assert(rawHost->openCalls == 2);
+  assert(rawHost->createBuffersCalls == 2);
+  assert(rawHost->startCalls == 2);
+}
+
 void testActualOutputFormats() {
   struct Case {
     AudioSampleFormat sampleFormat;
@@ -810,6 +863,47 @@ void testActualOutputFormatRefreshAfterBuffers() {
   assert(info.perfectReason.find("actual output format differs") != std::string::npos);
 }
 
+void testPcmShortReadIsCountedOncePerCallback() {
+  auto host = makeHost();
+  auto* rawHost = host.get();
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("asio:mock", sourceFormat(48000, 32), &error));
+  assert(backend.start([](float* output, size_t frames) {
+    std::fill(output, output + frames * 2, 0.25f);
+    return frames / 2;
+  }, nullptr, &error));
+
+  rawHost->triggerBufferSwitch(0);
+  const auto firstSession = backend.outputInfo();
+  assert(firstSession.diagnostics.sessionUnderrunCount == 1);
+  assert(firstSession.diagnostics.lifetimeUnderrunCount == 1);
+
+  backend.close();
+  assert(backend.open("asio:mock", sourceFormat(48000, 32), &error));
+  const auto secondSession = backend.outputInfo();
+  assert(secondSession.diagnostics.sessionUnderrunCount == 0);
+  assert(secondSession.diagnostics.lifetimeUnderrunCount == 1);
+}
+
+void testOutputReadyFailureDisablesRepeatedDriverCalls() {
+  auto host = makeHost();
+  auto* rawHost = host.get();
+  rawHost->failOutputReadyCount = 1;
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("asio:mock", sourceFormat(48000, 32), &error));
+  assert(backend.start([](float* output, size_t frames) {
+    std::fill(output, output + frames * 2, 0.0f);
+    return frames;
+  }, nullptr, &error));
+
+  rawHost->triggerBufferSwitch(0);
+  rawHost->triggerBufferSwitch(1);
+  rawHost->triggerBufferSwitch(0);
+  assert(rawHost->outputReadyCalls == 1);
+}
+
 void testBufferSizeMatrix() {
   const uint32_t sizes[] = {0, 64, 128, 256, 512, 1024, 2048};
   for (const auto size : sizes) {
@@ -828,6 +922,21 @@ void testBufferSizeMatrix() {
     const long expected = size == 0 ? 256 : static_cast<long>(size);
     assert(rawHost->lastOpenConfig.bufferSizeFrames == expected);
     assert(backend.outputInfo().bufferSizeFrames == expected);
+    size_t callbacks = 0;
+    assert(backend.start([&](float* output, size_t frames) {
+      std::fill(output, output + frames * 2, 0.125f);
+      ++callbacks;
+      return frames;
+    }, nullptr, &error));
+    const int formatQueriesBeforePump = rawHost->outputChannelFormatCalls;
+    for (size_t callbackIndex = 0; callbackIndex < 256; ++callbackIndex) {
+      rawHost->triggerBufferSwitch(static_cast<long>(callbackIndex % 2));
+    }
+    assert(callbacks == 256);
+    assert(rawHost->outputReadyCalls == 256);
+    assert(rawHost->outputChannelFormatCalls == formatQueriesBeforePump);
+    assert(backend.outputInfo().diagnostics.sessionBufferDropCount == 0);
+    backend.stop();
   }
 }
 
@@ -1206,10 +1315,11 @@ void testRealAsioSmokeOptIn() {
 
 int main() {
   testAsioBooleanSemantics();
-  testAsioNativeDsdTransportRate();
+  testAsioNativeDsdSampleRateSemantics();
   testAsioDriverActivationRequestsDriverClsid();
   testAsioRenderCallbackDoesNotResizeScratchBuffers();
   testAsioRenderCallbackDoesNotBlockOnBackendMutex();
+  testAsioRenderCallbackUsesImmutableSessionSnapshots();
   testAsioRenderCallbackDoesNotCopyStringDiagnostics();
   testAsioHostEventCallbackQueuesRecoveryOffDriverCallback();
   testAsioRecoveryQueueChecksStopRequestedWhileHoldingQueueLock();
@@ -1230,9 +1340,12 @@ int main() {
   testNativeDsdRuntimeChannelFormatMismatch();
   testChannelCounts();
   testLifecycleAndPlaybackInfo();
+  testCloseOpenRestartUsesFreshSessionSnapshot();
   testActualOutputFormats();
   testRejectsUnsupportedChannelDescriptor();
   testActualOutputFormatRefreshAfterBuffers();
+  testPcmShortReadIsCountedOncePerCallback();
+  testOutputReadyFailureDisablesRepeatedDriverCalls();
   testBufferSizeMatrix();
   testPacking();
   testTypedPassthroughPacking();

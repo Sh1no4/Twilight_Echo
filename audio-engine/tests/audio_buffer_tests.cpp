@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <thread>
 #include <vector>
 
 using namespace twilight::audio;
@@ -42,48 +43,99 @@ std::string extractFunctionBody(const std::string& source, const std::string& si
   return {};
 }
 
-void assertSharedFormatStateReadAfterLock(const std::string& body) {
-  const size_t firstSharedRead = std::min(
-      body.find("format_"),
-      body.find("channels_"));
-  const size_t firstLock = std::min(
-      body.find("std::lock_guard"),
-      body.find("std::unique_lock"));
-  assert(firstSharedRead == std::string::npos || (firstLock != std::string::npos && firstLock < firstSharedRead));
-}
-
-void testAudioBufferFormatStateIsReadUnderMutex() {
-  const std::filesystem::path testFilePath(__FILE__);
-  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioBuffer.cpp";
-  const std::string source = readTextFile(sourcePath);
-
-  assertSharedFormatStateReadAfterLock(
-      extractFunctionBody(source, "size_t AudioBuffer::writeBlocking(const float* data, size_t frames, const std::atomic<bool>& running)"));
-  assertSharedFormatStateReadAfterLock(
-      extractFunctionBody(source, "size_t AudioBuffer::writeBlocking(const PcmBlock& block, const std::atomic<bool>& running)"));
-  assertSharedFormatStateReadAfterLock(
-      extractFunctionBody(source, "size_t AudioBuffer::read(float* data, size_t frames)"));
-  assertSharedFormatStateReadAfterLock(
-      extractFunctionBody(source, "size_t AudioBuffer::read(PcmBlock& block)"));
-}
-
-void testAudioBufferRenderReadablePathsUseNonBlockingLocks() {
+void testAudioBufferRenderReadsUseSpscAtomicsWithoutMutexFallback() {
   const std::filesystem::path testFilePath(__FILE__);
   const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioBuffer.cpp";
   const std::string source = readTextFile(sourcePath);
   const std::string readFloatBody = extractFunctionBody(source, "size_t AudioBuffer::read(float* data, size_t frames)");
   const std::string readBlockBody = extractFunctionBody(source, "size_t AudioBuffer::read(PcmBlock& block)");
-  const std::string availableFramesBody = extractFunctionBody(source, "size_t AudioBuffer::availableFrames() const");
-  const std::string formatBody = extractFunctionBody(source, "AudioFormat AudioBuffer::format() const");
+  const std::string readFramesBody = extractFunctionBody(source, "size_t AudioBuffer::readFrames(PcmBlock& block, size_t targetBytesPerFrame)");
 
-  assert(readFloatBody.find("std::try_to_lock") != std::string::npos);
-  assert(readBlockBody.find("std::try_to_lock") != std::string::npos);
-  assert(availableFramesBody.find("std::try_to_lock") != std::string::npos);
-  assert(formatBody.find("std::try_to_lock") != std::string::npos);
-  assert(readFloatBody.find("std::lock_guard lock(mutex_)") == std::string::npos);
-  assert(readBlockBody.find("std::lock_guard lock(mutex_)") == std::string::npos);
-  assert(availableFramesBody.find("std::lock_guard lock(mutex_)") == std::string::npos);
-  assert(formatBody.find("std::lock_guard lock(mutex_)") == std::string::npos);
+  const std::string realtimeBodies = readFloatBody + readBlockBody + readFramesBody;
+  assert(realtimeBodies.find("std::try_to_lock") == std::string::npos);
+  assert(realtimeBodies.find("std::lock_guard") == std::string::npos);
+  assert(realtimeBodies.find("std::unique_lock") == std::string::npos);
+  assert(readFramesBody.find("readPosition_.load") != std::string::npos);
+  assert(readFramesBody.find("writePosition_.load") != std::string::npos);
+  assert(readFramesBody.find("readPosition_.store") != std::string::npos);
+  assert(readBlockBody.find("tryBeginRead()") != std::string::npos);
+  assert(readBlockBody.find("endRead()") != std::string::npos);
+  assert(readBlockBody.find("producerWakeEpoch_.fetch_add") != std::string::npos);
+  assert(readBlockBody.find("producerWakeEpoch_.notify_one") != std::string::npos);
+}
+
+void testProducerWaitUsesAtomicEpochWithoutLostWake() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioBuffer.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string writeBody = extractFunctionBody(
+      source,
+      "size_t AudioBuffer::writeBlocking(const PcmBlock& block, const std::atomic<bool>& running)");
+
+  assert(writeBody.find("producerWakeEpoch_.wait") != std::string::npos);
+  assert(writeBody.find("notFull_.wait") == std::string::npos);
+  assert(writeBody.find("std::unique_lock") == std::string::npos);
+}
+
+void testControlResetGateAtomicallyExcludesNewReaders() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioBuffer.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string beginReadBody = extractFunctionBody(source, "bool AudioBuffer::tryBeginRead() noexcept");
+  const std::string beginResetBody = extractFunctionBody(source, "void AudioBuffer::beginControlReset()");
+
+  assert(beginReadBody.find("readerState_.compare_exchange_weak") != std::string::npos);
+  assert(beginReadBody.find("kControlResetBit") != std::string::npos);
+  assert(beginResetBody.find("readerState_.compare_exchange_weak") != std::string::npos);
+  assert(beginResetBody.find("kControlResetBit") != std::string::npos);
+}
+
+void testSpscProducerConsumerDoesNotDropPublishedFrames() {
+  constexpr size_t frameCount = 200000;
+  AudioBuffer buffer;
+  buffer.reset(2, 257);
+  std::atomic<bool> running{true};
+  std::atomic<bool> producerDone{false};
+
+  std::thread producer([&] {
+    std::array<float, 62> chunk{};
+    size_t produced = 0;
+    while (produced < frameCount) {
+      const size_t frames = std::min<size_t>(31, frameCount - produced);
+      for (size_t frame = 0; frame < frames; ++frame) {
+        const float value = static_cast<float>(produced + frame + 1);
+        chunk[frame * 2] = value;
+        chunk[frame * 2 + 1] = -value;
+      }
+      const size_t written = buffer.writeBlocking(chunk.data(), frames, running);
+      assert(written == frames);
+      produced += written;
+    }
+    producerDone.store(true, std::memory_order_release);
+  });
+
+  std::array<float, 34> output{};
+  size_t consumed = 0;
+  while (consumed < frameCount) {
+    const size_t frames = std::min<size_t>(17, frameCount - consumed);
+    const size_t read = buffer.read(output.data(), frames);
+    if (read == 0) {
+      assert(!producerDone.load(std::memory_order_acquire) || buffer.availableFrames() > 0);
+      std::this_thread::yield();
+      continue;
+    }
+    for (size_t frame = 0; frame < read; ++frame) {
+      const float expected = static_cast<float>(consumed + frame + 1);
+      assert(output[frame * 2] == expected);
+      assert(output[frame * 2 + 1] == -expected);
+    }
+    consumed += read;
+  }
+
+  running.store(false, std::memory_order_release);
+  buffer.notifyAll();
+  producer.join();
+  assert(buffer.availableFrames() == 0);
 }
 
 void testResetMakesOldFramesUnreadableAndEmptyReadsSilent() {
@@ -173,8 +225,10 @@ void testResetStorageResizeShrinksWithoutClearingPrefix() {
 }  // namespace
 
 int main() {
-  testAudioBufferFormatStateIsReadUnderMutex();
-  testAudioBufferRenderReadablePathsUseNonBlockingLocks();
+  testAudioBufferRenderReadsUseSpscAtomicsWithoutMutexFallback();
+  testProducerWaitUsesAtomicEpochWithoutLostWake();
+  testControlResetGateAtomicallyExcludesNewReaders();
+  testSpscProducerConsumerDoesNotDropPublishedFrames();
   testResetMakesOldFramesUnreadableAndEmptyReadsSilent();
   testReadPcmBlockCapsFramesToByteSize();
   testWritePcmBlockCapsFramesToByteSize();
