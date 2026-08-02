@@ -446,12 +446,8 @@ function onVolumeWheel(event: WheelEvent): void {
   volume.value = clampVolume(volume.value + (event.deltaY < 0 ? step : -step))
 }
 
-/** I1：点击音量图标 = 静音/恢复；抽屉打开时点击则收起抽屉（不误触静音）。 */
+/** I1：点击音量图标只切换静音；相邻按钮负责打开音量抽屉。 */
 function onVolumeButtonClick(): void {
-  if (volumeOpen.value) {
-    closeFloatingPanels()
-    return
-  }
   toggleMute()
 }
 
@@ -483,7 +479,7 @@ const {
   moreOpen,
   floatingPanelOpen,
   dismissFloatingPanels,
-  closeFloatingPanels,
+  toggleVolume,
   togglePlaylist,
   toggleMore
 } = useFloatingPanels(playerBarShellRef)
@@ -1414,15 +1410,28 @@ onMounted(() => {
               </button>
             </div>
           </Transition>
-          <button
-            class="icon-btn"
-            :class="{ active: volumeOpen }"
-            title="音量"
-            aria-label="音量"
-            @click="onVolumeButtonClick"
-          >
-            <i :class="muted || volume <= 0.001 ? 'pi pi-volume-off' : 'pi pi-volume-up'"></i>
-          </button>
+          <div class="volume-button-group">
+            <button
+              class="icon-btn"
+              :class="{ active: muted || volume <= 0.001 }"
+              title="静音/恢复"
+              aria-label="静音/恢复"
+              :aria-pressed="muted || volume <= 0.001"
+              @click="onVolumeButtonClick"
+            >
+              <i :class="muted || volume <= 0.001 ? 'pi pi-volume-off' : 'pi pi-volume-up'"></i>
+            </button>
+            <button
+              class="volume-drawer-toggle"
+              :class="{ active: volumeOpen }"
+              title="打开音量控制"
+              aria-label="打开音量控制"
+              :aria-expanded="volumeOpen"
+              @click="toggleVolume"
+            >
+              <i class="pi pi-angle-up"></i>
+            </button>
+          </div>
         </div>
 
         <button

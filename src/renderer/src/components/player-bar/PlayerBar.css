@@ -68,6 +68,42 @@
   align-items: center;
 }
 
+.volume-button-group {
+  display: flex;
+  align-items: center;
+}
+
+.volume-drawer-toggle {
+  display: flex;
+  width: 18px;
+  height: 32px;
+  margin-left: -4px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #888;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.volume-drawer-toggle:hover,
+.volume-drawer-toggle.active {
+  background: color-mix(in srgb, var(--accent-color, #2563eb) 12%, transparent);
+  color: var(--accent-color, #2563eb);
+}
+
+.player-bar-glass .volume-drawer-toggle {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.player-bar-glass .volume-drawer-toggle:hover,
+.player-bar-glass .volume-drawer-toggle.active {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--accent-color, #1a73e8);
+}
+
 .sleep-timer-select {
   max-width: 120px;
   min-height: 30px;

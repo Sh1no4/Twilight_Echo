@@ -145,6 +145,17 @@ test('buildLyricLines pairs YRC word lyrics with drifted tlyric translations', (
   assert.equal(lines[1]?.words?.length, 3)
 })
 
+test('buildLyricLines includes the exact 1500ms translation and romanization boundary', () => {
+  const lines = buildLyricLines(
+    '[10000,1000](10000,500,0)Line one',
+    '[00:11.50]边界翻译',
+    '[00:08.50]boundary romanization'
+  )
+  assert.equal(lines.length, 1)
+  assert.equal(lines[0]?.translation, '边界翻译')
+  assert.equal(lines[0]?.romanization, 'boundary romanization')
+})
+
 test('buildLyricLines does not pair a translation that is far away', () => {
   const lines = buildLyricLines(
     '[10000,1000](10000,500,0)Line one',

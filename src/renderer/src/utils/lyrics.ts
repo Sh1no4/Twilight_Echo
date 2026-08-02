@@ -300,7 +300,7 @@ function matchTimedLayer(
       layerIndex++
     }
     let bestIndex = -1
-    let bestDelta = toleranceMs
+    let bestDelta = Number.POSITIVE_INFINITY
     for (let i = layerIndex; i < layerLines.length; i++) {
       const layerKey = Math.round(layerLines[i].time * 1000)
       if (usedLayerKeys.has(layerKey)) continue
