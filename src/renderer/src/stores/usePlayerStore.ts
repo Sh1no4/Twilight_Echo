@@ -165,7 +165,8 @@ let personalizedStreamSessionSequence = 0
 const audioEngineReady = ref(false)
 const audioEngineError = ref<string | null>(null)
 const audioEngineRecoveryNotice = ref<AudioEngineRecoveryNotice | null>(null)
-const { pushNotice } = useAppNoticeStore()
+const { pushNotice, dismissNotice } = useAppNoticeStore()
+let audioEngineRecoveryAppNoticeId = 0
 let lastAudioEngineNotice = ''
 
 function setAudioEngineError(error: string | null): void {
@@ -1951,16 +1952,34 @@ function flushLatestCurrentTime(): void {
   publishCurrentTime(latestPlaybackTime)
 }
 
+function publishAudioEngineRecoveryNotice(notice: AudioEngineRecoveryNotice): void {
+  audioEngineRecoveryNotice.value = notice
+  if (audioEngineRecoveryAppNoticeId) dismissNotice(audioEngineRecoveryAppNoticeId)
+  audioEngineRecoveryAppNoticeId = pushNotice({
+    kind: notice.kind === 'service-crash' || notice.canResume === false ? 'warning' : 'success',
+    message: notice.message,
+    action:
+      notice.kind === 'service-ready' && notice.canResume !== false
+        ? {
+            label: notice.actionLabel || '继续播放',
+            run: () => void togglePlayState()
+          }
+        : undefined,
+    sticky: notice.kind === 'service-crash' || notice.canResume === false,
+    durationMs: 8000
+  })
+}
+
 function setAudioServiceCrashNotice(reason: string): void {
   const message = reason.trim()
   const prefix = message.startsWith('音频服务已重启')
     ? message
     : `音频服务已重启：${message || '未知原因'}`
-  audioEngineRecoveryNotice.value = {
+  publishAudioEngineRecoveryNotice({
     kind: 'service-crash',
     message: `${prefix}。正在恢复音频服务，恢复后不会自动续播。`,
     actionLabel: '稍后手动继续'
-  }
+  })
 }
 
 function setAudioServiceReadyNotice(event?: {
@@ -1972,14 +1991,14 @@ function setAudioServiceReadyNotice(event?: {
     ? event.restoreErrors.filter((item) => item.trim())
     : []
   const detail = restoreErrors.length > 0 ? `（${restoreErrors.join('；')}）` : ''
-  audioEngineRecoveryNotice.value = {
+  publishAudioEngineRecoveryNotice({
     kind: 'service-ready',
     message: outputRouteSynced
       ? '音频服务已恢复，播放已停止，可手动继续。'
       : `音频服务已恢复，但输出设备/后端未完全恢复${detail}。请重新选择输出设备后继续。`,
     actionLabel: outputRouteSynced ? '继续播放' : undefined,
     canResume: outputRouteSynced
-  }
+  })
 }
 
 async function refreshVisualizationData(): Promise<void> {
@@ -2726,11 +2745,12 @@ function setupAudioEngineListeners(): void {
     cleanupFns.push(
       api.onServiceReady((event) => {
         audioEngineReady.value = true
-        setAudioEngineError(
-          event.outputRouteSynced
-            ? null
-            : event.restoreErrors?.join('；') || '音频输出设备/后端未完全恢复'
-        )
+        if (event.outputRouteSynced) {
+          setAudioEngineError(null)
+        } else {
+          audioEngineError.value =
+            event.restoreErrors?.join('；') || '音频输出设备/后端未完全恢复'
+        }
         setAudioServiceReadyNotice({
           outputRouteSynced: event.outputRouteSynced === true,
           restoreErrors: event.restoreErrors
@@ -2749,7 +2769,7 @@ function setupAudioEngineListeners(): void {
           outputRouteSynced: false,
           restoreErrors: ['等待结构化输出路由恢复确认']
         })
-        setAudioEngineError('音频输出设备/后端未完全恢复')
+        audioEngineError.value = '音频输出设备/后端未完全恢复'
       } else {
         setAudioEngineError(null)
       }
@@ -2771,9 +2791,11 @@ function setupAudioEngineListeners(): void {
   cleanupFns.push(
     api.onError((message) => {
       console.error('[audio-engine] Playback error:', message)
-      setAudioEngineError(message)
       if (message.includes('音频服务已重启')) {
+        audioEngineError.value = message
         setAudioServiceCrashNotice(message)
+      } else {
+        setAudioEngineError(message)
       }
       clearPlaybackToggleIntent()
       clearNativePlaybackInfoIntent()
@@ -2864,6 +2886,8 @@ function setupAudioEngineListeners(): void {
 }
 
 function dismissAudioEngineRecoveryNotice(): void {
+  if (audioEngineRecoveryAppNoticeId) dismissNotice(audioEngineRecoveryAppNoticeId)
+  audioEngineRecoveryAppNoticeId = 0
   audioEngineRecoveryNotice.value = null
 }
 

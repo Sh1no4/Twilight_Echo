@@ -701,12 +701,13 @@
   transform: scale(var(--te-motion-press-scale));
 }
 
-.transport-button.transport-play {
+.home .transport-button.transport-play {
   width: 56px;
   height: 56px;
   border: none;
   font-size: 20px;
   color: var(--home-card);
+  -webkit-text-fill-color: currentColor;
   background: var(--home-ink);
   box-shadow: 0 14px 30px color-mix(in srgb, var(--home-ink) 26%, transparent);
 }

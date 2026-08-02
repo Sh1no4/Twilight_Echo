@@ -11,6 +11,7 @@ export type AppTheme = 'system' | 'pureWhite' | 'dark'
 export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 export type NcmPlaybackQuality = 'auto' | 'standard' | 'exhigh' | 'lossless' | 'hires'
 export type StartupHomePage = 'local' | 'streaming'
+export type TrackActivationMode = 'singleClick' | 'doubleClick'
 /** sequential stops at the tail; listLoop wraps; repeat loops one track; shuffle uses a shuffled cycle. */
 export type PlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle'
 export type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
@@ -287,6 +288,7 @@ export interface AppSettings {
   /** First-run welcome wizard has been completed or skipped. */
   onboardingCompleted: boolean
   startupHomePage: StartupHomePage
+  trackActivationMode: TrackActivationMode
   theme: AppTheme
   pluginThemeId: string | null
   activeTheme: ThemeSelection

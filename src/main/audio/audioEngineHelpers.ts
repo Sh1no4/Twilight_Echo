@@ -679,19 +679,19 @@ export function normalizeAudioDeviceOption(option: unknown): AudioDeviceOption |
   const id = typeof record.id === 'string' ? record.id.trim() : ''
   if (!id) return null
   const rawLabel = typeof record.label === 'string' ? record.label.trim() : ''
+  const rawName = typeof record.name === 'string' ? record.name.trim() : ''
   return withAudioCapabilitySupportStates({
     ...(record as Partial<AudioDeviceOption>),
     id,
     label:
-      id === DEFAULT_AUDIO_DEVICE_OPTION.id ? DEFAULT_AUDIO_DEVICE_OPTION.label : rawLabel || id,
+      id === DEFAULT_AUDIO_DEVICE_OPTION.id
+        ? DEFAULT_AUDIO_DEVICE_OPTION.label
+        : rawLabel || rawName || id,
     isDefault: record.isDefault === true
   })
 }
 
-export function normalizeAudioDeviceOptions(
-  rawOptions: unknown,
-  selectedDevice: string
-): AudioDeviceOption[] {
+export function normalizeAudioDeviceOptions(rawOptions: unknown): AudioDeviceOption[] {
   const options: AudioDeviceOption[] = []
   const seen = new Set<string>()
 
@@ -710,14 +710,6 @@ export function normalizeAudioDeviceOptions(
   if (!seen.has(DEFAULT_AUDIO_DEVICE_OPTION.id)) {
     options.unshift({ ...DEFAULT_AUDIO_DEVICE_OPTION })
     seen.add(DEFAULT_AUDIO_DEVICE_OPTION.id)
-  }
-
-  if (selectedDevice && !seen.has(selectedDevice)) {
-    addOption({
-      id: selectedDevice,
-      label: formatAudioDeviceLabel(selectedDevice),
-      isDefault: selectedDevice === DEFAULT_AUDIO_DEVICE_OPTION.id
-    })
   }
 
   return options

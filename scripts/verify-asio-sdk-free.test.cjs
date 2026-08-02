@@ -48,3 +48,13 @@ test('Windows x64 ASIO runtime is enabled by default with an explicit opt-out', 
   assert.match(source, /if \(!asioEnabled\(\)\) return \{\};/)
   assert.match(source, /ASIO backend is disabled by TWILIGHT_DISABLE_ASIO=1/)
 })
+
+test('ASIO device catalog exports a user-facing label instead of exposing only the CLSID id', () => {
+  const source = readFileSync(
+    join(__dirname, '..', 'audio-engine', 'output', 'asio', 'RealAsioHost.cpp'),
+    'utf8'
+  )
+
+  assert.match(source, /\\"label\\":\\"/)
+  assert.match(source, /jsonEscape\(device\.name\)/)
+})

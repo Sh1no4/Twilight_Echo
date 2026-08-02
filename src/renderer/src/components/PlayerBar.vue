@@ -65,7 +65,6 @@ const {
   audioOutputOptions,
   audioDevice,
   audioDeviceOptions,
-  audioEngineRecoveryNotice,
   audioProcessing,
   audioOutputConfig,
   dspOutputStage,
@@ -95,7 +94,6 @@ const {
   reorderQueue,
   saveQueueAsPlaylist,
   toggleExclusiveMode,
-  dismissAudioEngineRecoveryNotice,
   formatTime,
   setUnityVolume,
   toggleMute,
@@ -1248,32 +1246,6 @@ onMounted(() => {
             :title="streamNowPlaying"
           >
             {{ streamNowPlaying }}
-          </div>
-          <div
-            v-if="audioEngineRecoveryNotice"
-            class="player-playback-diagnostic recovery"
-            role="status"
-            aria-live="polite"
-            :title="audioEngineRecoveryNotice.message"
-          >
-            <span>{{ audioEngineRecoveryNotice.message }}</span>
-            <button
-              v-if="
-                audioEngineRecoveryNotice.kind === 'service-ready' &&
-                audioEngineRecoveryNotice.canResume !== false
-              "
-              type="button"
-              @click.stop="togglePlay"
-            >
-              {{ audioEngineRecoveryNotice.actionLabel || '继续播放' }}
-            </button>
-            <button
-              type="button"
-              aria-label="关闭恢复提示"
-              @click.stop="dismissAudioEngineRecoveryNotice"
-            >
-              ×
-            </button>
           </div>
         </div>
       </div>

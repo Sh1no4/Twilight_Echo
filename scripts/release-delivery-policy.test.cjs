@@ -52,7 +52,7 @@ test('Windows packaging strips copied native binaries while unsigned releases st
 test('release packaging writes an SHA-256 companion file for the installer', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-release-checksum-'))
   try {
-    const installer = path.join(root, 'TwilightEcho-1.0.1-setup.exe')
+    const installer = path.join(root, 'TwilightEcho-1.0.2-setup.exe')
     fs.writeFileSync(installer, 'twilight-release')
     const { writeInstallerChecksum } = require('./build-windows-release.cjs')
     const checksumPath = await writeInstallerChecksum(installer)
@@ -60,7 +60,7 @@ test('release packaging writes an SHA-256 companion file for the installer', asy
     const expected = createHash('sha256').update('twilight-release').digest('hex')
     assert.equal(
       fs.readFileSync(checksumPath, 'utf8'),
-      `${expected}  TwilightEcho-1.0.1-setup.exe\n`
+      `${expected}  TwilightEcho-1.0.2-setup.exe\n`
     )
   } finally {
     fs.rmSync(root, { recursive: true, force: true })

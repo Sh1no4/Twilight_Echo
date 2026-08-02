@@ -87,6 +87,7 @@ import type {
   DspAssetKind,
   DspCorrectionImportResult,
   DspCorrectionProfile,
+  ImportedFrequencyResponse,
   DspGraphStatus,
   DspOutputStageConfig,
   DspProfile,
@@ -628,6 +629,8 @@ const api = {
       ipcRenderer.invoke('audioEngine:importDspAsset', kind),
     importDspCorrectionProfile: (): Promise<DspCorrectionImportResult | null> =>
       ipcRenderer.invoke('audioEngine:importDspCorrectionProfile'),
+    importFrequencyResponse: (): Promise<ImportedFrequencyResponse | null> =>
+      ipcRenderer.invoke('audioEngine:importFrequencyResponse'),
     getDspCorrectionProfile: (assetId: string): Promise<DspCorrectionProfile> =>
       ipcRenderer.invoke('audioEngine:getDspCorrectionProfile', assetId),
     deleteDspAsset: (assetId: string): Promise<DspAsset[]> =>
@@ -675,6 +678,8 @@ const api = {
     getMetadata: (source: string): Promise<NativeAudioMetadata | null> =>
       ipcRenderer.invoke('audioEngine:getMetadata', source),
     getPlaybackInfo: (): Promise<PlaybackInfo> => ipcRenderer.invoke('audioEngine:getPlaybackInfo'),
+    exportDiagnostics: (): Promise<{ filePath: string | null }> =>
+      ipcRenderer.invoke('audioEngine:exportDiagnostics'),
     getSpectrumData: (points?: number): Promise<number[]> =>
       ipcRenderer.invoke('audioEngine:getSpectrumData', points),
     getVisualizationData: (options?: VisualizationOptions): Promise<VisualizationData> =>
@@ -826,7 +831,10 @@ const api = {
     cancel: (transferId: string): Promise<boolean> =>
       ipcRenderer.invoke('ncmCloud:cancel', transferId),
     onProgress: (callback: (progress: NcmCloudTransferProgress) => void): (() => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, progress: NcmCloudTransferProgress): void => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        progress: NcmCloudTransferProgress
+      ): void => {
         callback(progress)
       }
       ipcRenderer.on(NCM_CLOUD_TRANSFER_PROGRESS_CHANNEL, handler)

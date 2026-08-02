@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { normalizeAudioDeviceOptions } from './player/audioOutputNormalize.ts'
 
 function extractFunctionBody(source: string, functionName: string): string {
   const signatureIndex = source.indexOf(`export function ${functionName}`)
@@ -1264,11 +1265,17 @@ test('player bar visualization polling stays light and stops behind the full vis
   )
 })
 
-test('player store exposes audio service recovery notice state', () => {
+test('audio service recovery uses the global notice channel instead of the player bar', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
-  const body = extractFunctionBody(source, 'usePlayerStore')
+  const playerBarSource = readFileSync(new URL('../components/PlayerBar.vue', import.meta.url), 'utf8')
 
   assert.match(source, /const audioEngineRecoveryNotice = ref/)
+  assert.match(source, /function publishAudioEngineRecoveryNotice/)
+  assert.match(source, /pushNotice\(\{/)
+  assert.match(source, /kind: notice\.kind === 'service-crash'/)
+  assert.match(source, /label: notice\.actionLabel \|\| '继续播放'/)
+  assert.match(source, /run: \(\) => void togglePlayState\(\)/)
+  assert.match(source, /sticky: notice\.kind === 'service-crash' \|\| notice\.canResume === false/)
   assert.match(source, /function setAudioServiceCrashNotice/)
   assert.match(source, /function setAudioServiceReadyNotice/)
   assert.match(source, /outputRouteSynced/)
@@ -1276,12 +1283,9 @@ test('player store exposes audio service recovery notice state', () => {
   assert.match(source, /canResume: outputRouteSynced/)
   assert.match(source, /api\.onServiceCrash/)
   assert.match(source, /api\.onServiceReady/)
-  assert.match(source, /kind: 'service-crash'/)
-  assert.match(source, /kind: 'service-ready'/)
   assert.match(source, /message\.includes\('音频服务已重启'\)/)
-  assert.match(source, /dismissAudioEngineRecoveryNotice/)
-  assert.match(body, /audioEngineRecoveryNotice/)
-  assert.match(body, /dismissAudioEngineRecoveryNotice/)
+  assert.doesNotMatch(playerBarSource, /audioEngineRecoveryNotice/)
+  assert.doesNotMatch(playerBarSource, /关闭恢复提示/)
 })
 
 test('renderer audio device normalization derives tri-state capability fallbacks', () => {
@@ -1310,7 +1314,33 @@ test('renderer audio device normalization derives tri-state capability fallbacks
     helper,
     /withAudioCapabilitySupportStates\(\s*\{\s*\.\.\.\(record as Partial<AudioDeviceOption>\),/
   )
-  assert.match(helper, /withAudioCapabilitySupportStates\(\s*\{\s*id: selectedDevice,/)
+  assert.doesNotMatch(helper, /id: selectedDevice/)
+})
+
+test('renderer audio device normalization uses native names and omits stale selected devices', () => {
+  const canonicalAsioId = 'asio:{6b3ba606-8664-4426-8994-0f1d9d12a345}'
+  const options = normalizeAudioDeviceOptions(
+    [
+      {
+        id: 'auto',
+        label: '系统默认',
+        isDefault: true
+      },
+      {
+        id: canonicalAsioId,
+        label: '',
+        name: 'FiiO ASIO Driver',
+        backend: 'asio',
+        isDefault: false,
+        pathKind: 'asio'
+      }
+    ],
+    'asio:{stale-device}',
+    'asio'
+  )
+
+  assert.equal(options.find((device) => device.id === canonicalAsioId)?.label, 'FiiO ASIO Driver')
+  assert.equal(options.some((device) => device.id === 'asio:{stale-device}'), false)
 })
 
 test('dominant cover color extraction ignores stale async results', () => {

@@ -18,7 +18,10 @@ test('dashboard prioritizes active and last-played tracks over recommendations',
 test('dashboard primary transport keeps its icon visible on the ink surface', () => {
   const styles = readFileSync(new URL('./LocalDashboard.css', import.meta.url), 'utf8')
 
-  assert.match(styles, /\.transport-button\.transport-play\s*\{[\s\S]*?color:\s*var\(--home-card\)/)
+  assert.match(
+    styles,
+    /\.home \.transport-button\.transport-play\s*\{[\s\S]*?color:\s*var\(--home-card\);[\s\S]*?-webkit-text-fill-color:\s*currentColor/
+  )
 })
 
 test('dashboard empty-state CTA keeps its content visible on the ink surface', () => {

@@ -11,6 +11,7 @@ import type {
   DspStereoImageConfig,
   Vst3CatalogState
 } from '../shared/dspGraph.ts'
+import type { ImportedFrequencyResponse } from '../shared/frequencyResponse.ts'
 import type { SleepTimerSettings } from '../shared/sleepTimer.ts'
 import type {
   ThemeAssetReference,
@@ -122,6 +123,7 @@ type AppTheme = 'system' | 'pureWhite' | 'dark'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 type NcmPlaybackQuality = 'auto' | 'standard' | 'exhigh' | 'lossless' | 'hires'
 type StartupHomePage = 'local' | 'streaming'
+type TrackActivationMode = 'singleClick' | 'doubleClick'
 type UiDensity = 'compact' | 'standard' | 'comfortable'
 type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 type LyricAlign = 'center' | 'left'
@@ -663,6 +665,7 @@ interface AppSettings {
   /** First-run welcome wizard has been completed or skipped. */
   onboardingCompleted: boolean
   startupHomePage: StartupHomePage
+  trackActivationMode: TrackActivationMode
   theme: AppTheme
   pluginThemeId: string | null
   activeTheme: ThemeSelection
@@ -1330,6 +1333,7 @@ interface AudioEngineAPI {
   getDspAssets: () => Promise<DspAsset[]>
   importDspAsset: (kind: DspAssetKind) => Promise<DspAsset | null>
   importDspCorrectionProfile: () => Promise<DspCorrectionImportResult | null>
+  importFrequencyResponse: () => Promise<ImportedFrequencyResponse | null>
   getDspCorrectionProfile: (assetId: string) => Promise<DspCorrectionProfile>
   deleteDspAsset: (assetId: string) => Promise<DspAsset[]>
   exportDspProfile: (name?: string) => Promise<DspProfile | null>
@@ -1359,6 +1363,7 @@ interface AudioEngineAPI {
   ) => Promise<AudioProcessingSettings>
   getMetadata: (source: string) => Promise<NativeAudioMetadata | null>
   getPlaybackInfo: () => Promise<PlaybackInfo>
+  exportDiagnostics: () => Promise<{ filePath: string | null }>
   getSpectrumData: (points?: number) => Promise<number[]>
   getVisualizationData: (options?: VisualizationOptions) => Promise<VisualizationData>
 

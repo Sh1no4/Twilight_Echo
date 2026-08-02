@@ -100,6 +100,7 @@ export function useSongListContextMenu({
   function closeContextMenu(): void {
     showContextMenu.value = false
     showPlaylistSubmenu.value = false
+    selectedTrack.value = null
   }
 
   function handleDelete(): void {

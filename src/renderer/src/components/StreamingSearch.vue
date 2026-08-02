@@ -23,6 +23,7 @@ const props = defineProps<{
   searchLoading: boolean
   searchError: string
   currentTrack: Track | null
+  trackActivationMode: 'singleClick' | 'doubleClick'
   likingTracks: Set<number>
   isTrackLiked: (id: number | undefined) => boolean
   formatTime: (time: number) => string
@@ -132,6 +133,9 @@ function emitPage(first: number): void {
                   'track-selected': isSelected(track.id)
                 }"
                 @click="emit('searchTrackClick', track, $event)"
+                @dblclick="
+                  trackActivationMode === 'doubleClick' && emit('searchTrackClick', track, $event)
+                "
                 @contextmenu.prevent="emit('trackContextMenu', track, index, $event)"
               >
                 <td class="col-cover">

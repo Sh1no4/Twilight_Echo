@@ -31,9 +31,7 @@ function resolveTracks(source: TrackListSource): Track[] {
   return source.value
 }
 
-function resolveEnabled(
-  enabled: UseTrackMultiSelectOptions['enabled']
-): boolean {
+function resolveEnabled(enabled: UseTrackMultiSelectOptions['enabled']): boolean {
   if (enabled == null) return true
   if (typeof enabled === 'function') return enabled()
   return enabled.value
@@ -50,9 +48,9 @@ function isEditableTarget(target: EventTarget | null): boolean {
  * System-style multi-select for track tables:
  * - Ctrl/Cmd+Click: toggle selection (does not play)
  * - Shift+Click: range from anchor (does not play)
- * - plain click: play only — never enters selection mode
+ * - plain click: returns a play intent and exits multi-select mode
  * - checkbox / explicit selectOnly: manual multi-select
- * - right-click (ensureContextSelection): select target for context actions
+ * - right-click is intentionally not handled here and must not change selection
  * - Ctrl/Cmd+A: select all current list
  * - Escape: clear
  */
@@ -71,7 +69,6 @@ export function useTrackMultiSelect({
   toggle: (trackId: string, index: number) => void
   selectRange: (toIndex: number) => void
   onRowClick: (track: Track, index: number, event: MouseEvent) => MultiSelectClickResult
-  ensureContextSelection: (track: Track, index: number) => void
   getSelectedTracks: () => Track[]
   getSelectedTrackIds: () => string[]
 } {
@@ -145,12 +142,6 @@ export function useTrackMultiSelect({
     return 'play'
   }
 
-  /** Right-click: keep multi-selection if target is already selected, else select only. */
-  function ensureContextSelection(track: Track, index: number): void {
-    if (selectedIds.value.has(track.id) && selectedIds.value.size > 0) return
-    selectOnly(track.id, index)
-  }
-
   function getSelectedTracks(): Track[] {
     const list = resolveTracks(tracks)
     const ids = selectedIds.value
@@ -182,15 +173,15 @@ export function useTrackMultiSelect({
 
   if (getCurrentInstance()) {
     for (const source of resetSources) {
-      watch(
-        typeof source === 'function' ? source : () => source.value,
-        () => clearSelection()
-      )
+      watch(typeof source === 'function' ? source : () => source.value, () => clearSelection())
     }
 
     // Drop ids that disappeared from the list (e.g. after delete)
     watch(
-      () => resolveTracks(tracks).map((track) => track.id).join('\0'),
+      () =>
+        resolveTracks(tracks)
+          .map((track) => track.id)
+          .join('\0'),
       () => {
         if (selectedIds.value.size === 0) return
         const valid = new Set(resolveTracks(tracks).map((track) => track.id))
@@ -223,7 +214,6 @@ export function useTrackMultiSelect({
     toggle,
     selectRange,
     onRowClick,
-    ensureContextSelection,
     getSelectedTracks,
     getSelectedTrackIds
   }

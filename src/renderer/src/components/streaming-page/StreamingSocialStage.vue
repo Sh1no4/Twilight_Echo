@@ -54,6 +54,7 @@ const props = withDefaults(
     activeTab?: string
     tracks?: Track[]
     currentTrackId?: string | null
+    trackActivationMode?: 'singleClick' | 'doubleClick'
     isExternal?: boolean
     hasSelection?: boolean
     selectedCount?: number
@@ -89,6 +90,7 @@ const props = withDefaults(
     activeTab: '',
     tracks: () => [],
     currentTrackId: null,
+    trackActivationMode: 'singleClick',
     isExternal: false,
     hasSelection: false,
     selectedCount: 0,
@@ -176,6 +178,7 @@ function onRowActivate(track: Track, index: number, event: MouseEvent): void {
 
 function onRowDblClick(track: Track, index: number, event: MouseEvent): void {
   event.preventDefault()
+  if (props.trackActivationMode !== 'doubleClick') return
   emit('playTrack', track, index)
 }
 

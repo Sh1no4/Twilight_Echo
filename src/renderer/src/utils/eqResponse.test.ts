@@ -5,6 +5,7 @@ import {
   computeBandResponse,
   computeBiquadCoefficients,
   computeCompositeResponse,
+  computeEstimatedSourceDeviation,
   magnitudeDbAtFrequency,
   sampleLogFrequencies
 } from './eqResponse.ts'
@@ -136,6 +137,75 @@ test('low pass bands still filter with zero gain', () => {
   const response = computeCompositeResponse([lowPass], 0, { pointCount: 128 })
   const last = response[response.length - 1]
   assert.ok(last.db < -30)
+})
+
+test('split manual and OPRA responses sum to the effective DSP response', () => {
+  const manualBands = [makeBand({ frequency: 180, gain: 3, q: 1.1 })]
+  const opraBands = [makeBand({ frequency: 3200, gain: -5, q: 2 })]
+  const manualPreamp = -1.5
+  const opraPreamp = -4.5
+  const options = { mode: 'parametric' as const, pointCount: 96 }
+  const manual = computeCompositeResponse(manualBands, manualPreamp, options)
+  const opra = computeCompositeResponse(opraBands, opraPreamp, options)
+  const effective = computeCompositeResponse(
+    [...opraBands, ...manualBands],
+    opraPreamp + manualPreamp,
+    options
+  )
+
+  for (let index = 0; index < effective.length; index++) {
+    assert.ok(Math.abs(effective[index].db - (manual[index].db + opra[index].db)) < 1e-9)
+  }
+})
+
+test('estimated source deviation inverts correction filters at every sampled frequency', () => {
+  const correctionBands = [
+    makeBand({ frequency: 120, gain: 5, q: 0.8, filterType: 'lowShelf' }),
+    makeBand({ frequency: 2800, gain: -4, q: 2.2 }),
+    makeBand({ frequency: 9000, gain: 2, q: 0.7, filterType: 'highShelf' })
+  ]
+  const correction = computeCompositeResponse(correctionBands, 0, {
+    mode: 'parametric',
+    pointCount: 128
+  })
+  const estimated = computeEstimatedSourceDeviation(correctionBands, { pointCount: 128 })
+
+  assert.equal(estimated.length, correction.length)
+  for (let index = 0; index < correction.length; index++) {
+    assert.equal(estimated[index].frequency, correction[index].frequency)
+    assert.ok(Math.abs(estimated[index].db + correction[index].db) < 1e-9)
+  }
+})
+
+test('estimated source deviation excludes correction preamp by API design', () => {
+  const correctionBands = [makeBand({ frequency: 1000, gain: 6, q: 1 })]
+  const estimated = computeEstimatedSourceDeviation(correctionBands, { pointCount: 65 })
+  const correctionWithHeadroom = computeCompositeResponse(correctionBands, -7, {
+    mode: 'parametric',
+    pointCount: 65
+  })
+  const centerIndex = estimated.reduce(
+    (nearest, point, index) =>
+      Math.abs(point.frequency - 1000) < Math.abs(estimated[nearest].frequency - 1000)
+        ? index
+        : nearest,
+    0
+  )
+
+  assert.ok(Math.abs(estimated[centerIndex].db + 6) < 0.05)
+  assert.ok(Math.abs(estimated[centerIndex].db + correctionWithHeadroom[centerIndex].db) > 6.9)
+})
+
+test('estimated source deviation always treats correction bands as parametric', () => {
+  const shelf = makeBand({ frequency: 500, gain: 8, q: 0.7, filterType: 'lowShelf' })
+  const estimated = computeEstimatedSourceDeviation([shelf], { mode: 'graphic', pointCount: 64 })
+  const parametricCorrection = computeCompositeResponse([shelf], 0, {
+    mode: 'parametric',
+    pointCount: 64
+  })
+  for (let index = 0; index < estimated.length; index++) {
+    assert.ok(Math.abs(estimated[index].db + parametricCorrection[index].db) < 1e-9)
+  }
 })
 
 test('auto preamp offsets the maximum boost with a safety margin', () => {

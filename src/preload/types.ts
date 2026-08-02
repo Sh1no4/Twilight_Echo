@@ -32,6 +32,12 @@ export type {
 } from '../shared/theme.ts'
 
 export type { VersionedDataEnvelope } from '../shared/versionedPersistence.ts'
+export type {
+  AutoEqSourceColumn,
+  FrequencyResponsePoint,
+  ImportedFrequencyResponse,
+  TargetRelativeFrequencyResponse
+} from '../shared/frequencyResponse.ts'
 export type { MotionPreference } from '../shared/motion.ts'
 export type {
   LyricsManagementDocument,
@@ -161,6 +167,7 @@ export type {
   NcmCloudUploadResult
 } from '../shared/ncmCloud.ts'
 export type StartupHomePage = 'local' | 'streaming'
+export type TrackActivationMode = 'singleClick' | 'doubleClick'
 export type UiDensity = 'compact' | 'standard' | 'comfortable'
 export type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 export type LyricAlign = 'center' | 'left'
@@ -725,6 +732,7 @@ export interface AppSettings {
   /** First-run welcome wizard has been completed or skipped. */
   onboardingCompleted: boolean
   startupHomePage: StartupHomePage
+  trackActivationMode: TrackActivationMode
   theme: AppTheme
   pluginThemeId: string | null
   activeTheme: ThemeSelection
