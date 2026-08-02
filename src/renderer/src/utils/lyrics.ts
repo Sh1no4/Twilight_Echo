@@ -252,6 +252,78 @@ export function parsePlainLyrics(lyrics: string | null | undefined): string[] {
     .filter((line) => line.length > 0 && !metadataTagRe.test(line))
 }
 
+const LAYER_MATCH_TOLERANCE_MS = 1500
+
+/**
+ * Pair translation / romanization lines to the original timed lines.
+ *
+ * NetEase YRC word lyrics carry line timestamps that can drift from the
+ * companion tlyric by up to ~1s (same song, same line order). A plain
+ * exact-millisecond join therefore hides every translation for word-level
+ * lyrics. Exact matches are tried first; remaining lines fall back to an
+ * order-preserving nearest match within a bounded tolerance.
+ */
+function matchTimedLayer(
+  originalLines: readonly ParsedTimedLyricLine[],
+  layerLines: readonly ParsedTimedLyricLine[],
+  toleranceMs: number = LAYER_MATCH_TOLERANCE_MS
+): Map<number, string> {
+  const result = new Map<number, string>()
+  if (originalLines.length === 0 || layerLines.length === 0) return result
+
+  // Exact millisecond pairing (the standard LRC alignment).
+  const exactByTime = new Map<number, string>()
+  for (const line of layerLines) {
+    const key = Math.round(line.time * 1000)
+    if (!exactByTime.has(key)) exactByTime.set(key, line.text)
+  }
+  const usedLayerKeys = new Set<number>()
+  for (const line of originalLines) {
+    const key = Math.round(line.time * 1000)
+    const text = exactByTime.get(key)
+    if (text != null && !usedLayerKeys.has(key)) {
+      result.set(key, text)
+      usedLayerKeys.add(key)
+    }
+  }
+
+  // Order-preserving nearest fallback for drifted word-level payloads.
+  const toleranceSeconds = toleranceMs / 1000
+  let layerIndex = 0
+  for (const line of originalLines) {
+    const key = Math.round(line.time * 1000)
+    if (result.has(key)) continue
+    while (
+      layerIndex < layerLines.length &&
+      usedLayerKeys.has(Math.round(layerLines[layerIndex].time * 1000))
+    ) {
+      layerIndex++
+    }
+    let bestIndex = -1
+    let bestDelta = Number.POSITIVE_INFINITY
+    for (let i = layerIndex; i < layerLines.length; i++) {
+      const layerKey = Math.round(layerLines[i].time * 1000)
+      if (usedLayerKeys.has(layerKey)) continue
+      const delta = Math.abs(key - layerKey)
+      if (delta > toleranceMs) {
+        if (layerLines[i].time - line.time > toleranceSeconds) break
+        continue
+      }
+      if (delta < bestDelta) {
+        bestDelta = delta
+        bestIndex = i
+      }
+    }
+    if (bestIndex >= 0) {
+      const matched = layerLines[bestIndex]
+      result.set(key, matched.text)
+      usedLayerKeys.add(Math.round(matched.time * 1000))
+      if (bestIndex > layerIndex) layerIndex = bestIndex
+    }
+  }
+  return result
+}
+
 export function buildLyricLines(
   lyrics: string | null | undefined,
   translatedLyrics: string | null | undefined,
@@ -262,14 +334,8 @@ export function buildLyricLines(
   const romanizedLines = parseTimedLrc(romanizedLyrics)
 
   if (originalLines.length > 0) {
-    const translatedMap = new Map<number, string>()
-    for (const line of translatedLines) {
-      translatedMap.set(Math.round(line.time * 1000), line.text)
-    }
-    const romanizedMap = new Map<number, string>()
-    for (const line of romanizedLines) {
-      romanizedMap.set(Math.round(line.time * 1000), line.text)
-    }
+    const translatedMap = matchTimedLayer(originalLines, translatedLines)
+    const romanizedMap = matchTimedLayer(originalLines, romanizedLines)
 
     return originalLines.map((line) => ({
       time: line.time,

@@ -830,7 +830,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 18px;
   align-self: center;
-  transform: translateX(32px);
+  /* U3: 移除写死的横向位移，避免各布局下封面与歌词列错位 */
 }
 
 .cover-frame {

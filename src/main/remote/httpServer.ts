@@ -40,6 +40,8 @@ export class RemoteHttpServer {
   private onCommand: RemoteCommandHandler | null
   private snapshot: RemotePlaybackSnapshot = createEmptyRemotePlaybackSnapshot()
   private readonly sseClients = new Set<ServerResponse>()
+  /** S3: SSE 长连接上限，防止局域网内开大量 /api/events 耗尽资源。 */
+  private readonly sseMaxClients = 8
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(options: RemoteHttpServerOptions = {}) {
@@ -131,6 +133,18 @@ export class RemoteHttpServer {
     })
 
     return this.getStatus()
+  }
+
+  private resolveAllowedOrigin(origin: string | undefined, host: string): string | null {
+    if (!origin) return null
+    try {
+      const parsed = new URL(origin)
+      if (parsed.host === host) return parsed.origin
+      if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') return parsed.origin
+    } catch {
+      return null
+    }
+    return null
   }
 
   /**
@@ -261,8 +275,13 @@ export class RemoteHttpServer {
         return
       }
 
+      // S2: CORS 不再无条件 `*`，仅当 Origin 与本服务同源（或本机回环）时回显。
+      // 任意第三方网页跨源读取将被浏览器拦截。
+      ;(res as ServerResponse & { teCorsOrigin?: string | null }).teCorsOrigin =
+        this.resolveAllowedOrigin(req.headers.origin, host)
+
       if (req.method === 'OPTIONS') {
-        res.writeHead(204, corsHeaders())
+        res.writeHead(204, corsHeaders((res as ServerResponse & { teCorsOrigin?: string | null }).teCorsOrigin))
         res.end()
         return
       }
@@ -373,8 +392,14 @@ export class RemoteHttpServer {
   }
 
   private attachSse(res: ServerResponse): void {
+    // S3: 超过上限直接 429 拒绝，避免无限长连接。
+    if (this.sseClients.size >= this.sseMaxClients) {
+      this.sendJson(res, 429, { error: 'too_many_event_connections' })
+      return
+    }
+    const origin = (res as ServerResponse & { teCorsOrigin?: string | null }).teCorsOrigin
     res.writeHead(200, {
-      ...corsHeaders(),
+      ...corsHeaders(origin),
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache, no-transform',
       connection: 'keep-alive'
@@ -409,7 +434,7 @@ export class RemoteHttpServer {
     }
     const body = readFileSync(path)
     res.writeHead(200, {
-      ...corsHeaders(),
+      ...corsHeaders((res as ServerResponse & { teCorsOrigin?: string | null }).teCorsOrigin),
       'content-type': contentType,
       'content-length': body.length,
       'cache-control': 'no-cache'
@@ -581,7 +606,7 @@ export class RemoteHttpServer {
   private sendJson(res: ServerResponse, status: number, body: unknown): void {
     const payload = Buffer.from(JSON.stringify(body), 'utf8')
     res.writeHead(status, {
-      ...corsHeaders(),
+      ...corsHeaders((res as ServerResponse & { teCorsOrigin?: string | null }).teCorsOrigin),
       'content-type': 'application/json; charset=utf-8',
       'content-length': payload.length
     })
@@ -589,11 +614,17 @@ export class RemoteHttpServer {
   }
 }
 
-function corsHeaders(): Record<string, string> {
+/**
+ * S2: 仅当 Origin 通过同源/回环校验时回显；无 Origin（curl/原生客户端/同源导航）
+ * 不需要 CORS 头。跨源网页读取将被浏览器拦截。
+ */
+function corsHeaders(origin?: string | null): Record<string, string> {
+  if (!origin) return {}
   return {
-    'access-control-allow-origin': '*',
+    'access-control-allow-origin': origin,
     'access-control-allow-headers': 'authorization, content-type',
-    'access-control-allow-methods': 'GET, POST, OPTIONS'
+    'access-control-allow-methods': 'GET, POST, OPTIONS',
+    vary: 'origin'
   }
 }
 

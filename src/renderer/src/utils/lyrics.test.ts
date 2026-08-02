@@ -123,3 +123,60 @@ test('buildLyricLines shows NetEase credits without raw JSON when only metadata 
   )
   assert.ok(!lines.some((line) => line.text.includes('{"t"')))
 })
+
+test('buildLyricLines pairs YRC word lyrics with drifted tlyric translations', () => {
+  // NetEase YRC line timestamps drift ~1s from the companion tlyric, so the
+  // exact-millisecond join used to drop every translation for word lyrics.
+  const yrc = [
+    '[21990,540](21990,540,0)Yeah',
+    '[25590,3060](25590,330,0)Who (25920,120,0)am (26040,300,0)I',
+    '[28800,3090](28800,210,0)You (29010,660,0)decide'
+  ].join('\n')
+  const tlyric = [
+    '[00:20.92]yeah',
+    '[00:25.29]我是谁？',
+    '[00:28.42]你来决定'
+  ].join('\n')
+  const lines = buildLyricLines(yrc, tlyric)
+  assert.equal(lines.length, 3)
+  assert.equal(lines[0]?.translation, 'yeah')
+  assert.equal(lines[1]?.translation, '我是谁？')
+  assert.equal(lines[2]?.translation, '你来决定')
+  assert.equal(lines[1]?.words?.length, 3)
+})
+
+test('buildLyricLines includes the exact 1500ms translation and romanization boundary', () => {
+  const lines = buildLyricLines(
+    '[10000,1000](10000,500,0)Line one',
+    '[00:11.50]边界翻译',
+    '[00:08.50]boundary romanization'
+  )
+  assert.equal(lines.length, 1)
+  assert.equal(lines[0]?.translation, '边界翻译')
+  assert.equal(lines[0]?.romanization, 'boundary romanization')
+})
+
+test('buildLyricLines does not pair a translation that is far away', () => {
+  const lines = buildLyricLines(
+    '[10000,1000](10000,500,0)Line one',
+    '[00:25.29]二十多秒后的翻译'
+  )
+  assert.equal(lines.length, 1)
+  assert.equal(lines[0]?.translation, null)
+})
+
+test('buildLyricLines keeps exact matches and only uses each layer line once', () => {
+  const original = [
+    '[00:10.00]<00:10.00>Hel<00:10.40>lo',
+    '[00:12.00]Second'
+  ].join('\n')
+  const translation = [
+    '[00:10.02]你好',
+    '[00:12.00]第二句'
+  ].join('\n')
+  const lines = buildLyricLines(original, translation)
+  // First line has no exact ms match; nearest is 10.02 within tolerance.
+  assert.equal(lines[0]?.translation, '你好')
+  // Second line is exact and must not steal/be stolen by the tolerant pass.
+  assert.equal(lines[1]?.translation, '第二句')
+})

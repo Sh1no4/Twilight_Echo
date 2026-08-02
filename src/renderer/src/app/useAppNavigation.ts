@@ -301,12 +301,19 @@ export function useAppNavigation() {
 
   function createToggleMenuHandler(): () => void {
     return () => {
+      // I4: 菜单键全局语义统一为“打开/收起侧边菜单”。
+      // 全屏页（设置/插件）先退出全屏页再打开菜单，保证按键始终有可见反馈。
       if (showLoginPage.value) return
       if (showSettingsPage.value) {
         closeSettingsPage()
+        menuOpen.value = true
         return
       }
-      if (showPluginPage.value) return
+      if (showPluginPage.value) {
+        hidePluginPage()
+        menuOpen.value = true
+        return
+      }
       if (showStreamingPage.value) {
         toggleStreamingMenu()
         return

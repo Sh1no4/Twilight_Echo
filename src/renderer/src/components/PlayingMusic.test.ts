@@ -246,3 +246,12 @@ test('player visibility selectors target stable controls and remove hidden butto
   assert.match(style, /data-te-visible-player-track-menu='false'/)
   assert.match(style, /data-te-visible-player-waveform='false'/)
 })
+
+test('player volume controls keep mute and drawer actions independently reachable', () => {
+  const source = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
+
+  assert.match(source, /function onVolumeButtonClick\(\): void \{\s*toggleMute\(\)\s*\}/)
+  assert.match(source, /class="volume-drawer-toggle"[\s\S]*@click="toggleVolume"/)
+  assert.match(source, /aria-label="静音\/恢复"/)
+  assert.match(source, /aria-label="打开音量控制"/)
+})
