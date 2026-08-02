@@ -43,6 +43,13 @@ import type {
 } from '../shared/localLibraryScan.ts'
 import type { DuplicateDetectionReadApi } from '../shared/duplicateDetection.ts'
 import type { LyricsManagementDocument } from '../shared/lyricsManagement.ts'
+import type {
+  NcmCloudDownloadRequest,
+  NcmCloudDownloadResult,
+  NcmCloudSelectedFile,
+  NcmCloudTransferProgress,
+  NcmCloudUploadResult
+} from '../shared/ncmCloud.ts'
 
 export {}
 
@@ -256,6 +263,10 @@ type TwilightMediaProviderMethod =
   | 'fetchUserLibrary'
   | 'fetchLikedTracks'
   | 'fetchLikedTracksPage'
+  | 'fetchCloudSongsPage'
+  | 'prepareCloudUpload'
+  | 'completeCloudUpload'
+  | 'getCloudDownloadUrl'
   | 'fetchRecommendSongs'
   | 'fetchRecommendPlaylists'
   | 'fetchPlaylistCategories'
@@ -1489,6 +1500,13 @@ interface WindowAPI {
     request: (path: string, cookie?: string) => Promise<unknown>
     getCachedSong: (songId: number) => Promise<string | null>
     cacheSong: (songId: number, url: string, fileName?: string) => Promise<string | null>
+  }
+  ncmCloud: {
+    chooseUploadFiles: () => Promise<NcmCloudSelectedFile[]>
+    upload: (handle: string) => Promise<NcmCloudUploadResult>
+    download: (request: NcmCloudDownloadRequest) => Promise<NcmCloudDownloadResult>
+    cancel: (transferId: string) => Promise<boolean>
+    onProgress: (callback: (progress: NcmCloudTransferProgress) => void) => () => void
   }
   radio: {
     loadStations: () => Promise<

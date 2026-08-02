@@ -218,11 +218,14 @@ test('provider and UI RPC cancellation is wired through protocol, host AbortSign
     /interface TwilightProviderRequestContext[\s\S]*signal: AbortSignal/
   )
   assert.match(pluginApiSource, /interface TwilightUiCommandContext[\s\S]*signal: AbortSignal/)
+  assert.match(managerSource, /interface TwilightProviderCallOptions[\s\S]*signal\?: AbortSignal/)
+  assert.match(managerSource, /kind: 'provider-call'[\s\S]*signal: options\.signal/)
 })
 
 test('provider write idempotency is connected from renderer bridge through host request context', () => {
   assert.match(preloadSource, /providerWriteIdempotency\.begin\(/)
   assert.match(managerSource, /const IDEMPOTENT_PROVIDER_WRITE_METHODS/)
+  assert.match(managerSource, /IDEMPOTENT_PROVIDER_WRITE_METHODS[\s\S]*'completeCloudUpload'/)
   assert.match(managerSource, /kind: 'provider-call'[\s\S]*idempotencyKey/)
   assert.match(pluginHostSource, /idempotencyKey: message\.idempotencyKey/)
   assert.match(pluginApiSource, /idempotencyKey\?: string/)

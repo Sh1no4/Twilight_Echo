@@ -26,6 +26,7 @@ import type {
 import StreamingHome from './StreamingHome.vue'
 import StreamingDiscovery from './StreamingDiscovery.vue'
 import StreamingLibrary from './StreamingLibrary.vue'
+import NcmCloudPanel from './NcmCloudPanel.vue'
 import StreamingSearch from './StreamingSearch.vue'
 import AnimatedInput from './AnimatedInput.vue'
 import StreamingDetailStage from './streaming-page/StreamingDetailStage.vue'
@@ -406,7 +407,10 @@ const hasOnlineNavigationEntries = computed(() => hasStreamingSidebarEntries(sid
 const visibleTabs = computed(() =>
   sidebarItems.value.filter(
     (item): item is SidebarItem & { tab: StreamingTab } =>
-      item.tab === 'home' || item.tab === 'discover' || item.tab === 'library'
+      item.tab === 'home' ||
+      item.tab === 'discover' ||
+      item.tab === 'library' ||
+      item.tab === 'cloud'
   )
 )
 const currentView = computed(() => visibleTabs.value.find((item) => item.tab === activeTab.value))
@@ -437,6 +441,21 @@ const {
   fetchPlaylistTracks,
   fetchLikedTracks,
   fetchLikedTracksPage,
+  cloudSongs,
+  cloudTotal,
+  cloudHasMore,
+  cloudLoading,
+  cloudLoadingMore,
+  cloudError,
+  cloudSelectedFiles,
+  cloudTransferTasks,
+  refreshCloudSongs,
+  loadMoreCloudSongs,
+  chooseCloudUploadFiles,
+  uploadCloudFile,
+  downloadCloudSong,
+  cancelCloudTransfer,
+  removeCloudSelectedFile,
   fetchRecommendSongs,
   fetchRecommendPlaylists,
   fetchPlaylistCategories,
@@ -473,6 +492,50 @@ const playbackStore = usePlayerStore()
 const { currentTrack, personalizedStreamSession, personalizedStreamRemaining } = playbackStore
 const { playTrack, startPersonalizedStream, appendPersonalizedStreamTracks, formatTime } =
   playbackStore
+
+function playCloudSong(song: import('../stores/useNcmStore.ts').NcmCloudSong): void {
+  playTrack(song.track, cloudSongs.value.map((item) => item.track))
+}
+
+function playAllCloudSongs(): void {
+  const queue = cloudSongs.value.map((item) => item.track)
+  if (queue.length > 0) playTrack(queue[0], queue)
+}
+
+async function chooseCloudFiles(): Promise<void> {
+  try {
+    await chooseCloudUploadFiles()
+  } catch (error) {
+    pushNotice({ kind: 'error', message: friendlyStreamingError(error, '选择云盘上传文件失败') })
+  }
+}
+
+async function startCloudUpload(handle: string): Promise<void> {
+  try {
+    await uploadCloudFile(handle)
+  } catch (error) {
+    pushNotice({ kind: 'error', message: friendlyStreamingError(error, '创建云盘上传任务失败') })
+  }
+}
+
+async function startCloudDownload(
+  song: import('../stores/useNcmStore.ts').NcmCloudSong
+): Promise<void> {
+  try {
+    await downloadCloudSong(song)
+  } catch (error) {
+    pushNotice({ kind: 'error', message: friendlyStreamingError(error, '创建云盘下载任务失败') })
+  }
+}
+
+async function cancelCloudTask(transferId: string): Promise<void> {
+  try {
+    const cancelled = await cancelCloudTransfer(transferId)
+    if (!cancelled) pushNotice({ kind: 'warning', message: '传输任务已结束，无法取消' })
+  } catch (error) {
+    pushNotice({ kind: 'error', message: friendlyStreamingError(error, '取消云盘传输失败') })
+  }
+}
 
 function playHomeTrack(track: Track, trackQueue: Track[]): void {
   const section = recSections.value.find((candidate) => candidate.tracks === trackQueue)
@@ -739,11 +802,12 @@ const timeGreeting = computed(() => {
   if (hour < 22) return '晚上好，放松一下'
   return '夜深了，放一首安静的歌'
 })
-const rootLoading = computed(() =>
-  isExternalActive.value
-    ? (activeExternalState.value?.libraryLoading ?? false) && !currentDetail.value
-    : libraryLoading.value && !currentDetail.value
-)
+const rootLoading = computed(() => {
+  if (activeTab.value !== 'library' || currentDetail.value) return false
+  return isExternalActive.value
+    ? (activeExternalState.value?.libraryLoading ?? false)
+    : libraryLoading.value
+})
 
 const likedSummary = computed(() => {
   if (isExternalActive.value) {
@@ -1018,6 +1082,9 @@ function selectSidebarItem(item: SidebarItem, options: { persistProvider?: boole
     }
     selectTab('library')
     return
+  }
+  if (item.tab === 'cloud') {
+    clearSearch()
   }
   if (item.provider !== NCM_PROVIDER_ID) {
     selectProvider(item.provider, persistProvider)
@@ -2413,6 +2480,10 @@ async function retryCurrentView(): Promise<void> {
     await openRanking()
     return
   }
+  if (activeTab.value === 'cloud') {
+    await refreshCloudSongs()
+    return
+  }
   await ensureLibraryLoaded(true)
 }
 
@@ -2486,6 +2557,8 @@ watch(activeProvider, async (provider, oldProvider) => {
       void discovery.ensureLoaded()
     } else if (activeTab.value === 'library') {
       await ensureLibraryLoaded()
+    } else if (activeTab.value === 'cloud' && isLoggedIn.value && cloudSongs.value.length === 0) {
+      await refreshCloudSongs().catch(() => undefined)
     }
     return
   }
@@ -2519,6 +2592,9 @@ watch(activeTab, async (tab) => {
   if (tab === 'library' && isLoggedIn.value) {
     await ensureLibraryLoaded()
   }
+  if (tab === 'cloud' && isLoggedIn.value && cloudSongs.value.length === 0) {
+    await refreshCloudSongs().catch(() => undefined)
+  }
 })
 
 watch(
@@ -2540,6 +2616,9 @@ watch(
     if (activeTab.value === 'library') {
       await ensureLibraryLoaded(true)
     }
+    if (activeTab.value === 'cloud') {
+      await refreshCloudSongs().catch(() => undefined)
+    }
   }
 )
 
@@ -2553,6 +2632,8 @@ async function refreshStreamingSurface(): Promise<void> {
       void discovery.ensureLoaded()
     } else if (activeTab.value === 'library') {
       await ensureLibraryLoaded()
+    } else if (activeTab.value === 'cloud' && isLoggedIn.value && cloudSongs.value.length === 0) {
+      await refreshCloudSongs().catch(() => undefined)
     }
     return
   }
@@ -2952,7 +3033,9 @@ onMounted(async () => {
               {{
                 isExternalActive
                   ? '登录后即可加载全部音乐库'
-                  : '登录后即可加载我收藏的歌曲和在线歌单'
+                  : activeTab === 'cloud'
+                    ? '登录后即可管理音乐云盘中的歌曲和传输任务'
+                    : '登录后即可加载我收藏的歌曲和在线歌单'
               }}
             </p>
             <button type="button" class="stream-action-btn" @click="emit('login', activeProvider)">
@@ -2966,7 +3049,10 @@ onMounted(async () => {
             :provider-label="activeProviderLabel"
           />
 
-          <div v-else-if="!currentDetail && activeLibraryError" class="streaming-placeholder">
+          <div
+            v-else-if="activeTab === 'library' && !currentDetail && activeLibraryError"
+            class="streaming-placeholder"
+          >
             <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
             <p class="placeholder-title">加载失败</p>
             <p class="placeholder-hint">{{ activeLibraryError }}</p>
@@ -3082,6 +3168,28 @@ onMounted(async () => {
               @track-context-menu="onStreamingTrackContextMenu"
             />
           </div>
+
+          <NcmCloudPanel
+            v-else-if="activeTab === 'cloud' && !currentDetail && !isExternalActive"
+            :songs="cloudSongs"
+            :total="cloudTotal"
+            :loading="cloudLoading"
+            :loading-more="cloudLoadingMore"
+            :has-more="cloudHasMore"
+            :error="cloudError"
+            :selected-files="cloudSelectedFiles"
+            :transfer-tasks="cloudTransferTasks"
+            :current-track-id="currentTrack?.id ?? null"
+            @refresh="refreshCloudSongs"
+            @load-more="loadMoreCloudSongs"
+            @choose-files="chooseCloudFiles"
+            @upload="startCloudUpload"
+            @remove-selected="removeCloudSelectedFile"
+            @play="playCloudSong"
+            @play-all="playAllCloudSongs"
+            @download="startCloudDownload"
+            @cancel="cancelCloudTask"
+          />
 
           <StreamingLibrary
             v-else-if="activeTab === 'library' && !currentDetail"

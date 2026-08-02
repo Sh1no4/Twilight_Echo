@@ -148,6 +148,8 @@ interface UiCommandRpcMetadata {
 export interface TwilightProviderCallOptions {
   /** Reuse this key when retrying one user-initiated write after an unknown outcome. */
   idempotencyKey?: string
+  /** Cancels queued or active plugin RPC work and propagates cancellation to the provider host. */
+  signal?: AbortSignal
 }
 
 const STATE_FILE = 'plugin-state.json'
@@ -165,7 +167,8 @@ const IDEMPOTENT_PROVIDER_WRITE_METHODS = new Set<TwilightMediaProviderMethod>([
   'createPlaylist',
   'deletePlaylist',
   'addTracksToPlaylist',
-  'removeTracksFromPlaylist'
+  'removeTracksFromPlaylist',
+  'completeCloudUpload'
 ])
 const INTERNAL_NCM_PLUGIN_ID = 'com.twilightecho.provider.ncm'
 const RESERVED_PROVIDER_IDS = new Set(['local', 'ncm'])
@@ -187,6 +190,7 @@ function getProviderCallTimeoutMs(method: TwilightMediaProviderMethod): number {
       'fetchPlaylistTracks',
       'fetchLikedTracks',
       'fetchLikedTracksPage',
+      'fetchCloudSongsPage',
       'fetchUserLibrary',
       'fetchRecommendSongs',
       'fetchRecommendPlaylists',
@@ -720,6 +724,7 @@ export class TwilightPluginManager extends EventEmitter {
         } satisfies PluginHostRequest)
       },
       cancel: (reason) => this.cancelHostRpc(running, requestId, reason),
+      signal: options.signal,
       onTimeout: () => {
         this.recordProviderCallFailure(
           normalizedProviderId,

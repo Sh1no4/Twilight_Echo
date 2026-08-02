@@ -9,6 +9,7 @@ function request(
     timeoutMs?: number
     dispatches?: string[]
     cancellations?: string[]
+    signal?: AbortSignal
     idempotency?: { scope: string; key: string; fingerprint: string }
   } = {}
 ): Promise<string> {
@@ -20,6 +21,7 @@ function request(
     metadata: { requestId },
     dispatch: () => options.dispatches?.push(requestId),
     cancel: (reason) => options.cancellations?.push(`${requestId}:${reason}`),
+    signal: options.signal,
     idempotency: options.idempotency
   })
 }
@@ -41,6 +43,47 @@ test('plugin lifecycle cancellation rejects active RPCs immediately and quaranti
     coordinator.complete('com.example.provider', 'provider-1', { ok: true, value: 'late result' }),
     { status: 'late' }
   )
+})
+
+test('external abort cancels active and queued RPC work promptly', async () => {
+  const coordinator = new PluginRpcCoordinator({ maxConcurrencyPerPlugin: 1 })
+  const cancellations: string[] = []
+  const activeController = new AbortController()
+  const queuedController = new AbortController()
+  const active = request(coordinator, 'abort-active', {
+    cancellations,
+    signal: activeController.signal
+  })
+  const queued = request(coordinator, 'abort-queued', {
+    cancellations,
+    signal: queuedController.signal
+  })
+
+  queuedController.abort(new Error('queued cancelled'))
+  await assert.rejects(queued, /queued cancelled/)
+  assert.deepEqual(cancellations, [])
+
+  activeController.abort(new Error('active cancelled'))
+  await assert.rejects(active, /active cancelled/)
+  assert.equal(cancellations.length, 1)
+  assert.match(cancellations[0], /abort-active:active cancelled/)
+  assert.equal(coordinator.getPendingCount('com.example.provider'), 0)
+  assert.deepEqual(
+    coordinator.complete('com.example.provider', 'abort-active', { ok: true, value: 'late' }),
+    { status: 'late' }
+  )
+})
+
+test('an already aborted signal prevents RPC dispatch', async () => {
+  const coordinator = new PluginRpcCoordinator()
+  const dispatches: string[] = []
+  const controller = new AbortController()
+  controller.abort(new Error('cancel before request'))
+  await assert.rejects(
+    request(coordinator, 'already-aborted', { dispatches, signal: controller.signal }),
+    /cancel before request/
+  )
+  assert.deepEqual(dispatches, [])
 })
 
 test('a timed out RPC sends cancellation and late success cannot settle a newer state', async () => {

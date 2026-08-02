@@ -51,6 +51,11 @@ import type {
   OutputConfigApplyStatus,
   NativeAudioMetadata,
   AudioEnginePlayResult,
+  NcmCloudDownloadRequest,
+  NcmCloudDownloadResult,
+  NcmCloudSelectedFile,
+  NcmCloudTransferProgress,
+  NcmCloudUploadResult,
   AppSettings,
   AudioEqPreset,
   ConvolverInfo,
@@ -120,6 +125,7 @@ import {
   persistentDataRevisionConflictFromResponse
 } from '../shared/versionedPersistence.ts'
 import { isLyricsManagementDocument } from '../shared/lyricsManagement.ts'
+import { NCM_CLOUD_TRANSFER_PROGRESS_CHANNEL } from '../shared/ncmCloud.ts'
 
 const audioEngineEventCallbacks = new Set<AudioEngineEventCallback>()
 const audioEngineEndFileCallbacks = new Set<AudioEngineEndFileCallback>()
@@ -809,6 +815,23 @@ const api = {
       ipcRenderer.invoke('ncm:getCachedSong', songId),
     cacheSong: (songId: number, url: string, fileName?: string): Promise<string | null> =>
       ipcRenderer.invoke('ncm:cacheSong', songId, url, fileName)
+  },
+  ncmCloud: {
+    chooseUploadFiles: (): Promise<NcmCloudSelectedFile[]> =>
+      ipcRenderer.invoke('ncmCloud:chooseUploadFiles'),
+    upload: (handle: string): Promise<NcmCloudUploadResult> =>
+      ipcRenderer.invoke('ncmCloud:upload', handle),
+    download: (request: NcmCloudDownloadRequest): Promise<NcmCloudDownloadResult> =>
+      ipcRenderer.invoke('ncmCloud:download', request),
+    cancel: (transferId: string): Promise<boolean> =>
+      ipcRenderer.invoke('ncmCloud:cancel', transferId),
+    onProgress: (callback: (progress: NcmCloudTransferProgress) => void): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, progress: NcmCloudTransferProgress): void => {
+        callback(progress)
+      }
+      ipcRenderer.on(NCM_CLOUD_TRANSFER_PROGRESS_CHANNEL, handler)
+      return () => ipcRenderer.removeListener(NCM_CLOUD_TRANSFER_PROGRESS_CHANNEL, handler)
+    }
   },
   radio: {
     loadStations: (): Promise<VersionedDataEnvelope<RadioStationsDocument>> =>

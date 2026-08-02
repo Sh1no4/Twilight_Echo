@@ -14,6 +14,14 @@ const { MediaProviderRegistry } = (await import(
   new URL('../../providers/mediaProvider.ts', import.meta.url).href
 )) as typeof import('../../providers/mediaProvider.ts')
 
+test('streaming page renders NetEase cloud as a dedicated sidebar surface', () => {
+  assert.match(source, /import NcmCloudPanel from '\.\/NcmCloudPanel\.vue'/)
+  assert.match(source, /activeTab === 'cloud'/)
+  assert.match(source, /<NcmCloudPanel[\s\S]*@download="startCloudDownload"/)
+  assert.match(source, /if \(item\.tab === 'cloud'\) \{\s*clearSearch\(\)/)
+  assert.doesNotMatch(source, /<StreamingLibrary[\s\S]*:show-ncm-cloud=/)
+})
+
 test('streaming page exposes unified song search beyond the NetEase-only surface', () => {
   assert.match(source, /useMediaProviders\(\)/)
   assert.match(source, /mediaProviders\.searchAllSongs\(\{/)

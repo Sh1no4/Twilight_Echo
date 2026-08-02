@@ -1,4 +1,8 @@
 import { ref, type Ref } from 'vue'
+import type {
+  NcmCloudSelectedFile,
+  NcmCloudTransferProgress
+} from '../../../shared/ncmCloud.ts'
 import type { Track } from '../types/music'
 
 export interface NcmProfile {
@@ -96,6 +100,25 @@ export interface NcmLikedTracksPage {
   hasMore: boolean
 }
 
+export interface NcmCloudSong {
+  cloudSongId: string | number
+  songId: string | number
+  fileName: string
+  addTime?: number
+  track: Track
+}
+
+export interface NcmCloudSongsPage {
+  items: NcmCloudSong[]
+  total: number
+  offset: number
+  limit: number
+  nextOffset: number
+  hasMore: boolean
+}
+
+export interface NcmCloudTransferTask extends NcmCloudTransferProgress {}
+
 export interface NcmStore {
   providerAvailable: Ref<boolean>
   providerError: Ref<string>
@@ -107,6 +130,14 @@ export interface NcmStore {
   likedPlaylist: Ref<NcmPlaylistSummary | null>
   userPlaylists: Ref<NcmPlaylistSummary[]>
   likedSongIds: Ref<Set<number>>
+  cloudSongs: Ref<NcmCloudSong[]>
+  cloudTotal: Ref<number>
+  cloudHasMore: Ref<boolean>
+  cloudLoading: Ref<boolean>
+  cloudLoadingMore: Ref<boolean>
+  cloudError: Ref<string>
+  cloudSelectedFiles: Ref<NcmCloudSelectedFile[]>
+  cloudTransferTasks: Ref<Record<string, NcmCloudTransferTask>>
   buildProfile: (prof: {
     userId: number
     nickname: string
@@ -129,6 +160,14 @@ export interface NcmStore {
   fetchPlaylistTracks: (playlistId: number | string, force?: boolean) => Promise<Track[]>
   fetchLikedTracks: (force?: boolean) => Promise<Track[]>
   fetchLikedTracksPage: (offset?: number, limit?: number, force?: boolean) => Promise<NcmLikedTracksPage>
+  fetchCloudSongsPage: (offset?: number, limit?: number, append?: boolean) => Promise<NcmCloudSongsPage>
+  refreshCloudSongs: () => Promise<NcmCloudSongsPage>
+  loadMoreCloudSongs: () => Promise<NcmCloudSongsPage | null>
+  chooseCloudUploadFiles: () => Promise<NcmCloudSelectedFile[]>
+  uploadCloudFile: (handle: string) => Promise<string>
+  downloadCloudSong: (song: NcmCloudSong) => Promise<string | null>
+  cancelCloudTransfer: (transferId: string) => Promise<boolean>
+  removeCloudSelectedFile: (handle: string) => void
   getSongStreamUrl: (songId: number, force?: boolean) => Promise<string | null>
   fetchRecommendSongs: () => Promise<Track[]>
   fetchRecommendPlaylists: () => Promise<NcmPlaylistSummary[]>
@@ -205,6 +244,87 @@ const libraryError = ref('')
 const likedPlaylist = ref<NcmPlaylistSummary | null>(null)
 const userPlaylists = ref<NcmPlaylistSummary[]>([])
 const likedSongIds = ref<Set<number>>(new Set())
+const cloudSongs = ref<NcmCloudSong[]>([])
+const cloudTotal = ref(0)
+const cloudNextOffset = ref(0)
+const cloudHasMore = ref(false)
+const cloudLoading = ref(false)
+const cloudLoadingMore = ref(false)
+const cloudError = ref('')
+const cloudSelectedFiles = ref<NcmCloudSelectedFile[]>([])
+const cloudTransferTasks = ref<Record<string, NcmCloudTransferTask>>({})
+let cloudProgressUnsubscribe: (() => void) | null = null
+let cloudStateRevision = 0
+let cloudRefreshTimer: ReturnType<typeof setTimeout> | null = null
+const retiredCloudTransferIds = new Set<string>()
+
+function scheduleCloudRefresh(): void {
+  if (cloudRefreshTimer || !isLoggedIn.value) return
+  const revision = cloudStateRevision
+  const userId = profile.value?.userId
+  cloudRefreshTimer = setTimeout(() => {
+    cloudRefreshTimer = null
+    if (!isLoggedIn.value || cloudStateRevision !== revision || profile.value?.userId !== userId) return
+    void callNcmProvider<NcmCloudSongsPage>('fetchCloudSongsPage', [0, 50])
+      .then((page) => {
+        if (!isLoggedIn.value || cloudStateRevision !== revision || profile.value?.userId !== userId) return
+        cloudSongs.value = page.items
+        cloudTotal.value = page.total
+        cloudNextOffset.value = page.nextOffset
+        cloudHasMore.value = page.hasMore
+      })
+      .catch(() => undefined)
+  }, 150)
+}
+
+function ensureCloudProgressListener(): void {
+  if (cloudProgressUnsubscribe) return
+  cloudProgressUnsubscribe = window.api.ncmCloud.onProgress((progress) => {
+    if (retiredCloudTransferIds.has(progress.transferId)) {
+      if (['completed', 'failed', 'cancelled'].includes(progress.stage)) {
+        retiredCloudTransferIds.delete(progress.transferId)
+      }
+      return
+    }
+    cloudTransferTasks.value = {
+      ...cloudTransferTasks.value,
+      [progress.transferId]: progress
+    }
+    if (progress.kind === 'upload' && progress.stage === 'completed') {
+      cloudSelectedFiles.value = cloudSelectedFiles.value.filter(
+        (file) => file.handle !== progress.handle
+      )
+      scheduleCloudRefresh()
+    }
+  })
+}
+
+function resetCloudState(): void {
+  cloudStateRevision += 1
+  for (const task of Object.values(cloudTransferTasks.value)) {
+    if (['completed', 'failed', 'cancelled'].includes(task.stage)) continue
+    retiredCloudTransferIds.add(task.transferId)
+    void window.api.ncmCloud
+      .cancel(task.transferId)
+      .then((cancelled) => {
+        if (!cancelled) retiredCloudTransferIds.delete(task.transferId)
+      })
+      .catch(() => retiredCloudTransferIds.delete(task.transferId))
+  }
+  if (cloudRefreshTimer) {
+    clearTimeout(cloudRefreshTimer)
+    cloudRefreshTimer = null
+  }
+  cloudSongs.value = []
+  cloudTotal.value = 0
+  cloudNextOffset.value = 0
+  cloudHasMore.value = false
+  cloudLoading.value = false
+  cloudLoadingMore.value = false
+  cloudError.value = ''
+  cloudSelectedFiles.value = []
+  cloudTransferTasks.value = {}
+}
 
 function resetLibraryState(): void {
   libraryLoading.value = false
@@ -213,6 +333,7 @@ function resetLibraryState(): void {
   likedPlaylist.value = null
   userPlaylists.value = []
   likedSongIds.value = new Set()
+  resetCloudState()
 }
 
 function markProviderAvailable(): void {
@@ -258,6 +379,8 @@ function applyLoginState(state: NcmLoginState): boolean {
 }
 
 export function useNcmStore(): NcmStore {
+  ensureCloudProgressListener()
+
   async function buildProfile(prof: {
     userId: number
     nickname: string
@@ -367,6 +490,95 @@ export function useNcmStore(): NcmStore {
     ])
     syncLikedIds(page.tracks)
     return page
+  }
+
+  async function fetchCloudSongsPage(
+    offset = 0,
+    limit = 50,
+    append = false
+  ): Promise<NcmCloudSongsPage> {
+    if (!isLoggedIn.value) throw new Error('请先登录网易云音乐')
+    const revision = cloudStateRevision
+    const userId = profile.value?.userId
+    const isCurrentCloudSession = (): boolean =>
+      isLoggedIn.value && cloudStateRevision === revision && profile.value?.userId === userId
+    if (append) cloudLoadingMore.value = true
+    else cloudLoading.value = true
+    cloudError.value = ''
+    try {
+      const page = await callNcmProvider<NcmCloudSongsPage>('fetchCloudSongsPage', [offset, limit])
+      if (!isCurrentCloudSession()) return page
+      cloudSongs.value = append ? [...cloudSongs.value, ...page.items] : page.items
+      cloudTotal.value = page.total
+      cloudNextOffset.value = page.nextOffset
+      cloudHasMore.value = page.hasMore
+      return page
+    } catch (error) {
+      if (!isCurrentCloudSession()) throw error
+      cloudError.value = error instanceof Error ? error.message : '加载网易云云盘失败'
+      if (/请先登录|未登录|登录.*失效/i.test(cloudError.value)) {
+        isLoggedIn.value = false
+        profile.value = null
+        resetLibraryState()
+        cloudError.value = '登录状态已失效，请重新登录网易云音乐'
+      }
+      throw error
+    } finally {
+      if (isCurrentCloudSession()) {
+        cloudLoading.value = false
+        cloudLoadingMore.value = false
+      }
+    }
+  }
+
+  async function refreshCloudSongs(): Promise<NcmCloudSongsPage> {
+    return fetchCloudSongsPage(0, 50, false)
+  }
+
+  async function loadMoreCloudSongs(): Promise<NcmCloudSongsPage | null> {
+    if (!cloudHasMore.value || cloudLoading.value || cloudLoadingMore.value) return null
+    return fetchCloudSongsPage(cloudNextOffset.value, 50, true)
+  }
+
+  async function chooseCloudUploadFiles(): Promise<NcmCloudSelectedFile[]> {
+    if (!isLoggedIn.value) throw new Error('请先登录网易云音乐')
+    const files = await window.api.ncmCloud.chooseUploadFiles()
+    const existing = new Set(cloudSelectedFiles.value.map((file) => file.handle))
+    cloudSelectedFiles.value = [
+      ...cloudSelectedFiles.value,
+      ...files.filter((file) => !existing.has(file.handle))
+    ]
+    return files
+  }
+
+  async function uploadCloudFile(handle: string): Promise<string> {
+    if (!isLoggedIn.value) throw new Error('请先登录网易云音乐')
+    ensureCloudProgressListener()
+    const result = await window.api.ncmCloud.upload(handle)
+    return result.transferId
+  }
+
+  async function downloadCloudSong(song: NcmCloudSong): Promise<string | null> {
+    if (!isLoggedIn.value) throw new Error('请先登录网易云音乐')
+    ensureCloudProgressListener()
+    const result = await window.api.ncmCloud.download({
+      cloudSongId: song.cloudSongId,
+      fileName: song.fileName || song.track.fileName || `${song.track.title}.${song.track.format || 'mp3'}`
+    })
+    return result.accepted ? result.transferId : null
+  }
+
+  async function cancelCloudTransfer(transferId: string): Promise<boolean> {
+    return window.api.ncmCloud.cancel(transferId)
+  }
+
+  function removeCloudSelectedFile(handle: string): void {
+    const active = Object.values(cloudTransferTasks.value).some(
+      (task) => task.handle === handle && !['completed', 'failed', 'cancelled'].includes(task.stage)
+    )
+    if (!active) {
+      cloudSelectedFiles.value = cloudSelectedFiles.value.filter((file) => file.handle !== handle)
+    }
   }
 
   async function getSongStreamUrl(songId: number, force = false): Promise<string | null> {
@@ -610,6 +822,14 @@ export function useNcmStore(): NcmStore {
     likedPlaylist,
     userPlaylists,
     likedSongIds,
+    cloudSongs,
+    cloudTotal,
+    cloudHasMore,
+    cloudLoading,
+    cloudLoadingMore,
+    cloudError,
+    cloudSelectedFiles,
+    cloudTransferTasks,
     buildProfile,
     checkLogin,
     setLogin,
@@ -622,6 +842,14 @@ export function useNcmStore(): NcmStore {
     fetchPlaylistTracks,
     fetchLikedTracks,
     fetchLikedTracksPage,
+    fetchCloudSongsPage,
+    refreshCloudSongs,
+    loadMoreCloudSongs,
+    chooseCloudUploadFiles,
+    uploadCloudFile,
+    downloadCloudSong,
+    cancelCloudTransfer,
+    removeCloudSelectedFile,
     getSongStreamUrl,
     fetchRecommendSongs,
     fetchRecommendPlaylists,

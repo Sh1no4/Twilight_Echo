@@ -85,6 +85,10 @@ export async function activate(context) {
     fetchUserLibrary,
     fetchLikedTracks,
     fetchLikedTracksPage,
+    fetchCloudSongsPage,
+    prepareCloudUpload,
+    completeCloudUpload,
+    getCloudDownloadUrl,
     fetchRecommendSongs,
     fetchRecommendPlaylists,
     fetchPlaylistCategories,
@@ -1176,6 +1180,172 @@ async function fetchLikedTracksPage(offset = 0, limit = 100, force = false) {
     nextOffset,
     hasMore: nextOffset < ids.length
   }
+}
+
+function normalizeCloudSong(item) {
+  const cloudSongId = item?.songId ?? item?.id
+  const rawSong = item?.simpleSong ?? item?.song ?? item
+  const playbackSongId = rawSong?.id ?? cloudSongId
+  const numericPlaybackSongId = Number(playbackSongId)
+  if (cloudSongId == null || !Number.isFinite(numericPlaybackSongId) || numericPlaybackSongId <= 0) {
+    return null
+  }
+
+  const track = normalizeTrack({
+    ...rawSong,
+    id: numericPlaybackSongId,
+    name: rawSong?.name ?? item?.songName,
+    artist: rawSong?.artist ?? item?.artist,
+    album: rawSong?.album ?? (item?.album ? { name: item.album } : undefined),
+    size: rawSong?.size ?? item?.fileSize,
+    bitrate: rawSong?.bitrate ?? item?.bitrate,
+    type: rawSong?.type ?? item?.fileName?.split('.').pop()
+  })
+  const fileName =
+    typeof item?.fileName === 'string' && item.fileName.trim()
+      ? item.fileName.trim()
+      : `${track.artist} - ${track.title}`
+  const addTime = Number(item?.addTime)
+  return {
+    cloudSongId,
+    songId: numericPlaybackSongId,
+    fileName,
+    ...(Number.isFinite(addTime) && addTime > 0 ? { addTime } : {}),
+    track
+  }
+}
+
+async function fetchCloudSongsPage(offset = 0, limit = 50, requestContext) {
+  const normalizedOffset = normalizePageNumber(offset, 0, 0, Number.MAX_SAFE_INTEGER)
+  const normalizedLimit = normalizePageNumber(limit, 50, 1, 200)
+  const data = await requestAuthed(
+    `/user/cloud?limit=${normalizedLimit}&offset=${normalizedOffset}`,
+    requestContext
+  )
+  const rawItems = Array.isArray(data?.data)
+    ? data.data
+    : Array.isArray(data?.data?.data)
+      ? data.data.data
+      : []
+  const items = rawItems.map(normalizeCloudSong).filter(Boolean)
+  const declaredTotal = Number(data?.count ?? data?.data?.count)
+  const total = Number.isFinite(declaredTotal)
+    ? Math.max(0, Math.floor(declaredTotal))
+    : normalizedOffset + rawItems.length
+  const explicitHasMore = [data?.hasMore, data?.data?.hasMore].find(
+    (value) => typeof value === 'boolean'
+  )
+  const nextOffset = normalizedOffset + rawItems.length
+  return {
+    items,
+    total,
+    offset: normalizedOffset,
+    limit: normalizedLimit,
+    nextOffset,
+    hasMore:
+      typeof explicitHasMore === 'boolean'
+        ? explicitHasMore
+        : rawItems.length >= normalizedLimit && nextOffset < total
+  }
+}
+
+function assertCloudApiSuccess(data, fallback) {
+  const code = Number(data?.code ?? data?.body?.code)
+  if (Number.isFinite(code) && code !== 200) {
+    throw new Error(normalizeApiMessage(data?.body ?? data, fallback))
+  }
+}
+
+function normalizeCloudUploadPreparation(data, input) {
+  assertCloudApiSuccess(data, '获取云盘上传凭证失败')
+  const payload = data?.data ?? data?.body?.data
+  const songId = payload?.songId
+  const resourceId = payload?.resourceId
+  const needUpload = payload?.needUpload === true
+  if (songId == null || resourceId == null) {
+    throw new Error('网易云上传凭证响应缺少 songId 或 resourceId')
+  }
+  if (needUpload && (!payload?.uploadToken || !payload?.uploadUrl)) {
+    throw new Error('网易云上传凭证响应缺少 uploadToken 或 uploadUrl')
+  }
+  const uploadUrl = needUpload ? normalizePlaybackStreamUrl(payload.uploadUrl) : ''
+  if (needUpload && !uploadUrl) throw new Error('网易云上传地址不是有效的 HTTP(S) URL')
+  return {
+    needUpload,
+    songId,
+    uploadToken: needUpload ? String(payload.uploadToken) : '',
+    uploadUrl,
+    resourceId: String(resourceId),
+    md5: String(payload?.md5 ?? input.md5),
+    fileSize: Number(payload?.fileSize ?? input.fileSize),
+    filename: String(payload?.filename ?? input.filename)
+  }
+}
+
+async function prepareCloudUpload(input, requestContext) {
+  const md5 = typeof input?.md5 === 'string' ? input.md5.trim().toLowerCase() : ''
+  const fileSize = Number(input?.fileSize)
+  const filename = typeof input?.filename === 'string' ? input.filename.trim() : ''
+  const bitrate = normalizePageNumber(input?.bitrate, 999000, 1, 10_000_000)
+  if (!/^[a-f0-9]{32}$/.test(md5)) throw new Error('云盘上传 MD5 无效')
+  if (!Number.isSafeInteger(fileSize) || fileSize <= 0) throw new Error('云盘上传文件大小无效')
+  if (!filename || filename.length > 255) throw new Error('云盘上传文件名无效')
+  const path = appendQueryParams('/cloud/upload/token', { md5, fileSize, filename, bitrate })
+  const data = await requestAuthed(path, requestContext)
+  return normalizeCloudUploadPreparation(data, { md5, fileSize, filename })
+}
+
+async function completeCloudUpload(input, requestContext) {
+  const required = ['songId', 'resourceId', 'md5', 'filename']
+  for (const key of required) {
+    if (input?.[key] == null || String(input[key]).trim() === '') {
+      throw new Error(`云盘上传完成参数缺少 ${key}`)
+    }
+  }
+  const params = {
+    songId: input.songId,
+    resourceId: input.resourceId,
+    md5: input.md5,
+    filename: input.filename,
+    ...(input.song ? { song: input.song } : {}),
+    ...(input.artist ? { artist: input.artist } : {}),
+    ...(input.album ? { album: input.album } : {}),
+    ...(input.bitrate ? { bitrate: input.bitrate } : {})
+  }
+  return runIdempotentProviderWrite(
+    'completeCloudUpload',
+    [params],
+    requestContext,
+    async () => {
+      const data = await requestAuthed(
+        appendQueryParams('/cloud/upload/complete', params),
+        requestContext
+      )
+      assertCloudApiSuccess(data, '导入网易云云盘失败')
+      return { songId: input.songId }
+    }
+  )
+}
+
+function extractCloudDownloadUrl(data) {
+  const candidates = [data?.data?.url, data?.url, data?.body?.data?.url, data?.data?.data?.url]
+  for (const candidate of candidates) {
+    const normalized = normalizePlaybackStreamUrl(candidate)
+    if (normalized) return normalized
+  }
+  return null
+}
+
+async function getCloudDownloadUrl(cloudSongId, requestContext) {
+  if (cloudSongId == null || !String(cloudSongId).trim()) throw new Error('云盘歌曲 ID 无效')
+  const data = await requestAuthed(
+    `/song/cloud/download?id=${encodeURIComponent(String(cloudSongId))}`,
+    requestContext
+  )
+  assertCloudApiSuccess(data, '获取云盘下载地址失败')
+  const url = extractCloudDownloadUrl(data)
+  if (!url) throw new Error('网易云下载响应缺少有效的 HTTP(S) URL')
+  return url
 }
 
 function getSongIdFromTrack(track) {

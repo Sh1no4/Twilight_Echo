@@ -11,6 +11,7 @@ import {
   normalizeOptionalIpcString
 } from '../security/ipcValidation.ts'
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
+import { setupNcmCloudTransferIpc } from './cloudTransfer.ts'
 
 export const NCM_API_PORT = 3100
 export const NCM_API_HOST = '127.0.0.1'
@@ -177,6 +178,7 @@ export async function openNcmOfficialLogin(): Promise<string> {
 }
 
 export function setupNcmIpc(): void {
+  setupNcmCloudTransferIpc()
   ipcMain.handle('ncm:getPort', (event) => {
     assertTrustedIpcSender(event, 'NCM IPC')
     return NCM_API_PORT

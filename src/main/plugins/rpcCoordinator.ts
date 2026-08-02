@@ -27,6 +27,7 @@ export interface PluginRpcRequestOptions<TMetadata> {
   dispatch: () => void
   cancel?: (reason: string) => void
   onTimeout?: (error: Error) => void
+  signal?: AbortSignal
   idempotency?: PluginRpcIdempotency
 }
 
@@ -73,6 +74,8 @@ interface PendingPluginRpc<TMetadata> {
   dispatch: () => void
   cancel?: (reason: string) => void
   onTimeout?: (error: Error) => void
+  signal?: AbortSignal
+  abortListener?: () => void
   idempotency?: {
     cacheKey: string
     fingerprint: string
@@ -168,6 +171,7 @@ export class PluginRpcCoordinator {
     if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) {
       return Promise.reject(new Error('Plugin RPC timeout must be a positive number.'))
     }
+    if (options.signal?.aborted) return Promise.reject(abortError(options.signal))
     this.pruneExpiredEntries()
     if (this.pendingById.has(options.requestId)) {
       return Promise.reject(new Error(`Plugin RPC request id is already pending: ${options.requestId}`))
@@ -210,6 +214,7 @@ export class PluginRpcCoordinator {
       dispatch: options.dispatch,
       cancel: options.cancel,
       onTimeout: options.onTimeout,
+      signal: options.signal,
       idempotency: idempotency?.record,
       resolve,
       reject,
@@ -228,7 +233,13 @@ export class PluginRpcCoordinator {
       })
     }
     pending.timer = setTimeout(() => this.timeout(pending.requestId), pending.timeoutMs)
+    if (pending.signal) {
+      pending.abortListener = () => this.abort(pending.requestId)
+      pending.signal.addEventListener('abort', pending.abortListener, { once: true })
+      if (pending.signal.aborted) this.abort(pending.requestId)
+    }
 
+    if (pending.settled) return promise
     if (state.active.size < this.maxConcurrencyPerPlugin) {
       this.start(state, pending as PendingPluginRpc<unknown>)
     } else {
@@ -316,6 +327,24 @@ export class PluginRpcCoordinator {
     }
   }
 
+  private abort(requestId: string): void {
+    const pending = this.pendingById.get(requestId)
+    if (!pending || pending.settled) return
+    const state = this.stateFor(pending.pluginId)
+    const error = abortError(pending.signal)
+    if (pending.dispatched) {
+      this.addLateResult(pending.requestId)
+      try {
+        pending.cancel?.(error.message)
+      } catch {
+        // The utility process may have exited between abort and cancellation.
+      }
+      this.settle(state, pending, { kind: 'cancelled-active', error })
+    } else {
+      this.settle(state, pending, { kind: 'cancelled-queued', error })
+    }
+  }
+
   private timeout(requestId: string): void {
     const pending = this.pendingById.get(requestId)
     if (!pending || pending.settled) return
@@ -352,6 +381,10 @@ export class PluginRpcCoordinator {
     pending.settled = true
     if (pending.timer) clearTimeout(pending.timer)
     pending.timer = null
+    if (pending.signal && pending.abortListener) {
+      pending.signal.removeEventListener('abort', pending.abortListener)
+    }
+    pending.abortListener = undefined
     this.pendingById.delete(pending.requestId)
     if (pending.dispatched) state.active.delete(pending.requestId)
     else {
@@ -544,6 +577,13 @@ export class PluginRpcCoordinator {
       if (this.idempotency.size <= maximumSize) return
     }
   }
+}
+
+function abortError(signal: AbortSignal | undefined): Error {
+  const reason = signal?.reason
+  if (reason instanceof Error) return reason
+  if (reason != null) return new Error(String(reason))
+  return new Error('Plugin RPC request was aborted.')
 }
 
 function positiveInteger(value: number | undefined, fallback: number, label: string): number {

@@ -414,6 +414,162 @@ test('search song normalization preserves legal bpm metadata', async () => {
   }
 })
 
+test('cloud songs page preserves separate cloud and playback song identifiers', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    return {
+      count: 3,
+      hasMore: true,
+      data: [
+        {
+          songId: 'cloud-9001',
+          songName: 'cloud title',
+          fileName: 'original-file.flac',
+          fileSize: 123456,
+          bitrate: 999000,
+          addTime: 1720000000000,
+          simpleSong: {
+            ...song(81),
+            ar: [{ name: 'cloud artist' }],
+            al: { name: 'cloud album', picUrl: '//img.example/81.jpg' }
+          }
+        }
+      ]
+    }
+  })
+
+  try {
+    const page = await provider.fetchCloudSongsPage(50, 1)
+    const request = parseRequest(requests[0])
+    assert.equal(request.pathname, '/user/cloud')
+    assert.equal(request.searchParams.get('offset'), '50')
+    assert.equal(request.searchParams.get('limit'), '1')
+    assert.equal(page.total, 3)
+    assert.equal(page.hasMore, true)
+    assert.equal(page.nextOffset, 51)
+    assert.equal(page.items[0].cloudSongId, 'cloud-9001')
+    assert.equal(page.items[0].songId, 81)
+    assert.equal(page.items[0].fileName, 'original-file.flac')
+    assert.equal(page.items[0].track.id, 'ncm:81')
+    assert.equal(page.items[0].track.filePath, 'ncm:81')
+    assert.equal(page.items[0].track.cover, 'https://img.example/81.jpg')
+    assert.equal(page.items[0].track.size, 123456)
+    assert.equal(page.items[0].track.format, 'flac')
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('cloud provider operations require an existing login cookie', async () => {
+  const provider = await activateProvider(async () => {
+    throw new Error('request should not run')
+  }, new Map())
+
+  try {
+    await assert.rejects(() => provider.fetchCloudSongsPage(), /请先登录网易云音乐/)
+    await assert.rejects(
+      () =>
+        provider.prepareCloudUpload({
+          md5: '0123456789abcdef0123456789abcdef',
+          fileSize: 1024,
+          filename: 'test.flac'
+        }),
+      /请先登录网易云音乐/
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('cloud upload protocol validates and forwards documented token and completion fields', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname === '/cloud/upload/token') {
+      return {
+        code: 200,
+        data: {
+          needUpload: true,
+          songId: 9002,
+          uploadToken: 'upload-token',
+          uploadUrl: '//nos.example/upload/object',
+          resourceId: 'resource-9002',
+          md5: url.searchParams.get('md5'),
+          fileSize: Number(url.searchParams.get('fileSize')),
+          filename: url.searchParams.get('filename')
+        }
+      }
+    }
+    if (url.pathname === '/cloud/upload/complete') return { code: 200 }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    const input = {
+      md5: '0123456789abcdef0123456789abcdef',
+      fileSize: 4096,
+      filename: '测试 音乐.flac',
+      bitrate: 960000
+    }
+    const preparation = await provider.prepareCloudUpload(input)
+    assert.equal(preparation.uploadUrl, 'https://nos.example/upload/object')
+    assert.equal(preparation.uploadToken, 'upload-token')
+    assert.equal(preparation.resourceId, 'resource-9002')
+    const tokenRequest = parseRequest(requests[0])
+    assert.equal(tokenRequest.searchParams.get('filename'), input.filename)
+    assert.equal(tokenRequest.searchParams.get('bitrate'), '960000')
+
+    const completion = {
+      songId: preparation.songId,
+      resourceId: preparation.resourceId,
+      md5: input.md5,
+      filename: input.filename,
+      song: '测试音乐',
+      artist: '测试歌手',
+      album: '测试专辑',
+      bitrate: 960000
+    }
+    const requestContext = {
+      signal: new AbortController().signal,
+      idempotencyKey: 'cloud-complete-9002'
+    }
+    await provider.completeCloudUpload(completion, requestContext)
+    await provider.completeCloudUpload(completion, requestContext)
+    const completeRequest = parseRequest(requests[1])
+    assert.equal(completeRequest.pathname, '/cloud/upload/complete')
+    assert.equal(completeRequest.searchParams.get('songId'), '9002')
+    assert.equal(completeRequest.searchParams.get('resourceId'), 'resource-9002')
+    assert.equal(completeRequest.searchParams.get('song'), '测试音乐')
+    assert.equal(requests.length, 2)
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('cloud download accepts documented URL shapes and rejects malformed responses', async () => {
+  let response = { code: 200, data: { url: '//download.example/song.flac' } }
+  const provider = await activateProvider(async (path) => {
+    assert.equal(parseRequest(path).pathname, '/song/cloud/download')
+    return response
+  })
+
+  try {
+    assert.equal(
+      await provider.getCloudDownloadUrl('cloud-77'),
+      'https://download.example/song.flac'
+    )
+    response = { code: 200, data: { downloadUrl: 'https://unverified.example/song.flac' } }
+    await assert.rejects(
+      () => provider.getCloudDownloadUrl('cloud-77'),
+      /下载响应缺少有效的 HTTP\(S\) URL/
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
 test('liked tracks fall back to playlist detail when playlist track-all is malformed', async () => {
   const requests = []
   const provider = await activateProvider(async (path) => {

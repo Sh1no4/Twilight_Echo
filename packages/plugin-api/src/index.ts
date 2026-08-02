@@ -254,6 +254,45 @@ export interface UserSummary {
   followed?: boolean
 }
 
+export interface NcmCloudSong {
+  cloudSongId: string | number
+  songId: string | number
+  fileName: string
+  addTime?: number
+  track: Track
+}
+
+export interface NcmCloudSongsPage {
+  items: NcmCloudSong[]
+  total: number
+  offset: number
+  limit: number
+  nextOffset: number
+  hasMore: boolean
+}
+
+export interface NcmCloudUploadPreparation {
+  needUpload: boolean
+  songId: string | number
+  uploadToken: string
+  uploadUrl: string
+  resourceId: string
+  md5: string
+  fileSize: number
+  filename: string
+}
+
+export interface NcmCloudUploadCompletion {
+  songId: string | number
+  resourceId: string
+  md5: string
+  filename: string
+  song?: string
+  artist?: string
+  album?: string
+  bitrate?: number
+}
+
 export interface ProviderProfile {
   userId?: string | number
   nickname?: string
@@ -350,6 +389,23 @@ export interface TwilightMediaProviderRegistration {
     nextOffset: number
     hasMore: boolean
   }>
+  fetchCloudSongsPage?(
+    offset?: number,
+    limit?: number,
+    context?: TwilightProviderRequestContext
+  ): Promise<NcmCloudSongsPage>
+  prepareCloudUpload?(
+    input: { md5: string; fileSize: number; filename: string; bitrate?: number },
+    context?: TwilightProviderRequestContext
+  ): Promise<NcmCloudUploadPreparation>
+  completeCloudUpload?(
+    input: NcmCloudUploadCompletion,
+    context?: TwilightProviderRequestContext
+  ): Promise<{ songId: string | number }>
+  getCloudDownloadUrl?(
+    cloudSongId: string | number,
+    context?: TwilightProviderRequestContext
+  ): Promise<string>
   fetchRecommendSongs?(context?: TwilightProviderRequestContext): Promise<Track[]>
   fetchRecommendPlaylists?(context?: TwilightProviderRequestContext): Promise<PlaylistSummary[]>
   fetchPersonalFm?(context?: TwilightProviderRequestContext): Promise<Track[]>

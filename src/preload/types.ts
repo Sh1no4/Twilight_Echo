@@ -153,6 +153,13 @@ export interface PlayerShortcutStatus {
 export type AppTheme = 'system' | 'pureWhite' | 'dark'
 export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 export type NcmPlaybackQuality = 'auto' | 'standard' | 'exhigh' | 'lossless' | 'hires'
+export type {
+  NcmCloudDownloadRequest,
+  NcmCloudDownloadResult,
+  NcmCloudSelectedFile,
+  NcmCloudTransferProgress,
+  NcmCloudUploadResult
+} from '../shared/ncmCloud.ts'
 export type StartupHomePage = 'local' | 'streaming'
 export type UiDensity = 'compact' | 'standard' | 'comfortable'
 export type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
@@ -345,6 +352,10 @@ export type TwilightMediaProviderMethod =
   | 'fetchUserLibrary'
   | 'fetchLikedTracks'
   | 'fetchLikedTracksPage'
+  | 'fetchCloudSongsPage'
+  | 'prepareCloudUpload'
+  | 'completeCloudUpload'
+  | 'getCloudDownloadUrl'
   | 'fetchRecommendSongs'
   | 'fetchRecommendPlaylists'
   | 'fetchPlaylistCategories'

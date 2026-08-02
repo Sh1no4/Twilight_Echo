@@ -70,6 +70,7 @@ test('keeps shared music library visible when a unified provider is enabled with
     }
   ])
   assert.equal(getFirstVisibleStreamingTab(items), 'library')
+  assert.equal(items.some((item) => item.tab === 'cloud'), false)
   assert.equal(hasStreamingSidebarEntries(items), true)
 })
 
@@ -102,6 +103,13 @@ test('shows the NetEase discover entry right after home when NetEase is availabl
       tab: 'library'
     },
     {
+      key: 'cloud',
+      provider: 'ncm',
+      label: '音乐云盘',
+      icon: 'pi pi-cloud',
+      tab: 'cloud'
+    },
+    {
       key: 'recent',
       provider: 'ncm',
       label: '最近播放',
@@ -116,6 +124,15 @@ test('shows the NetEase discover entry right after home when NetEase is availabl
       itemKey: 'discover',
       activeProvider: 'ncm',
       activeTab: 'discover'
+    }),
+    true
+  )
+  assert.equal(
+    isSidebarItemActiveForProvider({
+      itemProvider: 'ncm',
+      itemKey: 'cloud',
+      activeProvider: 'ncm',
+      activeTab: 'cloud'
     }),
     true
   )
