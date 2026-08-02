@@ -29,7 +29,7 @@ const visualizationOptions = {
   oscilloscopePoints: 0,
   visualizerBarCount: VISUALIZER_BAR_COUNT
 } as const
-const VISUALIZER_POLL_INTERVAL_MS = 33
+const VISUALIZER_POLL_INTERVAL_MS = 50
 const CONTROL_VISUALIZATION_PAUSE_MS = 220
 let visualizationTimer: number | null = null
 let visualizationRequestInFlight = false
@@ -165,19 +165,24 @@ function postInactiveVisualizationFrame(): void {
   )
 }
 
+function scheduleVisualizationFrame(delayMs = 0): void {
+  if (!shouldPollVisualization.value || visualizationTimer !== null) return
+  visualizationTimer = window.setTimeout(async () => {
+    visualizationTimer = null
+    await pollVisualizationFrame()
+    if (!visualizerUnmounted && shouldPollVisualization.value) {
+      scheduleVisualizationFrame(VISUALIZER_POLL_INTERVAL_MS)
+    }
+  }, delayMs)
+}
+
 function startVisualizationPolling(): void {
-  if (!shouldPollVisualization.value) return
-  if (visualizationTimer !== null) return
-  void pollVisualizationFrame()
-  visualizationTimer = window.setInterval(
-    () => void pollVisualizationFrame(),
-    VISUALIZER_POLL_INTERVAL_MS
-  )
+  scheduleVisualizationFrame()
 }
 
 function stopVisualizationPolling(): void {
   if (visualizationTimer === null) return
-  window.clearInterval(visualizationTimer)
+  window.clearTimeout(visualizationTimer)
   visualizationTimer = null
 }
 

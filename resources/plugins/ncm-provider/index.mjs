@@ -22,9 +22,13 @@ const MAX_PERSISTED_PROVIDER_WRITE_IDEMPOTENCY_RECORDS = 128
 const PROVIDER_WRITE_IDEMPOTENCY_SETTINGS_KEY = 'providerWriteIdempotency'
 const MAX_PLAYLIST_TRACKS = 5000
 const PLAYLIST_TRACK_PAGE_SIZE = 1000
+const PERSONAL_FM_TARGET_TRACKS = 30
+const PERSONAL_FM_MAX_FALLBACK_BATCHES = 10
+const PERSONAL_RADAR_PLAYLIST_ID = 3136952023
 let likedTracksCache = null
 let playlistCatalogueCache = null
 let likedSongIdListCache = null
+let personalFmSeenSongIds = new Set()
 let likedSongIds = new Set()
 let ownedPlaylistIds = new Set()
 let providerWriteRecordsLoaded = false
@@ -189,6 +193,7 @@ function resetCaches() {
   likedTracksCache = null
   playlistCatalogueCache = null
   likedSongIdListCache = null
+  personalFmSeenSongIds = new Set()
   likedSongIds = new Set()
   ownedPlaylistIds = new Set()
   providerWriteRecordsLoaded = false
@@ -1290,26 +1295,49 @@ async function fetchRecommendSongs() {
   return getSongItems(data).map(normalizeTrack)
 }
 
+function getPersonalFmItems(data) {
+  if (Array.isArray(data.data)) return data.data
+  if (Array.isArray(data.result)) return data.result
+  return getSongItems(data)
+}
+
+function appendUniqueSongs(target, seen, songs) {
+  let added = 0
+  for (const song of songs) {
+    const songId = Number(song?.id)
+    if (!Number.isFinite(songId) || songId <= 0 || seen.has(songId)) continue
+    seen.add(songId)
+    target.push(song)
+    added += 1
+    if (target.length >= PERSONAL_FM_TARGET_TRACKS) break
+  }
+  return added
+}
+
 async function fetchPersonalFm() {
-  const data = await requestAuthed('/personal_fm')
-  const fmData = Array.isArray(data.data)
-    ? data.data
-    : Array.isArray(data.result)
-      ? data.result
-      : []
-  if (fmData.length > 0) return fmData.map(normalizeTrack)
-  return getSongItems(data).map(normalizeTrack)
+  const songs = []
+  try {
+    const data = await requestAuthed(
+      `/personal/fm/mode?mode=DEFAULT&limit=${PERSONAL_FM_TARGET_TRACKS}`
+    )
+    appendUniqueSongs(songs, personalFmSeenSongIds, getPersonalFmItems(data))
+  } catch (error) {
+    getContext().logger.warn(`网易云私人漫游批量接口失败，将回退经典 FM：${getErrorMessage(error)}`)
+  }
+
+  for (
+    let batch = 0;
+    songs.length < PERSONAL_FM_TARGET_TRACKS && batch < PERSONAL_FM_MAX_FALLBACK_BATCHES;
+    batch += 1
+  ) {
+    const data = await requestAuthed('/personal_fm')
+    appendUniqueSongs(songs, personalFmSeenSongIds, getPersonalFmItems(data))
+  }
+  return songs.map(normalizeTrack)
 }
 
 async function fetchPrivateContent() {
-  const data = await requestAuthed('/personalized/privatecontent')
-  const result = Array.isArray(data.result)
-    ? data.result
-    : Array.isArray(data.data)
-      ? data.data
-      : []
-  if (result.length > 0) return result.map(normalizeTrack)
-  return getSongItems(data).map(normalizeTrack)
+  return fetchPlaylistTracks(PERSONAL_RADAR_PLAYLIST_ID, true)
 }
 
 async function fetchRecommendPlaylists() {

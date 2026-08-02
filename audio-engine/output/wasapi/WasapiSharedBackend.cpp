@@ -202,21 +202,20 @@ struct WasapiSharedBackend::Impl {
     recordFailure("render_failure", reason);
   }
 
-  void recordRenderFailureFromRenderThread(HRESULT hr, const char* message) {
-    std::unique_lock lock(infoMutex, std::try_to_lock);
-    if (!lock.owns_lock()) return;
-
+  void recordRenderFailureFromRenderThread(HRESULT hr, const char* message) noexcept {
     deferredRenderFailureHr.store(hr, std::memory_order_relaxed);
     deferredRenderFailureMessage.store(message, std::memory_order_relaxed);
+
+    // Keep the MMCSS render thread free of dynamic text assignments and copies.
+    // Human-readable failure details are materialized by outputInfo().
+    std::unique_lock lock(infoMutex, std::try_to_lock);
+    if (!lock.owns_lock()) return;
     if (isDeviceInvalidated(hr)) {
       ++diagnostics.deviceLostCount;
-      outputInfo.perfectReasonCode = "device_lost";
     } else {
       ++diagnostics.sessionBufferDropCount;
       ++diagnostics.lifetimeBufferDropCount;
-      outputInfo.perfectReasonCode = "render_failure";
     }
-    outputInfo.diagnostics = diagnostics;
   }
 
   bool renderSucceeded(HRESULT hr, std::string* error, const char* message) {
@@ -634,11 +633,14 @@ OutputInfo WasapiSharedBackend::outputInfo() const {
   {
     std::lock_guard lock(impl_->infoMutex);
     info = impl_->outputInfo;
+    info.diagnostics = impl_->diagnostics;
     deferredRenderFailureHr = impl_->deferredRenderFailureHr.load(std::memory_order_relaxed);
     deferredRenderFailureMessage = impl_->deferredRenderFailureMessage.load(std::memory_order_relaxed);
   }
   if (deferredRenderFailureMessage && FAILED(deferredRenderFailureHr)) {
     const std::string reason = hresultMessage(deferredRenderFailureMessage, deferredRenderFailureHr);
+    info.perfectReasonCode =
+        wasapi::isDeviceInvalidated(deferredRenderFailureHr) ? "device_lost" : "render_failure";
     info.diagnostics.lastError = reason;
     info.capabilityReason = reason;
     info.perfectReason = reason;

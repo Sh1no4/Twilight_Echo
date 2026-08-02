@@ -196,6 +196,42 @@ void testAsioRecoveryQueueChecksStopRequestedWhileHoldingQueueLock() {
   assert(stopCheckPos < pushPos);
 }
 
+void testAsioEmptyCatalogReportsArchitectureMismatch() {
+  class DiagnosticHost final : public IAsioHost {
+   public:
+    std::vector<AsioDeviceInfo> enumerateDevices() override { return {}; }
+    AsioHostDiagnostics diagnostics() const override {
+      AsioHostDiagnostics result;
+      result.processArchitecture = "x64";
+      result.buildEnabled = true;
+      result.registeredDriverCount32 = 2;
+      return result;
+    }
+    bool open(const AsioOpenConfig&, AsioOpenResult*, std::string*) override { return false; }
+    bool createBuffers(AsioBufferSwitchCallback, AsioEventCallback, std::string*) override { return false; }
+    bool start(std::string*) override { return false; }
+    void stop() override {}
+    void close() override {}
+    void* outputBuffer(long, long) override { return nullptr; }
+    AudioSampleFormat outputSampleFormat(long) const override {
+      return AudioSampleFormat::Float32Interleaved;
+    }
+    AsioChannelFormat outputChannelFormat(long) const override { return {}; }
+    bool outputReady() override { return false; }
+  };
+
+  AsioBackend backend(std::make_unique<DiagnosticHost>());
+  std::string error;
+  assert(!backend.open("auto", sourceFormat(48000, 32), &error));
+  assert(error.find("32 位 ASIO 驱动") != std::string::npos);
+  const OutputInfo info = backend.outputInfo();
+  assert(info.diagnostics.processArchitecture == "x64");
+  assert(info.diagnostics.asioBuildEnabled);
+  assert(info.diagnostics.asioRegisteredDriverCount32 == 2);
+  assert(info.diagnostics.asioRegisteredDriverCount64 == 0);
+  assert(info.diagnostics.asioLoadableDriverCount64 == 0);
+}
+
 void testFormatNegotiation() {
   auto host = makeHost();
   auto* rawHost = host.get();
@@ -446,6 +482,87 @@ void testNativeDsdRuntimeProven() {
   assert(info.nativeDsdRuntimeState == "proven");
   assert(info.nativeDsdActualRate == 2822400);
   assert(!info.resampled);
+}
+
+void testNativeDsdDriverSelectedWireTypeAndIdleTail() {
+  struct Case {
+    AudioSampleFormat wireFormat;
+    uint8_t expectedIdle;
+  };
+  const Case cases[] = {
+      {AudioSampleFormat::DsdInt8Lsb1, 0x69},
+      {AudioSampleFormat::DsdInt8Msb1, 0x96},
+      {AudioSampleFormat::DsdInt8Ner8, 0x69},
+  };
+
+  for (const auto& item : cases) {
+    MockAsioHost::DsdProfile profile;
+    profile.nativeDsdCapable = true;
+    profile.nativeDsdSampleRates = {2822400};
+    profile.nativeDsdSampleFormats = {
+        AudioSampleFormat::DsdInt8Lsb1,
+        AudioSampleFormat::DsdInt8Msb1,
+        AudioSampleFormat::DsdInt8Ner8,
+    };
+    auto host = std::make_unique<MockAsioHost>();
+    auto device = makeMockAsioDevice(
+        "asio:native-wire-type",
+        {48000},
+        2,
+        AudioSampleFormat::Float32Interleaved,
+        profile);
+    device.preferredBufferSize = 4;
+    device.minBufferSize = 4;
+    device.maxBufferSize = 4;
+    host->devices.push_back(device);
+    auto* rawHost = host.get();
+    rawHost->channelFormats = {item.wireFormat, item.wireFormat};
+
+    AsioBackend backend(std::move(host));
+    std::string error;
+    const AudioFormat request = sourceFormat(
+        2822400,
+        1,
+        2,
+        AudioSampleFormat::DsdInt8Lsb1);
+    assert(backend.open("asio:native-wire-type", request, &error));
+    assert(backend.startTyped(
+        [&](PcmBlock& block) {
+          assert(block.format.sampleFormat == item.wireFormat);
+          assert(block.frames == 4);
+          block.data[0] = 0xa1;
+          block.data[1] = 0xb1;
+          block.data[2] = 0xa2;
+          block.data[3] = 0xb2;
+          return 2;
+        },
+        [](float*, size_t frames) { return frames; },
+        nullptr,
+        &error));
+
+    rawHost->triggerBufferSwitch(0);
+    assert(rawHost->channelBuffers[0].buffers[0][0] == 0xa1);
+    assert(rawHost->channelBuffers[1].buffers[0][0] == 0xb1);
+    assert(rawHost->channelBuffers[0].buffers[0][1] == 0xa2);
+    assert(rawHost->channelBuffers[1].buffers[0][1] == 0xb2);
+    for (size_t frame = 2; frame < 4; ++frame) {
+      assert(rawHost->channelBuffers[0].buffers[0][frame] == item.expectedIdle);
+      assert(rawHost->channelBuffers[1].buffers[0][frame] == item.expectedIdle);
+    }
+
+    const NativeDsdRuntimeFacts facts = backend.nativeDsdRuntimeFacts();
+    assert(facts.state == NativeDsdRuntimeFactState::Proven);
+    assert(facts.actualDsdRate == 2822400);
+    const OutputInfo info = backend.outputInfo();
+    assert(!info.resampled);
+    assert(info.diagnostics.dsdShortReadCount == 1);
+    assert(info.diagnostics.dsdIdleFrameCount == 2);
+    assert(info.diagnostics.actualWireFormat == sampleFormatToString(item.wireFormat));
+    assert(info.diagnostics.firstBufferSummary.find("native-dsd bytes=4") != std::string::npos);
+    assert(
+        info.diagnostics.firstBufferSummary.find(
+            item.expectedIdle == 0x96 ? "idle=0x96" : "idle=0x69") != std::string::npos);
+  }
 }
 
 void testNativeDsdRuntimeDiscoveryWithoutCatalogCapability() {
@@ -1096,6 +1213,7 @@ int main() {
   testAsioRenderCallbackDoesNotCopyStringDiagnostics();
   testAsioHostEventCallbackQueuesRecoveryOffDriverCallback();
   testAsioRecoveryQueueChecksStopRequestedWhileHoldingQueueLock();
+  testAsioEmptyCatalogReportsArchitectureMismatch();
   testFormatNegotiation();
   testOpenFailureAndFallbackFormats();
   testExtremeSampleRates();
@@ -1104,6 +1222,7 @@ int main() {
   testDopRuntimeFactsMismatchWhenActualFormatDiffers();
   testNativeDsdCapabilityProfile();
   testNativeDsdRuntimeProven();
+  testNativeDsdDriverSelectedWireTypeAndIdleTail();
   testNativeDsdRuntimeDiscoveryWithoutCatalogCapability();
   testNativeDsdUnderrunWarmupCallbacks();
   testNativeDsdRejectsUnsupportedRate();

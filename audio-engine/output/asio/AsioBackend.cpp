@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -47,6 +48,36 @@ bool sameFormat(const AudioFormat& a, const AudioFormat& b) {
   return a.sampleRate == b.sampleRate && a.channelCount == b.channelCount &&
          normalizeBitDepth(a.bitDepth) == normalizeBitDepth(b.bitDepth) &&
          a.sampleFormat == b.sampleFormat;
+}
+
+bool sameNativeDsdStream(const AudioFormat& requested, const AudioFormat& actual) {
+  return isDsdSampleFormat(requested.sampleFormat) && isDsdSampleFormat(actual.sampleFormat) &&
+         requested.sampleRate == actual.sampleRate && requested.channelCount == actual.channelCount &&
+         effectivePcmBitDepth(requested) == 1 && effectivePcmBitDepth(actual) == 1;
+}
+
+void appendDecimal(std::string& output, uint64_t value) {
+  char digits[32] = {};
+  const auto [end, error] = std::to_chars(digits, digits + sizeof(digits), value);
+  if (error == std::errc{}) output.append(digits, end);
+}
+
+void appendHex(std::string& output, uint64_t value) {
+  char digits[32] = {};
+  const auto [end, error] = std::to_chars(digits, digits + sizeof(digits), value, 16);
+  if (error == std::errc{}) output.append(digits, end);
+}
+
+std::string nativeDsdBufferSummary(size_t inspected, uint8_t idleByte, uint64_t hash) {
+  std::string summary;
+  summary.reserve(96);
+  summary += "native-dsd bytes=";
+  appendDecimal(summary, inspected);
+  summary += " idle=0x";
+  appendHex(summary, idleByte);
+  summary += " fnv64=0x";
+  appendHex(summary, hash);
+  return summary;
 }
 
 bool containsFormat(const std::vector<AudioSampleFormat>& formats, AudioSampleFormat format) {
@@ -286,14 +317,16 @@ NativeDsdRuntimeFacts buildAsioNativeDsdRuntimeFacts(
   }
 
   facts.actualDsdRate = actualFormat.sampleRate;
-  if (!dsdFormatsExactMatch(requestedFormat, actualFormat)) {
+  if (!sameNativeDsdStream(requestedFormat, actualFormat)) {
     facts.state = NativeDsdRuntimeFactState::Mismatch;
-    facts.reason = "ASIO actual Native DSD format does not exactly match the negotiated format";
+    facts.reason = "ASIO actual Native DSD stream rate or channel count does not match the negotiated stream";
     return facts;
   }
 
   facts.state = NativeDsdRuntimeFactState::Proven;
-  facts.reason = "ASIO Native DSD stream started with a matching runtime rate";
+  facts.reason = requestedFormat.sampleFormat == actualFormat.sampleFormat
+                     ? "ASIO Native DSD stream started with a matching runtime rate"
+                     : "ASIO Native DSD stream started with a matching rate and a driver-selected wire sample type";
   return facts;
 }
 
@@ -357,6 +390,10 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
     actualOutputFormatObserved_ = false;
     actualOutputChannelFormatsMatch_ = true;
     nativeDsdTypedCallbackMissing_ = false;
+    firstNativeDsdBufferObserved_ = false;
+    firstNativeDsdInspectedBytes_ = 0;
+    firstNativeDsdIdleByte_ = 0;
+    firstNativeDsdHash_ = 0;
     outputInfo_ = {};
     outputInfo_.exclusive = true;
     outputInfo_.accessMode = "exclusive";
@@ -368,10 +405,32 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
     outputInfo_.recoveryCount = recoveryCount_;
   }
 
+  const AsioHostDiagnostics hostDiagnostics = host_->diagnostics();
+  diagnostics_.processArchitecture = hostDiagnostics.processArchitecture;
+  diagnostics_.asioBuildEnabled = hostDiagnostics.buildEnabled;
+  diagnostics_.asioEnvironmentDisabled = hostDiagnostics.environmentDisabled;
+  diagnostics_.asioRegisteredDriverCount32 = hostDiagnostics.registeredDriverCount32;
+  diagnostics_.asioRegisteredDriverCount64 = hostDiagnostics.registeredDriverCount64;
+  diagnostics_.asioLoadableDriverCount64 = hostDiagnostics.loadableDriverCount64;
+
   const auto devices = host_->enumerateDevices();
   if (devices.empty()) {
-    if (error) *error = "未找到可用 ASIO 驱动";
-    diagnostics_.lastError = error ? *error : "未找到可用 ASIO 驱动";
+    std::string reason = "未找到可用 ASIO 驱动";
+    if (!hostDiagnostics.buildEnabled) {
+      reason = "当前构建未启用 Windows x64 ASIO 输出";
+    } else if (hostDiagnostics.environmentDisabled) {
+      reason = "ASIO 已被 TWILIGHT_DISABLE_ASIO=1 禁用";
+    } else if (
+        hostDiagnostics.registeredDriverCount32 > 0 &&
+        hostDiagnostics.registeredDriverCount64 == 0) {
+      reason = "仅检测到 32 位 ASIO 驱动；Twilight Echo x64 需要安装对应的 64 位 ASIO 驱动";
+    } else if (
+        hostDiagnostics.registeredDriverCount64 > 0 &&
+        hostDiagnostics.loadableDriverCount64 == 0) {
+      reason = "检测到 64 位 ASIO 注册项，但未找到可加载的 64 位进程内驱动 DLL";
+    }
+    if (error) *error = reason;
+    diagnostics_.lastError = reason;
     outputInfo_.backend = "asio";
     outputInfo_.actualBackend = "asio";
     outputInfo_.accessMode = "exclusive";
@@ -511,6 +570,19 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
       actualOutputChannelFormatsMatch_,
       false);
   applyNativeDsdFactsToOutputInfo(&outputInfo_, nativeDsdRuntimeFacts_);
+  if (isNativeDsdRequest(openConfig_.format)) {
+    diagnostics_.dsdTransport = "asio-native";
+    diagnostics_.requestedWireFormat = sampleFormatToString(openConfig_.format.sampleFormat);
+    diagnostics_.actualWireFormat = sampleFormatToString(outputFormat_.sampleFormat);
+    diagnostics_.containerBits = static_cast<int>(audioSampleFormatBytes(outputFormat_.sampleFormat) * 8);
+    diagnostics_.validBits = 1;
+    diagnostics_.blockAlign = outputFormat_.channelCount;
+    diagnostics_.semanticSampleRate = outputFormat_.sampleRate;
+    diagnostics_.transportSampleRate = asio::transportSampleRate(outputFormat_);
+    diagnostics_.typedRawPath = true;
+    diagnostics_.processingBypassed = true;
+    outputInfo_.diagnostics = diagnostics_;
+  }
   opened_ = true;
   return true;
 }
@@ -602,6 +674,10 @@ void AsioBackend::close() {
   actualOutputFormatObserved_ = false;
   actualOutputChannelFormatsMatch_ = true;
   nativeDsdTypedCallbackMissing_ = false;
+  firstNativeDsdBufferObserved_ = false;
+  firstNativeDsdInspectedBytes_ = 0;
+  firstNativeDsdIdleByte_ = 0;
+  firstNativeDsdHash_ = 0;
   opened_ = false;
 }
 
@@ -615,6 +691,12 @@ OutputInfo AsioBackend::outputInfo() const {
   info.deviceRecovered = deviceRecovered_;
   info.recoveryCount = recoveryCount_;
   info.diagnostics = diagnostics_;
+  if (firstNativeDsdBufferObserved_) {
+    info.diagnostics.firstBufferSummary = nativeDsdBufferSummary(
+        firstNativeDsdInspectedBytes_,
+        firstNativeDsdIdleByte_,
+        firstNativeDsdHash_);
+  }
   if (nativeDsdTypedCallbackMissing_) {
     const std::string reason = "ASIO Native DSD render requires a typed raw DSD callback";
     info.perfectReasonCode = "native_dsd_typed_callback_missing";
@@ -849,7 +931,17 @@ bool AsioBackend::createAndStartHost(std::string* error) {
     outputInfo_.actualOutputFormat = sampleFormatToString(firstActualSampleFormat);
     outputInfo_.actualBitDepth = outputFormat_.bitDepth;
     outputInfo_.outputBitDepth = outputFormat_.bitDepth;
-    outputInfo_.resampled = !sameFormat(openConfig_.format, outputFormat_);
+    if (isNativeDsdRequest(openConfig_.format)) {
+      diagnostics_.actualWireFormat = sampleFormatToString(firstActualSampleFormat);
+      diagnostics_.containerBits = firstChannelFormat.containerBits;
+      diagnostics_.validBits = firstChannelFormat.validBits;
+      diagnostics_.blockAlign = static_cast<int>(
+          asio::bytesPerSample(firstChannelFormat) * static_cast<size_t>(outputChannels));
+      outputInfo_.diagnostics = diagnostics_;
+    }
+    outputInfo_.resampled = isNativeDsdRequest(openConfig_.format)
+                                ? !sameNativeDsdStream(openConfig_.format, outputFormat_)
+                                : !sameFormat(openConfig_.format, outputFormat_);
     const size_t callbackFrames = static_cast<size_t>(std::max<long>(1, bufferSizeFrames_));
     const size_t renderSamples = callbackFrames * static_cast<size_t>(std::max(1, outputFormat_.channelCount));
     renderScratch_.resize(renderSamples);
@@ -931,7 +1023,9 @@ void AsioBackend::renderBuffer(long bufferIndex) {
       auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
       if (!output) continue;
       const AsioChannelFormat channelFormat = host_->outputChannelFormat(channel);
-      const int silenceByte = isDsdSampleFormat(channelFormat.logicalFormat) ? 0x69 : 0;
+      const int silenceByte = isDsdSampleFormat(channelFormat.logicalFormat)
+                                  ? asio::nativeDsdIdleByte(channelFormat.logicalFormat)
+                                  : 0;
       std::memset(output, silenceByte, frames * asio::bytesPerSample(channelFormat));
     }
   };
@@ -984,11 +1078,36 @@ void AsioBackend::renderBuffer(long bufferIndex) {
       const size_t rendered = typedCallback(block);
       if (rendered > 0) {
         const size_t renderedFrames = std::min(rendered, frames);
+        if (nativeDsdOutput) {
+          std::unique_lock lock(mutex_, std::try_to_lock);
+          if (lock.owns_lock() && !firstNativeDsdBufferObserved_) {
+            uint64_t hash = 1469598103934665603ULL;
+            const size_t inspected = std::min<size_t>(renderedFrames * bytesPerFrame, 512);
+            for (size_t i = 0; i < inspected; ++i) {
+              hash ^= typedRenderScratch_[i];
+              hash *= 1099511628211ULL;
+            }
+            firstNativeDsdInspectedBytes_ = inspected;
+            firstNativeDsdIdleByte_ = asio::nativeDsdIdleByte(outputFormat.sampleFormat);
+            firstNativeDsdHash_ = hash;
+            firstNativeDsdBufferObserved_ = true;
+          }
+        }
         if (renderedFrames < frames) {
+          const uint8_t idleByte = nativeDsdOutput
+                                       ? asio::nativeDsdIdleByte(outputFormat.sampleFormat)
+                                       : 0;
           std::memset(
               typedRenderScratch_.data() + renderedFrames * bytesPerFrame,
-              0,
+              idleByte,
               (frames - renderedFrames) * bytesPerFrame);
+          if (nativeDsdOutput) {
+            std::unique_lock lock(mutex_, std::try_to_lock);
+            if (lock.owns_lock()) {
+              ++diagnostics_.dsdShortReadCount;
+              diagnostics_.dsdIdleFrameCount += frames - renderedFrames;
+            }
+          }
         }
         for (int channel = 0; channel < outputChannels; ++channel) {
           auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
@@ -1019,7 +1138,10 @@ void AsioBackend::renderBuffer(long bufferIndex) {
       const AsioChannelFormat channelFormat = host_->outputChannelFormat(channel);
       const AudioSampleFormat sampleFormat = channelFormat.logicalFormat;
       if (!isDsdSampleFormat(sampleFormat)) continue;
-      std::memset(output, 0x69, frames * asio::bytesPerSample(channelFormat));
+      std::memset(
+          output,
+          asio::nativeDsdIdleByte(sampleFormat),
+          frames * asio::bytesPerSample(channelFormat));
     }
     {
       std::unique_lock lock(mutex_, std::try_to_lock);
@@ -1027,6 +1149,8 @@ void AsioBackend::renderBuffer(long bufferIndex) {
         ++diagnostics_.sessionBufferDropCount;
         ++diagnostics_.lifetimeBufferDropCount;
         nativeDsdTypedCallbackMissing_ = true;
+        ++diagnostics_.dsdShortReadCount;
+        diagnostics_.dsdIdleFrameCount += frames;
       }
     }
     host_->outputReady();

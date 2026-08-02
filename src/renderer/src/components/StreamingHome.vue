@@ -174,6 +174,11 @@ function playDailyAll(): void {
     openDaily()
   }
 }
+
+function playPersonalizedStream(section: RecSection | null): void {
+  if (!section || section.tracks.length === 0) return
+  emit('playTrack', section.tracks[0], section.tracks)
+}
 </script>
 
 <template>
@@ -188,7 +193,7 @@ function playDailyAll(): void {
       <p class="invite-kicker">Twilight Echo · 在线漫游</p>
       <h2 class="invite-title">听见为你而来的音乐</h2>
       <p class="invite-desc">
-        登录网易云音乐后，这里会生成你的每日推荐、私人漫游电台与精选歌单——全部随你的口味生长。
+        登录网易云音乐后，这里会生成你的每日推荐、私人漫游与私人雷达——持续发现符合你口味的歌曲。
       </p>
       <button type="button" class="invite-cta" @click="emit('requestLogin')">
         <i class="pi pi-user"></i>
@@ -299,7 +304,7 @@ function playDailyAll(): void {
           v-if="fmSection"
           type="button"
           class="duo-card duo-fm"
-          @click="emit('openRecSection', fmSection)"
+          @click="playPersonalizedStream(fmSection)"
         >
           <span class="duo-stack" aria-hidden="true">
             <span
@@ -328,7 +333,7 @@ function playDailyAll(): void {
           v-if="radarSection"
           type="button"
           class="duo-card duo-radar"
-          @click="emit('openRecSection', radarSection)"
+          @click="playPersonalizedStream(radarSection)"
         >
           <span class="duo-stack" aria-hidden="true">
             <span

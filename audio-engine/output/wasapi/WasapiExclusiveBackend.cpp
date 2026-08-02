@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <charconv>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -42,6 +43,82 @@ std::string outputFormatSummary(const AudioFormat& format) {
 double referenceTimeToMilliseconds(REFERENCE_TIME duration) {
   return duration > 0 ? static_cast<double>(duration) / 10000.0 : 0.0;
 }
+
+struct DopBufferObservation {
+  bool observed = false;
+  size_t inspectedFrames = 0;
+  uint8_t startMarker = 0;
+  bool startMarkerValid = false;
+  size_t invalidMarkers = 0;
+  size_t channelMarkerMismatches = 0;
+  uint64_t hash = 0;
+};
+
+DopBufferObservation inspectDopBuffer(
+    const uint8_t* data,
+    size_t frames,
+    const AudioFormat& format) noexcept {
+  DopBufferObservation observation;
+  if (!data || frames == 0 || !isDopCarrierFormat(format)) return observation;
+  const size_t channels = static_cast<size_t>(std::max(1, format.channelCount));
+  const size_t bytesPerSample = audioSampleFormatBytes(format.sampleFormat);
+  const size_t bytesPerFrame = audioFormatBytesPerFrame(format);
+  if (bytesPerSample == 0 || bytesPerFrame == 0) return observation;
+
+  observation.observed = true;
+  observation.inspectedFrames = std::min<size_t>(frames, 256);
+  observation.hash = 1469598103934665603ULL;
+  observation.startMarker = data[bytesPerSample - 1];
+  observation.startMarkerValid = observation.startMarker == 0x05 || observation.startMarker == 0xfa;
+  for (size_t frame = 0; frame < observation.inspectedFrames; ++frame) {
+    const uint8_t expected =
+        (frame % 2 == 0) ? observation.startMarker : (observation.startMarker == 0x05 ? 0xfa : 0x05);
+    uint8_t firstMarker = 0;
+    for (size_t channel = 0; channel < channels; ++channel) {
+      const uint8_t* sample = data + frame * bytesPerFrame + channel * bytesPerSample;
+      const uint8_t marker = sample[bytesPerSample - 1];
+      if (channel == 0) firstMarker = marker;
+      if (marker != expected) ++observation.invalidMarkers;
+      if (channel > 0 && marker != firstMarker) ++observation.channelMarkerMismatches;
+      for (size_t byte = 0; byte < bytesPerSample; ++byte) {
+        observation.hash ^= sample[byte];
+        observation.hash *= 1099511628211ULL;
+      }
+    }
+  }
+  return observation;
+}
+
+void appendDecimal(std::string& output, uint64_t value) {
+  char digits[32] = {};
+  const auto [end, error] = std::to_chars(digits, digits + sizeof(digits), value);
+  if (error == std::errc{}) output.append(digits, end);
+}
+
+void appendHex(std::string& output, uint64_t value) {
+  char digits[32] = {};
+  const auto [end, error] = std::to_chars(digits, digits + sizeof(digits), value, 16);
+  if (error == std::errc{}) output.append(digits, end);
+}
+
+std::string dopBufferSummary(const DopBufferObservation& observation) {
+  if (!observation.observed) return {};
+  std::string summary;
+  summary.reserve(160);
+  summary += "dop frames=";
+  appendDecimal(summary, observation.inspectedFrames);
+  summary += " startMarker=0x";
+  appendHex(summary, observation.startMarker);
+  summary += " startMarkerValid=";
+  summary += observation.startMarkerValid ? "true" : "false";
+  summary += " markerInvalid=";
+  appendDecimal(summary, observation.invalidMarkers);
+  summary += " channelMarkerMismatch=";
+  appendDecimal(summary, observation.channelMarkerMismatches);
+  summary += " fnv64=0x";
+  appendHex(summary, observation.hash);
+  return summary;
+}
 #endif
 
 }  // namespace
@@ -80,6 +157,7 @@ struct WasapiExclusiveBackend::Impl {
   std::vector<float> renderScratch;
   std::vector<uint8_t> waveFormatBytes;
   bool ownerComInitialized = false;
+  DopBufferObservation firstDopBufferObservation;
 
   // ── 自动恢复状态 ──
   std::atomic<bool> recoveryInProgress{false};
@@ -122,6 +200,7 @@ struct WasapiExclusiveBackend::Impl {
     outputInfo.actualDeviceName = deviceName;
     outputInfo.diagnostics = diagnostics;
     renderBufferLatencyMs.store(0.0);
+    firstDopBufferObservation = {};
   }
 
   void recordFailure(const char* reasonCode, const std::string& reason, std::string* error = nullptr) {
@@ -240,6 +319,17 @@ struct WasapiExclusiveBackend::Impl {
         reinterpret_cast<const uint8_t*>(negotiator.waveFormat()),
         reinterpret_cast<const uint8_t*>(negotiator.waveFormat()) + negotiator.waveFormatSize());
     const auto* waveFormat = reinterpret_cast<const WAVEFORMATEX*>(waveFormatBytes.data());
+    diagnostics.dsdTransport = isDopCarrierFormat(outputFormat) ? "dop" : "pcm";
+    diagnostics.requestedWireFormat = sampleFormatToString(requestedFormat.sampleFormat);
+    diagnostics.actualWireFormat = sampleFormatToString(outputFormat.sampleFormat);
+    diagnostics.containerBits = waveFormat ? waveFormat->wBitsPerSample : 0;
+    diagnostics.validBits = outputFormat.bitDepth;
+    diagnostics.blockAlign = waveFormat ? waveFormat->nBlockAlign : 0;
+    diagnostics.semanticSampleRate = isDopCarrierFormat(outputFormat) ? outputFormat.sampleRate * 16 : outputFormat.sampleRate;
+    diagnostics.transportSampleRate = outputFormat.sampleRate;
+    diagnostics.typedRawPath = isDopCarrierFormat(outputFormat);
+    diagnostics.processingBypassed = isDopCarrierFormat(outputFormat);
+    outputInfo.diagnostics = diagnostics;
     const std::string negotiatedPerfectReasonCode = outputInfo.perfectReasonCode;
     const std::string negotiatedCapabilityReason = outputInfo.capabilityReason;
     const std::string negotiatedPerfectReason = outputInfo.perfectReason;
@@ -335,8 +425,23 @@ struct WasapiExclusiveBackend::Impl {
       const size_t rendered = typedCallback(block);
       if (rendered > 0) {
         const size_t renderedFrames = std::min<size_t>(rendered, frameCount);
+        if (isDopCarrierFormat(outputFormat)) {
+          std::unique_lock lock(infoMutex, std::try_to_lock);
+          if (lock.owns_lock() && !firstDopBufferObservation.observed) {
+            firstDopBufferObservation = inspectDopBuffer(data, renderedFrames, outputFormat);
+          }
+        }
         const size_t renderedBytes = renderedFrames * audioFormatBytesPerFrame(outputFormat);
-        if (data && renderedBytes < byteCount) std::memset(data + renderedBytes, 0, byteCount - renderedBytes);
+        if (data && renderedBytes < byteCount && !isDopCarrierFormat(outputFormat)) {
+          std::memset(data + renderedBytes, 0, byteCount - renderedBytes);
+        }
+        if (renderedFrames < frameCount) {
+          std::unique_lock lock(infoMutex, std::try_to_lock);
+          if (lock.owns_lock()) {
+            ++diagnostics.dsdShortReadCount;
+            diagnostics.dsdIdleFrameCount += frameCount - renderedFrames;
+          }
+        }
         hr = renderClient->ReleaseBuffer(frameCount, 0);
         if (FAILED(hr)) return hr;
         return S_OK;
@@ -397,33 +502,38 @@ struct WasapiExclusiveBackend::Impl {
     if (eventCallback) eventCallback(OutputBackendEvent::RenderError, buffer);
   }
 
-  void recordRenderFailureFromRenderThread(HRESULT hr, const char* message) {
-    char buffer[160] = {};
-    std::snprintf(buffer, sizeof(buffer), "%s (错误码 0x%08lx)", message, static_cast<unsigned long>(hr));
-
+  void recordRenderFailureFromRenderThread(HRESULT hr) noexcept {
+    // Keep the MMCSS render thread allocation-free: only fixed-size counters are
+    // updated here. The human-readable error is published after MMCSS teardown.
     std::unique_lock lock(infoMutex, std::try_to_lock);
     if (!lock.owns_lock()) return;
-
-    diagnostics.lastError = buffer;
     if (wasapi::isDeviceInvalidated(hr)) {
       ++diagnostics.deviceLostCount;
-      outputInfo.perfectReasonCode = "device_lost";
     } else {
       ++diagnostics.sessionBufferDropCount;
       ++diagnostics.lifetimeBufferDropCount;
-      outputInfo.perfectReasonCode = "render_failure";
     }
+  }
+
+  void publishQueuedRenderFailure(HRESULT hr, const char* message) {
+    char buffer[160] = {};
+    std::snprintf(buffer, sizeof(buffer), "%s (错误码 0x%08lx)", message, static_cast<unsigned long>(hr));
+
+    std::lock_guard lock(infoMutex);
+    diagnostics.lastError = buffer;
+    outputInfo.perfectReasonCode = wasapi::isDeviceInvalidated(hr) ? "device_lost" : "render_failure";
     outputInfo.capabilityReason = buffer;
     outputInfo.perfectReason = buffer;
     outputInfo.diagnostics = diagnostics;
   }
 
-  void recordRenderUnderrun() {
+  void recordRenderUnderrun() noexcept {
+    // Diagnostics contains dynamic text, so copying it here could allocate on
+    // the MMCSS render thread. The query path snapshots it under the lock.
     std::unique_lock lock(infoMutex, std::try_to_lock);
     if (!lock.owns_lock()) return;
     ++diagnostics.sessionUnderrunCount;
     ++diagnostics.lifetimeUnderrunCount;
-    outputInfo.diagnostics = diagnostics;
   }
 
   void refreshLatencyTelemetry() {
@@ -505,12 +615,20 @@ struct WasapiExclusiveBackend::Impl {
     if (mmcssHandle) AvRevertMmThreadCharacteristics(mmcssHandle);
     CoUninitialize();
 
+    const bool renderErrorQueued = renderErrorEventQueued.exchange(false);
+    const bool deviceInvalidatedQueued = deviceInvalidatedEventQueued.exchange(false);
+    if (renderErrorQueued || deviceInvalidatedQueued) {
+      const HRESULT queuedHr = static_cast<HRESULT>(queuedRenderFailureHr.load());
+      const char* queuedMessage = queuedRenderFailureMessage ? queuedRenderFailureMessage : "独占输出渲染失败";
+      publishQueuedRenderFailure(queuedHr, queuedMessage);
+    }
+
     if (recoveryQueued.load() && !stopRequested.load()) {
       startQueuedRecoveryAfterRenderExit(queuedRecoveryReason);
       return;
     }
 
-    if (renderErrorEventQueued.exchange(false) && eventCallback) {
+    if (renderErrorQueued && eventCallback) {
       char buffer[160] = {};
       const char* message = queuedRenderFailureMessage ? queuedRenderFailureMessage : "独占输出渲染失败";
       std::snprintf(
@@ -521,7 +639,7 @@ struct WasapiExclusiveBackend::Impl {
           static_cast<unsigned long>(queuedRenderFailureHr.load()));
       eventCallback(OutputBackendEvent::RenderError, buffer);
     }
-    if (deviceInvalidatedEventQueued.exchange(false) && eventCallback) {
+    if (deviceInvalidatedQueued && eventCallback) {
       eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
     }
   }
@@ -563,12 +681,23 @@ struct WasapiExclusiveBackend::Impl {
           if (error) *error = "无法预填充独占输出缓冲区";
           return false;
         }
+        DWORD prefillFlags = AUDCLNT_BUFFERFLAGS_SILENT;
         if (data) {
           const size_t byteCount =
               static_cast<size_t>(prefillFrames) * audioFormatBytesPerFrame(outputFormat);
           std::memset(data, 0, byteCount);
-          // Drain one period of decoder output into a discard buffer so position stays aligned.
-          if (outputFormat.sampleFormat == AudioSampleFormat::Float32Interleaved && callback) {
+          // DoP cannot use all-zero PCM silence: that removes the 0x05/0xFA marker
+          // sequence and makes many DACs lose DSD lock. Let the typed callback emit
+          // a valid carrier pre-roll and submit those bytes without the SILENT flag.
+          if (isDopCarrierFormat(outputFormat) && typedCallback) {
+            PcmBlock block;
+            block.format = outputFormat;
+            block.data = data;
+            block.frames = prefillFrames;
+            block.byteSize = byteCount;
+            (void)typedCallback(block);
+            prefillFlags = 0;
+          } else if (outputFormat.sampleFormat == AudioSampleFormat::Float32Interleaved && callback) {
             std::vector<float> discard(
                 static_cast<size_t>(prefillFrames) *
                 static_cast<size_t>(std::max(1, outputFormat.channelCount)));
@@ -587,7 +716,7 @@ struct WasapiExclusiveBackend::Impl {
             (void)callback(discard.data(), prefillFrames);
           }
         }
-        prefillHr = renderClient->ReleaseBuffer(prefillFrames, AUDCLNT_BUFFERFLAGS_SILENT);
+        prefillHr = renderClient->ReleaseBuffer(prefillFrames, prefillFlags);
         if (FAILED(prefillHr)) {
           if (error) *error = "无法提交独占输出预填充缓冲区";
           return false;
@@ -658,8 +787,19 @@ struct WasapiExclusiveBackend::Impl {
           if (SUCCEEDED(renderClient->GetBuffer(framesAvailable, &data)) && data) {
             const size_t byteCount =
                 static_cast<size_t>(framesAvailable) * audioFormatBytesPerFrame(outputFormat);
-            std::memset(data, 0, byteCount);
-            (void)renderClient->ReleaseBuffer(framesAvailable, AUDCLNT_BUFFERFLAGS_SILENT);
+            DWORD releaseFlags = AUDCLNT_BUFFERFLAGS_SILENT;
+            if (isDopCarrierFormat(outputFormat) && typedCallback) {
+              PcmBlock block;
+              block.format = outputFormat;
+              block.data = data;
+              block.frames = framesAvailable;
+              block.byteSize = byteCount;
+              (void)typedCallback(block);
+              releaseFlags = 0;
+            } else {
+              std::memset(data, 0, byteCount);
+            }
+            (void)renderClient->ReleaseBuffer(framesAvailable, releaseFlags);
           }
         }
       }
@@ -840,10 +980,10 @@ struct WasapiExclusiveBackend::Impl {
   // 返回 true = 已恢复可以继续渲染；false = 需退出渲染循环
   bool handleRenderFailure(HRESULT hr, const char* message) {
     const bool devInvalidated = wasapi::isDeviceInvalidated(hr);
-    recordRenderFailureFromRenderThread(hr, message);
+    recordRenderFailureFromRenderThread(hr);
+    queuedRenderFailureMessage = message;
+    queuedRenderFailureHr.store(hr);
     if (!devInvalidated) {
-      queuedRenderFailureMessage = message;
-      queuedRenderFailureHr.store(hr);
       renderErrorEventQueued.store(true);
       running = false;
       if (samplesReadyEvent) SetEvent(samplesReadyEvent.get());
@@ -980,7 +1120,14 @@ AudioFormat WasapiExclusiveBackend::outputFormat() const {
 
 OutputInfo WasapiExclusiveBackend::outputInfo() const {
   std::lock_guard lock(impl_->infoMutex);
-  return impl_->outputInfo;
+  OutputInfo info = impl_->outputInfo;
+  info.diagnostics = impl_->diagnostics;
+#if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
+  if (impl_->firstDopBufferObservation.observed) {
+    info.diagnostics.firstBufferSummary = dopBufferSummary(impl_->firstDopBufferObservation);
+  }
+#endif
+  return info;
 }
 
 DopRuntimeFacts WasapiExclusiveBackend::dopRuntimeFacts() const {

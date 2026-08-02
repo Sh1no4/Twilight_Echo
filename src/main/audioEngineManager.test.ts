@@ -494,7 +494,10 @@ class FakeNativeBinding implements NativeAudioBinding {
   failAsioPlayWith = ''
   lastErrorMessage = ''
   nextLeavesStopped = false
+  nextTargetIndex: number | null = null
+  previousTargetIndex: number | null = null
   nextCalls = 0
+  previousCalls = 0
   playbackInfoReads = 0
   spectrumReads = 0
   visualizationReads = 0
@@ -729,6 +732,17 @@ class FakeNativeBinding implements NativeAudioBinding {
   }
   Next = (): void => {
     this.nextCalls += 1
+    if (this.nextTargetIndex !== null) {
+      const target = this.lastLoadedQueue[this.nextTargetIndex]
+      this.playbackInfo = {
+        ...this.playbackInfo,
+        state: 'playing',
+        queueIndex: this.nextTargetIndex,
+        source: target?.source ?? this.playbackInfo.source,
+        position: 0
+      }
+      return
+    }
     if (this.nextLeavesStopped) {
       this.playbackInfo = {
         ...this.playbackInfo,
@@ -737,7 +751,18 @@ class FakeNativeBinding implements NativeAudioBinding {
       }
     }
   }
-  Previous = (): void => {}
+  Previous = (): void => {
+    this.previousCalls += 1
+    if (this.previousTargetIndex === null) return
+    const target = this.lastLoadedQueue[this.previousTargetIndex]
+    this.playbackInfo = {
+      ...this.playbackInfo,
+      state: 'playing',
+      queueIndex: this.previousTargetIndex,
+      source: target?.source ?? this.playbackInfo.source,
+      position: 0
+    }
+  }
   SetPlayMode = (mode: PlayMode): void => {
     this.playModeCalls += 1
     this.playbackInfo = {
@@ -3090,6 +3115,77 @@ test('next falls back to Play when native Next advances but does not keep playba
   assert.equal(info.state, 'playing')
   assert.equal(info.queueIndex, 1)
   assert.equal(info.source, 'second.flac')
+})
+
+test('switching to shuffle preserves the active stream and only updates native policy', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const queue = [
+    { id: '1', source: 'first.flac', title: 'First' },
+    { id: '2', source: 'second.flac', title: 'Second' },
+    { id: '3', source: 'third.flac', title: 'Third' }
+  ]
+
+  await manager.loadQueue(queue, 1)
+  await manager.play(queue[1].source, 37)
+  const before = await manager.getPlaybackInfo()
+  const loadQueueCalls = nativeBinding.loadQueueCalls
+  const playCalls = nativeBinding.playCalls.length
+  const stopCalls = nativeBinding.stopCalls
+  const seekCalls = nativeBinding.seekCalls
+  const playModeCalls = nativeBinding.playModeCalls
+
+  await manager.setPlayMode('shuffle')
+  const after = await manager.getPlaybackInfo()
+
+  assert.equal(nativeBinding.playModeCalls, playModeCalls + 1)
+  assert.equal(nativeBinding.playbackInfo.playMode, 'shuffle')
+  assert.equal(nativeBinding.loadQueueCalls, loadQueueCalls)
+  assert.equal(nativeBinding.playCalls.length, playCalls)
+  assert.equal(nativeBinding.stopCalls, stopCalls)
+  assert.equal(nativeBinding.seekCalls, seekCalls)
+  assert.equal(after.source, before.source)
+  assert.equal(after.queueIndex, before.queueIndex)
+  assert.equal(after.position, before.position)
+  assert.equal(after.state, before.state)
+})
+
+test('shuffle next accepts the native non-adjacent queue target', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  nativeBinding.nextTargetIndex = 3
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const queue = [
+    { id: '1', source: 'first.flac', title: 'First' },
+    { id: '2', source: 'second.flac', title: 'Second' },
+    { id: '3', source: 'third.flac', title: 'Third' },
+    { id: '4', source: 'fourth.flac', title: 'Fourth' }
+  ]
+
+  await manager.loadQueue(queue, 0)
+  await manager.play(queue[0].source, 0)
+  await manager.setPlayMode('shuffle')
+  await manager.next()
+  const info = await manager.getPlaybackInfo()
+
+  assert.equal(nativeBinding.nextCalls, 1)
+  assert.equal(nativeBinding.playCalls.length, 1)
+  assert.equal(info.queueIndex, 3)
+  assert.equal(info.source, 'fourth.flac')
+  assert.equal(info.state, 'playing')
 })
 
 test('next falls back to target track when native Next reports stale playback info', async () => {

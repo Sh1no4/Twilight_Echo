@@ -141,6 +141,18 @@ inline int semanticSampleRate(AudioSampleFormat format, int transportRate) {
   return transportRate <= std::numeric_limits<int>::max() / 8 ? transportRate * 8 : 0;
 }
 
+inline uint8_t reverseBits(uint8_t value) {
+  value = static_cast<uint8_t>(((value & 0xf0U) >> 4U) | ((value & 0x0fU) << 4U));
+  value = static_cast<uint8_t>(((value & 0xccU) >> 2U) | ((value & 0x33U) << 2U));
+  return static_cast<uint8_t>(((value & 0xaaU) >> 1U) | ((value & 0x55U) << 1U));
+}
+
+inline uint8_t nativeDsdIdleByte(AudioSampleFormat format) {
+  // 0x69 is the conventional LSB-first DSD idle pattern. MSB1 transports the
+  // same bitstream with each byte bit-reversed; NER8 keeps the byte unchanged.
+  return format == AudioSampleFormat::DsdInt8Msb1 ? reverseBits(0x69) : 0x69;
+}
+
 inline bool isSupportedChannelFormat(const AsioChannelFormat& format) {
   if (!format.littleEndian) return false;
   switch (format.logicalFormat) {

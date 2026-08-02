@@ -85,6 +85,20 @@ std::vector<AsioDeviceInfo> RealAsioHost::enumerateDevices() {
 #endif
 }
 
+AsioHostDiagnostics RealAsioHost::diagnostics() const {
+  AsioHostDiagnostics result;
+  result.processArchitecture = sizeof(void*) == 8 ? "x64" : "x86";
+  result.environmentDisabled = !asioEnabled();
+#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+  result.buildEnabled = true;
+  const auto catalog = asio_windows::AsioDriverCatalog::diagnostics();
+  result.registeredDriverCount32 = catalog.registeredDriverCount32;
+  result.registeredDriverCount64 = catalog.registeredDriverCount64;
+  result.loadableDriverCount64 = catalog.loadableDriverCount64;
+#endif
+  return result;
+}
+
 bool RealAsioHost::open(const AsioOpenConfig& config, AsioOpenResult* result, std::string* error) {
 #if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
   close();

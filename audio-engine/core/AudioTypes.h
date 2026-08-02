@@ -159,6 +159,27 @@ struct OutputInfo {
     uint64_t lifetimeRecoveryCount = 0;
     uint64_t driverRestartCount = 0;
     uint64_t deviceLostCount = 0;
+    uint64_t dsdIdleFrameCount = 0;
+    uint64_t dsdShortReadCount = 0;
+    std::string dsdTransport;
+    std::string dsdSourceBitOrder;
+    std::string dsdSourcePacking;
+    std::string requestedWireFormat;
+    std::string actualWireFormat;
+    int containerBits = 0;
+    int validBits = 0;
+    int blockAlign = 0;
+    int semanticSampleRate = 0;
+    int transportSampleRate = 0;
+    bool typedRawPath = false;
+    bool processingBypassed = false;
+    std::string firstBufferSummary;
+    std::string processArchitecture;
+    bool asioBuildEnabled = false;
+    bool asioEnvironmentDisabled = false;
+    int asioRegisteredDriverCount32 = 0;
+    int asioRegisteredDriverCount64 = 0;
+    int asioLoadableDriverCount64 = 0;
     std::string lastError;
   };
 

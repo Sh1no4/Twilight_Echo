@@ -10,7 +10,11 @@ import {
 } from '../stores/useNcmStore'
 import { useProviderStore } from '../stores/useProviderStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
-import { usePlayerStore } from '../stores/usePlayerStore'
+import {
+  usePlayerStore,
+  type PersonalizedStreamKey,
+  type PersonalizedStreamSession
+} from '../stores/usePlayerStore'
 import { useMusicStore } from '../stores/useMusicStore'
 import { useMediaProviders } from '../providers'
 import type {
@@ -178,6 +182,17 @@ const dailySongs = ref<Track[]>([])
 const personalFmSongs = ref<Track[]>([])
 const privateContentSongs = ref<Track[]>([])
 const recommendPlaylists = ref<NcmPlaylistSummary[]>([])
+const PERSONALIZED_STREAM_LOAD_THRESHOLD = 0.75
+const PERSONALIZED_STREAM_QUEUE_THRESHOLD = 6
+const PERSONALIZED_STREAM_RETRY_COOLDOWN_MS = 15_000
+const personalizedStreamLoading = reactive<Record<PersonalizedStreamKey, boolean>>({
+  fm: false,
+  radar: false
+})
+const personalizedStreamRetryAfter = reactive<Record<PersonalizedStreamKey, number>>({
+  fm: 0,
+  radar: 0
+})
 const LIKED_TRACKS_PAGE_SIZE = 100
 const LIKED_TRACKS_LOAD_THRESHOLD = 0.75
 const likedTracksNextOffset = ref(0)
@@ -289,20 +304,28 @@ const libraryProviderOptions = computed(() =>
 async function loadRecommendations(): Promise<void> {
   if (isExternalActive.value) return
   if (!isLoggedIn.value) return
-  if (dailySongs.value.length > 0 && personalFmSongs.value.length > 0) return
+
+  const needsDaily = dailySongs.value.length === 0
+  const needsFm = personalFmSongs.value.length === 0
+  const needsRadar = privateContentSongs.value.length === 0
+  const needsPlaylists = recommendPlaylists.value.length === 0
+  if (!needsDaily && !needsFm && !needsRadar && !needsPlaylists) return
+
   recsLoading.value = true
   recsError.value = ''
   try {
-    const [daily, fm, pvt, playlists] = await Promise.all([
-      fetchRecommendSongs().catch(() => [] as Track[]),
-      fetchPersonalFm().catch(() => [] as Track[]),
-      fetchPrivateContent().catch(() => [] as Track[]),
-      fetchRecommendPlaylists().catch(() => [] as NcmPlaylistSummary[])
+    const [daily, fm, radar, playlists] = await Promise.all([
+      needsDaily ? fetchRecommendSongs().catch(() => [] as Track[]) : dailySongs.value,
+      needsFm ? fetchPersonalFm().catch(() => [] as Track[]) : personalFmSongs.value,
+      needsRadar ? fetchPrivateContent().catch(() => [] as Track[]) : privateContentSongs.value,
+      needsPlaylists
+        ? fetchRecommendPlaylists().catch(() => [] as NcmPlaylistSummary[])
+        : recommendPlaylists.value
     ])
-    dailySongs.value = daily
-    personalFmSongs.value = fm
-    privateContentSongs.value = pvt
-    recommendPlaylists.value = playlists
+    if (needsDaily) dailySongs.value = daily
+    if (needsFm) personalFmSongs.value = fm
+    if (needsRadar) privateContentSongs.value = radar
+    if (needsPlaylists) recommendPlaylists.value = playlists
   } catch (e) {
     recsError.value = friendlyStreamingError(e, '加载推荐失败')
   } finally {
@@ -323,6 +346,52 @@ async function openRecSection(section: RecSection): Promise<void> {
   detailTracks.value = section.tracks
   detailLoading.value = false
   detailError.value = ''
+}
+
+function getPersonalizedStreamKey(section: RecSection | null): PersonalizedStreamKey | null {
+  if (section?.key === 'fm' || section?.key === 'radar') return section.key
+  return null
+}
+
+function appendUniqueTracks(current: readonly Track[], incoming: readonly Track[]): Track[] {
+  const seen = new Set(current.map((track) => track.id))
+  return incoming.filter((track) => track.id && !seen.has(track.id) && seen.add(track.id))
+}
+
+async function loadMorePersonalizedStream(
+  key: PersonalizedStreamKey,
+  session: PersonalizedStreamSession | null = null
+): Promise<void> {
+  if (personalizedStreamLoading[key] || Date.now() < personalizedStreamRetryAfter[key]) return
+  personalizedStreamLoading[key] = true
+  try {
+    const current = key === 'fm' ? personalFmSongs.value : privateContentSongs.value
+    const incoming = await (key === 'fm' ? fetchPersonalFm() : fetchPrivateContent())
+    let additions = appendUniqueTracks(current, incoming)
+    if (key === 'radar' && additions.length === 0) {
+      additions = appendUniqueTracks(current, await fetchPersonalFm())
+    }
+    if (additions.length === 0) {
+      personalizedStreamRetryAfter[key] = Date.now() + PERSONALIZED_STREAM_RETRY_COOLDOWN_MS
+      return
+    }
+
+    const merged = [...current, ...additions]
+    if (key === 'fm') personalFmSongs.value = merged
+    else privateContentSongs.value = merged
+
+    const detail = currentDetail.value
+    if (detail?.type === 'rec' && detail.section.key === key) {
+      currentDetail.value = { type: 'rec', section: { ...detail.section, tracks: merged } }
+      detailTracks.value = merged
+    }
+
+    if (session) appendPersonalizedStreamTracks(session, additions)
+  } catch {
+    personalizedStreamRetryAfter[key] = Date.now() + PERSONALIZED_STREAM_RETRY_COOLDOWN_MS
+  } finally {
+    personalizedStreamLoading[key] = false
+  }
 }
 
 type SidebarItem = StreamingSidebarItem
@@ -401,8 +470,19 @@ const {
 } = useNcmStore()
 
 const playbackStore = usePlayerStore()
-const { currentTrack } = playbackStore
-const { playTrack, formatTime } = playbackStore
+const { currentTrack, personalizedStreamSession, personalizedStreamRemaining } = playbackStore
+const { playTrack, startPersonalizedStream, appendPersonalizedStreamTracks, formatTime } =
+  playbackStore
+
+function playHomeTrack(track: Track, trackQueue: Track[]): void {
+  const section = recSections.value.find((candidate) => candidate.tracks === trackQueue)
+  const streamKey = getPersonalizedStreamKey(section ?? null)
+  playTrack(track, trackQueue)
+  if (streamKey) {
+    personalizedStreamRetryAfter[streamKey] = 0
+    startPersonalizedStream(streamKey)
+  }
+}
 
 async function searchUnifiedSongs(
   keywords: string,
@@ -2253,15 +2333,42 @@ function setStreamingBatchRemovalError(message: string): void {
 
 function onStreamingContentScroll(event: Event): void {
   const element = event.currentTarget as HTMLElement | null
-  if (!element || currentDetail.value?.type !== 'liked') return
-  if (!likedTracksHasMore.value || likedTracksLoadingMore.value) return
+  if (!element) return
   const scrollable = element.scrollHeight - element.clientHeight
   if (scrollable <= 0) return
   const ratio = (element.scrollTop + element.clientHeight) / element.scrollHeight
-  if (ratio >= LIKED_TRACKS_LOAD_THRESHOLD) {
-    void loadMoreLikedTracks()
+
+  if (currentDetail.value?.type === 'liked') {
+    if (!likedTracksHasMore.value || likedTracksLoadingMore.value) return
+    if (ratio >= LIKED_TRACKS_LOAD_THRESHOLD) void loadMoreLikedTracks()
+    return
   }
+
+  if (currentDetail.value?.type !== 'rec' || ratio < PERSONALIZED_STREAM_LOAD_THRESHOLD) return
+  const key = getPersonalizedStreamKey(currentDetail.value.section)
+  if (key) void loadMorePersonalizedStream(key)
 }
+
+watch(
+  [
+    personalizedStreamRemaining,
+    personalizedStreamSession,
+    () => currentTrack.value?.queueEntryId,
+    () => personalizedStreamLoading.fm,
+    () => personalizedStreamLoading.radar
+  ],
+  ([remaining, session]) => {
+    if (
+      !session ||
+      personalizedStreamLoading[session.key] ||
+      remaining > PERSONALIZED_STREAM_QUEUE_THRESHOLD
+    ) {
+      return
+    }
+    void loadMorePersonalizedStream(session.key, session)
+  },
+  { flush: 'post' }
+)
 
 async function playLikedSongs(): Promise<void> {
   // For external providers the liked view is a playlist detail; detect it so we
@@ -2783,7 +2890,7 @@ onMounted(async () => {
             @load-recommendations="loadRecommendations"
             @open-rec-section="openRecSection"
             @open-playlist="openPlaylist"
-            @play-track="(track, queue) => playTrack(track, queue)"
+            @play-track="playHomeTrack"
             @request-login="emit('login', activeProvider)"
           />
 

@@ -87,6 +87,15 @@ std::vector<AsioDeviceInfo> MockAsioHost::enumerateDevices() {
   return devices;
 }
 
+AsioHostDiagnostics MockAsioHost::diagnostics() const {
+  AsioHostDiagnostics result;
+  result.processArchitecture = sizeof(void*) == 8 ? "x64" : "x86";
+  result.buildEnabled = true;
+  result.registeredDriverCount64 = static_cast<int>(devices.size());
+  result.loadableDriverCount64 = static_cast<int>(devices.size());
+  return result;
+}
+
 bool MockAsioHost::open(const AsioOpenConfig& config, AsioOpenResult* result, std::string* error) {
   ++openCalls;
   lastOpenConfig = config;

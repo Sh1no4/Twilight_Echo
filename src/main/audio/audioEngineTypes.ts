@@ -150,6 +150,27 @@ export interface OutputDiagnostics {
   lifetimeRecoveryCount: number
   driverRestartCount: number
   deviceLostCount: number
+  dsdIdleFrameCount?: number
+  dsdShortReadCount?: number
+  dsdTransport?: string
+  dsdSourceBitOrder?: string
+  dsdSourcePacking?: string
+  requestedWireFormat?: string
+  actualWireFormat?: string
+  containerBits?: number
+  validBits?: number
+  blockAlign?: number
+  semanticSampleRate?: number
+  transportSampleRate?: number
+  typedRawPath?: boolean
+  processingBypassed?: boolean
+  firstBufferSummary?: string
+  processArchitecture?: string
+  asioBuildEnabled?: boolean
+  asioEnvironmentDisabled?: boolean
+  asioRegisteredDriverCount32?: number
+  asioRegisteredDriverCount64?: number
+  asioLoadableDriverCount64?: number
   lastError: string
 }
 
@@ -423,7 +444,7 @@ export interface NativeAudioBinding {
   LoadQueue?: (queueJson: string, startIndex: number) => void
   Next?: () => void
   Previous?: () => void
-  SetPlayMode?: (mode: 'sequential' | 'repeat') => void
+  SetPlayMode?: (mode: 'sequential' | 'repeat' | 'shuffle') => void
   SetDspConfig?: (json: string) => void
   SetDspGraph?: (json: string) => void
   ApplyDspState: (revision: number, json: string) => void

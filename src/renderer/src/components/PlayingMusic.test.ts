@@ -85,7 +85,7 @@ test('renderer playback consumers cannot retain a second playback state after ho
 
   for (const component of playbackConsumers) {
     const source = readFileSync(new URL(component, import.meta.url), 'utf8')
-    assert.match(source, /import \{ usePlayerStore \} from /, component)
+    assert.match(source, /import \{[\s\S]*?usePlayerStore[\s\S]*?\} from /, component)
     assert.doesNotMatch(source, /usePlaybackQueueStore/, component)
   }
 

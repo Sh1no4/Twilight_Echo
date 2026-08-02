@@ -8,6 +8,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -22,6 +23,17 @@ namespace {
 constexpr uint32_t kEventReset = 1U << 0U;
 constexpr uint32_t kEventRestart = 1U << 1U;
 constexpr uint32_t kEventBufferFailure = 1U << 2U;
+
+std::string hresultError(const char* stage, HRESULT value) {
+  char buffer[96] = {};
+  std::snprintf(
+      buffer,
+      sizeof(buffer),
+      "%s (HRESULT=0x%08lx)",
+      stage,
+      static_cast<unsigned long>(value));
+  return buffer;
+}
 
 int bitDepthForFormat(AudioSampleFormat format) {
   switch (format) {
@@ -311,7 +323,7 @@ bool AsioDriverSession::open(const AsioOpenConfig& config, AsioOpenResult* resul
             reinterpret_cast<void**>(&state->driver));
         traceAsioDriverCall("after CoCreateInstance");
         if (FAILED(activation) || !state->driver) {
-          outcome.error = "ASIO driver activation failed";
+          outcome.error = hresultError("ASIO driver activation failed", activation);
           return outcome;
         }
         traceAsioDriverCall("before init");
@@ -392,10 +404,13 @@ bool AsioDriverSession::open(const AsioOpenConfig& config, AsioOpenResult* resul
             outcome.error = "unsupported_asio_sample_type";
             return outcome;
           }
-          if (nativeDsdRequested && format->logicalFormat != config.format.sampleFormat) {
-            outcome.error = "ASIO driver did not switch to the requested Native DSD sample type";
+          if (nativeDsdRequested && !isDsdSampleFormat(format->logicalFormat)) {
+            outcome.error = "ASIO driver did not switch to a Native DSD sample type";
             return outcome;
           }
+          // The driver owns the Native DSD wire sample type. Accept LSB1/MSB1/NER8
+          // even when it differs from the source bit order; AudioPipeline converts
+          // the source bytes to the runtime type before the planar ASIO write.
           state->channelFormats.push_back(*format);
         }
         traceAsioDriverCall("after getChannelInfo");

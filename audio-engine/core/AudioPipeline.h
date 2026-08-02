@@ -365,6 +365,12 @@ class AudioPipeline {
   std::atomic<uint64_t> requestedRenderDspEpoch_{0};
   std::atomic<uint64_t> appliedRenderDspEpoch_{0};
   std::atomic<uint64_t> renderedFrames_{0};
+  // Render-thread-owned DoP marker phase. Decoder chunks have their own packer
+  // phase; this counter also covers backend idle/underrun frames without gaps.
+  // Control-side discontinuities publish a reset request; only the render
+  // thread mutates the phase itself.
+  uint64_t renderDopMarkerIndex_ = 0;
+  std::atomic<bool> renderDopMarkerResetRequested_{false};
   // A-B loop (seconds). Enabled only when end > start and both finite/non-negative.
   std::atomic<bool> loopEnabled_{false};
   std::atomic<uint64_t> loopStartBits_{std::bit_cast<uint64_t>(0.0)};

@@ -228,6 +228,24 @@ void testNativeDsdRenderPositionAccountsForBitsPerByte() {
   assert(renderTypedBody.find("dsdRenderedFrameUnits") != std::string::npos);
 }
 
+void testTypedDsdFormatMismatchEmitsTransportIdleInsteadOfPcmFallback() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string renderTypedBody =
+      extractFunctionBody(source, "size_t AudioPipeline::renderTyped(PcmBlock& output)");
+  const std::string mismatchBody = extractFunctionBody(
+      renderTypedBody,
+      "if (!typedPassthroughActive || !outputMatches || !bufferMatches)");
+
+  assert(mismatchBody.find("fillDsdTransportIdle(output, &renderDopMarkerIndex_)") != std::string::npos);
+  assert(mismatchBody.find("return output.frames") != std::string::npos);
+  const size_t idlePos = mismatchBody.find("fillDsdTransportIdle");
+  const size_t zeroPos = mismatchBody.find("std::memset");
+  assert(idlePos != std::string::npos);
+  assert(zeroPos == std::string::npos || idlePos < zeroPos);
+}
+
 void testChannelRouterStateIsOwnedByRenderCallback() {
   const std::filesystem::path testFilePath(__FILE__);
   const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
@@ -2872,8 +2890,8 @@ void testCueDopPregapOutputsCanonicalCarrierAndResetsMarkerAfterSeek() {
   assert(std::abs(pregap[3] - markerFaSilence) < 0.0000001f);
   const auto renderedPath = g_backendRegistry.snapshots();
   assert(!renderedPath.empty());
-  assert(renderedPath.back().typedRenderCalls == 0);
-  assert(renderedPath.back().floatRenderCalls == 1);
+  assert(renderedPath.back().typedRenderCalls == 1);
+  assert(renderedPath.back().floatRenderCalls == 0);
 
   const auto source = renderBackendFrames(backend, 1);
   assert(std::abs(source[0] - marker05Silence) > 0.0001f);
@@ -3043,6 +3061,7 @@ int main() {
   testRenderCallbacksDoNotBlockOnPipelineMutex();
   testRenderCallbacksDoNotWaitForDecoderBuffers();
   testNativeDsdRenderPositionAccountsForBitsPerByte();
+  testTypedDsdFormatMismatchEmitsTransportIdleInsteadOfPcmFallback();
   testChannelRouterStateIsOwnedByRenderCallback();
   testRenderCallbacksUseNonBlockingSpectrumReset();
   testRenderCallbackDoesNotStopDecodeStreams();

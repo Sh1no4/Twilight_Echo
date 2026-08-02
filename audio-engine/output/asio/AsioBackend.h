@@ -89,6 +89,10 @@ class AsioBackend final : public IOutputBackend {
   bool actualOutputFormatObserved_ = false;
   bool actualOutputChannelFormatsMatch_ = true;
   bool nativeDsdTypedCallbackMissing_ = false;
+  bool firstNativeDsdBufferObserved_ = false;
+  size_t firstNativeDsdInspectedBytes_ = 0;
+  uint8_t firstNativeDsdIdleByte_ = 0;
+  uint64_t firstNativeDsdHash_ = 0;
   std::atomic<bool> running_{false};
   std::atomic<bool> stopRequested_{false};
   std::vector<float> renderScratch_;

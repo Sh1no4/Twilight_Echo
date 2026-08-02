@@ -43,6 +43,34 @@ bool hasInProcessServer(const std::wstring& clsid) {
   return true;
 }
 
+int countRegisteredDrivers(REGSAM registryView) {
+  HKEY catalog = nullptr;
+  if (RegOpenKeyExW(
+          HKEY_LOCAL_MACHINE,
+          L"SOFTWARE\\ASIO",
+          0,
+          KEY_READ | registryView,
+          &catalog) != ERROR_SUCCESS) {
+    return 0;
+  }
+  DWORD subkeyCount = 0;
+  const LSTATUS status = RegQueryInfoKeyW(
+      catalog,
+      nullptr,
+      nullptr,
+      nullptr,
+      &subkeyCount,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr);
+  RegCloseKey(catalog);
+  return status == ERROR_SUCCESS ? static_cast<int>(subkeyCount) : 0;
+}
+
 }  // namespace
 
 std::vector<AsioDriverEntry> AsioDriverCatalog::enumerate() {
@@ -85,6 +113,14 @@ std::vector<AsioDriverEntry> AsioDriverCatalog::enumerate() {
     return left.id < right.id;
   });
   return entries;
+}
+
+AsioDriverCatalogDiagnostics AsioDriverCatalog::diagnostics() {
+  AsioDriverCatalogDiagnostics result;
+  result.registeredDriverCount32 = countRegisteredDrivers(KEY_WOW64_32KEY);
+  result.registeredDriverCount64 = countRegisteredDrivers(KEY_WOW64_64KEY);
+  result.loadableDriverCount64 = static_cast<int>(enumerate().size());
+  return result;
 }
 
 std::optional<AsioDriverEntry> AsioDriverCatalog::resolve(const std::string& id) {

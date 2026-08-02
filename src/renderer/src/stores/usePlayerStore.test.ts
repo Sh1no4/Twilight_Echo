@@ -629,7 +629,10 @@ test('native queue switching guards the target track before applying playback-in
   )
 
   assert.match(source, /evaluateNativePlaybackInfoIntent/)
-  assert.match(advanceNativePlayback, /const target = getNativeQueueAdvanceTarget\(direction\)/)
+  assert.match(
+    advanceNativePlayback,
+    /const target = playMode\.value === 'shuffle' \? null : getNativeQueueAdvanceTarget\(direction\)/
+  )
   assert.match(advanceNativePlayback, /activateCurrentTrack\(target\.track/)
   assert.match(source, /function activateCurrentTrack/)
   assert.match(source, /function hydratePlaybackTrack/)
@@ -930,7 +933,13 @@ test('audio visualizer iframe controls are wired to the player store', () => {
   assert.match(panelSource, /visualizerBarCount: VISUALIZER_BAR_COUNT/)
   assert.match(panelSource, /spectrogramFrames: 0/)
   assert.match(panelSource, /oscilloscopePoints: 0/)
-  assert.match(panelSource, /VISUALIZER_POLL_INTERVAL_MS = 33/)
+  assert.match(panelSource, /VISUALIZER_POLL_INTERVAL_MS = 50/)
+  assert.match(panelSource, /function scheduleVisualizationFrame\(delayMs = 0\)/)
+  assert.match(panelSource, /visualizationTimer = window\.setTimeout\(async \(\) => \{/)
+  assert.match(panelSource, /await pollVisualizationFrame\(\)/)
+  assert.match(panelSource, /scheduleVisualizationFrame\(VISUALIZER_POLL_INTERVAL_MS\)/)
+  assert.match(panelSource, /window\.clearTimeout\(visualizationTimer\)/)
+  assert.doesNotMatch(panelSource, /window\.setInterval\(/)
   assert.match(panelSource, /CONTROL_VISUALIZATION_PAUSE_MS = 220/)
   assert.match(panelSource, /let visualizationPausedUntil = 0/)
   assert.match(panelSource, /if \(performance\.now\(\) < visualizationPausedUntil\) return/)
@@ -942,7 +951,10 @@ test('audio visualizer iframe controls are wired to the player store', () => {
     panelSource,
     /props\.active &&\s*iframeReady\.value &&\s*documentVisible\.value &&\s*isPlaying\.value &&\s*audioEngineReady\.value &&\s*currentTrack\.value/
   )
-  assert.match(panelSource, /if \(!shouldPollVisualization\.value\) return/)
+  assert.match(
+    panelSource,
+    /if \(visualizerUnmounted \|\| !shouldPollVisualization\.value \|\| visualizationRequestInFlight\) return/
+  )
   assert.match(panelSource, /function syncVisualizationPolling\(\)/)
   assert.match(panelSource, /postInactiveVisualizationFrame\(\)/)
   assert.doesNotMatch(panelSource, /Float32Array\.from\(v\.spectrum\)/)
@@ -1376,7 +1388,52 @@ test('play mode is persisted in settings and restored on launch', () => {
   assert.match(mainSource, /playMode: normalizePlayMode\(settings\.playMode\)/)
   assert.match(playerSource, /import type \{[\s\S]*PlayMode[\s\S]*\} from '\.\.\/types\/settings'/)
   assert.match(playerSource, /watch\(\s*\(\) => appSettings\.value\.playMode,/)
+  const queueNativePlayModeSync = extractInternalFunctionBody(
+    playerSource,
+    'queueNativePlayModeSync'
+  )
+  const applyPendingRendererPlayModeAtBoundary = extractInternalFunctionBody(
+    playerSource,
+    'applyPendingRendererPlayModeAtBoundary'
+  )
+  const next = extractInternalFunctionBody(playerSource, 'next')
+  const previous = extractInternalFunctionBody(playerSource, 'previous')
+  const loadAndPlay =
+    playerSource.match(/async function loadAndPlay[\s\S]*?function next\(\)/)?.[0] ?? ''
+
+  assert.match(setPlayModeInternal, /if \(mode === playMode\.value\) return/)
+  assert.match(setPlayModeInternal, /rendererPlayModeBoundaryPending = true/)
   assert.match(setPlayModeInternal, /void updateSettings\(\{ playMode: mode \}\)/)
+  assert.match(setPlayModeInternal, /queueNativePlayModeSync\(mode\)/)
+  assert.doesNotMatch(setPlayModeInternal, /queueNativeQueueStateSync\(/)
+  assert.doesNotMatch(setPlayModeInternal, /loadQueue\(/)
+  assert.doesNotMatch(setPlayModeInternal, /playQueueTrack\(|loadAndPlay\(/)
+  assert.match(
+    queueNativePlayModeSync,
+    /mode === 'repeat' \|\| mode === 'shuffle' \? mode : 'sequential'/
+  )
+  assert.match(queueNativePlayModeSync, /window\.api\.audioEngine\.setPlayMode\(nativePlayMode\)/)
+  assert.doesNotMatch(queueNativePlayModeSync, /loadQueue\(/)
+  assert.match(applyPendingRendererPlayModeAtBoundary, /rendererPlayModeBoundaryPending = false/)
+  assert.match(
+    applyPendingRendererPlayModeAtBoundary,
+    /track\.queueEntryId === current\.queueEntryId/
+  )
+  assert.match(
+    applyPendingRendererPlayModeAtBoundary,
+    /originalQueue\.value\.findIndex\(\(track\) => track\.id === current\.id\)/
+  )
+  assert.match(
+    applyPendingRendererPlayModeAtBoundary,
+    /queue\.value = \[current, \.\.\.shuffleArray\(remaining\)\]/
+  )
+  assert.match(advanceAfterPlaybackEnded, /applyPendingRendererPlayModeAtBoundary\(\)/)
+  assert.match(next, /applyPendingRendererPlayModeAtBoundary\(\)/)
+  assert.match(previous, /applyPendingRendererPlayModeAtBoundary\(\)/)
+  assert.match(
+    loadAndPlay,
+    /playMode\.value === 'repeat' \|\| playMode\.value === 'shuffle'[\s\S]*await window\.api\.audioEngine\.setPlayMode\(nativePlayMode\)/
+  )
   assert.match(
     playerSource,
     /const modes: PlayMode\[\] = \['sequential', 'listLoop', 'repeat', 'shuffle'\]/
@@ -1440,6 +1497,23 @@ test('current playlist selection preserves the existing shuffled queue order', (
   )
 })
 
+test('ordinary queue playback ends a personalized stream without adding a play mode', () => {
+  const playerSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const playTrack = extractInternalFunctionBody(playerSource, 'playTrack')
+  const playTrackFromPosition = extractInternalFunctionBody(playerSource, 'playTrackFromPosition')
+
+  assert.match(
+    playTrack,
+    /if \(trackList \|\| !isPersonalizedStreamTrack\(track\)\) endPersonalizedStream\(\)/
+  )
+  assert.match(
+    playTrackFromPosition,
+    /if \(trackList \|\| !isPersonalizedStreamTrack\(track\)\) endPersonalizedStream\(\)/
+  )
+  assert.match(playerSource, /export type PersonalizedStreamKey = 'fm' \| 'radar'/)
+  assert.doesNotMatch(playerSource, /const modes: PlayMode\[\] = \[[^\]]*personalizedStream/)
+})
+
 test('playback session carries play mode for quit-time restore', () => {
   const playerSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const musicTypes = readFileSync(new URL('../types/music.ts', import.meta.url), 'utf8')
@@ -1460,6 +1534,10 @@ test('queue editing commands commit snapshots, persistence, and revision-fenced 
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const commit = extractInternalFunctionBody(source, 'commitQueueEdit')
   const enqueue = extractInternalFunctionBody(source, 'enqueueTrack')
+  const append = extractInternalFunctionBody(source, 'appendQueueTracks')
+  const appendPersonalized = extractInternalFunctionBody(source, 'appendPersonalizedStreamTracks')
+  const startPersonalized = extractInternalFunctionBody(source, 'startPersonalizedStream')
+  const endPersonalized = extractInternalFunctionBody(source, 'endPersonalizedStream')
   const playNext = extractInternalFunctionBody(source, 'playNextTrack')
   const remove = extractInternalFunctionBody(source, 'removeQueueItem')
   const clear = extractInternalFunctionBody(source, 'clearQueue')
@@ -1470,6 +1548,26 @@ test('queue editing commands commit snapshots, persistence, and revision-fenced 
   assert.match(commit, /persistPlaybackSessionAfterQueueMutation\(\)/)
   assert.match(commit, /queueNativeQueueStateSync\(\)/)
   assert.match(enqueue, /\[\.\.\.queue\.value, track\]/)
+  assert.match(append, /toPlaybackQueueSnapshots\(tracks\)/)
+  assert.match(append, /originalQueue\.value = \[\.\.\.originalQueue\.value, \.\.\.additions\]/)
+  assert.match(append, /endPersonalizedStream\(\)/)
+  assert.match(append, /persistPlaybackSessionAfterQueueMutation\(\)/)
+  assert.match(append, /queueNativeQueueStateSync\(\)/)
+  assert.match(startPersonalized, /personalizedStreamEntryIds\.clear\(\)/)
+  assert.match(startPersonalized, /personalizedStreamPlayedEntryIds\.clear\(\)/)
+  assert.match(startPersonalized, /markCurrentPersonalizedStreamTrackPlayed\(\)/)
+  assert.match(appendPersonalized, /!isPersonalizedStreamSessionCurrent\(session\)/)
+  assert.match(appendPersonalized, /personalizedStreamEntryIds\.add\(track\.queueEntryId\)/)
+  assert.match(
+    appendPersonalized,
+    /playMode\.value === 'shuffle' \? shuffleArray\(additions\) : additions/
+  )
+  assert.match(endPersonalized, /personalizedStreamSession\.value = null/)
+  assert.match(source, /function markCurrentPersonalizedStreamTrackPlayed\(\)/)
+  assert.match(
+    source,
+    /personalizedStreamPlayedEntryIds\.add\(entryId\)[\s\S]*refreshPersonalizedStreamRemaining\(\)/
+  )
   assert.match(playNext, /next\.splice\(insertAt, 0, track\)/)
   assert.match(remove, /next\.splice\(index, 1\)/)
   assert.match(clear, /commitQueueEdit\(\[\], -1\)/)

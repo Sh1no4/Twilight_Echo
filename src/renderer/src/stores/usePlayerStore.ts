@@ -85,6 +85,11 @@ type NativeVisualizationData = Awaited<
   ReturnType<typeof window.api.audioEngine.getVisualizationData>
 >
 type ProviderSourceReliability = Record<string, number>
+export type PersonalizedStreamKey = 'fm' | 'radar'
+export interface PersonalizedStreamSession {
+  id: number
+  key: PersonalizedStreamKey
+}
 const automaticLyricsBaselines = new Map<string, Track>()
 /** Per-track generation so a later load for A does not cancel an in-flight load for B. */
 const lyricsLoadGenerationByTrackId = new Map<string, number>()
@@ -152,6 +157,11 @@ const queue = shallowRef<Track[]>([])
 const queueIndex = ref(-1)
 const playMode = ref<PlayMode>('sequential')
 const originalQueue = shallowRef<Track[]>([])
+const personalizedStreamSession = ref<PersonalizedStreamSession | null>(null)
+const personalizedStreamRemaining = ref(0)
+const personalizedStreamEntryIds = new Set<string>()
+const personalizedStreamPlayedEntryIds = new Set<string>()
+let personalizedStreamSessionSequence = 0
 const audioEngineReady = ref(false)
 const audioEngineError = ref<string | null>(null)
 const audioEngineRecoveryNotice = ref<AudioEngineRecoveryNotice | null>(null)
@@ -1341,7 +1351,10 @@ async function syncNativeQueueState(snapshot: NativeQueueStateSnapshot): Promise
     return
   }
 
-  const nativePlayMode = snapshot.playMode === 'repeat' ? 'repeat' : 'sequential'
+  const nativePlayMode =
+    snapshot.playMode === 'repeat' || snapshot.playMode === 'shuffle'
+      ? snapshot.playMode
+      : 'sequential'
   const synchronized = await synchronizeLatestNativeQueue(
     nativeQueueRevisionFence,
     snapshot.revision,
@@ -1372,6 +1385,16 @@ async function syncNativeQueueState(snapshot: NativeQueueStateSnapshot): Promise
   nativeQueueDelegated = preparedQueue.delegated
 }
 
+function trackNativeQueueSyncRequest(request: Promise<void>): Promise<void> {
+  nativeQueueSyncRequest = request
+  void request.finally(() => {
+    if (nativeQueueSyncRequest === request) {
+      nativeQueueSyncRequest = null
+    }
+  })
+  return request
+}
+
 function queueNativeQueueStateSync(): Promise<void> {
   const revision = nativeQueueRevisionFence.next()
   const snapshot = captureNativeQueueState(revision)
@@ -1379,15 +1402,16 @@ function queueNativeQueueStateSync(): Promise<void> {
   const request = (previousRequest ?? Promise.resolve())
     .catch(() => {})
     .then(() => syncNativeQueueState(snapshot))
+  return trackNativeQueueSyncRequest(request)
+}
 
-  nativeQueueSyncRequest = request
-  void request.finally(() => {
-    if (nativeQueueSyncRequest === request) {
-      nativeQueueSyncRequest = null
-    }
-  })
-
-  return request
+function queueNativePlayModeSync(mode: PlayMode): Promise<void> {
+  const nativePlayMode = mode === 'repeat' || mode === 'shuffle' ? mode : 'sequential'
+  const previousRequest = nativeQueueSyncRequest
+  const request = (previousRequest ?? Promise.resolve())
+    .catch(() => {})
+    .then(() => window.api.audioEngine.setPlayMode(nativePlayMode))
+  return trackNativeQueueSyncRequest(request)
 }
 
 async function waitForNativeQueueStateSync(): Promise<void> {
@@ -1424,7 +1448,9 @@ async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<vo
   const wasPlaying = isPlaying.value
   clearPlaybackToggleIntent()
 
-  const target = getNativeQueueAdvanceTarget(direction)
+  // In shuffle mode the native queue owns play order. Do not predict an adjacent
+  // renderer item; wait for playback-info to identify the actual shuffled target.
+  const target = playMode.value === 'shuffle' ? null : getNativeQueueAdvanceTarget(direction)
   if (target) {
     // Optimistic UI update so cover/title/progress reset immediately instead of
     // waiting for (or missing) the first native playback-info event.
@@ -1715,6 +1741,7 @@ let restoredPlaybackPending = false
 let restoredPlaybackPosition = 0
 let pendingLoadStartTime = 0
 let nativeQueueSyncRequest: Promise<void> | null = null
+let rendererPlayModeBoundaryPending = false
 let dominantColorRequestId = 0
 
 function getNowMs(): number {
@@ -2008,6 +2035,7 @@ async function handlePlaybackEnded(): Promise<void> {
 
 async function advanceAfterPlaybackEnded(): Promise<void> {
   clearCrossfadeTimer()
+  applyPendingRendererPlayModeAtBoundary()
   const nextIndex = queueIndex.value + 1
   if (nextIndex >= 0 && nextIndex < queue.value.length) {
     queueIndex.value = nextIndex
@@ -3061,7 +3089,10 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         }
         nativeQueueDelegated = preparedQueue.delegated
 
-        const nativePlayMode = playMode.value === 'repeat' ? 'repeat' : 'sequential'
+        const nativePlayMode =
+          playMode.value === 'repeat' || playMode.value === 'shuffle'
+            ? playMode.value
+            : 'sequential'
         await window.api.audioEngine.setPlayMode(nativePlayMode)
         if (!isActiveLoad(loadToken, track)) {
           releaseLoadIfOwned()
@@ -3219,6 +3250,7 @@ function next(): void {
     return
   }
 
+  applyPendingRendererPlayModeAtBoundary()
   const nextIndex = queueIndex.value + 1
   if (nextIndex < queue.value.length) {
     queueIndex.value = nextIndex
@@ -3351,12 +3383,13 @@ function previous(): void {
     }
     return
   }
-  const prevIndex = queueIndex.value - 1
   if (!castTargetUsn.value && nativePlaybackActive && isNativeQueueDelegated()) {
     void advanceNativePlayback('previous')
     return
   }
 
+  applyPendingRendererPlayModeAtBoundary()
+  const prevIndex = queueIndex.value - 1
   if (prevIndex >= 0) {
     queueIndex.value = prevIndex
     playQueueTrack(queue.value[prevIndex])
@@ -3790,6 +3823,12 @@ function setupPlayerIntegrationSideEffects(): void {
   watch(currentTrack, () => syncDesktopLyricsSnapshot(), { immediate: true })
 
   watch(
+    [() => currentTrack.value?.queueEntryId, () => currentTrack.value?.id, queueIndex],
+    () => markCurrentPersonalizedStreamTrackPlayed(),
+    { flush: 'sync' }
+  )
+
+  watch(
     [() => currentTrack.value?.id, isPlaying],
     () => {
       const track = currentTrack.value
@@ -3832,23 +3871,97 @@ function shuffleArray<T>(arr: T[]): T[] {
   return a
 }
 
-function applyPlayMode(): void {
+function getPersonalizedStreamEntryId(track: Track | null): string | null {
+  if (!track) return null
+  if (track.queueEntryId) return track.queueEntryId
+  const queued = queue.value[queueIndex.value]
+  if (queued?.id === track.id && queued.queueEntryId) return queued.queueEntryId
+  return queue.value.find((candidate) => candidate.id === track.id)?.queueEntryId ?? null
+}
+
+function refreshPersonalizedStreamRemaining(): void {
+  if (!personalizedStreamSession.value) {
+    personalizedStreamRemaining.value = 0
+    return
+  }
+  let remaining = 0
+  for (const entryId of personalizedStreamEntryIds) {
+    if (!personalizedStreamPlayedEntryIds.has(entryId)) remaining += 1
+  }
+  personalizedStreamRemaining.value = remaining
+}
+
+function markCurrentPersonalizedStreamTrackPlayed(): void {
+  if (!personalizedStreamSession.value) return
+  const entryId = getPersonalizedStreamEntryId(currentTrack.value)
+  if (!entryId || !personalizedStreamEntryIds.has(entryId)) return
+  personalizedStreamPlayedEntryIds.add(entryId)
+  refreshPersonalizedStreamRemaining()
+}
+
+function endPersonalizedStream(): void {
+  personalizedStreamSession.value = null
+  personalizedStreamEntryIds.clear()
+  personalizedStreamPlayedEntryIds.clear()
+  personalizedStreamRemaining.value = 0
+}
+
+function isPersonalizedStreamTrack(track: Track): boolean {
+  if (!personalizedStreamSession.value) return false
+  if (track.queueEntryId) return personalizedStreamEntryIds.has(track.queueEntryId)
+  return queue.value.some(
+    (candidate) =>
+      candidate.id === track.id &&
+      !!candidate.queueEntryId &&
+      personalizedStreamEntryIds.has(candidate.queueEntryId)
+  )
+}
+
+function startPersonalizedStream(key: PersonalizedStreamKey): PersonalizedStreamSession {
+  personalizedStreamEntryIds.clear()
+  personalizedStreamPlayedEntryIds.clear()
+  for (const track of queue.value) {
+    if (track.queueEntryId) personalizedStreamEntryIds.add(track.queueEntryId)
+  }
+  const session = { id: ++personalizedStreamSessionSequence, key }
+  personalizedStreamSession.value = session
+  markCurrentPersonalizedStreamTrackPlayed()
+  refreshPersonalizedStreamRemaining()
+  return session
+}
+
+function isPersonalizedStreamSessionCurrent(session: PersonalizedStreamSession): boolean {
+  const active = personalizedStreamSession.value
+  return active?.id === session.id && active.key === session.key
+}
+
+function applyPendingRendererPlayModeAtBoundary(): void {
+  if (!rendererPlayModeBoundaryPending) return
+  rendererPlayModeBoundaryPending = false
   const current = currentTrack.value
   if (!current || originalQueue.value.length === 0) return
 
   if (playMode.value === 'shuffle') {
-    const shuffled = shuffleArray(originalQueue.value)
-    queue.value = shuffled
-    queueIndex.value = shuffled.findIndex((t) => t.id === current.id)
-    if (queueIndex.value === -1) queueIndex.value = 0
-  } else {
-    queue.value = [...originalQueue.value]
-    queueIndex.value = queue.value.findIndex((t) => t.id === current.id)
-    if (queueIndex.value === -1) queueIndex.value = 0
+    const queueEntryIndex = current.queueEntryId
+      ? originalQueue.value.findIndex((track) => track.queueEntryId === current.queueEntryId)
+      : -1
+    const currentOriginalIndex =
+      queueEntryIndex >= 0
+        ? queueEntryIndex
+        : originalQueue.value.findIndex((track) => track.id === current.id)
+    const remaining = originalQueue.value.filter((_, index) => index !== currentOriginalIndex)
+    queue.value = [current, ...shuffleArray(remaining)]
+    queueIndex.value = 0
+    return
   }
+
+  queue.value = [...originalQueue.value]
+  queueIndex.value = queue.value.findIndex((track) => track.id === current.id)
+  if (queueIndex.value === -1) queueIndex.value = 0
 }
 
 function commitQueueEdit(nextQueue: readonly Track[], nextIndex: number): void {
+  endPersonalizedStream()
   const snapshots = toPlaybackQueueSnapshots(nextQueue)
   queue.value = snapshots
   originalQueue.value = [...snapshots]
@@ -3863,6 +3976,43 @@ function commitQueueEdit(nextQueue: readonly Track[], nextIndex: number): void {
 function enqueueTrack(track: Track): void {
   const next = [...queue.value, track]
   commitQueueEdit(next, queueIndex.value)
+}
+
+function appendQueueTracks(tracks: readonly Track[]): void {
+  if (tracks.length === 0) return
+  endPersonalizedStream()
+  const additions = toPlaybackQueueSnapshots(tracks)
+  originalQueue.value = [...originalQueue.value, ...additions]
+  queue.value = [
+    ...queue.value,
+    ...(playMode.value === 'shuffle' ? shuffleArray(additions) : additions)
+  ]
+  persistPlaybackSessionAfterQueueMutation()
+  void queueNativeQueueStateSync().catch((error) => {
+    setAudioEngineError(error instanceof Error ? error.message : String(error))
+  })
+}
+
+function appendPersonalizedStreamTracks(
+  session: PersonalizedStreamSession,
+  tracks: readonly Track[]
+): boolean {
+  if (tracks.length === 0 || !isPersonalizedStreamSessionCurrent(session)) return false
+  const additions = toPlaybackQueueSnapshots(tracks)
+  for (const track of additions) {
+    if (track.queueEntryId) personalizedStreamEntryIds.add(track.queueEntryId)
+  }
+  originalQueue.value = [...originalQueue.value, ...additions]
+  queue.value = [
+    ...queue.value,
+    ...(playMode.value === 'shuffle' ? shuffleArray(additions) : additions)
+  ]
+  refreshPersonalizedStreamRemaining()
+  persistPlaybackSessionAfterQueueMutation()
+  void queueNativeQueueStateSync().catch((error) => {
+    setAudioEngineError(error instanceof Error ? error.message : String(error))
+  })
+  return true
 }
 
 function playNextTrack(track: Track): void {
@@ -3922,14 +4072,17 @@ function cyclePlayMode(): void {
 }
 
 function setPlayModeInternal(mode: PlayMode, options: { persist?: boolean } = {}): void {
+  if (mode === playMode.value) return
   playMode.value = mode
-  applyPlayMode()
+  // Preserve the active track, position and queue identity. Renderer fallback
+  // applies the new ordering only when next/EOF reaches a track boundary.
+  rendererPlayModeBoundaryPending = true
   if (options.persist !== false) {
     void updateSettings({ playMode: mode }).catch((err) => {
       console.error('[音频引擎] 保存播放模式失败:', err)
     })
   }
-  void queueNativeQueueStateSync().catch((err) => {
+  void queueNativePlayModeSync(mode).catch((err) => {
     setAudioEngineError(err instanceof Error ? err.message : String(err))
     console.error('[音频引擎] 同步播放模式失败:', err)
   })
@@ -4201,6 +4354,8 @@ export function usePlayerStore(): {
   queue: Ref<Track[]>
   queueIndex: Ref<number>
   playMode: Ref<PlayMode>
+  personalizedStreamSession: Ref<PersonalizedStreamSession | null>
+  personalizedStreamRemaining: Ref<number>
   audioEngineReady: Ref<boolean>
   audioEngineError: Ref<string | null>
   audioEngineRecoveryNotice: Ref<AudioEngineRecoveryNotice | null>
@@ -4223,6 +4378,13 @@ export function usePlayerStore(): {
   cyclePlayMode: () => void
   setPlayMode: (mode: PlayMode) => void
   enqueueTrack: (track: Track) => void
+  appendQueueTracks: (tracks: readonly Track[]) => void
+  startPersonalizedStream: (key: PersonalizedStreamKey) => PersonalizedStreamSession
+  appendPersonalizedStreamTracks: (
+    session: PersonalizedStreamSession,
+    tracks: readonly Track[]
+  ) => boolean
+  endPersonalizedStream: () => void
   playNextTrack: (track: Track) => void
   removeQueueItem: (index: number) => void
   clearQueue: () => void
@@ -4282,6 +4444,7 @@ export function usePlayerStore(): {
   setupPlayerIntegrationSideEffects()
 
   function playTrack(track: Track, trackList?: Track[]): void {
+    if (trackList || !isPersonalizedStreamTrack(track)) endPersonalizedStream()
     if (trackList) {
       const snapshots = toPlaybackQueueSnapshots(trackList)
       originalQueue.value = snapshots
@@ -4301,6 +4464,7 @@ export function usePlayerStore(): {
   }
 
   function playTrackFromPosition(track: Track, positionSeconds: number, trackList?: Track[]): void {
+    if (trackList || !isPersonalizedStreamTrack(track)) endPersonalizedStream()
     if (trackList) {
       const snapshots = toPlaybackQueueSnapshots(trackList)
       originalQueue.value = snapshots
@@ -4615,6 +4779,8 @@ export function usePlayerStore(): {
     queue,
     queueIndex,
     playMode,
+    personalizedStreamSession,
+    personalizedStreamRemaining,
     audioEngineReady,
     audioEngineError,
     audioEngineRecoveryNotice,
@@ -4638,6 +4804,10 @@ export function usePlayerStore(): {
     cyclePlayMode,
     setPlayMode,
     enqueueTrack,
+    appendQueueTracks,
+    startPersonalizedStream,
+    appendPersonalizedStreamTracks,
+    endPersonalizedStream,
     playNextTrack,
     removeQueueItem,
     clearQueue,

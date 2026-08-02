@@ -22,10 +22,7 @@ function album(id) {
   }
 }
 
-async function activateProvider(
-  request,
-  settings = new Map([['cookie', 'MUSIC_U=test;']])
-) {
+async function activateProvider(request, settings = new Map([['cookie', 'MUSIC_U=test;']])) {
   let registeredProvider = null
   await ncmProvider.activate({
     twilight: {
@@ -66,6 +63,115 @@ async function activateProvider(
 function parseRequest(path) {
   return new URL(path, 'http://twilight.local')
 }
+
+test('personal FM requests a 30-track roaming batch', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    assert.equal(url.pathname, '/personal/fm/mode')
+    assert.equal(url.searchParams.get('mode'), 'DEFAULT')
+    assert.equal(url.searchParams.get('limit'), '30')
+    return { data: Array.from({ length: 30 }, (_, index) => song(index + 1)) }
+  })
+
+  try {
+    const tracks = await provider.fetchPersonalFm()
+    assert.equal(tracks.length, 30)
+    assert.deepEqual(
+      tracks.map((track) => track.ncmSongId),
+      Array.from({ length: 30 }, (_, index) => index + 1)
+    )
+    assert.equal(requests.length, 1)
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('personal FM returns fresh session tracks across repeated roaming requests', async () => {
+  let requestNumber = 0
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    if (url.pathname === '/personal/fm/mode') {
+      requestNumber += 1
+      const start = (requestNumber - 1) * 30 + 1
+      return { data: Array.from({ length: 30 }, (_, index) => song(start + index)) }
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    const first = await provider.fetchPersonalFm()
+    const second = await provider.fetchPersonalFm()
+    assert.equal(first.length, 30)
+    assert.equal(second.length, 30)
+    assert.deepEqual(
+      second.map((track) => track.ncmSongId),
+      Array.from({ length: 30 }, (_, index) => index + 31)
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('personal FM fills a short roaming response with deduplicated classic batches', async () => {
+  const requests = []
+  let classicBatch = 0
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname === '/personal/fm/mode') {
+      return { data: [song(1), song(2), song(3)] }
+    }
+    if (url.pathname === '/personal_fm') {
+      classicBatch += 1
+      const start = classicBatch * 3 + 1
+      return { data: [song(start - 1), song(start), song(start + 1)] }
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    const tracks = await provider.fetchPersonalFm()
+    assert.equal(tracks.length, 30)
+    assert.deepEqual(
+      tracks.map((track) => track.ncmSongId),
+      Array.from({ length: 30 }, (_, index) => index + 1)
+    )
+    assert.equal(
+      requests.filter((path) => parseRequest(path).pathname === '/personal_fm').length,
+      10
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('private radar resolves the personalized radar playlist instead of private-content entries', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    assert.equal(url.pathname, '/playlist/track/all')
+    assert.equal(url.searchParams.get('id'), '3136952023')
+    assert.equal(url.searchParams.get('offset'), '0')
+    return { songs: [song(101), song(102), song(103), song(104)] }
+  })
+
+  try {
+    const tracks = await provider.fetchPrivateContent()
+    assert.deepEqual(
+      tracks.map((track) => track.ncmSongId),
+      [101, 102, 103, 104]
+    )
+    assert.equal(
+      requests.some((path) => parseRequest(path).pathname === '/personalized/privatecontent'),
+      false
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
 
 test('playback quality falls back only through official lower compatible levels', async () => {
   const requests = []
@@ -548,7 +654,9 @@ test('fetchPlaylistTracks pages multiple track/all windows up to 5000', async ()
   try {
     const tracks = await provider.fetchPlaylistTracks(77, true)
     assert.equal(tracks.length, total)
-    const trackAll = requests.map(parseRequest).filter((url) => url.pathname === '/playlist/track/all')
+    const trackAll = requests
+      .map(parseRequest)
+      .filter((url) => url.pathname === '/playlist/track/all')
     assert.equal(trackAll.length, 3)
     assert.deepEqual(
       trackAll.map((url) => Number(url.searchParams.get('offset') || 0)),
@@ -695,7 +803,10 @@ test('liked tracks page loads only the requested window', async () => {
       playlistIds.slice(100, 200)
     )
     assert.deepEqual(detailIds, playlistIds.slice(100, 200))
-    assert.equal(requests.some((path) => parseRequest(path).pathname === '/likelist'), false)
+    assert.equal(
+      requests.some((path) => parseRequest(path).pathname === '/likelist'),
+      false
+    )
   } finally {
     ncmProvider.deactivate()
   }

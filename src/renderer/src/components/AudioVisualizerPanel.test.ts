@@ -101,12 +101,18 @@ test('audio visualizer panel requests precomputed bars instead of posting full s
   assert.doesNotMatch(panel, /data: spectrum/)
 })
 
-test('audio visualizer panel keeps fullscreen spectrum responsive while posting bars only', () => {
+test('audio visualizer panel self-schedules sampling without timer backlog', () => {
   const panel = readFileSync(new URL('./AudioVisualizerPanel.vue', import.meta.url), 'utf8')
 
   assert.match(panel, /const VISUALIZER_ANALYSIS_POINTS = 4096/)
   assert.match(panel, /spectrumPoints: VISUALIZER_ANALYSIS_POINTS/)
-  assert.match(panel, /const VISUALIZER_POLL_INTERVAL_MS = 33/)
+  assert.match(panel, /const VISUALIZER_POLL_INTERVAL_MS = 50/)
+  assert.match(panel, /function scheduleVisualizationFrame\(delayMs = 0\)/)
+  assert.match(panel, /visualizationTimer = window\.setTimeout\(async \(\) => \{/)
+  assert.match(panel, /await pollVisualizationFrame\(\)/)
+  assert.match(panel, /scheduleVisualizationFrame\(VISUALIZER_POLL_INTERVAL_MS\)/)
+  assert.match(panel, /window\.clearTimeout\(visualizationTimer\)/)
+  assert.doesNotMatch(panel, /window\.setInterval\(/)
   assert.match(panel, /visualizerBarCount: VISUALIZER_BAR_COUNT/)
   assert.doesNotMatch(panel, /data: spectrum/)
 })
@@ -126,7 +132,7 @@ test('audio visualizer damps incoming samples without global spectrum pumping', 
   assert.doesNotMatch(visualizer, /adaptiveDisplayGain/)
   assert.doesNotMatch(visualizer, /visualizerDisplayLevel\(sourceLevel\) \* loudnessScale \* 255/)
   assert.doesNotMatch(visualizer, /const targetLoudnessScale = spectrumLoudnessScale\(\)/)
-  assert.match(panel, /const VISUALIZER_POLL_INTERVAL_MS = 33/)
+  assert.match(panel, /const VISUALIZER_POLL_INTERVAL_MS = 50/)
 })
 
 test('audio visualizer fixed curve keeps headroom while strong peaks can touch the zero line', () => {

@@ -75,6 +75,15 @@ struct AsioOpenResult {
   long driverVersion = 0;
 };
 
+struct AsioHostDiagnostics {
+  std::string processArchitecture;
+  bool buildEnabled = false;
+  bool environmentDisabled = false;
+  int registeredDriverCount32 = 0;
+  int registeredDriverCount64 = 0;
+  int loadableDriverCount64 = 0;
+};
+
 using AsioBufferSwitchCallback = std::function<void(long bufferIndex)>;
 using AsioEventCallback = std::function<void(AsioHostEvent event, const std::string& message)>;
 
@@ -83,6 +92,7 @@ class IAsioHost {
   virtual ~IAsioHost() = default;
 
   virtual std::vector<AsioDeviceInfo> enumerateDevices() = 0;
+  virtual AsioHostDiagnostics diagnostics() const = 0;
   virtual bool open(const AsioOpenConfig& config, AsioOpenResult* result, std::string* error) = 0;
   virtual bool createBuffers(AsioBufferSwitchCallback bufferSwitch, AsioEventCallback eventCallback, std::string* error) = 0;
   virtual bool start(std::string* error) = 0;

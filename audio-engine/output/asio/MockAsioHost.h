@@ -50,6 +50,7 @@ class MockAsioHost final : public IAsioHost {
   bool started = false;
 
   std::vector<AsioDeviceInfo> enumerateDevices() override;
+  AsioHostDiagnostics diagnostics() const override;
   bool open(const AsioOpenConfig& config, AsioOpenResult* result, std::string* error) override;
   bool createBuffers(AsioBufferSwitchCallback bufferSwitch, AsioEventCallback eventCallback, std::string* error) override;
   bool start(std::string* error) override;

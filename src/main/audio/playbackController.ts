@@ -602,7 +602,7 @@ async loadQueue(items: AudioEngineQueueItem[], startIndex = 0): Promise<void> {
   this.invalidateUpcomingTrackCache()
   this.tryNative('加载队列', (native) => {
     native.LoadQueue?.(nextQueueJson, nextQueueIndex)
-    native.SetPlayMode?.(this.playbackInfo.playMode === 'repeat' ? 'repeat' : 'sequential')
+    native.SetPlayMode?.(this.nativePlayMode(this.playbackInfo.playMode))
   })
   this.emit('queue-change', this.queue)
 }
@@ -629,9 +629,12 @@ async next(): Promise<void> {
     if (
       nativeInfo &&
       nativeInfo.state === 'playing' &&
-      nativeInfo.source === targetSource &&
       nativeInfo.queueIndex >= 0 &&
-      nativeInfo.queueIndex < this.queue.length
+      nativeInfo.queueIndex < this.queue.length &&
+      nativeInfo.source ===
+        (this.playbackInfo.playMode === 'shuffle'
+          ? this.queue[nativeInfo.queueIndex]?.source
+          : targetSource)
     ) {
       nextIndex = nativeInfo.queueIndex
       this.pendingNativeSource = null
@@ -668,9 +671,12 @@ async previous(): Promise<void> {
     if (
       nativeInfo &&
       nativeInfo.state === 'playing' &&
-      nativeInfo.source === targetSource &&
       nativeInfo.queueIndex >= 0 &&
-      nativeInfo.queueIndex < this.queue.length
+      nativeInfo.queueIndex < this.queue.length &&
+      nativeInfo.source ===
+        (this.playbackInfo.playMode === 'shuffle'
+          ? this.queue[nativeInfo.queueIndex]?.source
+          : targetSource)
     ) {
       nextIndex = nativeInfo.queueIndex
       this.pendingNativeSource = null
@@ -687,15 +693,17 @@ async previous(): Promise<void> {
 
 
 
+private nativePlayMode(mode: PlayMode): 'sequential' | 'repeat' | 'shuffle' {
+  return mode === 'repeat' || mode === 'shuffle' ? mode : 'sequential'
+}
+
 async setPlayMode(mode: PlayMode): Promise<void> {
   if (mode === this.playbackInfo.playMode) return
   this.playbackInfo.playMode = mode
   this.invalidateUpcomingTrackCache()
-  // The native ABI only exposes sequential/repeat. Renderer orchestrates
-  // list-loop and shuffle at queue boundaries while native remains sequential.
-  this.tryNative('切换播放模式', (native) =>
-    native.SetPlayMode?.(mode === 'repeat' ? 'repeat' : 'sequential')
-  )
+  // Native QueueManager anchors the current queue item while rebuilding shuffle
+  // order, so the new policy affects only the next manual/EOF advancement.
+  this.tryNative('切换播放模式', (native) => native.SetPlayMode?.(this.nativePlayMode(mode)))
   this.publishPlaybackInfo()
 }
 
