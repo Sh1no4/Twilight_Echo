@@ -83,6 +83,8 @@ void writeDiagnosticsJson(std::ostringstream& json, const OutputInfo::Diagnostic
        << "\"transportSampleRate\":" << diagnostics.transportSampleRate << ","
        << "\"typedRawPath\":" << (diagnostics.typedRawPath ? "true" : "false") << ","
        << "\"processingBypassed\":" << (diagnostics.processingBypassed ? "true" : "false") << ","
+       << "\"nativeDsdNegotiation\":\"" << json_utils::escape(diagnostics.nativeDsdNegotiation) << "\","
+       << "\"dopRuntimeEvidence\":\"" << json_utils::escape(diagnostics.dopRuntimeEvidence) << "\","
        << "\"firstBufferSummary\":\"" << json_utils::escape(diagnostics.firstBufferSummary) << "\","
        << "\"processArchitecture\":\"" << json_utils::escape(diagnostics.processArchitecture) << "\","
        << "\"asioBuildEnabled\":" << (diagnostics.asioBuildEnabled ? "true" : "false") << ","

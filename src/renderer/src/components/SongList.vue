@@ -82,6 +82,7 @@ const {
   applyLocalTagWrite,
   clearTrackMetadataMatch,
   applyTrackMetadataMatch,
+  refreshLibraryIndex,
   addToPlaylist,
   removeFromPlaylist,
   addTracksToPlaylist,
@@ -412,8 +413,12 @@ const tagManagerTracks = ref<Track[]>([])
 const tagManagerFocusRestoreTarget = ref<HTMLElement | null>(null)
 const libraryMutationPending = ref(false)
 const exclusionRestorePending = ref(false)
+const searchOnlineSongs = ref(false)
 
-const shouldUseUnifiedSearch = computed(() => props.category === 'allSongs' && !props.filter)
+const showOnlineSearchToggle = computed(() => props.category === 'allSongs' && !props.filter)
+const shouldUseUnifiedSearch = computed(
+  () => showOnlineSearchToggle.value && searchOnlineSongs.value
+)
 
 const libraryRepairStatusText = computed(() => {
   if (props.category !== 'allSongs' || props.filter) return ''
@@ -428,7 +433,7 @@ const libraryRepairStatusText = computed(() => {
 })
 
 watch(
-  [debouncedSearchQuery, () => props.category, () => props.filter],
+  [debouncedSearchQuery, () => props.category, () => props.filter, searchOnlineSongs],
   ([query]) => {
     const q = query.trim()
     if (!q || !shouldUseUnifiedSearch.value) {
@@ -542,9 +547,20 @@ const baseCollectionItems = computed<GridItem[]>(() => {
   if (props.category === 'albums') return albums.value
   return []
 })
-const collectionGenreOptions = computed(() => availableCollectionGenres(baseCollectionItems.value))
+const collectionGenreOptions = computed(() =>
+  availableCollectionGenres(baseCollectionItems.value, settingsStore.settings.value.genreSeparators)
+)
 const collectionGridItems = computed(() =>
-  applyLibraryCollectionView(baseCollectionItems.value, collectionViewState.value)
+  applyLibraryCollectionView(
+    baseCollectionItems.value,
+    collectionViewState.value,
+    settingsStore.settings.value.genreSeparators
+  )
+)
+
+watch(
+  () => settingsStore.settings.value.genreSeparators,
+  () => refreshLibraryIndex()
 )
 const currentGridItems = computed<GridItem[]>(() => {
   if (isCollectionGrid.value) return collectionGridItems.value
@@ -557,8 +573,8 @@ const currentGridItems = computed<GridItem[]>(() => {
 function onRowDblClick(track: Track, event: MouseEvent): void {
   const target = event.target as HTMLElement
   if (target.closest('.btn-remove') || target.closest('.track-select-checkbox')) return
+  if (multiSelect.shouldSuppressRowDoubleClick(event)) return
   if (settingsStore.settings.value.trackActivationMode !== 'doubleClick') return
-  clearSelection()
   playTrack(track, displayTracks.value)
 }
 
@@ -813,15 +829,8 @@ const multiSelect = useTrackMultiSelect({
   enabled: showTable
 })
 
-const {
-  selectedCount,
-  hasSelection,
-  isSelected,
-  clearSelection,
-  selectOnly,
-  toggle,
-  getSelectedTracks
-} = multiSelect
+const { selectedCount, hasSelection, isSelected, clearSelection, toggle, getSelectedTracks } =
+  multiSelect
 
 const {
   playlistImportInput,
@@ -866,10 +875,7 @@ function onRowClick(track: Track, indexInVisible: number, event: MouseEvent): vo
   const index = absoluteIndex(indexInVisible)
   const result = multiSelect.onRowClick(track, index, event)
   if (result !== 'play') return
-  if (settingsStore.settings.value.trackActivationMode === 'doubleClick') {
-    selectOnly(track.id, index)
-    return
-  }
+  if (settingsStore.settings.value.trackActivationMode === 'doubleClick') return
   playTrack(track, displayTracks.value)
 }
 
@@ -1327,6 +1333,17 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
           <div v-else-if="category === 'playlists' && playlists.length === 0" class="empty-state">
             <p class="empty-text">暂无歌单</p>
             <p class="empty-hint">点击下方卡片创建你的第一个歌单</p>
+          </div>
+          <div v-else-if="category === 'folders' && folders.length === 0" class="empty-state">
+            <div class="empty-icon">
+              <ThemeIcon class="empty-library-icon" icon-slot="library.folder" />
+            </div>
+            <p class="empty-text">暂无可显示的文件夹</p>
+            <p class="empty-hint">请在设置的“媒体库管理”中添加音乐文件夹，然后执行完整重扫。</p>
+          </div>
+          <div v-else-if="gridTotalCount === 0" class="empty-state">
+            <p class="empty-text">没有符合搜索条件的内容</p>
+            <p class="empty-hint">请清除搜索内容后重试</p>
           </div>
           <div v-else class="collection-grid-layout" :class="{ 'has-az-index': isCollectionGrid }">
             <div class="card-grid">
@@ -1818,6 +1835,15 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   </div>
                 </div>
               </div>
+              <label
+                v-if="showOnlineSearchToggle"
+                class="online-search-toggle"
+                title="搜索网络歌曲"
+              >
+                <span>网络搜索</span>
+                <input v-model="searchOnlineSongs" type="checkbox" aria-label="搜索网络歌曲" />
+                <span class="online-search-toggle-track" aria-hidden="true"></span>
+              </label>
               <div class="search-box" :class="{ focused: searchInputFocused }">
                 <ThemeIcon class="search-icon" icon-slot="library.search" />
                 <input

@@ -39,6 +39,12 @@ test('first-use appearance defaults to blue accents and bilingual desktop lyrics
 
 test('settings chrome no longer dual-writes theme-owned CSS variables', () => {
   const source = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
+  const themeSource = readFileSync(new URL('./useThemeStore.ts', import.meta.url), 'utf8')
+  const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
+  const songListSource = readFileSync(
+    new URL('../components/song-list/SongList.css', import.meta.url),
+    'utf8'
+  )
 
   assert.match(source, /THEME_OWNED_INLINE_STYLE_VARS/)
   assert.match(source, /clearLegacyThemeOwnedInlineStyles/)
@@ -48,6 +54,15 @@ test('settings chrome no longer dual-writes theme-owned CSS variables', () => {
   assert.doesNotMatch(source, /setProperty\('--te-app-bg'/)
   assert.doesNotMatch(source, /function applyCardAppearance/)
   assert.doesNotMatch(source, /dataset\.theme = resolvedTheme/)
+  assert.match(themeSource, /function applyAppBackgroundVariables/)
+  assert.match(themeSource, /function syncThemeSettingsAppearance/)
+  assert.match(
+    themeSource,
+    /variables\['--te-app-bg-image'\] = toBackgroundImageValue\(globalBackground\)/
+  )
+  assert.match(themeSource, /applyAppBackgroundVariables\(tone, variables\)/)
+  assert.doesNotMatch(appSource, /body\s*\{\s*background:\s*transparent/)
+  assert.match(songListSource, /background-image:[\s\S]*var\(--te-local-bg-image\)/)
 })
 
 test('background image import accepts ArrayBuffer views from Electron IPC', () => {
@@ -248,6 +263,42 @@ test('track activation mode is persisted across layers and applied to all track 
     streamingPageSource,
     /function onStreamingTrackContextMenu\([\s\S]*?streamingContextMenuTrack\.value = track/
   )
+})
+
+test('genre separators persist across settings layers and refresh derived library groups', () => {
+  const mainTypes = readFileSync(new URL('../../../main/core/types.ts', import.meta.url), 'utf8')
+  const mainSettings = readFileSync(
+    new URL('../../../main/core/settings.ts', import.meta.url),
+    'utf8'
+  )
+  const preloadTypes = readFileSync(new URL('../../../preload/types.ts', import.meta.url), 'utf8')
+  const preloadDts = readFileSync(new URL('../../../preload/index.d.ts', import.meta.url), 'utf8')
+  const rendererTypes = readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8')
+  const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
+  const settingsPageSource = readSettingsPageSources()
+  const songListSource = readFileSync(
+    new URL('../components/SongList.vue', import.meta.url),
+    'utf8'
+  )
+
+  for (const source of [mainTypes, preloadTypes, preloadDts, rendererTypes]) {
+    assert.match(source, /genreSeparators: string/)
+  }
+  assert.match(mainSettings, /genreSeparators: DEFAULT_GENRE_SEPARATORS/)
+  assert.match(
+    mainSettings,
+    /genreSeparators: normalizeGenreSeparators\(settings\.genreSeparators\)/
+  )
+  assert.match(storeSource, /genreSeparators: DEFAULT_GENRE_SEPARATORS/)
+  assert.match(
+    settingsPageSource,
+    /async function setGenreSeparators\(event: Event\): Promise<void>/
+  )
+  assert.match(settingsPageSource, /updateSettings\(\{ genreSeparators: value \}\)/)
+  assert.match(settingsPageSource, /aria-label="流派分隔符"/)
+  assert.match(settingsPageSource, /@change="setGenreSeparators"/)
+  assert.match(songListSource, /settingsStore\.settings\.value\.genreSeparators/)
+  assert.match(songListSource, /\(\) => refreshLibraryIndex\(\)/)
 })
 
 test('audio settings expose advanced replaygain, fft, crossfeed, and real loudnorm option', () => {

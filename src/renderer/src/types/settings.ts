@@ -3,9 +3,17 @@ import type { DspScene } from '../../../shared/dspGraph.ts'
 import type { SleepTimerSettings } from '../../../shared/sleepTimer.ts'
 import type { ThemeSelection, ThemeWindowInheritance } from '../../../shared/theme.ts'
 import type { MotionPreference } from '../../../shared/motion.ts'
+import type { LyricsAppearanceSettings } from '../../../shared/lyricsAppearance.ts'
 
 export type { MiniPlayerSettings } from '../../../shared/miniPlayer.ts'
 export type { MotionPreference } from '../../../shared/motion.ts'
+export type {
+  LyricsAppearanceAlign,
+  LyricsAppearanceColorMode,
+  LyricsAppearanceFontFamily,
+  LyricsAppearanceSettings,
+  LyricsFocusLineCount
+} from '../../../shared/lyricsAppearance.ts'
 
 export type AppTheme = 'system' | 'pureWhite' | 'dark'
 export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
@@ -160,6 +168,7 @@ export interface EqualizerBand {
 
 export interface AudioProcessingSettings {
   dspEnabled: boolean
+  directMode: boolean
   clipGuard: boolean
   fftEnabled: boolean
   fftResolution: number
@@ -298,8 +307,9 @@ export interface AppSettings {
   windowTransparency: boolean
   windowTransparencyEffect: WindowTransparencyEffectSettings
   useCoverTheme: boolean
-  lyricFontSize: number
+  lyricsAppearance: LyricsAppearanceSettings
   libraryFolders: string[]
+  genreSeparators: string
   watchLibrary: boolean
   /** When true, empty local/provider lyrics may fall back to LRCLIB online search. */
   onlineLyricsFallback: boolean
@@ -313,8 +323,6 @@ export interface AppSettings {
   appBackground: AppBackgroundSettings
   cardAppearance: CardAppearanceSettings
   nowPlayingBackground: NowPlayingBackground
-  lyricAlign: LyricAlign
-  lyricDimOpacity: number
   playbackResumeMode: PlaybackResumeMode
   sleepTimer: SleepTimerSettings
   ncmPlaybackQuality: NcmPlaybackQuality

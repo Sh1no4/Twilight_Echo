@@ -35,6 +35,7 @@ import {
 } from '../utils/musicMetadataMatching.ts'
 import { useSettingsStore } from './useSettingsStore.ts'
 import { notifyLocalTracksUnavailable } from '../utils/localTrackRemovalPolicy.ts'
+import { splitGenreValues } from '../../../shared/genreSeparators.ts'
 import { PlaylistPersistence, type PlaylistPersistenceStatus } from './playlistPersistence.ts'
 import {
   exportPlaylistDocument,
@@ -325,6 +326,7 @@ export function useMusicStore(): {
 
   function rebuildDerivedCollections(): void {
     rebuildTrackLookupIndexes()
+    const { settings } = useSettingsStore()
     const artistMap = new Map<string, DerivedTrackGroup>()
     const albumMap = new Map<string, DerivedTrackGroup>()
     const genreMap = new Map<string, DerivedTrackGroup>()
@@ -350,8 +352,12 @@ export function useMusicStore(): {
 
       addToGroup(albumMap, getAlbumIdentity(track), track, track.albumArtist || track.artist)
 
-      const genreName = track.genre?.trim() || '未知流派'
-      addToGroup(genreMap, genreName, track)
+      const genreNames = splitGenreValues(track.genre, settings.value.genreSeparators)
+      if (genreNames.length === 0) {
+        addToGroup(genreMap, '未知流派', track)
+      } else {
+        for (const genreName of genreNames) addToGroup(genreMap, genreName, track)
+      }
     }
 
     artists.value = Array.from(artistMap.entries())
@@ -387,7 +393,17 @@ export function useMusicStore(): {
       }))
       .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
 
-    const folderGroups = scannedFolders.value.map((folderPath) => {
+    const configuredFolderPaths = deduplicateLibraryPaths([
+      ...scannedFolders.value,
+      ...settings.value.libraryFolders
+    ])
+    const folderPaths =
+      configuredFolderPaths.length > 0
+        ? configuredFolderPaths
+        : deduplicateLibraryPaths(
+            tracks.value.map((track) => track.dir?.trim() || parentDirectoryOf(track.filePath))
+          )
+    const folderGroups = folderPaths.map((folderPath) => {
       const normalized = normalizeLibraryPath(folderPath)
       return {
         folderPath,
@@ -2121,6 +2137,16 @@ function parentDirectoryOf(filePath: string): string {
   const separator = normalized.lastIndexOf('\\')
   if (separator <= 0) return ''
   return normalized.slice(0, separator)
+}
+
+function deduplicateLibraryPaths(paths: readonly string[]): string[] {
+  const values = new Map<string, string>()
+  for (const path of paths) {
+    const trimmed = path.trim()
+    const normalized = normalizeLibraryPath(trimmed)
+    if (trimmed && normalized && !values.has(normalized)) values.set(normalized, trimmed)
+  }
+  return [...values.values()]
 }
 
 function normalizeLibraryPath(path: string): string {

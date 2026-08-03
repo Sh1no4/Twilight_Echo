@@ -435,6 +435,7 @@
       height: 100%;
       object-fit: cover;
       display: block;
+      visibility: hidden;
     }
 
     .album-art-box img:not([src]),
@@ -1339,7 +1340,7 @@
           <div class="bracket bl"></div>
           <div class="bracket br"></div>
           <!-- album cover is fed by the host app via postMessage -->
-          <img id="album-cover-img" src="" alt="Album cover">
+          <img id="album-cover-img" src="" alt="">
           <div class="album-cover-motion" aria-hidden="true"></div>
           <div class="album-cover-badge" aria-hidden="true"></div>
         </div>
@@ -2194,6 +2195,38 @@
     // --- HOST MESSAGE BRIDGE ---
     // Receives spectrum data, track metadata, cover URL, and playback state
     // from the parent Vue component (AudioVisualizerPanel.vue).
+    let albumCoverRequestId = 0;
+
+    function updateAlbumCover(url) {
+      const mountedImage = document.getElementById('album-cover-img');
+      if (!mountedImage) return;
+
+      const requestId = ++albumCoverRequestId;
+      mountedImage.style.visibility = 'hidden';
+      mountedImage.removeAttribute('src');
+      if (typeof url !== 'string' || url.trim().length === 0) return;
+
+      const candidate = new Image();
+      candidate.id = 'album-cover-img';
+      candidate.alt = '';
+      candidate.style.visibility = 'hidden';
+      candidate.onload = () => {
+        if (requestId !== albumCoverRequestId) return;
+        const currentImage = document.getElementById('album-cover-img');
+        if (!currentImage) return;
+        currentImage.replaceWith(candidate);
+        candidate.style.visibility = 'visible';
+        candidate.onload = null;
+        candidate.onerror = null;
+      };
+      candidate.onerror = () => {
+        if (requestId !== albumCoverRequestId) return;
+        mountedImage.style.visibility = 'hidden';
+        mountedImage.removeAttribute('src');
+      };
+      candidate.src = url.trim();
+    }
+
     window.addEventListener('message', (event) => {
       const msg = event.data;
       if (!msg || typeof msg.kind !== 'string') return;
@@ -2269,16 +2302,7 @@
           break;
         }
         case 'cover': {
-          const albumCoverImg = document.getElementById('album-cover-img');
-          if (albumCoverImg) {
-            if (typeof msg.url === 'string' && msg.url.length > 0) {
-              albumCoverImg.src = msg.url;
-              albumCoverImg.style.visibility = 'visible';
-            } else {
-              albumCoverImg.removeAttribute('src');
-              albumCoverImg.style.visibility = 'hidden';
-            }
-          }
+          updateAlbumCover(msg.url);
           break;
         }
         case 'playback': {

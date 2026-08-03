@@ -2615,6 +2615,73 @@ html[data-te-motion='full'] .swatch.active {
   text-align: center;
 }
 
+.sponsor-list-entries {
+  display: grid;
+  gap: 10px;
+}
+
+.sponsor-list-entry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 12px;
+  background: var(--te-subtle-bg);
+}
+
+.sponsor-list-avatar {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--te-primary-500), var(--te-accent-cyan));
+  color: var(--te-on-primary, white);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.sponsor-list-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sponsor-list-entry-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.sponsor-list-entry-copy strong {
+  overflow: hidden;
+  color: var(--te-settings-text);
+  font-size: 14px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sponsor-list-entry-copy small {
+  overflow: hidden;
+  color: var(--te-settings-text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sponsor-list-entry-heart {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--te-warning-500);
+  font-size: 13px;
+}
+
 .sponsor-list-empty > span {
   width: 58px;
   height: 58px;
@@ -2687,6 +2754,19 @@ html[data-theme='dark'] .sponsor-dialog .sponsor-dialog-close,
 html[data-theme='dark'] .sponsor-dialog .sponsor-qr-card {
   border-color: var(--te-card-border);
   background: var(--te-subtle-bg);
+}
+
+html[data-theme='dark'] .sponsor-dialog .sponsor-list-entry {
+  border-color: var(--te-card-border);
+  background: var(--te-subtle-bg);
+}
+
+html[data-theme='dark'] .sponsor-dialog .sponsor-list-entry-copy strong {
+  color: var(--te-settings-text);
+}
+
+html[data-theme='dark'] .sponsor-dialog .sponsor-list-entry-copy small {
+  color: var(--te-settings-text-muted);
 }
 
 html[data-theme='dark'] .sponsor-dialog .sponsor-dialog-notice {

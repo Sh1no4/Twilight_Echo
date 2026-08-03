@@ -9,6 +9,10 @@ import type {
   LyricTrackOverride
 } from '../../../../shared/lyricsManagement.ts'
 import type { LyricSource } from '../../types/music'
+import {
+  syncLegacyLyricsAppearance,
+  type LyricsAppearanceSettings
+} from '../../../../shared/lyricsAppearance.ts'
 
 type LayerKey = 'original' | 'translation' | 'romanization'
 type LayerSelectionKey = 'originalSelection' | 'translationSelection' | 'romanizationSelection'
@@ -41,6 +45,12 @@ const { currentTrack, lyricsLoadState } = playbackStore
 const { refreshCurrentLyrics } = playbackStore
 const lyricsManagement = useLyricsManagement()
 const { settings, updateSettings } = useSettingsStore()
+const lyricFocusLineCounts = [
+  { value: 'all', label: '全部' },
+  { value: 1, label: '1 行' },
+  { value: 3, label: '3 行' },
+  { value: 5, label: '5 行' }
+] as const
 
 const lyricSaving = ref(false)
 const lyricImporting = ref(false)
@@ -392,16 +402,27 @@ async function toggleLyricVisibility(
   }
 }
 
-function setLyricAlign(align: 'center' | 'left'): void {
-  void updateSettings({ lyricAlign: align })
-}
-
-function updateLyricFontSize(event: Event): void {
-  void updateSettings({ lyricFontSize: Number((event.target as HTMLInputElement).value) })
-}
-
-function updateLyricDimOpacity(event: Event): void {
-  void updateSettings({ lyricDimOpacity: Number((event.target as HTMLInputElement).value) })
+function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
+  key: K,
+  value: LyricsAppearanceSettings[K]
+): void {
+  const legacyKeys = new Set<keyof LyricsAppearanceSettings>([
+    'fontFamily',
+    'fontSize',
+    'fontWeight',
+    'lineHeight',
+    'align',
+    'colorMode',
+    'textColor',
+    'activeColor',
+    'karaokeColor'
+  ])
+  const lyricsAppearance = legacyKeys.has(key)
+    ? syncLegacyLyricsAppearance(settings.value.lyricsAppearance, {
+        [key]: value
+      } as Partial<LyricsAppearanceSettings>)
+    : { ...settings.value.lyricsAppearance, [key]: value }
+  void updateSettings({ lyricsAppearance })
 }
 </script>
 
@@ -409,7 +430,7 @@ function updateLyricDimOpacity(event: Event): void {
   <section class="lyric-manager lyric-manager--panel" aria-label="歌词工作台">
     <header class="lyric-manager-heading">
       <div>
-        <h2>自定义歌词</h2>
+        <h2>歌词管理</h2>
         <p>
           {{ currentTrack ? `${currentTrack.title} · ${currentTrack.artist}` : '当前没有播放歌曲' }}
         </p>
@@ -427,247 +448,350 @@ function updateLyricDimOpacity(event: Event): void {
       </span>
     </header>
 
-    <div class="lyric-source-grid">
-      <label class="lyric-field">
-        <span>自动解析</span>
-        <select v-model="draftSource" :disabled="!currentTrack">
-          <option value="auto">自动</option>
-          <option value="local">本地 LRC</option>
-          <option value="provider">Provider</option>
-          <option value="manual">仅手写</option>
-        </select>
-      </label>
-      <label class="lyric-field">
-        <span>全局偏移 (ms)</span>
-        <input
-          type="number"
-          min="-120000"
-          max="120000"
-          step="50"
-          :value="lyricVisibility.globalOffsetMs"
-          :disabled="!currentTrack"
-          @change="updateGlobalLyricOffset"
-        />
-      </label>
-      <label class="lyric-field">
-        <span>本曲偏移 (ms)</span>
-        <input
-          v-model.number="draftTrackOffsetMs"
-          type="number"
-          min="-120000"
-          max="120000"
-          step="50"
-          :disabled="!currentTrack"
-        />
-      </label>
-    </div>
-
-    <div class="lyric-layer-grid">
-      <label class="lyric-layer-source">
-        <span>原文</span>
-        <select v-model="draftOriginalSelection" :disabled="!currentTrack">
-          <option value="automatic">
-            {{ automaticLayerLabel('automatic', originalAutomaticSource) }}
-          </option>
-          <option value="local">本地 LRC</option>
-          <option value="provider">Provider</option>
-          <option value="manual">手写内容</option>
-        </select>
-      </label>
-      <label class="lyric-layer-source">
-        <span>翻译</span>
-        <select v-model="draftTranslationSelection" :disabled="!currentTrack">
-          <option value="automatic">
-            {{ automaticLayerLabel('automatic', translationAutomaticSource) }}
-          </option>
-          <option value="local">本地</option>
-          <option value="provider">Provider</option>
-          <option value="manual">手写内容</option>
-        </select>
-      </label>
-      <label class="lyric-layer-source">
-        <span>音译</span>
-        <select v-model="draftRomanizationSelection" :disabled="!currentTrack">
-          <option value="automatic">
-            {{ automaticLayerLabel('automatic', romanizationAutomaticSource) }}
-          </option>
-          <option value="local">本地</option>
-          <option value="provider">Provider</option>
-          <option value="manual">手写内容</option>
-        </select>
-      </label>
-    </div>
-
-    <div class="lyric-manager-toggles" aria-label="歌词显示图层">
-      <button
-        type="button"
-        :aria-pressed="lyricVisibility.showOriginal"
-        :disabled="!currentTrack"
-        @click="toggleLyricVisibility('showOriginal')"
-      >
-        原文
-      </button>
-      <button
-        type="button"
-        :aria-pressed="lyricVisibility.showTranslation"
-        :disabled="!currentTrack"
-        @click="toggleLyricVisibility('showTranslation')"
-      >
-        翻译
-      </button>
-      <button
-        type="button"
-        :aria-pressed="lyricVisibility.showRomanization"
-        :disabled="!currentTrack"
-        @click="toggleLyricVisibility('showRomanization')"
-      >
-        音译
-      </button>
-      <span class="lyric-toggle-spacer"></span>
-      <button
-        type="button"
-        :disabled="!currentTrack || lyricImporting"
-        @click="importLyricsIntoDraft"
-      >
-        <i class="ph ph-file-arrow-up" aria-hidden="true"></i
-        >{{ lyricImporting ? '导入中…' : '导入 LRC' }}
-      </button>
-      <button
-        type="button"
-        :disabled="!currentTrack || lyricSearching"
-        @click="searchOnlineIntoDraft"
-      >
-        <i class="ph ph-magnifying-glass" aria-hidden="true"></i
-        >{{ lyricSearching ? '搜索中…' : '在线搜索' }}
-      </button>
-    </div>
-
-    <div v-if="onlineLyricCandidates.length" class="online-lyric-candidates">
-      <button
-        v-for="candidate in onlineLyricCandidates"
-        :key="`${candidate.source}-${candidate.id}`"
-        type="button"
-        class="online-lyric-candidate"
-        @click="applyOnlineCandidate(candidate)"
-      >
-        <strong>{{ candidate.title }} · {{ candidate.artist }}</strong>
-        <span
-          >{{ candidate.source }} · {{ formatDurationDelta(candidate.durationSeconds) }} ·
-          {{ candidate.score.toFixed(2) }}</span
-        >
-        <em>{{
-          (candidate.syncedLyrics || candidate.plainLyrics || '').split('\n')[0]?.slice(0, 90)
-        }}</em>
-      </button>
-    </div>
-
-    <label class="lyric-editor-label">
-      <span>原文手写内容</span>
-      <textarea
-        v-model="draftOriginal"
-        rows="4"
-        spellcheck="false"
-        :disabled="!currentTrack"
-        @input="useManualLayer('original')"
-      ></textarea>
-    </label>
-    <label class="lyric-editor-label">
-      <span>翻译手写内容</span>
-      <textarea
-        v-model="draftTranslation"
-        rows="3"
-        spellcheck="false"
-        :disabled="!currentTrack"
-        @input="useManualLayer('translation')"
-      ></textarea>
-    </label>
-    <label class="lyric-editor-label">
-      <span>音译手写内容</span>
-      <textarea
-        v-model="draftRomanization"
-        rows="3"
-        spellcheck="false"
-        :disabled="!currentTrack"
-        @input="useManualLayer('romanization')"
-      ></textarea>
-    </label>
-
     <section class="lyric-style-controls" aria-label="歌词样式">
-      <div class="lyric-style-heading">显示样式</div>
-      <label class="lyric-range-field">
-        <span
-          >字号 <strong>{{ settings.lyricFontSize }}px</strong></span
-        >
-        <input
-          type="range"
-          min="14"
-          max="28"
-          step="1"
-          :value="settings.lyricFontSize"
-          @change="updateLyricFontSize"
-        />
-      </label>
-      <label class="lyric-range-field">
-        <span
-          >弱化 <strong>{{ settings.lyricDimOpacity }}%</strong></span
-        >
-        <input
-          type="range"
-          min="10"
-          max="100"
-          step="5"
-          :value="settings.lyricDimOpacity"
-          @change="updateLyricDimOpacity"
-        />
-      </label>
-      <div class="lyric-align-control" role="group" aria-label="歌词对齐">
+      <div class="lyric-style-heading">
+        <strong>歌词样式</strong>
+        <span>主播放页快捷设置</span>
+      </div>
+      <div class="lyric-style-grid">
+        <label class="lyric-range-field">
+          <span
+            >字号 <strong>{{ settings.lyricsAppearance.fontSize }}px</strong></span
+          >
+          <input
+            type="range"
+            min="14"
+            max="32"
+            step="1"
+            :value="settings.lyricsAppearance.fontSize"
+            @change="
+              updateLyricsAppearance('fontSize', Number(($event.target as HTMLInputElement).value))
+            "
+          />
+        </label>
+        <label class="lyric-range-field">
+          <span
+            >行距 <strong>{{ settings.lyricsAppearance.lineHeight.toFixed(2) }}</strong></span
+          >
+          <input
+            type="range"
+            min="1.2"
+            max="2.6"
+            step="0.05"
+            :value="settings.lyricsAppearance.lineHeight"
+            @change="
+              updateLyricsAppearance(
+                'lineHeight',
+                Number(($event.target as HTMLInputElement).value)
+              )
+            "
+          />
+        </label>
+        <label class="lyric-range-field">
+          <span
+            >未播放暗度 <strong>{{ settings.lyricsAppearance.inactiveOpacity }}%</strong></span
+          >
+          <input
+            type="range"
+            min="10"
+            max="100"
+            step="5"
+            :value="settings.lyricsAppearance.inactiveOpacity"
+            @change="
+              updateLyricsAppearance(
+                'inactiveOpacity',
+                Number(($event.target as HTMLInputElement).value)
+              )
+            "
+          />
+        </label>
+        <label class="lyric-field lyric-weight-field">
+          <span>字重</span>
+          <select
+            :value="settings.lyricsAppearance.fontWeight"
+            aria-label="歌词字重"
+            @change="
+              updateLyricsAppearance(
+                'fontWeight',
+                Number(($event.target as HTMLSelectElement).value)
+              )
+            "
+          >
+            <option :value="400">标准</option>
+            <option :value="500">中等</option>
+            <option :value="600">半粗</option>
+            <option :value="700">粗体</option>
+          </select>
+        </label>
+        <div class="lyric-style-choice">
+          <span>对齐</span>
+          <div class="lyric-segment-control" role="group" aria-label="歌词对齐">
+            <button
+              type="button"
+              :aria-pressed="settings.lyricsAppearance.align === 'left'"
+              @click="updateLyricsAppearance('align', 'left')"
+            >
+              左对齐
+            </button>
+            <button
+              type="button"
+              :aria-pressed="settings.lyricsAppearance.align === 'center'"
+              @click="updateLyricsAppearance('align', 'center')"
+            >
+              居中
+            </button>
+          </div>
+        </div>
+        <div class="lyric-style-choice">
+          <span>聚焦行数</span>
+          <div class="lyric-segment-control" role="group" aria-label="歌词聚焦行数">
+            <button
+              v-for="option in lyricFocusLineCounts"
+              :key="option.value"
+              type="button"
+              :aria-pressed="settings.lyricsAppearance.focusLineCount === option.value"
+              @click="updateLyricsAppearance('focusLineCount', option.value)"
+            >
+              {{ option.label }}
+            </button>
+          </div>
+        </div>
         <button
           type="button"
-          :aria-pressed="settings.lyricAlign === 'center'"
-          @click="setLyricAlign('center')"
+          class="lyric-karaoke-toggle"
+          :aria-pressed="settings.lyricsAppearance.karaokeEnabled"
+          @click="
+            updateLyricsAppearance('karaokeEnabled', !settings.lyricsAppearance.karaokeEnabled)
+          "
         >
-          居中
-        </button>
-        <button
-          type="button"
-          :aria-pressed="settings.lyricAlign === 'left'"
-          @click="setLyricAlign('left')"
-        >
-          靠左
+          <i
+            :class="
+              settings.lyricsAppearance.karaokeEnabled
+                ? 'ph ph-highlighter-circle'
+                : 'ph ph-highlighter-circle-slash'
+            "
+            aria-hidden="true"
+          ></i>
+          逐字高亮
         </button>
       </div>
     </section>
 
-    <p v-if="draftTrackMismatch" class="lyric-manager-error">
-      未保存的草稿来自「{{ seededTrackTitle }}」，当前曲目已切换。可撤销草稿，或切回原曲目后保存。
-    </p>
-    <p v-if="lyricManagerError" class="lyric-manager-error">{{ lyricManagerError }}</p>
-    <p v-if="lyricManagerNotice" class="lyric-manager-notice">{{ lyricManagerNotice }}</p>
-    <div class="lyric-manager-actions">
-      <button type="button" :disabled="!currentTrack || lyricWriting" @click="saveDraftAsLrc">
-        <i class="ph ph-download-simple" aria-hidden="true"></i
-        >{{ lyricWriting ? '导出中…' : '导出 LRC' }}
-      </button>
-      <button type="button" :disabled="!currentTrack || !draftDirty" @click="discardDraft">
-        撤销草稿
-      </button>
-      <button
-        type="button"
-        :disabled="!currentTrack || lyricSaving"
-        @click="restoreAutomaticLyrics"
-      >
-        恢复自动
-      </button>
-      <button
-        type="button"
-        class="lyric-save-button"
-        :disabled="!currentTrack || lyricSaving || !draftDirty || draftTrackMismatch"
-        @click="saveLyricManager"
-      >
-        <i :class="lyricSaving ? 'pi pi-spin pi-spinner' : 'ph ph-check'" aria-hidden="true"></i>
-        {{ lyricSaving ? '保存中…' : '保存歌词' }}
-      </button>
-    </div>
+    <details class="lyric-editor-disclosure">
+      <summary>
+        <span class="lyric-disclosure-title">
+          <i class="ph ph-pencil-simple" aria-hidden="true"></i>
+          自定义歌词
+        </span>
+        <span class="lyric-disclosure-meta">
+          {{ draftDirty ? '有未保存更改' : currentTrack ? '已同步' : '暂无曲目' }}
+          <i class="ph ph-caret-down" aria-hidden="true"></i>
+        </span>
+      </summary>
+
+      <div class="lyric-editor-content">
+        <div class="lyric-source-grid">
+          <label class="lyric-field">
+            <span>自动解析</span>
+            <select v-model="draftSource" :disabled="!currentTrack">
+              <option value="auto">自动</option>
+              <option value="local">本地 LRC</option>
+              <option value="provider">Provider</option>
+              <option value="manual">仅手写</option>
+            </select>
+          </label>
+          <label class="lyric-field">
+            <span>全局偏移 (ms)</span>
+            <input
+              type="number"
+              min="-120000"
+              max="120000"
+              step="50"
+              :value="lyricVisibility.globalOffsetMs"
+              :disabled="!currentTrack"
+              @change="updateGlobalLyricOffset"
+            />
+          </label>
+          <label class="lyric-field">
+            <span>本曲偏移 (ms)</span>
+            <input
+              v-model.number="draftTrackOffsetMs"
+              type="number"
+              min="-120000"
+              max="120000"
+              step="50"
+              :disabled="!currentTrack"
+            />
+          </label>
+        </div>
+
+        <div class="lyric-layer-grid">
+          <label class="lyric-layer-source">
+            <span>原文</span>
+            <select v-model="draftOriginalSelection" :disabled="!currentTrack">
+              <option value="automatic">
+                {{ automaticLayerLabel('automatic', originalAutomaticSource) }}
+              </option>
+              <option value="local">本地 LRC</option>
+              <option value="provider">Provider</option>
+              <option value="manual">手写内容</option>
+            </select>
+          </label>
+          <label class="lyric-layer-source">
+            <span>翻译</span>
+            <select v-model="draftTranslationSelection" :disabled="!currentTrack">
+              <option value="automatic">
+                {{ automaticLayerLabel('automatic', translationAutomaticSource) }}
+              </option>
+              <option value="local">本地</option>
+              <option value="provider">Provider</option>
+              <option value="manual">手写内容</option>
+            </select>
+          </label>
+          <label class="lyric-layer-source">
+            <span>音译</span>
+            <select v-model="draftRomanizationSelection" :disabled="!currentTrack">
+              <option value="automatic">
+                {{ automaticLayerLabel('automatic', romanizationAutomaticSource) }}
+              </option>
+              <option value="local">本地</option>
+              <option value="provider">Provider</option>
+              <option value="manual">手写内容</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="lyric-manager-toggles" aria-label="歌词显示图层">
+          <button
+            type="button"
+            :aria-pressed="lyricVisibility.showOriginal"
+            :disabled="!currentTrack"
+            @click="toggleLyricVisibility('showOriginal')"
+          >
+            原文
+          </button>
+          <button
+            type="button"
+            :aria-pressed="lyricVisibility.showTranslation"
+            :disabled="!currentTrack"
+            @click="toggleLyricVisibility('showTranslation')"
+          >
+            翻译
+          </button>
+          <button
+            type="button"
+            :aria-pressed="lyricVisibility.showRomanization"
+            :disabled="!currentTrack"
+            @click="toggleLyricVisibility('showRomanization')"
+          >
+            音译
+          </button>
+          <span class="lyric-toggle-spacer"></span>
+          <button
+            type="button"
+            :disabled="!currentTrack || lyricImporting"
+            @click="importLyricsIntoDraft"
+          >
+            <i class="ph ph-file-arrow-up" aria-hidden="true"></i
+            >{{ lyricImporting ? '导入中…' : '导入 LRC' }}
+          </button>
+          <button
+            type="button"
+            :disabled="!currentTrack || lyricSearching"
+            @click="searchOnlineIntoDraft"
+          >
+            <i class="ph ph-magnifying-glass" aria-hidden="true"></i
+            >{{ lyricSearching ? '搜索中…' : '在线搜索' }}
+          </button>
+        </div>
+
+        <div v-if="onlineLyricCandidates.length" class="online-lyric-candidates">
+          <button
+            v-for="candidate in onlineLyricCandidates"
+            :key="`${candidate.source}-${candidate.id}`"
+            type="button"
+            class="online-lyric-candidate"
+            @click="applyOnlineCandidate(candidate)"
+          >
+            <strong>{{ candidate.title }} · {{ candidate.artist }}</strong>
+            <span
+              >{{ candidate.source }} · {{ formatDurationDelta(candidate.durationSeconds) }} ·
+              {{ candidate.score.toFixed(2) }}</span
+            >
+            <em>{{
+              (candidate.syncedLyrics || candidate.plainLyrics || '').split('\n')[0]?.slice(0, 90)
+            }}</em>
+          </button>
+        </div>
+
+        <label class="lyric-editor-label">
+          <span>原文手写内容</span>
+          <textarea
+            v-model="draftOriginal"
+            rows="4"
+            spellcheck="false"
+            :disabled="!currentTrack"
+            @input="useManualLayer('original')"
+          ></textarea>
+        </label>
+        <label class="lyric-editor-label">
+          <span>翻译手写内容</span>
+          <textarea
+            v-model="draftTranslation"
+            rows="3"
+            spellcheck="false"
+            :disabled="!currentTrack"
+            @input="useManualLayer('translation')"
+          ></textarea>
+        </label>
+        <label class="lyric-editor-label">
+          <span>音译手写内容</span>
+          <textarea
+            v-model="draftRomanization"
+            rows="3"
+            spellcheck="false"
+            :disabled="!currentTrack"
+            @input="useManualLayer('romanization')"
+          ></textarea>
+        </label>
+
+        <p v-if="draftTrackMismatch" class="lyric-manager-error">
+          未保存的草稿来自「{{
+            seededTrackTitle
+          }}」，当前曲目已切换。可撤销草稿，或切回原曲目后保存。
+        </p>
+        <p v-if="lyricManagerError" class="lyric-manager-error">{{ lyricManagerError }}</p>
+        <p v-if="lyricManagerNotice" class="lyric-manager-notice">{{ lyricManagerNotice }}</p>
+        <div class="lyric-manager-actions">
+          <button type="button" :disabled="!currentTrack || lyricWriting" @click="saveDraftAsLrc">
+            <i class="ph ph-download-simple" aria-hidden="true"></i
+            >{{ lyricWriting ? '导出中…' : '导出 LRC' }}
+          </button>
+          <button type="button" :disabled="!currentTrack || !draftDirty" @click="discardDraft">
+            撤销草稿
+          </button>
+          <button
+            type="button"
+            :disabled="!currentTrack || lyricSaving"
+            @click="restoreAutomaticLyrics"
+          >
+            恢复自动
+          </button>
+          <button
+            type="button"
+            class="lyric-save-button"
+            :disabled="!currentTrack || lyricSaving || !draftDirty || draftTrackMismatch"
+            @click="saveLyricManager"
+          >
+            <i
+              :class="lyricSaving ? 'pi pi-spin pi-spinner' : 'ph ph-check'"
+              aria-hidden="true"
+            ></i>
+            {{ lyricSaving ? '保存中…' : '保存歌词' }}
+          </button>
+        </div>
+      </div>
+    </details>
   </section>
 </template>
 
@@ -811,12 +935,14 @@ function updateLyricDimOpacity(event: Event): void {
 
 .lyric-manager-toggles button,
 .lyric-manager-actions button,
-.lyric-align-control button {
+.lyric-segment-control button,
+.lyric-karaoke-toggle {
   padding: 5px 8px;
 }
 
 .lyric-manager-toggles button[aria-pressed='true'],
-.lyric-align-control button[aria-pressed='true'] {
+.lyric-segment-control button[aria-pressed='true'],
+.lyric-karaoke-toggle[aria-pressed='true'] {
   border-color: var(--d-accent-line, rgba(129, 140, 248, 0.5));
   background: var(--d-accent-soft, rgba(129, 140, 248, 0.12));
   color: var(--d-accent, #a5b4fc);
@@ -855,14 +981,39 @@ function updateLyricDimOpacity(event: Event): void {
 
 .lyric-style-controls {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) auto;
-  padding-top: 2px;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--d-line);
+  border-radius: 6px;
+  background: var(--d-well);
 }
 
 .lyric-style-heading {
-  color: var(--d-muted, rgba(255, 255, 255, 0.55));
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--d-muted);
   font-size: 11px;
+}
+
+.lyric-style-heading strong {
+  color: var(--d-ink);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.lyric-style-heading span {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.lyric-style-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  align-items: end;
 }
 
 .lyric-range-field span {
@@ -872,29 +1023,109 @@ function updateLyricDimOpacity(event: Event): void {
 }
 
 .lyric-range-field strong {
-  color: var(--d-ink, rgba(255, 255, 255, 0.85));
+  color: var(--d-ink);
   font-weight: 550;
 }
 
 .lyric-range-field input {
   width: 100%;
-  accent-color: var(--d-accent, #818cf8);
+  accent-color: var(--d-accent);
 }
 
-.lyric-align-control {
+.lyric-style-choice {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--d-muted);
+  font-size: 11px;
+}
+
+.lyric-segment-control {
   display: flex;
-  align-self: end;
+  min-width: 0;
 }
 
-.lyric-align-control button + button {
+.lyric-segment-control button {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.lyric-segment-control button + button {
   margin-left: -1px;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
 }
 
-.lyric-align-control button:first-child {
+.lyric-segment-control button:first-child {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
+}
+
+.lyric-karaoke-toggle {
+  align-self: end;
+  white-space: nowrap;
+}
+
+.lyric-editor-disclosure {
+  min-width: 0;
+  border: 1px solid var(--d-line);
+  border-radius: 6px;
+  background: var(--d-well);
+  overflow: hidden;
+}
+
+.lyric-editor-disclosure summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 42px;
+  padding: 0 12px;
+  color: var(--d-ink);
+  cursor: pointer;
+  list-style: none;
+}
+
+.lyric-editor-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.lyric-editor-disclosure[open] summary {
+  border-bottom: 1px solid var(--d-line);
+}
+
+.lyric-disclosure-title,
+.lyric-disclosure-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.lyric-disclosure-title {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.lyric-disclosure-meta {
+  flex: 0 0 auto;
+  color: var(--d-muted);
+  font-size: 10px;
+}
+
+.lyric-disclosure-meta i {
+  transition: transform 160ms ease;
+}
+
+.lyric-editor-disclosure[open] .lyric-disclosure-meta i {
+  transform: rotate(180deg);
+}
+
+.lyric-editor-content {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
 }
 
 .lyric-manager-error {
@@ -920,13 +1151,18 @@ function updateLyricDimOpacity(event: Event): void {
 
 @media (max-width: 520px) {
   .lyric-source-grid,
-  .lyric-layer-grid,
-  .lyric-style-controls {
+  .lyric-layer-grid {
     grid-template-columns: 1fr;
   }
 
-  .lyric-align-control {
-    align-self: start;
+  .lyric-style-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .lyric-style-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

@@ -803,10 +803,6 @@ const titleSurface = computed<TitleSurface>(() => {
 </template>
 
 <style>
-body {
-  background: transparent;
-}
-
 html[data-te-shell-layout='custom'],
 html[data-te-shell-layout='custom'] body,
 html[data-te-shell-layout='custom'] #app {

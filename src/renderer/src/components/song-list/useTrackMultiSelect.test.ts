@@ -41,21 +41,42 @@ function withScope<T>(run: () => T): T {
   return result
 }
 
-test('plain click plays without selecting and clears any prior selection', () => {
+test('plain click plays without selecting when selection mode is inactive', () => {
   const tracks = ref(makeTracks(5))
   const multi = withScope(() => useTrackMultiSelect({ tracks }))
-  multi.toggle(tracks.value[0].id, 0)
-  assert.equal(multi.selectedCount.value, 1)
 
   const result = multi.onRowClick(tracks.value[2], 2, {
     shiftKey: false,
     ctrlKey: false,
-    metaKey: false
+    metaKey: false,
+    detail: 1
   } as MouseEvent)
   assert.equal(result, 'play')
   assert.equal(multi.selectedCount.value, 0)
-  assert.equal(multi.isSelected('t2'), false)
-  assert.deepEqual(multi.getSelectedTrackIds(), [])
+})
+
+test('plain click only toggles selection while selection mode is active', () => {
+  const tracks = ref(makeTracks(5))
+  const multi = withScope(() => useTrackMultiSelect({ tracks }))
+  multi.toggle(tracks.value[0].id, 0)
+
+  const result = multi.onRowClick(tracks.value[2], 2, {
+    shiftKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    detail: 1
+  } as MouseEvent)
+  assert.equal(result, 'select')
+  assert.deepEqual(multi.getSelectedTrackIds().sort(), ['t0', 't2'])
+
+  const deselectResult = multi.onRowClick(tracks.value[0], 0, {
+    shiftKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    detail: 1
+  } as MouseEvent)
+  assert.equal(deselectResult, 'select')
+  assert.deepEqual(multi.getSelectedTrackIds(), ['t2'])
 })
 
 test('ctrl click toggles selection without play', () => {
@@ -82,6 +103,28 @@ test('ctrl click toggles selection without play', () => {
   } as MouseEvent)
   assert.equal(multi.isSelected('t0'), false)
   assert.equal(multi.selectedCount.value, 1)
+})
+
+test('selection clicks suppress the following row double-click play', () => {
+  const tracks = ref(makeTracks(3))
+  const multi = withScope(() => useTrackMultiSelect({ tracks }))
+  multi.toggle(tracks.value[0].id, 0)
+
+  multi.onRowClick(tracks.value[1], 1, {
+    shiftKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    detail: 2
+  } as MouseEvent)
+
+  assert.equal(
+    multi.shouldSuppressRowDoubleClick({
+      shiftKey: false,
+      ctrlKey: false,
+      metaKey: false
+    } as MouseEvent),
+    true
+  )
 })
 
 test('meta click behaves like ctrl click', () => {
@@ -114,7 +157,7 @@ test('shift click selects inclusive range from anchor', () => {
   assert.deepEqual(multi.getSelectedTrackIds().sort(), ['t1', 't2', 't3', 't4'])
 })
 
-test('shift click without prior selection selects only the target row', () => {
+test('shift click without prior ctrl selection does not enter multi-select', () => {
   const tracks = ref(makeTracks(4))
   const multi = withScope(() => useTrackMultiSelect({ tracks }))
   const result = multi.onRowClick(tracks.value[2], 2, {
@@ -122,8 +165,8 @@ test('shift click without prior selection selects only the target row', () => {
     ctrlKey: false,
     metaKey: false
   } as MouseEvent)
-  assert.equal(result, 'select')
-  assert.deepEqual(multi.getSelectedTrackIds(), ['t2'])
+  assert.equal(result, 'play')
+  assert.deepEqual(multi.getSelectedTrackIds(), [])
 })
 
 test('selectAll and clearSelection', () => {

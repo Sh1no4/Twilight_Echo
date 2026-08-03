@@ -12,7 +12,7 @@ import {
   computeEstimatedSourceDeviation,
   isBandActive
 } from '@renderer/utils/eqResponse'
-import { computeTargetRelativeFrequencyResponse } from '../../../shared/frequencyResponse.ts'
+import { computeFrequencyResponseComparison } from '../../../shared/frequencyResponse.ts'
 import type { ImportedFrequencyResponse } from '../../../shared/frequencyResponse.ts'
 import { createParametricBand, spectrumToPath } from '@renderer/utils/parametricEqInteraction'
 import type {
@@ -32,6 +32,7 @@ const emit = defineEmits<{
 
 type EqualizerTab = EqMode
 type ResponseView = 'dsp' | 'headphone'
+type HeadphoneCurveKey = 'source' | 'target' | 'individual' | 'combined' | 'corrected'
 type EqApplyFeedback = 'idle' | 'editing' | 'applying' | 'applied' | 'failed'
 type OpraProfile = Awaited<ReturnType<typeof window.api.opra.search>>[number]
 type OpraCatalogStatus = Awaited<ReturnType<typeof window.api.opra.getStatus>>
@@ -65,6 +66,7 @@ const defaultEqBands: EqualizerBand[] = defaultBandFrequencies.map((frequency) =
 
 const defaultAudioProcessing: AudioProcessingSettings = {
   dspEnabled: false,
+  directMode: false,
   clipGuard: true,
   fftEnabled: true,
   fftResolution: 8192,
@@ -241,6 +243,11 @@ const frequencyResponseError = ref('')
 const showManualResponse = ref(true)
 const showOpraResponse = ref(true)
 const showOpraEstimatedDeviation = ref(true)
+const showMeasuredSource = ref(true)
+const showTargetResponse = ref(true)
+const showIndividualFilters = ref(true)
+const showCombinedFilter = ref(true)
+const showCorrectedResponse = ref(true)
 
 // Display reference rate: use the actual device output rate when known so the
 // plotted curve matches the coefficients the engine builds for that rate.
@@ -308,23 +315,32 @@ const acousticDspResponse = computed(() =>
     mode: displayEqMode.value
   })
 )
-const acousticResponse = computed(() => {
+// The imported source and target remain absolute curves. The filter response is
+// an acoustic estimate only: digital preamp is excluded before adding H(f) to M(f).
+const frequencyResponseComparison = computed(() => {
   const imported = importedFrequencyResponse.value
   if (!imported) return null
-  return computeTargetRelativeFrequencyResponse(
+  return computeFrequencyResponseComparison(
     imported,
     acousticDspResponse.value,
     acousticDspResponse.value.map((point) => point.frequency)
   )
 })
 const measuredSourcePath = computed(() =>
-  acousticResponse.value ? responseToPath(acousticResponse.value.sourceDeviation) : ''
+  frequencyResponseComparison.value ? responseToPath(frequencyResponseComparison.value.source) : ''
 )
 const targetResponsePath = computed(() =>
-  acousticResponse.value ? responseToPath(acousticResponse.value.target) : ''
+  frequencyResponseComparison.value ? responseToPath(frequencyResponseComparison.value.target) : ''
+)
+const combinedFilterPath = computed(() =>
+  frequencyResponseComparison.value
+    ? responseToPath(frequencyResponseComparison.value.combinedFilter)
+    : ''
 )
 const correctedAcousticPath = computed(() =>
-  acousticResponse.value ? responseToPath(acousticResponse.value.correctedDeviation) : ''
+  frequencyResponseComparison.value
+    ? responseToPath(frequencyResponseComparison.value.corrected)
+    : ''
 )
 const responseFillPath = computed(() => {
   if (!responsePath.value) return ''
@@ -338,32 +354,36 @@ const parametricResponseFillPath = computed(() => {
 
 // Preserve the source band index so interactive control points, colors, and
 // curves stay aligned even when inactive bands are omitted from processing.
-const bandResponsePaths = computed(() => {
-  const mode = audioProcessing.value.eqMode
+function computeBandResponsePaths(
+  bands: readonly EqualizerBand[],
+  mode: EqMode
+): { index: number; path: string }[] {
   const sampleRate = responseSampleRate.value
   const paths: { index: number; path: string }[] = []
-  audioProcessing.value.eqBands.forEach((band, index) => {
+  bands.forEach((band, index) => {
     if (!isBandActive(band, mode)) return
-    const response = computeBandResponse(band, {
-      sampleRate,
-      mode,
-      pointCount: 97,
-      minFrequency: graphMinFrequency,
-      maxFrequency: graphMaxFrequency
-    })
     paths.push({
       index,
-      path: response
-        .map((point, pointIndex) => {
-          const x = frequencyToX(point.frequency)
-          const y = gainToY(clampNumber(point.db, graphMinGain, graphMaxGain, 0))
-          return `${pointIndex === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`
+      path: responseToPath(
+        computeBandResponse(band, {
+          sampleRate,
+          mode,
+          pointCount: 97,
+          minFrequency: graphMinFrequency,
+          maxFrequency: graphMaxFrequency
         })
-        .join(' ')
+      )
     })
   })
   return paths
-})
+}
+
+const bandResponsePaths = computed(() =>
+  computeBandResponsePaths(audioProcessing.value.eqBands, audioProcessing.value.eqMode)
+)
+const headphoneBandResponsePaths = computed(() =>
+  computeBandResponsePaths(displayEqBands.value, displayEqMode.value)
+)
 
 // Auto gain compensation target: offset the highest boost of the band-only
 // response by a 0.5 dB safety margin, clamped to the preamp slider range.
@@ -554,10 +574,10 @@ async function syncActiveSceneEq(nextSettings: AudioProcessingSettings): Promise
   const scene = dspState.scenes.find((item) => item.id === dspState.activeSceneId)
   const node = scene?.graph.nodes.find((item) => item.type === 'equalizer')
   if (!node) return
-  // Keep OPRA in the applied graph: the scene EQ node must hold the effective
-  // processing (compensation stacked on the manual EQ), otherwise resetting or
-  // editing the manual EQ silently drops OPRA from the DSP chain.
-  node.enabled = nextSettings.eqEnabled || opraCompensationEnabled.value
+  // OPRA contributes to the equalizer node but must not override the user's EQ
+  // bypass. Preserve its parameters while disabled so re-enabling EQ restores
+  // the same stacked response without continuing to process audio in bypass.
+  node.enabled = nextSettings.dspEnabled && nextSettings.eqEnabled
   node.params = {
     ...node.params,
     mode: opraCompensationEnabled.value ? 'parametric' : nextSettings.eqMode,
@@ -801,6 +821,17 @@ function clearFrequencyResponse(): void {
   importedFrequencyResponse.value = null
   frequencyResponseError.value = ''
   responseView.value = 'dsp'
+}
+
+function toggleHeadphoneCurve(curve: HeadphoneCurveKey): void {
+  const visibility = {
+    source: showMeasuredSource,
+    target: showTargetResponse,
+    individual: showIndividualFilters,
+    combined: showCombinedFilter,
+    corrected: showCorrectedResponse
+  }
+  visibility[curve].value = !visibility[curve].value
 }
 
 async function loadOpraStatus(): Promise<void> {
@@ -1348,7 +1379,9 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
                 <span v-if="importedFrequencyResponse" class="frequency-response-source">
                   {{ importedFrequencyResponse.sourceName }} ·
                   {{
-                    importedFrequencyResponse.sourceColumn === 'smoothed' ? '平滑测量' : '原始测量'
+                    importedFrequencyResponse.sourceColumn === 'smoothed'
+                      ? 'AutoEq smoothed 列'
+                      : 'AutoEq raw 列'
                   }}
                 </span>
                 <span v-if="frequencyResponseError" class="frequency-response-error">
@@ -1375,13 +1408,55 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
             <div
               v-if="responseView === 'headphone'"
               class="response-legend acoustic"
-              aria-label="耳机频响曲线图例"
+              aria-label="耳机频响曲线显示控制"
             >
-              <span class="response-legend-item measured"><i></i>源频响偏差（实测）</span>
-              <span class="response-legend-item target"><i></i>目标曲线（0 dB）</span>
-              <span class="response-legend-item corrected"><i></i>预计校正后频响</span>
+              <button
+                type="button"
+                class="response-legend-item measured"
+                :class="{ muted: !showMeasuredSource }"
+                :aria-pressed="showMeasuredSource"
+                @click="showMeasuredSource = !showMeasuredSource"
+              >
+                <i></i>源频响 M(f)
+              </button>
+              <button
+                type="button"
+                class="response-legend-item target"
+                :class="{ muted: !showTargetResponse }"
+                :aria-pressed="showTargetResponse"
+                @click="showTargetResponse = !showTargetResponse"
+              >
+                <i></i>目标曲线 T(f)
+              </button>
+              <button
+                type="button"
+                class="response-legend-item individual"
+                :class="{ muted: !showIndividualFilters }"
+                :aria-pressed="showIndividualFilters"
+                @click="showIndividualFilters = !showIndividualFilters"
+              >
+                <i></i>单个滤波 Hn(f)
+              </button>
+              <button
+                type="button"
+                class="response-legend-item combined"
+                :class="{ muted: !showCombinedFilter }"
+                :aria-pressed="showCombinedFilter"
+                @click="showCombinedFilter = !showCombinedFilter"
+              >
+                <i></i>合并滤波 H(f)
+              </button>
+              <button
+                type="button"
+                class="response-legend-item corrected"
+                :class="{ muted: !showCorrectedResponse }"
+                :aria-pressed="showCorrectedResponse"
+                @click="showCorrectedResponse = !showCorrectedResponse"
+              >
+                <i></i>滤波结果 R(f)
+              </button>
               <span class="response-estimate-note"
-                >M(f) + 当前滤波器 − T(f) · 排除数字前级 · 非校正后实测</span
+                >R(f) = M(f) + H(f) · 排除数字前级 · 预计值，非校正后实测</span
               >
             </div>
             <div v-if="responseView === 'dsp'" class="response-legend" aria-label="频响曲线图例">
@@ -1482,31 +1557,43 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
                   class="grid-line"
                 />
                 <path
-                  v-if="responseView === 'headphone' && measuredSourcePath"
+                  v-if="responseView === 'headphone' && showMeasuredSource && measuredSourcePath"
                   class="equalizer-measured-source-line"
                   :d="measuredSourcePath"
                   fill="none"
                   vector-effect="non-scaling-stroke"
                 />
                 <path
-                  v-if="responseView === 'headphone' && targetResponsePath"
+                  v-if="responseView === 'headphone' && showTargetResponse && targetResponsePath"
                   class="equalizer-target-response-line"
                   :d="targetResponsePath"
                   fill="none"
                   vector-effect="non-scaling-stroke"
                 />
                 <path
-                  v-if="responseView === 'headphone' && correctedAcousticPath"
-                  class="equalizer-corrected-acoustic-line"
-                  :d="correctedAcousticPath"
+                  v-for="bandPath in
+                    responseView === 'dsp'
+                      ? bandResponsePaths
+                      : showIndividualFilters
+                        ? headphoneBandResponsePaths
+                        : []"
+                  :key="`${responseView}-band-curve-${bandPath.index}`"
+                  class="equalizer-band-line"
+                  :d="bandPath.path"
                   fill="none"
                   vector-effect="non-scaling-stroke"
                 />
                 <path
-                  v-for="bandPath in responseView === 'dsp' ? bandResponsePaths : []"
-                  :key="'band-curve-' + bandPath.index"
-                  class="equalizer-band-line"
-                  :d="bandPath.path"
+                  v-if="responseView === 'headphone' && showCombinedFilter && combinedFilterPath"
+                  class="equalizer-combined-filter-line"
+                  :d="combinedFilterPath"
+                  fill="none"
+                  vector-effect="non-scaling-stroke"
+                />
+                <path
+                  v-if="responseView === 'headphone' && showCorrectedResponse && correctedAcousticPath"
+                  class="equalizer-corrected-acoustic-line"
+                  :d="correctedAcousticPath"
                   fill="none"
                   vector-effect="non-scaling-stroke"
                 />
@@ -1633,20 +1720,18 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
         <div v-else-if="activeTab === 'parametric'" class="tab-pane active parametric-pane">
           <header class="parametric-page-header">
             <div class="parametric-page-title">
-              <span class="parametric-eyebrow">DSP / EQUALIZATION</span>
               <div>
                 <h1>参数均衡器</h1>
-                <p>精确控制中心频率、增益与 Q，并实时写入当前 DSP Scene。</p>
+                <p>精确控制中心频率、增益与品质因数，并实时写入当前处理场景。</p>
               </div>
             </div>
             <div class="parametric-context-status" aria-label="参数均衡器工作模式">
               <span class="context-status-dot"></span>
-              <span>32 BAND · REAL-TIME</span>
+              <span>32 频段 · 实时处理</span>
             </div>
           </header>
 
           <section class="parametric-toolbar-card" aria-label="分析器数据视图">
-            <span class="parametric-toolbar-label">ANALYZER SOURCE</span>
             <div class="response-view-toolbar">
               <div class="response-view-switch" aria-label="响应视图">
                 <button
@@ -1671,7 +1756,9 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
                 <span v-if="importedFrequencyResponse" class="frequency-response-source">
                   {{ importedFrequencyResponse.sourceName }} ·
                   {{
-                    importedFrequencyResponse.sourceColumn === 'smoothed' ? '平滑测量' : '原始测量'
+                    importedFrequencyResponse.sourceColumn === 'smoothed'
+                      ? 'AutoEq smoothed 列'
+                      : 'AutoEq raw 列'
                   }}
                 </span>
                 <span v-if="frequencyResponseError" class="frequency-response-error">
@@ -1708,9 +1795,17 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
             :spectrum-visible="spectrumVisible"
             :measured-source-path="measuredSourcePath"
             :target-response-path="targetResponsePath"
+            :combined-filter-path="combinedFilterPath"
             :corrected-acoustic-path="correctedAcousticPath"
-            :band-response-paths="bandResponsePaths"
+            :band-response-paths="responseView === 'headphone' ? headphoneBandResponsePaths : bandResponsePaths"
+            :show-measured-source="showMeasuredSource"
+            :show-target-response="showTargetResponse"
+            :show-individual-filters="showIndividualFilters"
+            :show-combined-filter="showCombinedFilter"
+            :show-corrected-response="showCorrectedResponse"
             :eq-enabled="audioProcessing.eqEnabled"
+            :meter-peak-db="visualizationData.peakDb"
+            :meter-rms-db="visualizationData.rmsDb"
             :status="eqApplyStatusText"
             :status-state="eqApplyFeedback"
             :error="eqApplyError"
@@ -1722,6 +1817,7 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
             @toggle="toggleBandEnabled"
             @filter="selectFilterForBand"
             @toggle-spectrum="spectrumVisible = !spectrumVisible"
+            @toggle-headphone-curve="toggleHeadphoneCurve"
           />
         </div>
       </main>
@@ -1757,9 +1853,21 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
   inset: 0;
   z-index: 1100;
   overflow: hidden;
-  background: var(--te-glass-bg);
+  background-color: var(--te-settings-bg);
+  background-image: var(--te-settings-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
   backdrop-filter: blur(24px) saturate(150%);
   -webkit-backdrop-filter: blur(24px) saturate(150%);
+}
+
+:global(html[data-theme='dark'] .eq-page) {
+  background-color: var(--te-settings-bg);
+  background-image: var(--te-settings-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 .eq-toolbar-modern {
@@ -2596,6 +2704,13 @@ button.response-legend-item {
   border-color: var(--te-neutral-500);
   border-top-style: dashed;
 }
+.response-legend-item.individual i {
+  border-color: var(--te-favorite-500);
+}
+.response-legend-item.combined i {
+  border-color: var(--te-warning-500);
+  border-top-style: dashed;
+}
 .response-legend-item.corrected i {
   border-color: var(--te-success-500);
   border-top-width: 3px;
@@ -2633,6 +2748,7 @@ svg {
 .equalizer-estimated-deviation-line,
 .equalizer-measured-source-line,
 .equalizer-target-response-line,
+.equalizer-combined-filter-line,
 .equalizer-corrected-acoustic-line {
   stroke-width: 1.6px;
   stroke-linecap: round;
@@ -2657,6 +2773,12 @@ svg {
   stroke: var(--te-neutral-500);
   stroke-dasharray: 6 4;
   opacity: 0.85;
+}
+.equalizer-combined-filter-line {
+  stroke: var(--te-warning-500);
+  stroke-dasharray: 3 3;
+  stroke-width: 2px;
+  opacity: 0.9;
 }
 .equalizer-corrected-acoustic-line {
   stroke: var(--te-success-500);
@@ -3158,5 +3280,86 @@ svg {
 
 :global(html[data-te-equalizer-spectrum] .eq-page .equalizer-band-line) {
   stroke: var(--te-equalizer-spectrum);
+}
+
+/* The parametric view is a flat instrument surface that follows the page theme. */
+.parametric-pane {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.parametric-page-header {
+  min-height: 38px;
+  padding: 0 2px;
+}
+
+.parametric-eyebrow {
+  border-color: color-mix(in srgb, var(--te-neutral-900) 14%, transparent);
+  border-radius: 4px;
+  color: var(--te-neutral-700);
+  background: transparent;
+}
+
+.parametric-page-title h1 {
+  color: var(--te-neutral-900);
+}
+
+.parametric-page-title p,
+.parametric-context-status {
+  color: var(--te-neutral-500);
+}
+
+.parametric-toolbar-card {
+  border-color: var(--te-card-border);
+  border-radius: 8px;
+  background: var(--te-card-bg);
+  box-shadow: none;
+}
+
+.parametric-toolbar-label,
+.parametric-toolbar-card .frequency-response-source {
+  color: var(--te-neutral-500);
+}
+
+.parametric-toolbar-card .response-view-switch {
+  border-color: var(--te-card-border);
+  background: var(--te-neutral-100);
+}
+
+.parametric-toolbar-card .response-view-switch button {
+  color: var(--te-neutral-600);
+}
+
+.parametric-toolbar-card .response-view-switch button.active {
+  color: var(--te-neutral-900);
+  background: var(--te-card-bg);
+  box-shadow: none;
+}
+
+.parametric-toolbar-card .frequency-response-import {
+  border-color: color-mix(in srgb, var(--te-neutral-900) 18%, transparent);
+  color: var(--te-neutral-700);
+  background: transparent;
+}
+
+.parametric-toolbar-card .frequency-response-clear {
+  border-color: var(--te-card-border);
+  color: var(--te-neutral-500);
+}
+
+:global(html[data-theme='pureWhite'] .parametric-pane) {
+  background: transparent;
+}
+
+:global(html[data-theme='pureWhite'] .parametric-page-title h1) {
+  color: var(--te-neutral-900);
+}
+
+:global(html[data-theme='pureWhite'] .parametric-toolbar-card) {
+  border-color: var(--te-card-border);
+  background: var(--te-card-bg);
+  box-shadow: none;
 }
 </style>

@@ -97,6 +97,9 @@ class AsioBackend final : public IOutputBackend {
   std::atomic<size_t> firstNativeDsdInspectedBytes_{0};
   std::atomic<uint8_t> firstNativeDsdIdleByte_{0};
   std::atomic<uint64_t> firstNativeDsdHash_{0};
+  // 0=pending, 1=first typed DoP block alternates markers, 2=invalid marker sequence.
+  std::atomic<int> dopMarkerState_{0};
+  std::atomic<size_t> dopMarkerFramesVerified_{0};
   std::atomic<bool> running_{false};
   std::atomic<bool> stopRequested_{false};
   // Immutable for the lifetime of a started host session. The driver callback

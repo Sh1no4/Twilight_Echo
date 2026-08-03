@@ -284,6 +284,27 @@ int main() {
     passed &= expect(liveDriverCount() == 0, "set-failure fixture was not released");
   }
 
+  // Some real drivers omit GetIoFormat while still accepting the complete
+  // Native DSD negotiation. The optional probe must not be treated as a
+  // capability failure when CanDo/Set, channel type, and semantic rate work.
+  AsioDriver* getUnsupportedDriver = createWithIoFormatMode(4);
+  passed &= expect(getUnsupportedDriver != nullptr, "get-format-unsupported fixture did not create a driver");
+  if (getUnsupportedDriver) {
+    AsioIoFormat reported{};
+    AsioChannelInfo dsdChannel{};
+    dsdChannel.channel = 0;
+    dsdChannel.isInput = kAsioFalse;
+    passed &= expect(getUnsupportedDriver->init(&failureSystemReference) == kAsioTrue, "get-format-unsupported fixture init failed");
+    passed &= expect(getUnsupportedDriver->future(kFutureGetIoFormat, &reported) != kAsioOk, "get-format-unsupported fixture unexpectedly implemented GetIoFormat");
+    passed &= expect(getUnsupportedDriver->future(kFutureCanDoIoFormat, &failureDsdIoFormat) == kAsioOk, "GetIoFormat-unsupported fixture rejected Native DSD capability");
+    passed &= expect(getUnsupportedDriver->future(kFutureSetIoFormat, &failureDsdIoFormat) == kAsioOk, "GetIoFormat-unsupported fixture rejected Native DSD set");
+    passed &= expect(getUnsupportedDriver->canSampleRate(2822400.0) == kAsioOk, "GetIoFormat-unsupported fixture rejected DSD64 rate");
+    passed &= expect(getUnsupportedDriver->setSampleRate(2822400.0) == kAsioOk, "GetIoFormat-unsupported fixture rejected DSD64 rate set");
+    passed &= expect(getUnsupportedDriver->getChannelInfo(&dsdChannel) == kAsioOk && dsdChannel.type == kAsioSampleDsdInt8Lsb1, "GetIoFormat-unsupported fixture did not expose a DSD channel type");
+    getUnsupportedDriver->Release();
+    passed &= expect(liveDriverCount() == 0, "get-format-unsupported fixture was not released");
+  }
+
   FreeLibrary(module);
   return passed ? 0 : 1;
 }

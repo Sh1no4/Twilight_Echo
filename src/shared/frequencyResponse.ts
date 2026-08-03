@@ -18,6 +18,13 @@ export interface TargetRelativeFrequencyResponse {
   correctedDeviation: FrequencyResponsePoint[]
 }
 
+export interface FrequencyResponseComparison {
+  source: FrequencyResponsePoint[]
+  target: FrequencyResponsePoint[]
+  combinedFilter: FrequencyResponsePoint[]
+  corrected: FrequencyResponsePoint[]
+}
+
 const MAX_CSV_ROWS = 100_000
 const MIN_CURVE_POINTS = 2
 
@@ -197,6 +204,30 @@ export function sampleFrequencyCurveAt(
     (Math.log10(frequency) - Math.log10(left.frequency)) /
     (Math.log10(right.frequency) - Math.log10(left.frequency))
   return left.db + ratio * (right.db - left.db)
+}
+
+export function computeFrequencyResponseComparison(
+  imported: ImportedFrequencyResponse,
+  filterResponse: readonly FrequencyResponsePoint[],
+  frequencies: readonly number[]
+): FrequencyResponseComparison {
+  const source: FrequencyResponsePoint[] = []
+  const target: FrequencyResponsePoint[] = []
+  const combinedFilter: FrequencyResponsePoint[] = []
+  const corrected: FrequencyResponsePoint[] = []
+
+  for (const frequency of frequencies) {
+    const sourceDb = sampleFrequencyCurveAt(imported.sourceCurve, frequency)
+    const targetDb = sampleFrequencyCurveAt(imported.targetCurve, frequency)
+    const filterDb = sampleFrequencyCurveAt(filterResponse, frequency)
+    if (sourceDb === null || targetDb === null || filterDb === null) continue
+    source.push({ frequency, db: sourceDb })
+    target.push({ frequency, db: targetDb })
+    combinedFilter.push({ frequency, db: filterDb })
+    corrected.push({ frequency, db: sourceDb + filterDb })
+  }
+
+  return { source, target, combinedFilter, corrected }
 }
 
 export function computeTargetRelativeFrequencyResponse(

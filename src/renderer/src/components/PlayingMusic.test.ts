@@ -20,10 +20,114 @@ test('now playing keeps lyric source controls in the player bar sidebar', () => 
   assert.doesNotMatch(source, /class="lyric-translation-toggle"/)
 })
 
+test('now playing lyrics never reveal the global auto-hide scrollbar', () => {
+  const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+  const lyricsScroll = source.match(/\.lyrics-scroll \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const webkitScrollbar =
+    source.match(/\.lyrics-scroll::-webkit-scrollbar \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const webkitThumb =
+    source.match(/\.lyrics-scroll::-webkit-scrollbar-thumb \{[\s\S]*?\n\}/)?.[0] ?? ''
+
+  assert.match(lyricsScroll, /scrollbar-width: none !important/)
+  assert.match(webkitScrollbar, /display: none !important/)
+  assert.match(webkitThumb, /background: transparent !important/)
+})
+
 test('visualizer mode does not keep the heavy blurred backdrop mounted', () => {
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
 
   assert.match(source, /<div v-if="viewMode !== 'visualizer'" class="backdrop"/)
+})
+
+test('active lyric uses enlarged text emphasis without a glass surface', () => {
+  const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+  const mainStyle = readFileSync(new URL('../assets/main.css', import.meta.url), 'utf8')
+  const activeRow = source.match(/\.lyric-row\.active \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const activeText = source.match(/\.lyric-row\.active \.lyric-text \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const themeInvariant =
+    mainStyle.match(
+      /html body \.playing-music button\.lyric-row\.active:not\(\.lyric-row--custom-background\) \{[\s\S]*?\n\}/
+    )?.[0] ?? ''
+
+  assert.match(activeRow, /transform: scale\(1\.035\)/)
+  assert.match(activeRow, /background:\s*var\(--lyric-style-background, transparent\)/)
+  assert.match(activeRow, /border-color: var\(--te-playback-lyric-active-border, transparent\)/)
+  assert.match(activeRow, /box-shadow: var\(--te-playback-lyric-active-shadow, none\)/)
+  assert.doesNotMatch(activeRow, /linear-gradient/)
+  assert.match(
+    activeText,
+    /font-size:\s*clamp\(\s*12px,\s*var\(--lyric-style-font-size, calc\(var\(--te-lyric-font-size, 18px\) \+ 7px\)\),\s*48px\s*\)/
+  )
+  assert.match(
+    activeText,
+    /font-weight: var\(--lyric-style-font-weight, var\(--te-lyric-font-weight, 600\)\)/
+  )
+  assert.match(activeText, /text-shadow:/)
+  assert.match(source, /:deep\(\.lyric-word\) \{[\s\S]*display: inline-block/)
+  assert.match(source, /opacity: var\(--lyric-word-highlight-opacity, 0\)/)
+  assert.match(source, /clip-path: inset\(0 calc\(100% - var\(--lyric-word-progress\)\) 0 0\)/)
+  assert.doesNotMatch(source, /transition: clip-path 250ms linear/)
+  assert.doesNotMatch(source, /width: var\(--lyric-word-progress\)/)
+  assert.match(themeInvariant, /background: transparent !important/)
+  assert.match(themeInvariant, /background-image: none !important/)
+  assert.match(themeInvariant, /border-color: transparent !important/)
+  assert.match(themeInvariant, /box-shadow: none !important/)
+  assert.match(themeInvariant, /backdrop-filter: none !important/)
+  assert.match(themeInvariant, /-webkit-backdrop-filter: none !important/)
+})
+
+test('now playing exposes independent lyric customization with live persisted preview', () => {
+  const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+  const customizer = readFileSync(
+    new URL('./LyricsAppearanceCustomizer.vue', import.meta.url),
+    'utf8'
+  )
+  const appearance = readFileSync(
+    new URL('../../../shared/lyricsAppearance.ts', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(source, /import LyricsAppearanceCustomizer/)
+  assert.match(source, /个性化歌词/)
+  assert.match(
+    source,
+    /:style="lyricStyleVars\(item\.index === activeLyricIndex \? 'active' : 'normal'\)"/
+  )
+  assert.match(source, /:style="lyricStyleVars\('translation'\)"/)
+  assert.match(customizer, /普通歌词/)
+  assert.match(customizer, /当前歌词/)
+  assert.match(customizer, /翻译歌词/)
+  assert.match(customizer, /实时预览/)
+  assert.match(customizer, /恢复全部默认/)
+  assert.match(customizer, /function scheduleSave\(delay = 180\)/)
+  assert.match(customizer, /updateSettings\(\{ lyricsAppearance:/)
+  assert.match(customizer, /@media \(max-width: 620px\)/)
+  assert.match(appearance, /styles: Record<LyricsStyleTarget, LyricsTextStyle>/)
+  assert.match(appearance, /backgroundStyle: LyricsBackgroundStyle/)
+  assert.match(appearance, /highlightEffect: LyricsHighlightEffect/)
+})
+
+test('lyric handoff keeps completed lines out of the top layout flow', () => {
+  const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+  const renderedLines =
+    source.match(/const renderedLyricLines = computed\(\(\) => \{[\s\S]*?\n\}\)/)?.[0] ?? ''
+  const exitKeyframes =
+    source.match(
+      /@keyframes te-lyric-line-exit \{[\s\S]*?(?=\n@keyframes te-lyric-line-enter)/
+    )?.[0] ?? ''
+
+  assert.match(source, /const LYRIC_SCROLL_DELAY_MS = 140/)
+  assert.match(source, /const LYRIC_EXIT_DURATION_MS = 280/)
+  assert.match(source, /lyricLeavingIndex\.value = previousIndex/)
+  assert.match(source, /scheduleLyricScroll\(index\)/)
+  assert.match(source, /class="lyric-row-content"/)
+  assert.match(source, /'lyric-row--exiting': item\.index === lyricLeavingIndex/)
+  assert.match(renderedLines, /getLyricFocusLineIndices/)
+  assert.doesNotMatch(renderedLines, /indices\.push\(lyricLeavingIndex\.value\)/)
+  assert.match(source, /@keyframes te-lyric-line-exit/)
+  assert.doesNotMatch(exitKeyframes, /translateY\(/)
+  assert.match(exitKeyframes, /transform: scale\(0\.98\)/)
+  assert.match(source, /te-lyric-line-enter var\(--te-motion-panel\) var\(--te-ease-spring\) both/)
 })
 
 test('clicking a timed lyric releases manual scroll lock before seeking', () => {
@@ -46,19 +150,48 @@ test('now playing isolates high-frequency playhead updates from the full lyrics 
   const timeChip = readFileSync(new URL('./PlayingMusicTimeChip.vue', import.meta.url), 'utf8')
 
   assert.match(source, /lyricsLoadState\.value\.status === 'loading'/)
-  assert.match(
-    source,
-    /watch\(\[lyricLines, currentTime, currentLyricOffsetSeconds\], syncActiveLyricIndex/
-  )
-  assert.match(source, /<PlayingLyricWords/)
+  assert.match(source, /watch\(\s*\[lyricLines, currentTime, currentLyricOffsetSeconds\],/)
+  assert.match(source, /Math\.max\(observedTime, predictedLyricTime\)/)
+  assert.match(source, /function scheduleLyricIndexBoundary\(\): void/)
+  assert.match(source, /clearLyricIndexTimer\(\)/)
+  assert.match(source, /function advanceActiveLyricIndex\(time: number\): void/)
+  assert.match(source, /const lyricWordClock = \{ currentTime, isPlaying, playbackRate \}/)
+  assert.match(source, /<PlayingLyricWords[\s\S]*:clock="lyricWordClock"/)
+  assert.match(source, /:next-line-time="displayLyricLines\[item\.index \+ 1\]\?\.time \?\? null"/)
+  assert.match(source, /@reach-next-line="advanceActiveLyricIndex"/)
+  assert.match(source, /getLyricFocusLineIndices/)
+  assert.match(source, /manualLyricBrowse/)
+  assert.match(source, /lyrics-column--karaoke-disabled/)
   assert.match(source, /<PlayingMusicTimeChip/)
   assert.doesNotMatch(source, /formatTime\(currentTime\)/)
   assert.doesNotMatch(source, /findActiveWordIndex/)
-  assert.match(words, /if \(!props\.active\) return -1/)
+  assert.doesNotMatch(words, /usePlayerStore/)
+  assert.match(words, /currentTime: Ref<number>/)
+  assert.match(words, /isPlaying: Ref<boolean>/)
+  assert.match(words, /playbackRate: Ref<number>/)
+  assert.match(words, /nextLineTime: number \| null/)
+  assert.match(words, /karaokeEnabled: boolean/)
+  assert.match(words, /defineEmits<\{ reachNextLine: \[time: number\] \}>\(\)/)
+  assert.match(words, /window\.requestAnimationFrame\(animate\)/)
+  assert.match(words, /clockAnchorPosition \+ Math\.max\(0, now - clockAnchorTime\)/)
+  assert.match(words, /if \(isSeek\) syncAllWords\(time\)/)
+  assert.match(words, /else updateProgressingWord\(time\)/)
+  assert.match(words, /function bindPlaybackClock\(\): void/)
+  assert.match(words, /function updateLineBoundary\(time: number\): void/)
+  assert.match(words, /emit\('reachNextLine', time\)/)
+  assert.match(words, /if \(!props\.active\) return[\s\S]*stopClockWatch = watch/)
+  assert.match(words, /function unbindPlaybackClock\(\): void/)
+  assert.match(words, /if \(nextIndex >= 0\) setWordProgress\(nextIndex/)
+  assert.match(words, /dataset\.progressing = 'true'/)
   assert.match(
-    words,
-    /findActiveWordIndex\(props\.words, currentTime\.value \+ props\.offsetSeconds\)/
+    source,
+    /lyric-word\[data-progressing='true'\]\)::after[\s\S]*will-change: clip-path/
   )
+  assert.match(words, /getLyricWordProgress\(/)
+  assert.match(words, /--lyric-word-highlight-opacity', progress > 0 \? '1' : '0'/)
+  assert.match(words, /data-word-text/)
+  assert.doesNotMatch(words, /findActiveWordIndex|activeWordIndex|lyric-word--active/)
+  assert.doesNotMatch(source, /lyric-word--active|te-lyric-word-pulse/)
   assert.match(timeChip, /const \{ currentTime, duration, formatTime \} = usePlayerStore\(\)/)
 })
 
@@ -247,11 +380,14 @@ test('player visibility selectors target stable controls and remove hidden butto
   assert.match(style, /data-te-visible-player-waveform='false'/)
 })
 
-test('player volume controls keep mute and drawer actions independently reachable', () => {
+test('player volume control opens the volume drawer without toggling mute', () => {
   const source = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
 
-  assert.match(source, /function onVolumeButtonClick\(\): void \{\s*toggleMute\(\)\s*\}/)
-  assert.match(source, /class="volume-drawer-toggle"[\s\S]*@click="toggleVolume"/)
-  assert.match(source, /aria-label="静音\/恢复"/)
-  assert.match(source, /aria-label="打开音量控制"/)
+  assert.doesNotMatch(source, /toggleMute/)
+  assert.doesNotMatch(source, /onVolumeButtonClick/)
+  assert.match(source, /class="[^"]*volume-control-button[^"]*"[\s\S]*@click="toggleVolume"/)
+  assert.match(source, /aria-label="音量控制"/)
+  assert.match(source, /:aria-expanded="volumeOpen"/)
+  assert.doesNotMatch(source, /volume-control-chevron/)
+  assert.doesNotMatch(source, /pi-angle-up/)
 })

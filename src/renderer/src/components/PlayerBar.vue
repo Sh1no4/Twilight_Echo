@@ -52,7 +52,6 @@ const {
   currentTime,
   duration,
   volume,
-  muted,
   playbackRate,
   setPlaybackRate,
   sleepTimerState,
@@ -96,7 +95,6 @@ const {
   toggleExclusiveMode,
   formatTime,
   setUnityVolume,
-  toggleMute,
   configureSleepTimer,
   cancelSleepTimer,
   setAudioProcessing,
@@ -442,11 +440,6 @@ function onVolumeWheel(event: WheelEvent): void {
   // 抽屉已打开时保持打开，便于看到滑杆反馈。
   const step = event.shiftKey ? 0.01 : 0.04
   volume.value = clampVolume(volume.value + (event.deltaY < 0 ? step : -step))
-}
-
-/** I1：点击音量图标只切换静音；相邻按钮负责打开音量抽屉。 */
-function onVolumeButtonClick(): void {
-  toggleMute()
 }
 
 function onSleepTimerSelectValue(value: string): void {
@@ -1351,7 +1344,7 @@ onMounted(() => {
           <img v-else :src="shuffleIcon" alt="随机" />
         </button>
 
-        <!-- 音量按钮 + 向上弹出抽屉 -->
+        <!-- 独立音量控件：点击仅展开滑杆，不切换静音 -->
         <div class="volume-anchor player-misc-icon" @wheel="onVolumeWheel">
           <Transition name="volume-drawer">
             <div v-if="volumeOpen" class="volume-drawer" :class="{ 'drawer-glass': glass }">
@@ -1382,28 +1375,17 @@ onMounted(() => {
               </button>
             </div>
           </Transition>
-          <div class="volume-button-group">
-            <button
-              class="icon-btn"
-              :class="{ active: muted || volume <= 0.001 }"
-              title="静音/恢复"
-              aria-label="静音/恢复"
-              :aria-pressed="muted || volume <= 0.001"
-              @click="onVolumeButtonClick"
-            >
-              <i :class="muted || volume <= 0.001 ? 'pi pi-volume-off' : 'pi pi-volume-up'"></i>
-            </button>
-            <button
-              class="volume-drawer-toggle"
-              :class="{ active: volumeOpen }"
-              title="打开音量控制"
-              aria-label="打开音量控制"
-              :aria-expanded="volumeOpen"
-              @click="toggleVolume"
-            >
-              <i class="pi pi-angle-up"></i>
-            </button>
-          </div>
+          <button
+            type="button"
+            class="volume-control-button icon-btn"
+            :class="{ active: volumeOpen }"
+            title="音量控制"
+            aria-label="音量控制"
+            :aria-expanded="volumeOpen"
+            @click="toggleVolume"
+          >
+            <i :class="volume <= 0.001 ? 'pi pi-volume-off' : 'pi pi-volume-up'"></i>
+          </button>
         </div>
 
         <button

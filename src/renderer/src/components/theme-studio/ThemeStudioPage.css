@@ -6,7 +6,11 @@
   flex-direction: column;
   min-width: 1080px;
   color: var(--te-neutral-900);
-  background: var(--te-settings-bg);
+  background-color: var(--te-settings-bg);
+  background-image: var(--te-settings-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
   font-family: var(--te-font-sans);
 }
 

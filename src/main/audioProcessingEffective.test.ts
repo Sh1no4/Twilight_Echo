@@ -28,11 +28,58 @@ test('effective processing keeps manual EQ unchanged when OPRA is disabled', () 
   assert.equal(effective.eqBands[0].frequency, 1000)
 })
 
-test('effective processing forces parametric EQ and stacks OPRA with graphic EQ', () => {
+test('effective processing keeps OPRA configured but bypassed when equalizer is disabled', () => {
+  const effective = buildEffectiveAudioProcessingSettings(
+    {
+      dspEnabled: true,
+      eqEnabled: false,
+      eqMode: 'graphic',
+      eqPreamp: -1,
+      eqBands: [{ frequency: 1000, gain: 3, q: 1, filterType: 'peak' }]
+    },
+    {
+      enabled: true,
+      preampDb: -6.5,
+      bands: [{ frequency: 105, gain: -13, q: 0.19, filterType: 'lowShelf' }]
+    }
+  )
+
+  assert.equal(effective.dspEnabled, true)
+  assert.equal(effective.eqEnabled, false)
+  assert.equal(effective.eqMode, 'graphic')
+  assert.equal(effective.eqPreamp, -1)
+  assert.equal(effective.eqBands.length, 10)
+  assert.equal(effective.eqBands[0].frequency, 1000)
+})
+
+test('effective processing does not let OPRA override the DSP master bypass', () => {
   const effective = buildEffectiveAudioProcessingSettings(
     {
       dspEnabled: false,
-      eqEnabled: false,
+      eqEnabled: true,
+      eqMode: 'parametric',
+      eqPreamp: -1,
+      eqBands: [{ frequency: 1000, gain: 3, q: 1, filterType: 'peak' }]
+    },
+    {
+      enabled: true,
+      preampDb: -6.5,
+      bands: [{ frequency: 105, gain: -13, q: 0.19, filterType: 'lowShelf' }]
+    }
+  )
+
+  assert.equal(effective.dspEnabled, false)
+  assert.equal(effective.eqEnabled, true)
+  assert.equal(effective.eqPreamp, -1)
+  assert.equal(effective.eqBands.length, 1)
+  assert.equal(effective.eqBands[0].frequency, 1000)
+})
+
+test('effective processing forces parametric EQ and stacks OPRA with enabled graphic EQ', () => {
+  const effective = buildEffectiveAudioProcessingSettings(
+    {
+      dspEnabled: true,
+      eqEnabled: true,
       eqMode: 'graphic',
       eqPreamp: -1,
       eqBands: [{ frequency: 1000, gain: 3, q: 1, filterType: 'peak' }]

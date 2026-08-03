@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useEscapeToClose, useFocusTrap } from '../../app/useDismissLayer.ts'
+import { resolveCover } from '../../utils/coverLoader.ts'
 import { GITHUB_URL, HOMEPAGE_URL, RELEASES_URL } from './types.ts'
 import type { AppUpdateProgress } from '../../../../shared/appUpdate.ts'
 
@@ -8,6 +9,27 @@ const AFDIAN_URL = 'https://ifdian.net/a/pxasen'
 const ALIPAY_QR_URL = '/sponsor/alipay.jpg'
 const WECHAT_QR_URL = '/sponsor/wechat.png'
 const QQ_GROUP_QR_URL = '/qq-group-qrcode.jpg'
+
+interface Sponsor {
+  id: string
+  name: string
+  avatarUrl: string
+  requestedText?: string
+}
+
+const SPONSORS: readonly Sponsor[] = [
+  {
+    id: 'celestique',
+    name: 'Celestique',
+    avatarUrl: 'https://s41.ax1x.com/2026/08/03/pmI8JIJ.jpg',
+    requestedText: '運命のルーレット廻して，ずっと君を見ていた。'
+  },
+  {
+    id: 'afdian-user-b3f86',
+    name: '爱发电用户_b3f86',
+    avatarUrl: 'https://s41.ax1x.com/2026/08/03/pmI8Lzq.png'
+  }
+]
 
 const props = defineProps<{
   appVersion: string
@@ -53,6 +75,25 @@ const sponsorListOpen = ref(false)
 const sponsorListRef = ref<HTMLElement | null>(null)
 const qqGroupDialogOpen = ref(false)
 const qqGroupDialogRef = ref<HTMLElement | null>(null)
+const sponsorAvatarSources = ref<Record<string, string>>({})
+const sponsorAvatarLoadFailed = ref<Record<string, boolean>>({})
+
+onMounted(() => {
+  for (const sponsor of SPONSORS) {
+    void resolveCover(null, sponsor.avatarUrl).then((source) => {
+      if (!source) return
+      sponsorAvatarSources.value = { ...sponsorAvatarSources.value, [sponsor.id]: source }
+    })
+  }
+})
+
+function sponsorInitial(name: string): string {
+  return name.trim().slice(0, 1).toUpperCase() || '?'
+}
+
+function markSponsorAvatarLoadFailed(id: string): void {
+  sponsorAvatarLoadFailed.value = { ...sponsorAvatarLoadFailed.value, [id]: true }
+}
 
 function openSponsorDialog(): void {
   sponsorListOpen.value = false
@@ -362,7 +403,25 @@ function progressLabel(): string {
               </button>
             </header>
 
-            <div class="sponsor-list-empty">
+            <div v-if="SPONSORS.length > 0" class="sponsor-list-entries">
+              <article v-for="sponsor in SPONSORS" :key="sponsor.id" class="sponsor-list-entry">
+                <div class="sponsor-list-avatar" aria-hidden="true">
+                  <img
+                    v-if="sponsorAvatarSources[sponsor.id] && !sponsorAvatarLoadFailed[sponsor.id]"
+                    :src="sponsorAvatarSources[sponsor.id]"
+                    :alt="`${sponsor.name} 的头像`"
+                    @error="markSponsorAvatarLoadFailed(sponsor.id)"
+                  />
+                  <span v-else>{{ sponsorInitial(sponsor.name) }}</span>
+                </div>
+                <div class="sponsor-list-entry-copy">
+                  <strong>{{ sponsor.name }}</strong>
+                  <small v-if="sponsor.requestedText">{{ sponsor.requestedText }}</small>
+                </div>
+                <i class="pi pi-heart-fill sponsor-list-entry-heart" aria-hidden="true"></i>
+              </article>
+            </div>
+            <div v-else class="sponsor-list-empty">
               <span><i class="pi pi-heart"></i></span>
               <strong>赞助名单持续更新中</strong>
               <p>完成赞助后请添加作者联系方式，我会在确认后将你加入名单。</p>

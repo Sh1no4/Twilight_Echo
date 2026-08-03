@@ -1,4 +1,5 @@
 import type { Track } from '../types/music'
+import { splitGenreValues } from '../../../shared/genreSeparators.ts'
 
 export const AZ_INDEX_LETTERS = Array.from({ length: 26 }, (_, index) =>
   String.fromCharCode(65 + index)
@@ -31,13 +32,15 @@ const VALID_SORTS = new Set<LibraryCollectionSort>([
 
 export function applyLibraryCollectionView<T extends LibraryCollectionItem>(
   items: readonly T[],
-  state: LibraryCollectionViewState
+  state: LibraryCollectionViewState,
+  genreSeparators?: string
 ): T[] {
   const genre = normalizeGenre(state.genre)
   return items
     .map((item, index) => ({ item, index }))
     .filter(
-      ({ item }) => !genre || itemGenres(item).some((value) => normalizeGenre(value) === genre)
+      ({ item }) =>
+        !genre || itemGenres(item, genreSeparators).some((value) => normalizeGenre(value) === genre)
     )
     .sort((left, right) => {
       const comparison = compareCollectionItems(left.item, right.item, state.sort)
@@ -50,10 +53,13 @@ export function applyLibraryCollectionView<T extends LibraryCollectionItem>(
     .map(({ item }) => item)
 }
 
-export function availableCollectionGenres(items: readonly LibraryCollectionItem[]): string[] {
+export function availableCollectionGenres(
+  items: readonly LibraryCollectionItem[],
+  genreSeparators?: string
+): string[] {
   const labels = new Map<string, string>()
   for (const item of items) {
-    for (const genre of itemGenres(item)) {
+    for (const genre of itemGenres(item, genreSeparators)) {
       const normalized = normalizeGenre(genre)
       if (normalized && !labels.has(normalized)) labels.set(normalized, genre.trim())
     }
@@ -144,12 +150,13 @@ function compareCollectionItems(
   return compareNames(left.name, right.name)
 }
 
-function itemGenres(item: LibraryCollectionItem): string[] {
+function itemGenres(item: LibraryCollectionItem, genreSeparators?: string): string[] {
   const genres = new Map<string, string>()
   for (const track of item.tracks ?? []) {
-    const genre = track.genre?.trim()
-    const normalized = normalizeGenre(genre)
-    if (genre && normalized && !genres.has(normalized)) genres.set(normalized, genre)
+    for (const genre of splitGenreValues(track.genre, genreSeparators)) {
+      const normalized = normalizeGenre(genre)
+      if (genre && normalized && !genres.has(normalized)) genres.set(normalized, genre)
+    }
   }
   return [...genres.values()]
 }

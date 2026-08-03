@@ -846,7 +846,11 @@ onUnmounted(() => {
   position: fixed;
   inset: 0;
   z-index: 60;
-  background: #fafaf9;
+  background-color: var(--te-settings-bg);
+  background-image: var(--te-settings-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
@@ -856,7 +860,11 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   flex: 1;
-  background: #fafaf9;
+  background-color: var(--te-settings-bg);
+  background-image: var(--te-settings-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
   display: flex;
   overflow: hidden;
   position: relative;
@@ -991,7 +999,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   border-bottom: 0;
-  background: #fafaf9;
+  background: transparent;
   z-index: 10;
 }
 

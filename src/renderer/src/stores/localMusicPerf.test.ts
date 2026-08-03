@@ -551,6 +551,81 @@ test('genre derived collection and tag write updates groups', async () => {
   store.clearTracks()
 })
 
+test('genre derived collection splits default and custom separator characters', async () => {
+  const store = setupStore()
+  const settingsStore = useSettingsStoreModule.useSettingsStore()
+  const previousSeparators = settingsStore.settings.value.genreSeparators
+  await store.addTracks(
+    [
+      {
+        ...generateMockTracks(1)[0],
+        id: 'multi-genre',
+        genre: 'Rock，Jazz；Fusion、Electronic/Ambient',
+        filePath: 'C:\\music\\genre\\multi.flac'
+      }
+    ],
+    { deferRebuild: false }
+  )
+  store.flushRebuild()
+
+  assert.deepEqual(
+    store.genres.value.map((item) => item.name),
+    ['Ambient', 'Electronic', 'Fusion', 'Jazz', 'Rock']
+  )
+  for (const genre of store.genres.value) assert.equal(genre.trackCount, 1)
+
+  settingsStore.settings.value = { ...settingsStore.settings.value, genreSeparators: '|' }
+  store.tracks.value = [
+    {
+      ...store.tracks.value[0],
+      genre: 'Pop|Dance/Rock'
+    }
+  ]
+  store.refreshLibraryIndex()
+  assert.deepEqual(
+    store.genres.value.map((item) => item.name),
+    ['Dance/Rock', 'Pop']
+  )
+
+  settingsStore.settings.value = {
+    ...settingsStore.settings.value,
+    genreSeparators: previousSeparators
+  }
+  store.clearTracks()
+})
+
+test('folder groups fall back to track directories when persisted roots are missing', async () => {
+  const store = setupStore()
+  await store.addTracks(
+    [
+      {
+        ...generateMockTracks(1)[0],
+        id: 'fallback-folder-a',
+        dir: 'C:\\music\\album-a',
+        filePath: 'C:\\music\\album-a\\a.flac'
+      },
+      {
+        ...generateMockTracks(1)[0],
+        id: 'fallback-folder-b',
+        dir: 'C:\\music\\album-b',
+        filePath: 'C:\\music\\album-b\\b.flac'
+      }
+    ],
+    { deferRebuild: false }
+  )
+  store.flushRebuild()
+
+  assert.deepEqual(
+    store.folders.value.map((folder) => [folder.name, folder.trackCount]),
+    [
+      ['album-a', 1],
+      ['album-b', 1]
+    ]
+  )
+
+  store.clearTracks()
+})
+
 test('derived collections keep first cover without per-group rescans', async () => {
   const store = setupStore()
   await store.addTracks(

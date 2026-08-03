@@ -13,6 +13,8 @@ import { build } from 'vite'
 const require = createRequire(import.meta.url)
 const execFileAsync = promisify(execFile)
 const workspaceRoot = resolve(fileURLToPath(new URL('../../../../', import.meta.url)))
+const electronEnvironment = { ...process.env }
+delete electronEnvironment.ELECTRON_RUN_AS_NODE
 
 test('playbar lyrics manager panel manages provider tracks and projects into PlayingMusic', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'twilight-playing-music-lyrics-'))
@@ -57,6 +59,7 @@ test('playbar lyrics manager panel manages provider tracks and projects into Pla
 
     const electronPath = require('electron') as string
     const { stderr } = await execFileAsync(electronPath, ['--no-sandbox', runnerPath, htmlPath], {
+      env: electronEnvironment,
       timeout: 45_000,
       windowsHide: true
     })
@@ -66,6 +69,191 @@ test('playbar lyrics manager panel manages provider tracks and projects into Pla
     await rm(directory, { force: true, recursive: true })
   }
 })
+
+test('PlayingLyricWords advances YRC fill with the shared playback clock', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'twilight-playing-lyric-words-'))
+  try {
+    const entryPath = join(directory, 'playing-lyric-words-entry.ts')
+    const bundleDirectory = join(directory, 'bundle')
+    const htmlPath = join(directory, 'playing-lyric-words.html')
+    const runnerPath = join(directory, 'playing-lyric-words-runner.cjs')
+    await writeFile(entryPath, lyricWordsRuntimeEntrySource(), 'utf8')
+
+    await build({
+      configFile: false,
+      logLevel: 'error',
+      root: workspaceRoot,
+      plugins: [vue()],
+      resolve: {
+        alias: {
+          '@renderer': join(workspaceRoot, 'src/renderer/src'),
+          vue: require.resolve('vue/dist/vue.esm-bundler.js'),
+          pinia: join(resolve(require.resolve('pinia/package.json'), '..'), 'dist/pinia.mjs')
+        }
+      },
+      build: {
+        outDir: bundleDirectory,
+        emptyOutDir: true,
+        minify: false,
+        lib: {
+          entry: entryPath,
+          name: 'PlayingLyricWordsRuntime',
+          formats: ['iife'],
+          fileName: 'runtime'
+        }
+      }
+    })
+    const bundleName = (await readdir(bundleDirectory)).find((name) => name.endsWith('.iife.js'))
+    assert.ok(bundleName, 'Vite should bundle the real PlayingLyricWords component')
+    await writeFile(htmlPath, runtimeHtml(bundleName), 'utf8')
+    await writeFile(runnerPath, lyricWordsElectronRunnerSource(), 'utf8')
+
+    const electronPath = require('electron') as string
+    const { stderr } = await execFileAsync(electronPath, ['--no-sandbox', runnerPath, htmlPath], {
+      env: electronEnvironment,
+      timeout: 45_000,
+      windowsHide: true
+    })
+    assert.match(stderr, /PLAYING_LYRIC_WORDS_RUNTIME_OK/)
+    assert.doesNotMatch(stderr, /PLAYING_LYRIC_WORDS_RUNTIME_FAILED/)
+  } finally {
+    await rm(directory, { force: true, recursive: true })
+  }
+})
+
+function lyricWordsRuntimeEntrySource(): string {
+  const componentPath = join(
+    workspaceRoot,
+    'src/renderer/src/components/PlayingLyricWords.vue'
+  ).replaceAll('\\', '/')
+  return `import { createApp, h, nextTick, ref } from 'vue'
+import PlayingLyricWords from ${JSON.stringify(componentPath)}
+
+function expect(condition, message) {
+  if (!condition) throw new Error(message)
+}
+
+window.runPlayingLyricWordsRuntime = async () => {
+  const currentTime = ref(1)
+  const isPlaying = ref(false)
+  const playbackRate = ref(1)
+  const reachedLineTimes = []
+  const clock = { currentTime, isPlaying, playbackRate }
+  createApp({
+    render: () => h(PlayingLyricWords, {
+      active: true,
+      karaokeEnabled: true,
+      offsetSeconds: 0,
+      nextLineTime: 3,
+      clock,
+      onReachNextLine: (time) => reachedLineTimes.push(time),
+      words: [
+        { time: 1, endTime: 2, text: 'Null.' },
+        { time: 2, endTime: 3, text: 'No light' }
+      ]
+    })
+  }).mount('#app')
+  await nextTick()
+  const lyricWords = document.querySelectorAll('.lyric-word')
+  const firstWord = lyricWords[0]
+  const secondWord = lyricWords[1]
+  expect(firstWord && secondWord, 'karaoke words were not rendered')
+  expect(!document.querySelector('.lyric-word--active'), 'karaoke sweep retained a singled-out word')
+  expect(
+    firstWord.style.getPropertyValue('--lyric-word-progress') === '0%',
+    'karaoke word did not start fully clipped'
+  )
+  expect(
+    firstWord.style.getPropertyValue('--lyric-word-highlight-opacity') === '0',
+    'zero-progress karaoke highlight retained an antialiased edge'
+  )
+  currentTime.value = 1.5
+  await nextTick()
+  expect(
+    firstWord.style.getPropertyValue('--lyric-word-progress') === '50%',
+    'karaoke fill did not react to the shared playback clock'
+  )
+  expect(
+    firstWord.style.getPropertyValue('--lyric-word-highlight-opacity') === '1',
+    'positive karaoke progress did not reveal the highlight layer'
+  )
+  isPlaying.value = true
+  await nextTick()
+  await new Promise((resolve) => setTimeout(resolve, 90))
+  const predictedProgress = Number.parseFloat(
+    firstWord.style.getPropertyValue('--lyric-word-progress')
+  )
+  expect(
+    predictedProgress > 54 && predictedProgress < 75,
+    'karaoke fill did not advance between playback clock samples; progress=' + predictedProgress
+  )
+  isPlaying.value = false
+  await nextTick()
+  currentTime.value = 2
+  await nextTick()
+  expect(
+    firstWord.style.getPropertyValue('--lyric-word-progress') === '100%',
+    'karaoke word did not finish its fill'
+  )
+  expect(
+    secondWord.style.getPropertyValue('--lyric-word-progress') === '0%',
+    'karaoke sweep skipped ahead of playback order'
+  )
+  expect(!document.querySelector('.lyric-word--active'), 'karaoke sweep singled out a completed word')
+  currentTime.value = 2.95
+  isPlaying.value = true
+  await nextTick()
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  expect(
+    reachedLineTimes.some((time) => time >= 3),
+    'karaoke clock did not signal the next lyric line boundary'
+  )
+  const disabledRoot = document.createElement('div')
+  document.body.appendChild(disabledRoot)
+  createApp({
+    render: () => h(PlayingLyricWords, {
+      active: true,
+      karaokeEnabled: false,
+      offsetSeconds: 0,
+      nextLineTime: 3,
+      clock,
+      words: [
+        { time: 1, endTime: 2, text: 'Null.' },
+        { time: 2, endTime: 3, text: 'No light' }
+      ]
+    })
+  }).mount(disabledRoot)
+  await nextTick()
+  const disabledWord = disabledRoot.querySelector('.lyric-word')
+  expect(disabledWord, 'disabled karaoke words were not rendered')
+  expect(
+    disabledWord.style.getPropertyValue('--lyric-word-progress') === '',
+    'disabled karaoke still updated word progress'
+  )
+  console.log('PLAYING_LYRIC_WORDS_RUNTIME_OK')
+}
+`
+}
+
+function lyricWordsElectronRunnerSource(): string {
+  return `const { app, BrowserWindow } = require('electron')
+const path = require('node:path')
+const target = process.argv.at(-1)
+app.whenReady().then(async () => {
+  const window = new BrowserWindow({ show: false, webPreferences: { contextIsolation: false, nodeIntegration: false } })
+  window.webContents.on('console-message', (_event, _level, message, line, sourceId) => console.error('RENDERER', sourceId + ':' + line, message))
+  try {
+    await window.loadFile(path.resolve(target))
+    await window.webContents.executeJavaScript('window.runPlayingLyricWordsRuntime()')
+    console.error('PLAYING_LYRIC_WORDS_RUNTIME_OK')
+    app.exit(0)
+  } catch (error) {
+    console.error('PLAYING_LYRIC_WORDS_RUNTIME_FAILED', error)
+    app.exit(1)
+  }
+})
+`
+}
 
 function runtimeEntrySource(): string {
   const componentPath = join(
@@ -164,8 +352,24 @@ window.runPlayingMusicLyricsRuntime = async () => {
     if (!found) throw new Error('missing button ' + label + '; available: ' + buttons().map((item) => item.textContent.trim()).join(' | '))
     return found
   }
+  const styleControls = panel.querySelector('.lyric-style-controls')
+  const editorDisclosure = panel.querySelector('.lyric-editor-disclosure')
+  expect(styleControls, 'lyrics style controls are mounted as a separate section')
+  expect(editorDisclosure, 'custom lyrics editor is mounted in a disclosure')
+  expect(!editorDisclosure.open, 'custom lyrics editor should start collapsed')
+  expect(
+    Boolean(styleControls.compareDocumentPosition(editorDisclosure) & Node.DOCUMENT_POSITION_FOLLOWING),
+    'lyrics style controls should precede the custom lyrics editor'
+  )
+  button('左对齐').click()
+  await waitFor(
+    () => window.__settingsFixture.settings.lyricsAppearance?.align === 'left',
+    'left alignment did not persist through the lyrics style controls'
+  )
+  expect(button('左对齐').getAttribute('aria-pressed') === 'true', 'left alignment was not projected')
+  editorDisclosure.open = true
   const textareas = panel.querySelectorAll('textarea')
-  const source = panel.querySelector('select')
+  const source = panel.querySelector('.lyric-source-grid select')
   const importButton = button('导入 LRC')
   const saveLrcButton = button('导出 LRC')
 
@@ -265,7 +469,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
     'manual UI projection mutated queue; before=' + beforeQueue + '; after=' + JSON.stringify(player.queue.value)
   )
 
-  const sourceSelectors = panel.querySelectorAll('select')
+  const sourceSelectors = panel.querySelectorAll('.lyric-editor-content select')
   sourceSelectors[2].value = 'automatic'
   sourceSelectors[2].dispatchEvent(new Event('change', { bubbles: true }))
   await tick()
@@ -326,6 +530,48 @@ window.runPlayingMusicLyricsRuntime = async () => {
   expect(player.currentTime.value > 3.4, 'lyric seek froze after repeated confirmation samples')
   expect(document.querySelector('.lyric-row.active')?.textContent.includes('Seek line'), 'clicked lyric did not stay active while time advanced')
   player.isLoading.value = false
+
+  button('1 行').click()
+  await waitFor(
+    () => window.__settingsFixture.settings.lyricsAppearance?.focusLineCount === 1,
+    'single-line lyric focus did not persist before the handoff regression probe'
+  )
+  const rapidLyricsTrack = {
+    ...playbackTrack,
+    id: 'fixture-provider:rapid-lyrics',
+    title: 'Rapid lyrics',
+    lyrics: '[00:20.00]Start line\\n[00:20.10]Brief line\\n[00:20.42]Following line'
+  }
+  player.currentTrack.value = structuredClone(rapidLyricsTrack)
+  player.queue.value = [structuredClone(rapidLyricsTrack)]
+  player.currentTime.value = 20
+  player.isPlaying.value = true
+  await tick()
+  const observedActiveLines = new Set()
+  let maxRenderedLyricRows = 0
+  const activeLineProbe = window.setInterval(() => {
+    observedActiveLines.add(document.querySelector('.lyric-row.active')?.textContent ?? '')
+    maxRenderedLyricRows = Math.max(
+      maxRenderedLyricRows,
+      document.querySelectorAll('.lyric-row').length
+    )
+  }, 8)
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  window.clearInterval(activeLineProbe)
+  expect(
+    [...observedActiveLines].some((line) => line.includes('Brief line')),
+    'rapid plain LRC line never became active between playback time samples; currentTime=' +
+      player.currentTime.value +
+      '; isPlaying=' +
+      player.isPlaying.value +
+      '; observed=' +
+      [...observedActiveLines].join(' | ')
+  )
+  expect(
+    maxRenderedLyricRows === 1,
+    'completed lyric was reinserted above the single-line focus window during handoff; maxRows=' +
+      maxRenderedLyricRows
+  )
   console.log('PLAYING_MUSIC_LYRICS_RUNTIME_OK')
 }
 `
@@ -351,6 +597,16 @@ window.__lyricsFixture = {
 }
 const clone = (value) => JSON.parse(JSON.stringify(value))
 const envelope = () => ({ version: 2, revision: window.__lyricsFixture.revision, savedAt: '2026-07-18T00:00:00.000Z', data: clone(window.__lyricsFixture.document) })
+window.__settingsFixture = { settings: {}, patches: [] }
+const settingsSnapshot = () => ({
+  settings: clone(window.__settingsFixture.settings),
+  defaults: { cachePath: '' },
+  paths: { settingsFile: '', userDataPath: '', activeCachePath: '' },
+  appVersion: 'test',
+  platform: 'win32',
+  restartRequired: false,
+  restartReasons: []
+})
 window.__audioFixture = {
   propertyCallbacks: [],
   playbackInfoCallbacks: [],
@@ -372,6 +628,22 @@ const subscribe = (list, cb) => {
 }
 const noopSubscribe = () => () => {}
 window.api = {
+  settings: {
+    get: async () => settingsSnapshot(),
+    update: async (patch) => {
+      window.__settingsFixture.patches.push(clone(patch))
+      window.__settingsFixture.settings = {
+        ...window.__settingsFixture.settings,
+        ...patch,
+        lyricsAppearance: {
+          ...window.__settingsFixture.settings.lyricsAppearance,
+          ...patch.lyricsAppearance
+        }
+      }
+      return settingsSnapshot()
+    },
+    onChanged: () => () => {}
+  },
   audioEngine: {
     onPropertyChange: (cb) => subscribe(window.__audioFixture.propertyCallbacks, cb),
     onPlaybackInfo: (cb) => subscribe(window.__audioFixture.playbackInfoCallbacks, cb),

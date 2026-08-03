@@ -285,7 +285,13 @@ export interface DspSceneState {
   scenes: DspScene[]
   pinnedSceneId: string | null
   activeSceneId: string | null
+  /** Stored scene graph selected for this route. It is never mutated by direct mode. */
   graph: DspGraphConfig
+  /** Graph actually acknowledged by the engine after master/module/direct gates. */
+  effectiveGraph?: DspGraphConfig
+  /** Empty when the selected graph is active; otherwise explains the effective bypass. */
+  effectiveBypassReason?: string
+  directMode?: boolean
   requiresPcmFallback: boolean
   dsdPcmFallbackApplied: boolean
 }

@@ -1764,15 +1764,8 @@ const multiSelect = useTrackMultiSelect({
   enabled: multiSelectEnabled
 })
 
-const {
-  selectedIds,
-  selectedCount,
-  hasSelection,
-  isSelected,
-  clearSelection,
-  getSelectedTracks,
-  selectOnly
-} = multiSelect
+const { selectedIds, selectedCount, hasSelection, isSelected, clearSelection, getSelectedTracks } =
+  multiSelect
 
 function isStreamingTrackFavorited(track: Track): boolean {
   if (track.ncmSongId != null) return isTrackLiked(track.ncmSongId)
@@ -1929,15 +1922,12 @@ function onTrackClick(track: Track, index: number, event?: MouseEvent): void {
   if (!event) return
   const result = multiSelect.onRowClick(track, index, event)
   if (result !== 'play') return
-  if (settingsStore.settings.value.trackActivationMode === 'doubleClick') {
-    selectOnly(track.id, index)
-    return
-  }
+  if (settingsStore.settings.value.trackActivationMode === 'doubleClick') return
   void playTrackFromCurrentDetail(track)
 }
 
-function playDetailTrack(track: Track, _index: number): void {
-  clearSelection()
+function playDetailTrack(track: Track, _index: number, event?: MouseEvent): void {
+  if (event && multiSelect.shouldSuppressRowDoubleClick(event)) return
   void playTrackFromCurrentDetail(track)
 }
 
@@ -2126,7 +2116,6 @@ function onSearchTrackClickWithSelect(track: Track, event: MouseEvent): void {
     settingsStore.settings.value.trackActivationMode === 'doubleClick' &&
     event.type !== 'dblclick'
   ) {
-    selectOnly(track.id, index)
     return
   }
   clearSelection()

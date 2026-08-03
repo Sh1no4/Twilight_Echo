@@ -35,7 +35,7 @@ import {
   type ThemePerformanceOperation,
   type ThemePerformanceSnapshot
 } from '../utils/themePerformance'
-import type { AppSettings } from '../types/settings'
+import type { AppBackgroundColorPair, AppBackgroundPage, AppSettings } from '../types/settings'
 
 const STYLE_ID = 'twilight-theme-runtime'
 const EPOCH_ISO = new Date(0).toISOString()
@@ -47,6 +47,12 @@ const SETTINGS_ACCENT_COLORS: Readonly<Record<string, string>> = Object.freeze({
   amber: '#f59e0b',
   slate: '#334155'
 })
+const APP_BACKGROUND_PAGES: readonly AppBackgroundPage[] = [
+  'local',
+  'settings',
+  'streaming',
+  'player'
+]
 const themePerformanceRecorder = createThemePerformanceRecorder()
 const themePerformance = ref<ThemePerformanceSnapshot>(themePerformanceRecorder.snapshot())
 
@@ -74,6 +80,7 @@ let lastAppliedTone: ThemeTone | null = null
 let lightAccentColor = 'blue'
 let darkAccentColor = 'blue'
 let themePreference: AppSettings['theme'] = 'system'
+let appBackground: AppSettings['appBackground'] | null = null
 
 function resolveTone(): ThemeTone {
   return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'pureWhite'
@@ -94,11 +101,25 @@ function applySettingsThemeMode(theme: AppSettings['theme']): void {
 }
 
 function cacheSettingsAppearance(
-  settings: Pick<AppSettings, 'accentColor' | 'lightAccentColor' | 'darkAccentColor' | 'uiDensity'>
+  settings: Pick<
+    AppSettings,
+    'accentColor' | 'lightAccentColor' | 'darkAccentColor' | 'uiDensity' | 'appBackground'
+  >
 ): void {
   lightAccentColor = settings.lightAccentColor || settings.accentColor || 'blue'
   darkAccentColor = settings.darkAccentColor || settings.accentColor || 'blue'
+  appBackground = settings.appBackground
   document.documentElement.dataset.density = settings.uiDensity
+}
+
+export function syncThemeSettingsAppearance(
+  settings: Pick<
+    AppSettings,
+    'accentColor' | 'lightAccentColor' | 'darkAccentColor' | 'uiDensity' | 'appBackground'
+  >
+): void {
+  cacheSettingsAppearance(settings)
+  if (loaded.value) queueMicrotask(() => void applyActiveTheme(false))
 }
 
 function resolveSettingsAccentColor(color: string): string {
@@ -164,8 +185,7 @@ function setupThemeListeners(): void {
     if (next.settings.theme !== themePreference) {
       applySettingsThemeMode(next.settings.theme)
     }
-    cacheSettingsAppearance(next.settings)
-    queueMicrotask(() => void applyActiveTheme(true))
+    syncThemeSettingsAppearance(next.settings)
   })
   window.api.plugins.onChanged(() => {
     queueMicrotask(() => void applyActiveTheme(true))
@@ -301,6 +321,7 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
       applyProfileModeVariables(modes, tone, resolvedTokens, variables)
     }
   }
+  applyAppBackgroundVariables(tone, variables)
   applySettingsAccentColor(tone, variables)
   const root = Object.entries({ ...themeShellLayoutToCssVariables(shellLayout), ...variables })
     .map(([name, value]) => `  ${name}: ${value} !important;`)
@@ -319,6 +340,28 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
     tone,
     resourceUrls
   }
+}
+
+function applyAppBackgroundVariables(tone: ThemeTone, variables: Record<string, string>): void {
+  if (!appBackground) return
+
+  const colorMode = tone === 'dark' ? 'dark' : 'light'
+  const globalBackground = appBackground.global
+  variables['--te-app-bg'] = globalBackground[colorMode]
+  variables['--te-app-bg-image'] = toBackgroundImageValue(globalBackground)
+
+  for (const page of APP_BACKGROUND_PAGES) {
+    const pageBackground = appBackground.pages[page]
+    const resolvedBackground = pageBackground.inherit ? globalBackground : pageBackground
+    variables[`--te-${page}-bg`] = resolvedBackground[colorMode]
+    variables[`--te-${page}-bg-image`] = toBackgroundImageValue(resolvedBackground)
+  }
+  variables['--te-streaming-surface'] = 'var(--te-streaming-bg)'
+}
+
+function toBackgroundImageValue(background: AppBackgroundColorPair): string {
+  if (background.kind !== 'image' || !background.image) return 'none'
+  return `url("${escapeCssUrl(background.image)}")`
 }
 
 function resolveRuntimeTone(profile: ThemeProfileV2 | null, modes: ThemeModes): ThemeTone {

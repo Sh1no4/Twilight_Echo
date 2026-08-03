@@ -3227,8 +3227,12 @@ PipelineStatus AudioPipeline::buildStatusLocked() {
 
 PipelineStatus AudioPipeline::fallbackStatus() const {
   std::lock_guard lock(statusMutex_);
+  // `state` is the user-visible transport state. `renderState_` is a
+  // callback-side implementation detail and may be temporarily Paused while
+  // WASAPI Exclusive reopens its topology. Do not expose that transient state
+  // when the pipeline mutex is contended; status() will take the mutex for
+  // end-of-file, device-invalidated, and render-error snapshots.
   PipelineStatus status = lastStatus_;
-  status.state = renderState_.load(std::memory_order_acquire);
   const int positionSampleRate = positionSampleRateForStream(status.stream, status.outputFormat);
   status.positionSeconds =
       positionSampleRate > 0

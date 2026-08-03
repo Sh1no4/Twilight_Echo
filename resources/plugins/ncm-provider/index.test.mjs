@@ -22,7 +22,11 @@ function album(id) {
   }
 }
 
-async function activateProvider(request, settings = new Map([['cookie', 'MUSIC_U=test;']])) {
+async function activateProvider(
+  request,
+  settings = new Map([['cookie', 'MUSIC_U=test;']]),
+  overrides = {}
+) {
   let registeredProvider = null
   await ncmProvider.activate({
     twilight: {
@@ -31,7 +35,8 @@ async function activateProvider(request, settings = new Map([['cookie', 'MUSIC_U
           request,
           officialLogin: async () => 'MUSIC_U=test;',
           getCachedSong: async () => null,
-          cacheSong: async () => null
+          cacheSong: async () => null,
+          ...overrides.ncm
         }
       },
       providers: {
@@ -53,7 +58,8 @@ async function activateProvider(request, settings = new Map([['cookie', 'MUSIC_U
       debug: () => undefined,
       info: () => undefined,
       warn: () => undefined,
-      error: () => undefined
+      error: () => undefined,
+      ...overrides.logger
     }
   })
   assert.ok(registeredProvider)
@@ -236,10 +242,14 @@ test('automatic quality falls back through Hi-Res, lossless, extreme, and standa
   }
 })
 
-test('premium-only tracks return no URL when no officially authorized fallback exists', async () => {
+test('premium-only tracks return no URL when official and unlock fallbacks are unavailable', async () => {
   const requests = []
   const provider = await activateProvider(async (path) => {
     requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname === '/song/url/match') {
+      return { code: 500, msg: 'no matching source', data: [] }
+    }
     return {
       code: 200,
       data: [{ id: 79, url: null, code: 404, fee: 1, msg: 'VIP only' }]
@@ -252,10 +262,144 @@ test('premium-only tracks return no URL when no officially authorized fallback e
       requests.map((path) => {
         const url = parseRequest(path)
         if (url.pathname === '/song/url/v1') return `v1:${url.searchParams.get('level')}`
+        if (url.pathname === '/song/url/match') return `match:${url.searchParams.get('id')}`
         return `br:${url.searchParams.get('br')}`
       }),
-      ['v1:hires', 'v1:lossless', 'v1:exhigh', 'v1:standard', 'br:999000', 'br:320000', 'br:128000']
+      [
+        'v1:hires',
+        'v1:lossless',
+        'v1:exhigh',
+        'v1:standard',
+        'br:999000',
+        'br:320000',
+        'br:128000',
+        'match:79'
+      ]
     )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('gray tracks use song URL matching only after every official endpoint fails', async () => {
+  const requests = []
+  const cachedSongs = []
+  const provider = await activateProvider(
+    async (path) => {
+      requests.push(path)
+      const url = parseRequest(path)
+      if (url.pathname === '/song/url/match') {
+        assert.equal(url.searchParams.get('id'), '82')
+        assert.equal(url.searchParams.get('source'), null)
+        return { code: 200, data: 'https://unblock.example/82.flac', proxyUrl: '' }
+      }
+      return {
+        code: 200,
+        data: [{ id: 82, url: null, code: 404, fee: 1, msg: 'copyright unavailable' }]
+      }
+    },
+    undefined,
+    {
+      ncm: {
+        cacheSong: async (songId, url, fileName) => {
+          cachedSongs.push({ songId, url, fileName })
+          return null
+        }
+      }
+    }
+  )
+
+  try {
+    const track = { id: 'ncm:82', fileName: 'gray-track.flac' }
+    assert.equal(
+      await provider.getPlaybackUrl(track, { quality: 'standard' }),
+      'https://unblock.example/82.flac'
+    )
+    assert.deepEqual(
+      requests.map((path) => parseRequest(path).pathname),
+      ['/song/url/v1', '/song/url', '/song/url', '/song/url', '/song/url/match']
+    )
+    assert.deepEqual(cachedSongs, [
+      { songId: 82, url: 'https://unblock.example/82.flac', fileName: 'gray-track.flac' }
+    ])
+
+    assert.equal(
+      await provider.getPlaybackUrl(track, { quality: 'standard' }),
+      'https://unblock.example/82.flac'
+    )
+    assert.equal(requests.length, 5)
+    assert.equal(cachedSongs.length, 1)
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('gray track fallback rejects successful responses without a valid HTTP URL', async () => {
+  const warnings = []
+  const provider = await activateProvider(
+    async (path) => {
+      const url = parseRequest(path)
+      if (url.pathname === '/song/url/match') {
+        return { code: 200, data: [], proxyUrl: 'javascript:alert(1)' }
+      }
+      return { code: 200, data: [{ id: 83, url: null, code: 404, msg: 'unavailable' }] }
+    },
+    undefined,
+    { logger: { warn: (message) => warnings.push(message) } }
+  )
+
+  try {
+    assert.equal(await provider.getPlaybackUrl({ id: 'ncm:83' }, { quality: 'standard' }), null)
+    assert.ok(
+      warnings.some((message) => message.includes('灰色歌曲解锁响应缺少有效的 HTTP(S) URL'))
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('gray track fallback preserves unlock request failures in diagnostic logs', async () => {
+  const warnings = []
+  const provider = await activateProvider(
+    async (path) => {
+      const url = parseRequest(path)
+      if (url.pathname === '/song/url/match') throw new Error('unblock upstream failed')
+      return { code: 200, data: [{ id: 84, url: null, code: 404, msg: 'unavailable' }] }
+    },
+    undefined,
+    { logger: { warn: (message) => warnings.push(message) } }
+  )
+
+  try {
+    assert.equal(await provider.getPlaybackUrl({ id: 'ncm:84' }, { quality: 'standard' }), null)
+    assert.ok(warnings.some((message) => message.includes('unblock upstream failed')))
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('playback cancellation stops official fallback before gray track matching', async () => {
+  const controller = new AbortController()
+  const requests = []
+  const provider = await activateProvider(async (path, _cookie, options) => {
+    requests.push(path)
+    assert.strictEqual(options.signal, controller.signal)
+    controller.abort(new Error('playback cancelled'))
+    return { code: 200, data: [{ id: 85, url: null, code: 404 }] }
+  })
+
+  try {
+    await assert.rejects(
+      () =>
+        provider.getPlaybackUrl(
+          { id: 'ncm:85' },
+          { quality: 'standard' },
+          { signal: controller.signal }
+        ),
+      /playback cancelled/
+    )
+    assert.equal(requests.length, 1)
+    assert.equal(parseRequest(requests[0]).pathname, '/song/url/v1')
   } finally {
     ncmProvider.deactivate()
   }

@@ -25,6 +25,8 @@ import {
   fftResolutionOptions,
   accentColorOptions,
   fontFamilyOptions,
+  lyricsAppearanceFontFamilyOptions,
+  lyricsFocusLineCountOptions,
   uiDensityOptions,
   motionPreferenceOptions,
   appBackgroundPageOptions,
@@ -65,6 +67,7 @@ import type {
   DesktopLyricsLayout,
   DesktopLyricsSettings,
   DsdOutputMode,
+  LyricsAppearanceSettings,
   LyricAlign,
   MotionPreference,
   MusicCachePolicySettings,
@@ -84,6 +87,11 @@ import type {
 } from '../types/settings'
 import type { LibraryWatcherStatusSnapshot } from '../../../shared/localLibraryScan.ts'
 import type { Vst3CatalogState } from '../../../shared/dspGraph.ts'
+import {
+  DEFAULT_LYRICS_APPEARANCE,
+  cloneLyricsAppearance,
+  syncLegacyLyricsAppearance
+} from '../../../shared/lyricsAppearance.ts'
 
 const props = defineProps<{
   initialSection?: SectionKey
@@ -180,7 +188,8 @@ const {
   pauseLibraryScan,
   resumeLibraryScan,
   cancelLibraryScan,
-  cancelLibraryMetadataEnrichment
+  cancelLibraryMetadataEnrichment,
+  refreshLibraryIndex
 } = useMusicStore()
 const libraryScanCommandError = ref('')
 const libraryResetPending = ref(false)
@@ -603,6 +612,12 @@ function capabilityStateTitle(device: AudioDeviceOption, label: string): string 
   return reason ? `${label}: ${reason}` : label
 }
 
+async function setGenreSeparators(event: Event): Promise<void> {
+  const value = (event.target as HTMLInputElement).value
+  await updateSettings({ genreSeparators: value })
+  refreshLibraryIndex()
+}
+
 function setProxyMode(event: Event): void {
   const value = (event.target as HTMLSelectElement).value as ProxyMode
   void updateSettings({ proxyMode: value })
@@ -805,9 +820,7 @@ function resetSettingsGroup(group: 'appearance' | 'playback' | 'desktopLyrics'):
         motionPreference: 'system',
         blurEffect: true,
         useCoverTheme: true,
-        lyricFontSize: 18,
-        lyricAlign: 'center',
-        lyricDimOpacity: 40,
+        lyricsAppearance: cloneLyricsAppearance(DEFAULT_LYRICS_APPEARANCE),
         fontFamily: 'system',
         uiDensity: 'standard'
       })
@@ -1216,24 +1229,27 @@ function toggleBackgroundPage(page: AppBackgroundPage): void {
   backgroundPageOpen.value = backgroundPageOpen.value === page ? null : page
 }
 
-function setLyricAlign(event: Event): void {
-  void updateSettings({ lyricAlign: (event.target as HTMLSelectElement).value as LyricAlign })
-}
-
-function setLyricDimOpacity(event: Event): void {
-  setLyricDimOpacityValue(Number((event.target as HTMLInputElement).value))
-}
-
-function setLyricDimOpacityValue(lyricDimOpacity: number): void {
-  void updateSettings({ lyricDimOpacity })
-}
-
-function setLyricFontSize(event: Event): void {
-  setLyricFontSizeValue(Number((event.target as HTMLInputElement).value))
-}
-
-function setLyricFontSizeValue(lyricFontSize: number): void {
-  void updateSettings({ lyricFontSize })
+function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
+  key: K,
+  value: LyricsAppearanceSettings[K]
+): void {
+  const legacyKeys = new Set<keyof LyricsAppearanceSettings>([
+    'fontFamily',
+    'fontSize',
+    'fontWeight',
+    'lineHeight',
+    'align',
+    'colorMode',
+    'textColor',
+    'activeColor',
+    'karaokeColor'
+  ])
+  const lyricsAppearance = legacyKeys.has(key)
+    ? syncLegacyLyricsAppearance(settings.value.lyricsAppearance, {
+        [key]: value
+      } as Partial<LyricsAppearanceSettings>)
+    : { ...settings.value.lyricsAppearance, [key]: value }
+  void updateSettings({ lyricsAppearance })
 }
 
 const cardAppearanceTab = ref<'light' | 'dark'>('light')
@@ -1940,6 +1956,22 @@ onBeforeUnmount(() => {
                     添加文件夹
                   </button>
                 </div>
+              </div>
+              <hr />
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>流派分隔符</strong>
+                  <span>将标签中的多个字符识别为不同流派；默认支持 ,，;；、/。</span>
+                </div>
+                <input
+                  class="preview-select"
+                  type="text"
+                  maxlength="32"
+                  :value="settings.genreSeparators"
+                  aria-label="流派分隔符"
+                  placeholder=",，;；、/"
+                  @change="setGenreSeparators"
+                />
               </div>
               <hr />
               <div class="setting-item">
@@ -4196,10 +4228,39 @@ onBeforeUnmount(() => {
             <div class="setting-item lyric-style-item">
               <div class="setting-copy">
                 <strong>歌词显示样式 (Lyrics Style)</strong>
-                <span>翻译对齐方式、字号及未播放行暗度。</span>
+                <span>控制主播放页的排版、聚焦范围和高亮效果。</span>
               </div>
               <div class="inline-controls">
-                <select class="preview-select" :value="settings.lyricAlign" @change="setLyricAlign">
+                <select
+                  class="preview-select"
+                  :value="settings.lyricsAppearance.fontFamily"
+                  @change="
+                    updateLyricsAppearance(
+                      'fontFamily',
+                      ($event.target as HTMLSelectElement)
+                        .value as LyricsAppearanceSettings['fontFamily']
+                    )
+                  "
+                >
+                  <option
+                    v-for="option in lyricsAppearanceFontFamilyOptions"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </option>
+                </select>
+                <select
+                  class="preview-select"
+                  :value="settings.lyricsAppearance.align"
+                  @change="
+                    updateLyricsAppearance(
+                      'align',
+                      ($event.target as HTMLSelectElement)
+                        .value as LyricsAppearanceSettings['align']
+                    )
+                  "
+                >
                   <option
                     v-for="option in lyricAlignOptions"
                     :key="option.value"
@@ -4214,17 +4275,72 @@ onBeforeUnmount(() => {
                     class="range-input"
                     type="range"
                     min="14"
-                    max="28"
-                    :value="settings.lyricFontSize"
-                    @input="setLyricFontSize"
+                    max="32"
+                    :value="settings.lyricsAppearance.fontSize"
+                    @input="
+                      updateLyricsAppearance(
+                        'fontSize',
+                        Number(($event.target as HTMLInputElement).value)
+                      )
+                    "
                   />
                   <EditableRangeValue
-                    :value="settings.lyricFontSize"
+                    :value="settings.lyricsAppearance.fontSize"
                     :min="14"
-                    :max="28"
+                    :max="32"
                     suffix="px"
                     aria-label="编辑歌词字号"
-                    @change="setLyricFontSizeValue"
+                    @change="updateLyricsAppearance('fontSize', $event)"
+                  />
+                </div>
+                <div class="range-pill">
+                  <span>字重</span>
+                  <input
+                    class="range-input"
+                    type="range"
+                    min="400"
+                    max="700"
+                    step="100"
+                    :value="settings.lyricsAppearance.fontWeight"
+                    @input="
+                      updateLyricsAppearance(
+                        'fontWeight',
+                        Number(($event.target as HTMLInputElement).value)
+                      )
+                    "
+                  />
+                  <EditableRangeValue
+                    :value="settings.lyricsAppearance.fontWeight"
+                    :min="400"
+                    :max="700"
+                    :step="100"
+                    aria-label="编辑歌词字重"
+                    @change="updateLyricsAppearance('fontWeight', $event)"
+                  />
+                </div>
+                <div class="range-pill">
+                  <span>行距</span>
+                  <input
+                    class="range-input"
+                    type="range"
+                    min="1.2"
+                    max="2.6"
+                    step="0.05"
+                    :value="settings.lyricsAppearance.lineHeight"
+                    @input="
+                      updateLyricsAppearance(
+                        'lineHeight',
+                        Number(($event.target as HTMLInputElement).value)
+                      )
+                    "
+                  />
+                  <EditableRangeValue
+                    :value="settings.lyricsAppearance.lineHeight"
+                    :min="1.2"
+                    :max="2.6"
+                    :step="0.05"
+                    aria-label="编辑歌词行距"
+                    @change="updateLyricsAppearance('lineHeight', $event)"
                   />
                 </div>
                 <div class="range-pill">
@@ -4234,18 +4350,117 @@ onBeforeUnmount(() => {
                     type="range"
                     min="10"
                     max="100"
-                    :value="settings.lyricDimOpacity"
-                    @input="setLyricDimOpacity"
+                    :value="settings.lyricsAppearance.inactiveOpacity"
+                    @input="
+                      updateLyricsAppearance(
+                        'inactiveOpacity',
+                        Number(($event.target as HTMLInputElement).value)
+                      )
+                    "
                   />
                   <EditableRangeValue
-                    :value="settings.lyricDimOpacity"
+                    :value="settings.lyricsAppearance.inactiveOpacity"
                     :min="10"
                     :max="100"
                     suffix="%"
                     aria-label="编辑未播放歌词暗度"
-                    @change="setLyricDimOpacityValue"
+                    @change="updateLyricsAppearance('inactiveOpacity', $event)"
                   />
                 </div>
+              </div>
+              <div class="inline-controls">
+                <div class="segmented-control density" role="group" aria-label="歌词聚焦行数">
+                  <button
+                    v-for="option in lyricsFocusLineCountOptions"
+                    :key="option.value"
+                    type="button"
+                    :class="{ active: settings.lyricsAppearance.focusLineCount === option.value }"
+                    @click="updateLyricsAppearance('focusLineCount', option.value)"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
+                <div class="setting-copy">
+                  <strong>逐字高亮</strong>
+                  <span>按逐字时间戳显示扫光效果。</span>
+                </div>
+                <span
+                  class="toggle-switch"
+                  :class="{
+                    active: settings.lyricsAppearance.karaokeEnabled,
+                    inactive: !settings.lyricsAppearance.karaokeEnabled
+                  }"
+                  role="switch"
+                  :aria-checked="settings.lyricsAppearance.karaokeEnabled"
+                  @click="
+                    updateLyricsAppearance(
+                      'karaokeEnabled',
+                      !settings.lyricsAppearance.karaokeEnabled
+                    )
+                  "
+                ></span>
+              </div>
+              <div class="inline-controls">
+                <div class="segmented-control density" role="group" aria-label="歌词颜色来源">
+                  <button
+                    type="button"
+                    :class="{ active: settings.lyricsAppearance.colorMode === 'theme' }"
+                    @click="updateLyricsAppearance('colorMode', 'theme')"
+                  >
+                    跟随主题
+                  </button>
+                  <button
+                    type="button"
+                    :class="{ active: settings.lyricsAppearance.colorMode === 'custom' }"
+                    @click="updateLyricsAppearance('colorMode', 'custom')"
+                  >
+                    自定义
+                  </button>
+                </div>
+                <template v-if="settings.lyricsAppearance.colorMode === 'custom'">
+                  <label class="range-pill">
+                    <span>正文</span>
+                    <input
+                      type="color"
+                      class="color-picker"
+                      :value="settings.lyricsAppearance.textColor"
+                      @input="
+                        updateLyricsAppearance(
+                          'textColor',
+                          ($event.target as HTMLInputElement).value
+                        )
+                      "
+                    />
+                  </label>
+                  <label class="range-pill">
+                    <span>当前行</span>
+                    <input
+                      type="color"
+                      class="color-picker"
+                      :value="settings.lyricsAppearance.activeColor"
+                      @input="
+                        updateLyricsAppearance(
+                          'activeColor',
+                          ($event.target as HTMLInputElement).value
+                        )
+                      "
+                    />
+                  </label>
+                  <label class="range-pill">
+                    <span>逐字高亮</span>
+                    <input
+                      type="color"
+                      class="color-picker"
+                      :value="settings.lyricsAppearance.karaokeColor"
+                      @input="
+                        updateLyricsAppearance(
+                          'karaokeColor',
+                          ($event.target as HTMLInputElement).value
+                        )
+                      "
+                    />
+                  </label>
+                </template>
               </div>
             </div>
             <MiniPlayerSettingsSection />

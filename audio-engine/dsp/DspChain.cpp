@@ -388,6 +388,9 @@ bool DspChain::configureGraphJson(const std::string& json, std::string* error) {
   const std::string nodeArray = extractArrayField(root, "nodes");
   const uint64_t revision = static_cast<uint64_t>(std::max(0.0, extractNumberField(json, "revision").value_or(0.0)));
   const std::string sceneId = extractStringField(json, "sceneId").value_or("");
+  const std::string processing = json_utils::fieldObject(json, "processing");
+  const bool graphProcessingEnabled = extractBoolField(processing, "dspEnabled").value_or(
+      extractBoolField(json, "dspEnabled").value_or(true));
   std::lock_guard lock(mutex_);
 
   DspConfig next = config_;
@@ -445,6 +448,10 @@ bool DspChain::configureGraphJson(const std::string& json, std::string* error) {
     runtime.id = extractStringField(object, "id").value_or("");
     runtime.type = graphNodeType(object);
     runtime.enabled = extractBoolField(object, "enabled").value_or(true);
+    if (!graphProcessingEnabled && runtime.enabled) {
+      runtime.enabled = false;
+      runtime.bypassReason = "DSP master bypass is active";
+    }
     const std::string params = json_utils::fieldObject(object, "params");
     if (runtime.id.empty()) runtime.id = runtime.type;
     if (graphNodeRequiresUniqueProcessor(runtime.type) &&

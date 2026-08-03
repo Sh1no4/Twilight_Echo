@@ -300,12 +300,13 @@ void testSetVolumeAvoidsBlockingOnPipelineMutex() {
   assert(body.find("std::lock_guard lock(mutex_)") == std::string::npos);
 }
 
-void testFallbackStatusUsesRealtimeRenderState() {
+void testFallbackStatusPreservesStableTransportState() {
   const std::filesystem::path testFilePath(__FILE__);
   const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
   const std::string source = readTextFile(sourcePath);
   const std::string body = extractFunctionBody(source, "PipelineStatus AudioPipeline::fallbackStatus() const");
-  assert(body.find("status.state = renderState_.load(std::memory_order_acquire);") != std::string::npos);
+  assert(body.find("PipelineStatus status = lastStatus_;") != std::string::npos);
+  assert(body.find("status.state = renderState_.load") == std::string::npos);
 }
 
 void testVolumeCommandApplicationIsRealtimeSafe() {
@@ -3170,7 +3171,7 @@ int main() {
   testRenderCallbackDoesNotStopDecodeStreams();
   testSetDspConfigParsesJsonOutsidePipelineMutex();
   testSetVolumeAvoidsBlockingOnPipelineMutex();
-  testFallbackStatusUsesRealtimeRenderState();
+  testFallbackStatusPreservesStableTransportState();
   testVolumeCommandApplicationIsRealtimeSafe();
   testVolumeCommandCallbackWorkIsBoundedAndUsesPortableAtomics();
   testDecodeStreamReaperRetiresOutsideAudioCallback();

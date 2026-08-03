@@ -13,6 +13,7 @@ import type {
 } from '../shared/dspGraph.ts'
 import type { ImportedFrequencyResponse } from '../shared/frequencyResponse.ts'
 import type { SleepTimerSettings } from '../shared/sleepTimer.ts'
+import type { LyricsAppearanceSettings } from '../shared/lyricsAppearance.ts'
 import type {
   ThemeAssetReference,
   ThemeAssetType,
@@ -349,6 +350,7 @@ interface EqualizerBand {
 
 interface AudioProcessingSettings {
   dspEnabled: boolean
+  directMode: boolean
   clipGuard: boolean
   fftEnabled: boolean
   fftResolution: number
@@ -675,8 +677,9 @@ interface AppSettings {
   windowTransparency: boolean
   windowTransparencyEffect: WindowTransparencyEffectSettings
   useCoverTheme: boolean
-  lyricFontSize: number
+  lyricsAppearance: LyricsAppearanceSettings
   libraryFolders: string[]
+  genreSeparators: string
   watchLibrary: boolean
   /** When true, empty local/provider lyrics may fall back to LRCLIB online search. */
   onlineLyricsFallback: boolean
@@ -690,8 +693,6 @@ interface AppSettings {
   appBackground: AppBackgroundSettings
   cardAppearance: CardAppearanceSettings
   nowPlayingBackground: NowPlayingBackground
-  lyricAlign: LyricAlign
-  lyricDimOpacity: number
   playbackResumeMode: PlaybackResumeMode
   sleepTimer: SleepTimerSettings
   ncmPlaybackQuality: NcmPlaybackQuality

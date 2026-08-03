@@ -7,6 +7,8 @@ import type {
   AppBackgroundPage,
   ChannelRoutingMode,
   DesktopLyricsSettings,
+  LyricsAppearanceFontFamily,
+  LyricsFocusLineCount,
   LyricAlign,
   MotionPreference,
   NcmPlaybackQuality,
@@ -153,6 +155,26 @@ export const fontFamilyOptions: { value: string; label: string }[] = [
   { value: 'comic', label: 'Comic Sans MS' }
 ]
 
+export const lyricsAppearanceFontFamilyOptions: {
+  value: LyricsAppearanceFontFamily
+  label: string
+}[] = [
+  { value: 'inherit', label: '跟随界面字体' },
+  { value: 'system', label: '系统默认 (System)' },
+  { value: 'inter', label: 'Inter / Roboto' },
+  { value: 'lxgw', label: '霞鹜文楷 (LXGW)' },
+  { value: 'sarasa', label: 'Sarasa Gothic' },
+  { value: 'comic', label: 'Comic Sans MS' },
+  { value: 'custom', label: '自定义字体（在播放页设置）' }
+]
+
+export const lyricsFocusLineCountOptions: { value: LyricsFocusLineCount; label: string }[] = [
+  { value: 'all', label: '全部' },
+  { value: 1, label: '1 行' },
+  { value: 3, label: '3 行' },
+  { value: 5, label: '5 行' }
+]
+
 export const uiDensityOptions: { value: UiDensity; label: string }[] = [
   { value: 'compact', label: '紧凑' },
   { value: 'standard', label: '标准' },
@@ -191,7 +213,7 @@ export const SETTINGS_SEARCH_INDEX: Array<{
     section: 'general',
     title: '媒体库与启动',
     terms:
-      '常规 扫描 文件夹 监控 网易云 SMTC Discord 启动 托盘 代理 插件设置 备份 恢复 远程 遥控 PIN DLNA 投送 局域网 操作习惯 单击播放 双击播放 右键菜单'
+      '常规 扫描 文件夹 监控 流派 分隔符 genre separator 网易云 SMTC Discord 启动 托盘 代理 插件设置 备份 恢复 远程 遥控 PIN DLNA 投送 局域网 操作习惯 单击播放 双击播放 右键菜单'
   },
   {
     section: 'playback',

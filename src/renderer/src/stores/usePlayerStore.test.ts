@@ -661,6 +661,18 @@ test('native queue switching guards the target track before applying playback-in
   const advanceNativePlayback = extractInternalFunctionBody(source, 'advanceNativePlayback')
   const applyNativePlaybackInfo = extractInternalFunctionBody(source, 'applyNativePlaybackInfo')
   const setupAudioEngineListeners = extractInternalFunctionBody(source, 'setupAudioEngineListeners')
+  const refreshPlaybackInfoAfterStartFile = extractInternalFunctionBody(
+    source,
+    'refreshPlaybackInfoAfterStartFile'
+  )
+  const refreshPlaybackAfterRendererResume = extractInternalFunctionBody(
+    source,
+    'refreshPlaybackAfterRendererResume'
+  )
+  const retryCurrentTrackLyricsIfNeeded = extractInternalFunctionBody(
+    source,
+    'retryCurrentTrackLyricsIfNeeded'
+  )
   const advanceAfterPlaybackEnded = extractInternalFunctionBody(source, 'advanceAfterPlaybackEnded')
   const playQueueTrack = extractInternalFunctionBody(source, 'playQueueTrack')
   const resetPlaybackUiForTrackSwitch = extractInternalFunctionBody(
@@ -737,11 +749,20 @@ test('native queue switching guards the target track before applying playback-in
     setupAudioEngineListeners.match(/api\.onStartFile\(\(\) => \{[\s\S]*?\n    \}\)/)?.[0] ?? '',
     /if \(!nativePlaybackActive\) return/
   )
-  assert.match(setupAudioEngineListeners, /getPlaybackInfo\(\)/)
+  assert.match(setupAudioEngineListeners, /refreshPlaybackInfoAfterStartFile\(\)/)
+  assert.match(setupAudioEngineListeners, /document\.addEventListener\('visibilitychange'/)
+  assert.match(setupAudioEngineListeners, /window\.addEventListener\('focus'/)
+  assert.match(refreshPlaybackInfoAfterStartFile, /START_FILE_PLAYBACK_INFO_REFRESH_ATTEMPTS/)
+  assert.match(refreshPlaybackInfoAfterStartFile, /api\.getPlaybackInfo\(\)/)
   assert.match(
-    setupAudioEngineListeners,
+    refreshPlaybackInfoAfterStartFile,
     /applyNativePlaybackInfo\(info, \{ applyTrackWhenInactive: true \}\)/
   )
+  assert.match(refreshPlaybackInfoAfterStartFile, /currentTrack\.value\?\.id !== trackIdAtStart/)
+  assert.match(refreshPlaybackAfterRendererResume, /getPlaybackInfo\(\)/)
+  assert.match(refreshPlaybackAfterRendererResume, /retryCurrentTrackLyricsIfNeeded\(\)/)
+  assert.match(retryCurrentTrackLyricsIfNeeded, /lyricsLoadState\.value\.status === 'loading'/)
+  assert.match(retryCurrentTrackLyricsIfNeeded, /ensureCurrentTrackLyricsLoaded\(track, true\)/)
   // Accept time-pos whenever a track/session is active — do not freeze solely on
   // nativePlaybackActive demotions during track hand-off.
   assert.match(
@@ -752,7 +773,7 @@ test('native queue switching guards the target track before applying playback-in
   // clearing after an ignored previous-track snapshot re-opened the flash race.
   const onStartFile =
     setupAudioEngineListeners.match(/api\.onStartFile\(\(\) => \{[\s\S]*?\n    \}\)/)?.[0] ?? ''
-  assert.match(onStartFile, /applyNativePlaybackInfo\(info, \{ applyTrackWhenInactive: true \}\)/)
+  assert.match(onStartFile, /refreshPlaybackInfoAfterStartFile\(\)/)
   assert.doesNotMatch(onStartFile, /clearNativePlaybackInfoIntent\(\)/)
   assert.match(source, /intentionalTrackGuard/)
   assert.match(source, /function markNativePlaybackInfoIntentConfirmed/)
@@ -999,8 +1020,14 @@ test('audio visualizer iframe controls are wired to the player store', () => {
   assert.match(panelSource, /postInactiveVisualizationFrame\(\)/)
   assert.doesNotMatch(panelSource, /Float32Array\.from\(v\.spectrum\)/)
   assert.match(panelSource, /Float32Array\.from\(v\.waveform\)/)
-  assert.match(panelSource, /v\.tapStatus === 'synthetic-fallback'/)
-  assert.match(panelSource, /postInactiveVisualizationFrame\(\)\s*return/)
+  assert.match(
+    panelSource,
+    /if \(v\.tapStatus === 'synthetic-fallback'\) \{[\s\S]*postInactiveVisualizationFrame\(\)[\s\S]*return/
+  )
+  assert.doesNotMatch(
+    panelSource,
+    /if \(v\.tapStatus !== 'synthetic-fallback'\) \{[\s\S]*tempoEstimator\.pushFrame/
+  )
   assert.match(panelSource, /v\.visualizerBars/)
   assert.doesNotMatch(panelSource, /function mapSpectrumToVisualizerBars/)
   assert.match(panelSource, /const bars = Float32Array\.from\(v\.visualizerBars \?\? \[\]\)/)
