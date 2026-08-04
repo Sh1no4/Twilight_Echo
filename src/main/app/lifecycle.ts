@@ -42,7 +42,7 @@ import { setupRemoteIpc, destroyRemoteIpc } from '../remote/remoteIpc.ts'
 import { installElectronSecurity } from '../security/electronSecurity.ts'
 import { createRemoteMediaRequestHandler } from '../security/remoteMediaGrants.ts'
 import { createWindow } from './window'
-import { consumeAppSettingsLoadIssue } from '../core/settings'
+import { consumeAppSettingsLoadIssue, supportsNativeWindowTransparency } from '../core/settings'
 import type { SettingsFileLoadIssue } from '../persistence/settingsFile.ts'
 
 export function startApp(): void {
@@ -70,8 +70,13 @@ export function startApp(): void {
   // Desktop playback must not be blocked by Chromium's web-page autoplay policy.
   app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
-  // Linux 上透明窗口需要显式启用透明视觉，否则整窗不渲染（纯透明）
-  if (process.platform === 'linux' && runtime.appSettings.windowTransparency === true) {
+  // Linux 上透明窗口需要显式启用透明视觉，否则整窗不渲染（纯透明）。
+  // Wayland 会话不受支持，且该开关可能进一步破坏内容呈现，因此仅在支持时启用。
+  if (
+    process.platform === 'linux' &&
+    runtime.appSettings.windowTransparency === true &&
+    supportsNativeWindowTransparency()
+  ) {
     app.commandLine.appendSwitch('enable-transparent-visuals')
   }
 
@@ -305,7 +310,11 @@ export function startApp(): void {
       setupNcmApi()
 
       // Linux 上透明窗口必须等合成器视觉就绪后再建窗，否则内容不渲染
-      if (process.platform === 'linux' && runtime.appSettings.windowTransparency === true) {
+      if (
+        process.platform === 'linux' &&
+        runtime.appSettings.windowTransparency === true &&
+        supportsNativeWindowTransparency()
+      ) {
         setTimeout(() => {
           createWindow()
           applyRuntimeSettings()

@@ -2465,6 +2465,7 @@ html[data-window-transparent='on'] {
   --te-tp-card-alpha: 0.72;
   --te-tp-surface-blur: 0px;
   --te-tp-card-blur: 20px;
+  --te-tp-base-alpha: 0.78;
   --te-tp-surface: rgba(var(--te-tp-surface-rgb), var(--te-tp-surface-alpha));
   --te-tp-chrome: rgba(var(--te-tp-card-rgb), var(--te-tp-card-alpha));
   --te-tp-card: rgba(var(--te-tp-card-rgb), var(--te-tp-card-alpha));
@@ -2490,7 +2491,7 @@ html[data-window-transparent='on'][data-theme='pureWhite'],
 html[data-window-transparent='on'][data-theme='pureWhite'] body,
 html[data-window-transparent='on'] body.te-settings-surface,
 html[data-window-transparent='on'] body.te-streaming-surface {
-  background-color: rgba(var(--te-tp-surface-rgb), 0.78) !important;
+  background-color: rgba(var(--te-tp-surface-rgb), var(--te-tp-base-alpha, 0.78)) !important;
   background-image: none !important;
 }
 
@@ -2603,18 +2604,22 @@ html[data-window-transparent='on']
 }
 
 /* 5. Adjustable in-app blur on surfaces and cards (skipped when blur is
-   globally disabled via body.te-no-blur). Page containers that host
-   position: fixed descendants (settings nav, plugin sidebar, drawers) must
-   NOT get backdrop-filter — it turns them into containing blocks and breaks
-   fixed positioning — so only leaf surfaces are listed here. */
-html[data-window-transparent='on']
+   globally disabled via body.te-no-blur, and skipped entirely on Linux:
+   transparent Linux windows cannot sample the desktop behind the window, so
+   in-app blur only re-blurs the app's own translucent layers while forcing
+   per-frame backdrop re-composition — the main lag source reported on KDE).
+   Page containers that host position: fixed descendants (settings nav,
+   plugin sidebar, drawers) must NOT get backdrop-filter — it turns them into
+   containing blocks and breaks fixed positioning — so only leaf surfaces are
+   listed here. */
+html[data-window-transparent='on']:not([data-platform='linux'])
   body:not(.te-no-blur)
   :is(.side-menu, .dashboard-wrapper, .streaming-sidebar) {
   backdrop-filter: blur(var(--te-tp-surface-blur)) !important;
   -webkit-backdrop-filter: blur(var(--te-tp-surface-blur)) !important;
 }
 
-html[data-window-transparent='on']
+html[data-window-transparent='on']:not([data-platform='linux'])
   body:not(.te-no-blur)
   :is(
     .artist-card,

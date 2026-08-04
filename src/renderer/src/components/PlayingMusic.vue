@@ -1566,7 +1566,11 @@ onBeforeUnmount(() => {
   -webkit-backdrop-filter: var(--lyric-style-backdrop-filter, none);
   text-shadow: var(--lyric-style-highlight, none);
   word-break: break-word;
-  transition: all var(--te-motion-hover) ease;
+  transition:
+    opacity var(--te-motion-hover) ease,
+    color var(--te-motion-hover) ease,
+    background var(--te-motion-hover) ease,
+    text-shadow var(--te-motion-hover) ease;
 }
 
 .lyric-row.active .lyric-translation {

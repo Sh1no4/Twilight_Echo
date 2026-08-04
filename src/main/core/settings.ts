@@ -777,6 +777,16 @@ export function getRestartReasons(settings: AppSettings, launch: AppSettings): s
   return reasons
 }
 
+// Linux Wayland 会话中 Electron 透明窗口不受支持：合成器会忽略逐像素 alpha，
+// 内容可能整体不渲染（整窗透明/黑屏）。此时必须回退为不透明窗口。
+export function supportsNativeWindowTransparency(): boolean {
+  if (process.platform !== 'linux') return true
+  if (process.env['WAYLAND_DISPLAY'] || process.env['XDG_SESSION_TYPE'] === 'wayland') {
+    return false
+  }
+  return true
+}
+
 export function createSettingsSnapshot(
   settings: AppSettings,
   launch: AppSettings
@@ -795,6 +805,7 @@ export function createSettingsSnapshot(
     },
     appVersion: app.getVersion(),
     platform: process.platform,
+    windowTransparencySupported: supportsNativeWindowTransparency(),
     restartRequired: restartReasons.length > 0,
     restartReasons
   }

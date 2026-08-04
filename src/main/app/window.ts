@@ -6,6 +6,7 @@ import { pathToFileURL } from 'url'
 import { is } from '@electron-toolkit/utils'
 import { runtime } from '../core/runtime'
 import { getWindowBackgroundColor } from '../audio/state'
+import { supportsNativeWindowTransparency } from '../core/settings'
 import { installAudioDeviceHotplugWatcher } from '../audio/deviceHotplug'
 import { destroyDesktopLyrics } from '../integrations/desktopLyrics'
 import { ClosePersistenceAttemptGate } from './closePersistence.ts'
@@ -125,7 +126,17 @@ export function supportsWindowsAcrylic(): boolean {
 }
 
 export function createWindow(): void {
-  const transparent = runtime.appSettings.windowTransparency === true
+  const requestedTransparency = runtime.appSettings.windowTransparency === true
+  // Linux Wayland 上 Electron 透明窗口不受支持（alpha 被忽略、内容可能整窗不渲染），
+  // 此时强制回退为不透明窗口，保证应用始终可见。
+  const transparencySupported = supportsNativeWindowTransparency()
+  const transparent = requestedTransparency && transparencySupported
+  if (requestedTransparency && !transparencySupported) {
+    console.warn(
+      '[window] 当前 Wayland 会话不支持窗口透明，已回退为不透明窗口。' +
+        '如需要透明效果请在 X11 会话（或支持透明合成的桌面）中使用。'
+    )
+  }
   // Windows 上用原生亚克力模糊：backgroundMaterial 与 transparent 互斥，
   // 需保持 transparent: false 并用全透明 backgroundColor 露出背板
   const acrylic = transparent && supportsWindowsAcrylic()

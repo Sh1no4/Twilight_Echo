@@ -325,6 +325,7 @@
 
 .settings-search-empty,
 .settings-inline-notice,
+.settings-inline-warning,
 .settings-inline-error {
   padding: 9px 12px;
   border-radius: 8px;
@@ -347,6 +348,12 @@
   border: 1px solid rgba(220, 38, 38, 0.26);
   background: rgba(220, 38, 38, 0.08);
   color: #dc2626;
+}
+
+.settings-inline-warning {
+  border: 1px solid rgba(217, 119, 6, 0.35);
+  background: rgba(217, 119, 6, 0.1);
+  color: #b45309;
 }
 
 .glass-card {

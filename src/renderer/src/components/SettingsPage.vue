@@ -158,6 +158,7 @@ const {
   formattedLoudnessAnalysisCacheSize,
   restartRequired,
   restartReasons,
+  windowTransparencySupported,
   lastSettingsError,
   loadSettings,
   updateSettings,
@@ -177,6 +178,11 @@ const {
   addLibraryFolder,
   removeLibraryFolder
 } = useSettingsStore()
+
+const transparencyUnsupported = computed(
+  () => settings.value.windowTransparency === true && windowTransparencySupported.value === false
+)
+const transparencySupported = computed(() => windowTransparencySupported.value === true)
 
 const audioOutputDspStore = useAudioOutputDspStore()
 const playbackQueueStore = usePlayerStore()
@@ -678,6 +684,10 @@ function setProxyPort(event: Event): void {
 }
 
 function toggleSetting(key: BooleanSettingKey): void {
+  if (key === 'windowTransparency' && !windowTransparencySupported.value) {
+    settingsNotice.value = '当前 Wayland 会话不支持窗口透明，已自动使用不透明窗口。'
+    return
+  }
   void updateSettings({ [key]: !settings.value[key] } as Partial<AppSettings>)
   if (key === 'remoteControlEnabled') {
     void refreshRemoteStatus()
@@ -3772,21 +3782,26 @@ onBeforeUnmount(() => {
                 <strong>窗口透明</strong>
                 <span
                   >让窗口底层透明，显示系统模糊效果（Windows 11 22H2+ 使用原生亚克力模糊；Linux
-                  需合成器支持，如 niri / Hyprland / KWin）。更改后需重启。</span
+                  X11 需合成器支持，如 KWin / picom；Linux Wayland 暂不支持）。更改后需重启。</span
                 >
               </div>
               <span
                 class="toggle-switch"
                 :class="{
                   active: settings.windowTransparency,
-                  inactive: !settings.windowTransparency
+                  inactive: !settings.windowTransparency,
+                  disabled: !transparencySupported
                 }"
                 role="switch"
                 :aria-checked="settings.windowTransparency"
+                :aria-disabled="!transparencySupported"
                 @click="toggleSetting('windowTransparency')"
               ></span>
             </div>
-            <template v-if="settings.windowTransparency">
+            <div v-if="transparencyUnsupported" class="settings-inline-warning" role="status">
+              当前 Linux Wayland 会话不支持透明窗口（Electron 限制），已自动回退为不透明窗口，应用仍可正常使用。
+            </div>
+            <template v-if="settings.windowTransparency && transparencySupported">
               <hr />
               <div class="setting-item">
                 <div class="setting-copy">

@@ -509,3 +509,56 @@ test('settings backup and shortcut status APIs are exposed to the renderer', () 
   assert.match(storeSource, /importSettingsBackup: \(json: string\) => Promise<AppSettings>/)
   assert.match(storeSource, /getShortcutStatuses: \(\) => Promise<PlayerShortcutStatus\[]>/)
 })
+
+test('window transparency is gated on native support (Wayland fallback to opaque)', () => {
+  const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
+  const mainSettings = readFileSync(
+    new URL('../../../main/core/settings.ts', import.meta.url),
+    'utf8'
+  )
+  const mainTypes = readFileSync(new URL('../../../main/core/types.ts', import.meta.url), 'utf8')
+  const rendererTypes = readFileSync(
+    new URL('../types/settings.ts', import.meta.url),
+    'utf8'
+  )
+  const baseCss = readFileSync(
+    new URL('../assets/base.css', import.meta.url),
+    'utf8'
+  )
+
+  // Main process must expose a Wayland-aware support check and snapshot field.
+  assert.match(mainSettings, /export function supportsNativeWindowTransparency\(\)/)
+  assert.match(mainSettings, /WAYLAND_DISPLAY/)
+  assert.match(mainSettings, /XDG_SESSION_TYPE'\] === 'wayland'/)
+  assert.match(mainSettings, /windowTransparencySupported: supportsNativeWindowTransparency\(\)/)
+  for (const types of [mainTypes, rendererTypes]) {
+    assert.match(types, /windowTransparencySupported: boolean/)
+  }
+
+  // Renderer must not enable translucent styling when the platform cannot
+  // present transparent pixels (otherwise the whole app disappears).
+  assert.match(
+    storeSource,
+    /dataset\.windowTransparent = transparencyActive \? 'on' : 'off'/
+  )
+  assert.match(
+    storeSource,
+    /settings\.value\.windowTransparency === true && windowTransparencySupported\.value === true/
+  )
+  assert.match(storeSource, /dataset\.platform = platform\.value \|\| 'unknown'/)
+
+  // Linux must skip in-app backdrop-filter blur: transparent Linux windows
+  // cannot sample the desktop, and per-frame backdrop blur is the lag source.
+  assert.match(baseCss, /data-window-transparent='on']:not\(\[data-platform='linux'\]\)/)
+  assert.match(baseCss, /--te-tp-base-alpha/)
+})
+
+test('settings page warns and disables transparency controls on unsupported platforms', () => {
+  const source = readSettingsPageSources()
+
+  assert.match(source, /const transparencyUnsupported = computed/)
+  assert.match(source, /windowTransparencySupported\.value === false/)
+  assert.match(source, /当前 Linux Wayland 会话不支持透明窗口/)
+  assert.match(source, /toggleSetting\('windowTransparency'\)/)
+  assert.match(source, /aria-disabled="!transparencySupported"/)
+})
