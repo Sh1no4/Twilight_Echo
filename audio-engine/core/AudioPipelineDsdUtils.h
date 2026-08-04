@@ -18,14 +18,18 @@ inline uint8_t reverseDsdBits(uint8_t value) {
 }
 
 inline uint8_t convertDsdByte(uint8_t value, DsdBitOrder sourceOrder, AudioSampleFormat targetFormat) {
-  if (targetFormat == AudioSampleFormat::DsdInt8Ner8) return value;
+  if (targetFormat == AudioSampleFormat::DsdInt8Ner8 || targetFormat == AudioSampleFormat::DsdInt32LsbPacked) {
+    return sourceOrder == DsdBitOrder::LsbFirst ? value : reverseDsdBits(value);
+  }
   const bool targetMsb = targetFormat == AudioSampleFormat::DsdInt8Msb1;
   const bool sourceMsb = sourceOrder == DsdBitOrder::MsbFirst;
   return targetMsb == sourceMsb ? value : reverseDsdBits(value);
 }
 
 inline bool dsdBitOrderMatchesTarget(DsdBitOrder sourceOrder, AudioSampleFormat targetFormat) {
-  if (targetFormat == AudioSampleFormat::DsdInt8Ner8) return true;
+  if (targetFormat == AudioSampleFormat::DsdInt8Ner8 || targetFormat == AudioSampleFormat::DsdInt32LsbPacked) {
+    return sourceOrder == DsdBitOrder::LsbFirst;
+  }
   if (targetFormat == AudioSampleFormat::DsdInt8Msb1) return sourceOrder == DsdBitOrder::MsbFirst;
   if (targetFormat == AudioSampleFormat::DsdInt8Lsb1) return sourceOrder == DsdBitOrder::LsbFirst;
   return false;
@@ -44,6 +48,29 @@ inline size_t dsdBytesToInterleavedResizeOnly(
     std::vector<uint8_t>* output) {
   if (!dsdBytes || !output || info.channelCount <= 0) return 0;
   const size_t channels = static_cast<size_t>(info.channelCount);
+
+  if (targetFormat == AudioSampleFormat::DsdInt32LsbPacked) {
+    std::vector<uint8_t> lsbBytes;
+    const size_t byteFrames = dsdBytesToInterleavedResizeOnly(
+        dsdBytes, byteCount, info, AudioSampleFormat::DsdInt8Lsb1, &lsbBytes);
+    const size_t packedFrames = byteFrames / 4;
+    if (packedFrames == 0) {
+      output->clear();
+      return 0;
+    }
+    output->resize(packedFrames * channels * 4);
+    for (size_t frame = 0; frame < packedFrames; ++frame) {
+      for (size_t channel = 0; channel < channels; ++channel) {
+        const size_t source = (frame * 4) * channels + channel;
+        const size_t target = (frame * channels + channel) * 4;
+        for (size_t byte = 0; byte < 4; ++byte) {
+          (*output)[target + byte] = lsbBytes[source + byte * channels];
+        }
+      }
+    }
+    return packedFrames;
+  }
+
   const size_t frames = byteCount / channels;
   if (frames == 0) return 0;
 

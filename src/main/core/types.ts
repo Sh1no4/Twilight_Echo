@@ -196,6 +196,7 @@ export interface AppSettings {
   softwareVolume: number
   audioOutput: AudioOutputId
   audioDevice: string
+  foobar2000PortablePath: string
   audioExclusiveMode: boolean
   audioOutputConfig: OutputConfig
   audioProcessing: AudioProcessingSettings

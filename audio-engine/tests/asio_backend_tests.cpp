@@ -297,6 +297,10 @@ void testOpenFailureAndFallbackFormats() {
 
 void testExtremeSampleRates() {
   const std::vector<int> rates = {8000, 44100, 48000, 96000, 192000, 384000, 768000};
+  const auto probeRates = asioDefaultSampleRateProbeSet();
+  for (int carrierRate : {705600, 768000, 1411200, 1536000}) {
+    assert(std::find(probeRates.begin(), probeRates.end(), carrierRate) != probeRates.end());
+  }
   auto host = std::make_unique<MockAsioHost>();
   host->devices.push_back(makeMockAsioDevice("asio:rates", rates, 2));
   auto* rawHost = host.get();
@@ -377,6 +381,63 @@ void testDopRuntimeFactsProvenWithoutExplicitCapability() {
   assert(facts.state == DopRuntimeFactState::Proven);
   assert(!facts.explicitlyCapable);
   assert(pcmFormatsExactMatch(facts.candidateFormat, facts.actualFormat));
+}
+
+void testDopCarrierUsesInt32AsioContainer() {
+  auto host = std::make_unique<MockAsioHost>();
+  auto device = makeMockAsioDevice("asio:dop-int32", {352800}, 2, AudioSampleFormat::Int32Interleaved);
+  device.dopCapable = false;
+  host->devices.push_back(device);
+  auto* rawHost = host.get();
+  rawHost->actualFormatOverride = sourceFormat(352800, 32, 2, AudioSampleFormat::Int32Interleaved);
+  rawHost->channelFormats = {
+      AudioSampleFormat::Int32Interleaved,
+      AudioSampleFormat::Int32Interleaved,
+  };
+
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open(
+      "asio:dop-int32",
+      sourceFormat(352800, 24, 2, AudioSampleFormat::Int24Interleaved),
+      &error));
+  assert(backend.outputFormat().sampleFormat == AudioSampleFormat::Int24In32Interleaved);
+  assert(backend.outputFormat().bitDepth == 24);
+  assert(!backend.outputInfo().resampled);
+
+  assert(backend.startTyped(
+      [](PcmBlock& block) {
+        assert(block.format.sampleFormat == AudioSampleFormat::Int24In32Interleaved);
+        for (size_t frame = 0; frame < block.frames; ++frame) {
+          const uint8_t marker = (frame & 1U) == 0U ? 0x05 : 0xfa;
+          for (size_t channel = 0; channel < 2; ++channel) {
+            const size_t offset = (frame * 2 + channel) * 4;
+            block.data[offset + 0] = 0x00;
+            block.data[offset + 1] = 0x11;
+            block.data[offset + 2] = 0x22;
+            block.data[offset + 3] = marker;
+          }
+        }
+        return block.frames;
+      },
+      [](float*, size_t frames) { return frames; },
+      nullptr,
+      &error));
+
+  const DopRuntimeFacts facts = backend.dopRuntimeFacts();
+  assert(facts.state == DopRuntimeFactState::Proven);
+  assert(!facts.explicitlyCapable);
+  assert(facts.actualFormat.sampleFormat == AudioSampleFormat::Int24In32Interleaved);
+  assert(!backend.outputInfo().resampled);
+
+  rawHost->triggerBufferSwitch(0);
+  const auto& firstChannel = rawHost->channelBuffers[0].buffers[0];
+  assert(firstChannel.size() >= 4);
+  assert(firstChannel[0] == 0x00);
+  assert(firstChannel[1] == 0x11);
+  assert(firstChannel[2] == 0x22);
+  assert(firstChannel[3] == 0x05);
+  assert(backend.outputInfo().diagnostics.dopRuntimeEvidence.find("confirmed") != std::string::npos);
 }
 
 void testDopRuntimeFactsMismatchWhenActualFormatDiffers() {
@@ -487,6 +548,64 @@ void testNativeDsdCapabilityProfile() {
     assert(!info.outputPerfect);
     assert(!info.pcmPassthrough);
   }
+}
+
+void testFooDsdAsioProxySelector() {
+  MockAsioHost::DsdProfile profile;
+  profile.nativeDsdCapable = true;
+  profile.nativeDsdSampleRates = {2822400};
+  profile.nativeDsdSampleFormats = {AudioSampleFormat::DsdInt8Lsb1};
+  auto host = std::make_unique<MockAsioHost>();
+  auto proxy = makeMockAsioDevice("asio:foo-proxy", {2822400}, 2, AudioSampleFormat::DsdInt8Lsb1, profile);
+  proxy.name = "foo_dsd_asio";
+  host->devices.push_back(std::move(proxy));
+  auto* rawHost = host.get();
+  rawHost->channelFormats = {AudioSampleFormat::DsdInt8Lsb1, AudioSampleFormat::DsdInt8Lsb1};
+
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open(
+      "foo_dsd_asio",
+      sourceFormat(2822400, 1, 2, AudioSampleFormat::DsdInt8Lsb1),
+      &error));
+  assert(rawHost->lastOpenConfig.deviceId == "asio:foo-proxy");
+  assert(backend.outputInfo().deviceName == "foo_dsd_asio");
+}
+
+void testFiiOPackedDsdTransportRateAndLatency() {
+  auto host = std::make_unique<MockAsioHost>();
+  auto device = makeMockAsioDevice("asio:fiio", {352800}, 2, AudioSampleFormat::Int32Interleaved);
+  device.name = "FiiO ASIO Driver";
+  device.driverName = "FiiO ASIO Driver";
+  device.minBufferSize = 512;
+  device.maxBufferSize = 512;
+  device.preferredBufferSize = 512;
+  host->devices.push_back(device);
+  auto* rawHost = host.get();
+
+  AsioBackend backend(std::move(host));
+  std::string error;
+  const AudioFormat request = sourceFormat(11289600, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
+  assert(backend.open("asio:fiio", request, &error));
+  assert(rawHost->lastOpenConfig.format.sampleRate == 11289600);
+  assert(rawHost->lastOpenConfig.format.sampleFormat == AudioSampleFormat::DsdInt32LsbPacked);
+  assert(asio::driverSampleRate(rawHost->lastOpenConfig.format) == 352800);
+  assert(asio::callbackFrameRate(rawHost->lastOpenConfig.format) == 352800);
+  assert(backend.outputInfo().latencyInfo.bufferLatencyMs > 1.4);
+  assert(backend.outputInfo().latencyInfo.bufferLatencyMs < 1.5);
+
+  assert(backend.startTyped(
+      [](PcmBlock& block) {
+        assert(block.format.sampleFormat == AudioSampleFormat::DsdInt32LsbPacked);
+        std::memset(block.data, 0x69, block.byteSize);
+        return block.frames;
+      },
+      [](float*, size_t frames) { return frames; },
+      nullptr,
+      &error));
+  assert(backend.nativeDsdRuntimeFacts().state == NativeDsdRuntimeFactState::Proven);
+  rawHost->triggerBufferSwitch(0);
+  assert(backend.outputInfo().diagnostics.sessionUnderrunCount == 0);
 }
 
 void testNativeDsdRuntimeProven() {
@@ -1372,9 +1491,12 @@ int main() {
   testExtremeSampleRates();
   testDopCarrierProfile();
   testDopRuntimeFactsProvenWithoutExplicitCapability();
+  testDopCarrierUsesInt32AsioContainer();
   testDopRuntimeFactsMismatchWhenActualFormatDiffers();
   testDopMarkerEvidence();
   testNativeDsdCapabilityProfile();
+  testFooDsdAsioProxySelector();
+  testFiiOPackedDsdTransportRateAndLatency();
   testNativeDsdRuntimeProven();
   testNativeDsdDriverSelectedWireTypeAndIdleTail();
   testNativeDsdRuntimeDiscoveryWithoutCatalogCapability();

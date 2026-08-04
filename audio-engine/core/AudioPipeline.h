@@ -259,6 +259,7 @@ class AudioPipeline {
       const OutputConfig& outputConfig,
       const AudioStreamInfo& stream,
       double volume,
+      const std::string& backendId,
       const std::string& attemptedDopReason,
       bool dopModeRequested) const;
   TAE_Result playInternal(

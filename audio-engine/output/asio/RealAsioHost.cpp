@@ -199,7 +199,19 @@ std::unique_ptr<IAsioHost> createRealAsioHost() {
 }
 
 std::vector<int> asioDefaultSampleRateProbeSet() {
-  return {44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000};
+  return {
+      44100,
+      48000,
+      88200,
+      96000,
+      176400,
+      192000,
+      352800,
+      384000,
+      705600,
+      768000,
+      1411200,
+      1536000};
 }
 
 std::string asioSampleFormatName(AudioSampleFormat format) {

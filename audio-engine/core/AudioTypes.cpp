@@ -15,6 +15,7 @@ int bitDepthFromSampleFormat(AudioSampleFormat format) {
     case AudioSampleFormat::DsdInt8Lsb1:
     case AudioSampleFormat::DsdInt8Msb1:
     case AudioSampleFormat::DsdInt8Ner8:
+    case AudioSampleFormat::DsdInt32LsbPacked:
       return 1;
     case AudioSampleFormat::Int16Interleaved:
       return 16;
@@ -257,6 +258,8 @@ std::string sampleFormatToString(AudioSampleFormat format) {
       return "dsd-int8-msb1";
     case AudioSampleFormat::DsdInt8Ner8:
       return "dsd-int8-ner8";
+    case AudioSampleFormat::DsdInt32LsbPacked:
+      return "dsd-int32-lsb-packed";
     case AudioSampleFormat::Int16Interleaved:
       return "int16";
     case AudioSampleFormat::Int24Interleaved:
@@ -277,6 +280,8 @@ size_t audioSampleFormatBytes(AudioSampleFormat format) {
     case AudioSampleFormat::DsdInt8Msb1:
     case AudioSampleFormat::DsdInt8Ner8:
       return 1;
+    case AudioSampleFormat::DsdInt32LsbPacked:
+      return 4;
     case AudioSampleFormat::Int16Interleaved:
       return 2;
     case AudioSampleFormat::Int24Interleaved:
@@ -320,7 +325,7 @@ bool pcmFormatsExactMatch(const AudioFormat& left, const AudioFormat& right) {
 
 bool isDsdSampleFormat(AudioSampleFormat format) {
   return format == AudioSampleFormat::DsdInt8Lsb1 || format == AudioSampleFormat::DsdInt8Msb1 ||
-         format == AudioSampleFormat::DsdInt8Ner8;
+         format == AudioSampleFormat::DsdInt8Ner8 || format == AudioSampleFormat::DsdInt32LsbPacked;
 }
 
 bool dsdFormatsExactMatch(const AudioFormat& left, const AudioFormat& right) {

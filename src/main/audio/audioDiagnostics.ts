@@ -391,7 +391,7 @@ export function findFooDsdAsioBridgeSuggestion(input: {
     bridgeLabel: bridge.label,
     selectedDevice: outputState.device,
     reason:
-      'foo_dsd_asio is available but is not selected. It is an optional compatibility bridge; Twilight Echo will not switch to it or read foobar2000 settings automatically.'
+      'foo_dsd_asio is available but is not selected. Select the foo_dsd_asio DSD mode to use the proxy, or leave Auto enabled to try it after direct Native DSD fails.'
   }
 }
 

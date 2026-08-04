@@ -46,8 +46,10 @@ import {
   broadcastPlayerLifecycleEvents,
   getEffectiveAudioProcessing,
   persistAndApplyAudioProcessingState,
-  persistDspSceneState
+  persistDspSceneState,
+  updateAppSettings
 } from './state'
+import { inspectFooDsdAsioPortable } from './fooDsdAsioPortable.ts'
 import {
   normalizeFiniteNumber,
   normalizeInteger,
@@ -519,6 +521,30 @@ export async function setupAudioEngineIpc(): Promise<void> {
   runtime.audioEngineManager.on('loudnorm-status', (event) => {
     audioDiagnosticRecorder?.record('loudnorm-status', event)
     runtime.mainWindow?.webContents.send('audioEngine:loudnorm-status', event)
+  })
+
+  ipcMain.handle('audioEngine:getFooDsdAsioPortableStatus', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
+    return await inspectFooDsdAsioPortable(runtime.appSettings.foobar2000PortablePath)
+  })
+
+  ipcMain.handle('audioEngine:selectFooDsdAsioPortablePath', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
+    const win = BrowserWindow.getFocusedWindow() ?? runtime.mainWindow
+    const options: Electron.OpenDialogOptions = {
+      title: '选择 Foobar2000 便携版目录',
+      properties: ['openDirectory']
+    }
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options)
+    if (result.canceled || result.filePaths.length === 0) return null
+    const status = await inspectFooDsdAsioPortable(result.filePaths[0])
+    if (status.rootPath) {
+      await updateAppSettings({ foobar2000PortablePath: status.rootPath })
+      return await inspectFooDsdAsioPortable(status.rootPath)
+    }
+    return status
   })
 
   ipcMain.handle('audioEngine:loadQueue', async (_event, items: unknown, startIndex?: number) => {

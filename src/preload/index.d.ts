@@ -305,7 +305,7 @@ type ChannelRoutingMode =
   | 'stereo-to-7.1'
   | 'mono-to-stereo'
   | 'mono-to-multichannel'
-type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native'
+type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native' | 'foo_dsd_asio'
 type SacdProgramMode = 'auto' | 'stereo' | 'multichannel'
 type EqualizerFilterType =
   | 'peak'
@@ -700,6 +700,7 @@ interface AppSettings {
   softwareVolume: number
   audioOutput: AudioOutputId
   audioDevice: string
+  foobar2000PortablePath: string
   audioExclusiveMode: boolean
   audioOutputConfig: OutputConfig
   audioProcessing: AudioProcessingSettings
@@ -716,6 +717,17 @@ interface AppSettings {
   streamingActiveProvider: string
   remoteControlEnabled: boolean
   remoteControlPort: number
+}
+
+interface FooDsdAsioPortableStatus {
+  configuredPath: string
+  rootPath: string
+  foobarExecutable: string
+  portableModeEnabled: boolean
+  hasAsioDsdComponent: boolean
+  hasSacdComponent: boolean
+  matched: boolean
+  message: string
 }
 
 interface OpraCatalogStatus {
@@ -1298,6 +1310,8 @@ interface AudioEngineConfigAppliedEvent {
 }
 
 interface AudioEngineAPI {
+  getFooDsdAsioPortableStatus: () => Promise<FooDsdAsioPortableStatus>
+  selectFooDsdAsioPortablePath: () => Promise<FooDsdAsioPortableStatus | null>
   loadQueue: (items: AudioEngineQueueItem[], startIndex?: number) => Promise<void>
   play: (filePath: string, startTime?: number) => Promise<AudioEnginePlayResult>
   isHtmlAudioFallbackAllowed: () => Promise<boolean>

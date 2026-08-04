@@ -737,6 +737,44 @@ void testDsdInterleaveHelperCanCopyDffWhenBitOrderMatches() {
   if (render::canCopyDsdBytesToInterleaved(info, AudioSampleFormat::DsdInt8Lsb1)) std::abort();
 }
 
+void testFiiOPackedDsdInterleavesDsfBytesInInt32Samples() {
+  DsdStreamInfo info;
+  info.channelCount = 2;
+  info.bitOrder = DsdBitOrder::LsbFirst;
+  info.packing = DsdPacking::DsfPlanarBlocks;
+
+  const uint8_t dsd[] = {
+      0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80,
+      0x11, 0x22, 0x44, 0x88, 0x33, 0x66, 0xcc, 0x99,
+  };
+  std::vector<uint8_t> output;
+  const size_t frames = render::dsdBytesToInterleavedResizeOnly(
+      dsd, sizeof(dsd), info, AudioSampleFormat::DsdInt32LsbPacked, &output);
+
+  const std::vector<uint8_t> expected = {
+      0x01, 0x02, 0x04, 0x08, 0x11, 0x22, 0x44, 0x88,
+      0x10, 0x20, 0x40, 0x80, 0x33, 0x66, 0xcc, 0x99,
+  };
+  assert(frames == 2);
+  assert(output == expected);
+}
+
+void testFiiOPackedDsdReversesDffMsbBytesBeforePacking() {
+  DsdStreamInfo info;
+  info.channelCount = 2;
+  info.bitOrder = DsdBitOrder::MsbFirst;
+  info.packing = DsdPacking::DffInterleaved;
+
+  const uint8_t dsd[] = {0x80, 0x40, 0x40, 0x20, 0x20, 0x10, 0x10, 0x08};
+  std::vector<uint8_t> output;
+  const size_t frames = render::dsdBytesToInterleavedResizeOnly(
+      dsd, sizeof(dsd), info, AudioSampleFormat::DsdInt32LsbPacked, &output);
+
+  const std::vector<uint8_t> expected = {0x01, 0x02, 0x02, 0x04, 0x04, 0x08, 0x08, 0x10};
+  assert(frames == 1);
+  assert(output == expected);
+}
+
 void testDopPackerInt24() {
   DopPacker packer;
   DopPackerConfig config;
@@ -1520,6 +1558,8 @@ int main() {
   testDsdInterleaveHelperConvertsPlanarBlocks();
   testDsdInterleaveHelperConvertsBitOrderWithoutPreclearSentinel();
   testDsdInterleaveHelperCanCopyDffWhenBitOrderMatches();
+  testFiiOPackedDsdInterleavesDsfBytesInInt32Samples();
+  testFiiOPackedDsdReversesDffMsbBytesBeforePacking();
   testDopPackerHelperPacksInterleavedInt24In32WithoutPreclear();
   testDopPackerInt24();
   testDopPackerDsd256();

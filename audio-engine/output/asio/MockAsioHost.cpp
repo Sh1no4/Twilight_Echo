@@ -11,6 +11,8 @@ size_t bytesPerSample(AudioSampleFormat format) {
     case AudioSampleFormat::DsdInt8Msb1:
     case AudioSampleFormat::DsdInt8Ner8:
       return 1;
+    case AudioSampleFormat::DsdInt32LsbPacked:
+      return 4;
     case AudioSampleFormat::Int16Interleaved:
       return 2;
     case AudioSampleFormat::Int24Interleaved:
@@ -28,6 +30,8 @@ int bitDepthForFormat(AudioSampleFormat format) {
     case AudioSampleFormat::DsdInt8Lsb1:
     case AudioSampleFormat::DsdInt8Msb1:
     case AudioSampleFormat::DsdInt8Ner8:
+      return 1;
+    case AudioSampleFormat::DsdInt32LsbPacked:
       return 1;
     case AudioSampleFormat::Int16Interleaved:
       return 16;
@@ -59,6 +63,11 @@ AsioChannelFormat channelFormatFor(AudioSampleFormat format) {
       descriptor.containerBits = 8;
       descriptor.validBits = 8;
       descriptor.dsdPacking = AsioDsdPacking::Ner8;
+      break;
+    case AudioSampleFormat::DsdInt32LsbPacked:
+      descriptor.containerBits = 32;
+      descriptor.validBits = 32;
+      descriptor.dsdPacking = AsioDsdPacking::Int32LsbPacked;
       break;
     case AudioSampleFormat::Int16Interleaved:
       descriptor.containerBits = 16;
@@ -116,7 +125,7 @@ bool MockAsioHost::open(const AsioOpenConfig& config, AsioOpenResult* result, st
     if (error) *error = "mock open failure";
     return false;
   }
-  openResult.actualFormat = config.format;
+  openResult.actualFormat = actualFormatOverride.value_or(config.format);
   openResult.bufferSizeFrames = config.bufferSizeFrames > 0 ? config.bufferSizeFrames : 128;
   openResult.latencyFrames = openResult.bufferSizeFrames * 2;
   if (openResult.driverName.empty()) openResult.driverName = "Mock ASIO";
