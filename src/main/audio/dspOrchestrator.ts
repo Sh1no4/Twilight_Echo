@@ -858,7 +858,7 @@ export class DspOrchestrator {
 
     if (sourceIsDsd) {
       const mode = this.processing.dsdOutputMode
-      const optimisticMode = mode === 'auto' ? 'dop' : mode
+      const optimisticMode = mode === 'auto' || mode === 'foo_dsd_asio' ? 'native' : mode
       const isForcedPcm = mode === 'pcm'
 
       this.playbackInfo.outputInfo = {

@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,7 @@ class MockAsioHost final : public IAsioHost {
   std::vector<AsioDeviceInfo> devices;
   AsioOpenConfig lastOpenConfig;
   AsioOpenResult openResult;
+  std::optional<AudioFormat> actualFormatOverride;
   std::vector<AudioSampleFormat> channelFormats;
   std::vector<AsioChannelFormat> channelDescriptors;
   std::vector<ChannelBuffer> channelBuffers;

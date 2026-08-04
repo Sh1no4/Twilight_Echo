@@ -175,6 +175,7 @@ const fallbackSettings: AppSettings = {
   softwareVolume: 0.7,
   audioOutput: getFallbackAudioOutput(),
   audioDevice: 'auto',
+  foobar2000PortablePath: '',
   audioExclusiveMode: false,
   audioOutputConfig: {
     preferredBufferSize: 0,

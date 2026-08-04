@@ -372,6 +372,9 @@ void testDspConfigJsonParserReadsOnlyCurrentObjectFields() {
   assert(closeTo(config.eqBands[0].frequency, 1000.0, 0.0001));
   assert(closeTo(config.eqBands[0].gainDb, 1.5, 0.0001));
   assert(closeTo(config.eqBands[0].q, 0.7, 0.0001));
+
+  const DspConfig proxyConfig = DspChain::parseConfigJson(R"({"dsdOutputMode":"foo_dsd_asio"})");
+  assert(proxyConfig.dsdOutputMode == DsdOutputMode::FooDsdAsio);
 }
 
 void testConvolverWaveExtensibleParsingUsesSubFormatGuid() {

@@ -57,6 +57,9 @@ DsdOutputMode parseDsdOutputMode(const std::string& mode) {
   if (normalized == "pcm") return DsdOutputMode::Pcm;
   if (normalized == "dop") return DsdOutputMode::Dop;
   if (normalized == "native") return DsdOutputMode::Native;
+  if (normalized == "foo_dsd_asio" || normalized == "foo-dsd-asio" || normalized == "foodsdasio") {
+    return DsdOutputMode::FooDsdAsio;
+  }
   return DsdOutputMode::Auto;
 }
 

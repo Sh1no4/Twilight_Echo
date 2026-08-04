@@ -315,6 +315,11 @@ bool dopRuntimeFactsRequirePcmFallback(const DopRuntimeFacts& facts) {
          facts.state == DopRuntimeFactState::Unproven || facts.state == DopRuntimeFactState::Unsupported;
 }
 
+bool dopRuntimeFactsRejectBeforeStart(const DopRuntimeFacts& facts) {
+  return facts.state == DopRuntimeFactState::Mismatch || facts.state == DopRuntimeFactState::Unproven ||
+         facts.state == DopRuntimeFactState::Unsupported;
+}
+
 std::string dopPcmFallbackReason(const DopRuntimeFacts& facts) {
   return facts.state == DopRuntimeFactState::Mismatch ? "DoP carrier mismatch" : "DoP backend could not prove passthrough";
 }
@@ -440,7 +445,9 @@ size_t dsdBytesToInterleaved(
 }
 
 uint64_t dsdRenderedFrameUnits(size_t byteFrames, const AudioFormat& format) {
-  return static_cast<uint64_t>(byteFrames) * (isDsdSampleFormat(format.sampleFormat) ? 8U : 1U);
+  if (!isDsdSampleFormat(format.sampleFormat)) return static_cast<uint64_t>(byteFrames);
+  const uint64_t bitsPerFrame = format.sampleFormat == AudioSampleFormat::DsdInt32LsbPacked ? 32U : 8U;
+  return static_cast<uint64_t>(byteFrames) * bitsPerFrame;
 }
 
 DsdBitOrder dsdBitOrderFromInfo(const DsdStreamInfo& info) {
@@ -489,11 +496,12 @@ bool dsdOutputModePrefersPcm(DsdOutputMode mode) {
 }
 
 bool dsdOutputModeRequestsNative(DsdOutputMode mode) {
-  return mode == DsdOutputMode::Auto || mode == DsdOutputMode::Native;
+  return mode == DsdOutputMode::Auto || mode == DsdOutputMode::Native || mode == DsdOutputMode::FooDsdAsio;
 }
 
 bool dsdOutputModeRequestsDop(DsdOutputMode mode) {
-  return mode == DsdOutputMode::Auto || mode == DsdOutputMode::Dop || mode == DsdOutputMode::Native;
+  return mode == DsdOutputMode::Auto || mode == DsdOutputMode::Dop || mode == DsdOutputMode::Native ||
+         mode == DsdOutputMode::FooDsdAsio;
 }
 
 AudioFormat pcmFallbackRequestFormat(
@@ -746,7 +754,8 @@ struct AudioPipeline::DecodeStream {
       remainingVirtualPregapFrames = 0;
     }
     eof = remainingVirtualPregapFrames == 0 && remainingSegmentFrames && *remainingSegmentFrames == 0;
-    buffer.reset(decodeFormat, static_cast<size_t>(std::max(dsd.dsdSampleRate / 8, 8192)));
+    const int transportDivisor = decodeFormat.sampleFormat == AudioSampleFormat::DsdInt32LsbPacked ? 32 : 8;
+    buffer.reset(decodeFormat, static_cast<size_t>(std::max(dsd.dsdSampleRate / transportDivisor, 8192)));
     return true;
   }
 
@@ -914,7 +923,8 @@ struct AudioPipeline::DecodeStream {
 
   double segmentFrameRate() const {
     if (mode == Mode::NativeDsd && isDsdSampleFormat(decodeFormat.sampleFormat)) {
-      return static_cast<double>(decodeFormat.sampleRate) / 8.0;
+      const double packing = decodeFormat.sampleFormat == AudioSampleFormat::DsdInt32LsbPacked ? 32.0 : 8.0;
+      return static_cast<double>(decodeFormat.sampleRate) / packing;
     }
     return static_cast<double>(decodeFormat.sampleRate);
   }
@@ -1089,7 +1099,7 @@ struct AudioPipeline::DecodeStream {
             remainingVirtualPregapFrames, static_cast<uint64_t>(kDecodeChunkFrames)));
         const uint8_t silenceByte =
             render::convertDsdByte(0x69, DsdBitOrder::LsbFirst, decodeFormat.sampleFormat);
-        interleaved.assign(silenceFrames * static_cast<size_t>(channels), silenceByte);
+        interleaved.assign(silenceFrames * audioFormatBytesPerFrame(decodeFormat), silenceByte);
         PcmBlock silence;
         silence.format = decodeFormat;
         silence.data = interleaved.data();
@@ -1498,11 +1508,14 @@ TAE_Result AudioPipeline::playInternal(
   AudioFormat outputFormat;
   bool dopPath = false;
   bool nativeDsdPath = false;
+  bool fooProxyAvailable = false;
   std::string nativeAttemptError;
   std::string dopAttemptError;
   std::optional<NativeDsdRuntimeFacts> attemptedNativeDsdFacts = forcedNativeDsdFallbackFacts;
 
-  if (canTryNativeDsd) {
+  const bool fooDsdAsioRequested = requestedDspConfig.dsdOutputMode == DsdOutputMode::FooDsdAsio;
+  bool canTryFooDsdAsio = allowNativeDsd && backendId == "asio" && canTryNativeDsd && fooDsdAsioRequested;
+  const auto tryNativeDsdRoute = [&](const std::string& routeDeviceId) {
     auto nativeActive = makeDecodeStream();
     if (nativeActive->openNativeDsdSource(item, &nativeAttemptError)) {
       output = backendFactoryOverride() ? backendFactoryOverride()(backendId) : createOutputBackend(backendId);
@@ -1512,7 +1525,7 @@ TAE_Result AudioPipeline::playInternal(
         output.reset();
       } else {
         AudioFormat requested = nativeDsdFormatForStream(dsdProbe.value());
-        if (output->open(deviceId, requested, &nativeAttemptError)) {
+        if (output->open(routeDeviceId, requested, &nativeAttemptError)) {
           outputFormat = output->outputFormat();
           const NativeDsdRuntimeFacts nativeFacts = output->nativeDsdRuntimeFacts();
           if (nativeDsdOutputMatchesRequested(outputFormat, requested, nativeFacts) &&
@@ -1525,16 +1538,45 @@ TAE_Result AudioPipeline::playInternal(
                                        ? "ASIO runtime format did not match the requested Native DSD stream"
                                        : nativeFacts.reason;
             }
+            fooProxyAvailable = fooProxyAvailable || output->supportsDsdProxyRoute();
             attemptedNativeDsdFacts = buildNativeDsdAttemptFacts(requested, nativeFacts, nativeAttemptError);
             output->close();
             output.reset();
           }
         } else {
+          fooProxyAvailable = fooProxyAvailable || output->supportsDsdProxyRoute();
           attemptedNativeDsdFacts =
               buildNativeDsdAttemptFacts(requested, output->nativeDsdRuntimeFacts(), nativeAttemptError);
           output.reset();
         }
       }
+    }
+  };
+
+  if (canTryNativeDsd && !fooDsdAsioRequested) {
+    tryNativeDsdRoute(deviceId);
+  }
+
+  canTryFooDsdAsio = canTryFooDsdAsio ||
+                     (allowNativeDsd && backendId == "asio" && canTryNativeDsd &&
+                      requestedDspConfig.dsdOutputMode == DsdOutputMode::Auto && fooProxyAvailable);
+
+  if (canTryFooDsdAsio && !active) {
+    // foo_dsd_asio is an externally registered ASIO proxy. The selector is
+    // resolved by the ASIO backend against the enumerated driver name; no
+    // foobar2000 installation path or portable profile is required here.
+    tryNativeDsdRoute("foo_dsd_asio");
+    if (!active && nativeAttemptError.empty()) {
+      nativeAttemptError = "foo_dsd_asio proxy route was not available";
+    }
+  }
+
+  if (!active && fooDsdAsioRequested && canTryNativeDsd) {
+    const std::string proxyAttemptError = nativeAttemptError;
+    nativeAttemptError.clear();
+    tryNativeDsdRoute(deviceId);
+    if (!active && nativeAttemptError.empty()) {
+      nativeAttemptError = proxyAttemptError;
     }
   }
 
@@ -1729,6 +1771,7 @@ TAE_Result AudioPipeline::playInternal(
           outputConfig,
           active->stream,
           requestedPlaybackVolume,
+          backendId,
           forcedDsdFallbackReason.empty()
               ? (!nativeAttemptError.empty() ? nativeAttemptError : dopAttemptError)
               : forcedDsdFallbackReason,
@@ -1738,7 +1781,7 @@ TAE_Result AudioPipeline::playInternal(
 
   if (dopPath) {
     const DopRuntimeFacts dopFacts = output->dopRuntimeFacts();
-    if (dopRuntimeFactsRequirePcmFallback(dopFacts)) {
+    if (dopRuntimeFactsRejectBeforeStart(dopFacts)) {
       const std::string fallbackReason = dopPcmFallbackReason(dopFacts);
       output->close();
       return playInternal(
@@ -1825,7 +1868,15 @@ TAE_Result AudioPipeline::playInternal(
       outputInfo_.diagnostics.validBits = effectivePcmBitDepth(outputFormat_);
       outputInfo_.diagnostics.blockAlign = static_cast<int>(audioFormatBytesPerFrame(outputFormat_));
       outputInfo_.diagnostics.semanticSampleRate = sourceDsd.dsdSampleRate;
-      outputInfo_.diagnostics.transportSampleRate = outputFormat_.sampleRate;
+      // Preserve the backend's transport rate. Native DSD uses one ASIO
+      // element per 8 DSD bits, so its callback rate is DSD bit-clock / 8;
+      // the backend has already recorded that distinction. Only derive a
+      // value when an older/non-ASIO backend did not provide one.
+      if (outputInfo_.diagnostics.transportSampleRate <= 0) {
+        outputInfo_.diagnostics.transportSampleRate =
+            nativeDsdPath && outputFormat_.sampleRate % 8 == 0 ? outputFormat_.sampleRate / 8
+                                                               : outputFormat_.sampleRate;
+      }
       outputInfo_.diagnostics.typedRawPath = dopPath || nativeDsdPath;
       outputInfo_.diagnostics.processingBypassed = dopPath || nativeDsdPath;
     }
@@ -2030,6 +2081,7 @@ bool AudioPipeline::shouldAttemptDopForCurrentConfig(
     double volume,
     const std::string& backendId) const {
   if (!dsdProbe.has_value()) return false;
+  if (dspConfig.dsdOutputMode == DsdOutputMode::FooDsdAsio && backendId != "asio") return false;
   if (!dsdOutputModeRequestsDop(dspConfig.dsdOutputMode)) return false;
   const double playbackRate = loadAtomicDouble(requestedPlaybackRateBits_);
   if (dspConfigProcessingRequiresPcm(dspConfig, outputConfig, volume, playbackRate)) return false;
@@ -2044,6 +2096,7 @@ bool AudioPipeline::shouldAttemptNativeDsdForCurrentConfig(
     double volume,
     const std::string& backendId) const {
   if (!dsdProbe.has_value()) return false;
+  if (dspConfig.dsdOutputMode == DsdOutputMode::FooDsdAsio && backendId != "asio") return false;
   if (!dsdOutputModeRequestsNative(dspConfig.dsdOutputMode)) return false;
   const double playbackRate = loadAtomicDouble(requestedPlaybackRateBits_);
   if (dspConfigProcessingRequiresPcm(dspConfig, outputConfig, volume, playbackRate)) return false;
@@ -2057,6 +2110,7 @@ std::string AudioPipeline::determineDsdPcmFallbackReason(
     const OutputConfig& outputConfig,
     const AudioStreamInfo& stream,
     double volume,
+    const std::string& backendId,
     const std::string& attemptedDopReason,
     bool dopModeRequested) const {
   const double playbackRate = loadAtomicDouble(requestedPlaybackRateBits_);
@@ -2064,6 +2118,9 @@ std::string AudioPipeline::determineDsdPcmFallbackReason(
     return "DSD processing active; falling back to PCM";
   }
   if (dspConfig.dsdOutputMode == DsdOutputMode::Pcm) return "DSD output mode forced PCM";
+  if (dspConfig.dsdOutputMode == DsdOutputMode::FooDsdAsio && backendId != "asio") {
+    return "foo_dsd_asio proxy route requires the ASIO output backend";
+  }
   if (!attemptedDopReason.empty()) return attemptedDopReason;
   if (dspConfig.dsdOutputMode == DsdOutputMode::Native) return "ASIO Native DSD could not prove raw DSD output";
   if (stream.dsdRate >= 256) {

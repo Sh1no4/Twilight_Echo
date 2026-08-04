@@ -112,6 +112,8 @@ inline size_t bytesPerSample(AudioSampleFormat format) {
     case AudioSampleFormat::DsdInt8Msb1:
     case AudioSampleFormat::DsdInt8Ner8:
       return 1;
+    case AudioSampleFormat::DsdInt32LsbPacked:
+      return 4;
     case AudioSampleFormat::Int16Interleaved:
       return 2;
     case AudioSampleFormat::Int24Interleaved:
@@ -130,12 +132,19 @@ inline size_t bytesPerSample(const AsioChannelFormat& format) {
 }
 
 inline int driverSampleRate(const AudioFormat& format) {
-  return format.sampleRate > 0 ? format.sampleRate : 0;
+  if (format.sampleRate <= 0) return 0;
+  if (format.sampleFormat == AudioSampleFormat::DsdInt32LsbPacked) {
+    return format.sampleRate % 32 == 0 ? format.sampleRate / 32 : 0;
+  }
+  return format.sampleRate;
 }
 
 inline int callbackFrameRate(const AudioFormat& format) {
   if (format.sampleRate <= 0) return 0;
   if (!isDsdSampleFormat(format.sampleFormat)) return format.sampleRate;
+  if (format.sampleFormat == AudioSampleFormat::DsdInt32LsbPacked) {
+    return format.sampleRate % 32 == 0 ? format.sampleRate / 32 : 0;
+  }
   return format.sampleRate % 8 == 0 ? format.sampleRate / 8 : 0;
 }
 
@@ -178,6 +187,9 @@ inline bool isSupportedChannelFormat(const AsioChannelFormat& format) {
     case AudioSampleFormat::DsdInt8Ner8:
       return format.containerBits == 8 && format.validBits == 8 &&
              format.dsdPacking == AsioDsdPacking::Ner8;
+    case AudioSampleFormat::DsdInt32LsbPacked:
+      return format.containerBits == 32 && format.validBits == 32 &&
+             !format.validBitsAreMostSignificant && format.dsdPacking == AsioDsdPacking::Int32LsbPacked;
     default:
       return false;
   }
