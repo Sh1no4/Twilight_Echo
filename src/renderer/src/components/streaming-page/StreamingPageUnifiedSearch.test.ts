@@ -188,6 +188,19 @@ test('streaming page supports multi-select batch favorite and delete on track li
   assert.match(source, /streaming-context-menu/)
   assert.match(source, /添加到歌单/)
   assert.match(source, /onSearchTrackClickWithSelect/)
+  const detailClickHandler = source.match(
+    /function onTrackClick\([\s\S]*?\n}\n\nfunction playDetailTrack/
+  )
+  const searchClickHandler = source.match(
+    /function onSearchTrackClickWithSelect\([\s\S]*?\n}\n\nasync function favoriteStreamingTracks/
+  )
+  assert.ok(detailClickHandler)
+  assert.ok(searchClickHandler)
+  assert.match(detailClickHandler[0], /trackActivationMode === 'doubleClick'\) return/)
+  assert.doesNotMatch(detailClickHandler[0], /selectOnly\(/)
+  assert.doesNotMatch(searchClickHandler[0], /selectOnly\(/)
+  assert.match(source, /multiSelect\.shouldSuppressRowDoubleClick\(event\)/)
+  assert.match(detailSource, /emit\('playTrack', track, index, event\)/)
   assert.match(searchSource, /batchFavorite/)
   assert.match(searchSource, /batchAddToPlaylist/)
   assert.match(searchSource, /trackContextMenu/)

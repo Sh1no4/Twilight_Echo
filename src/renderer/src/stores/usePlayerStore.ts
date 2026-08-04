@@ -194,6 +194,7 @@ const audioOutputOptions = ref<AudioOutputOption[]>(getFallbackAudioOutputOption
 const audioDeviceOptions = ref<AudioDeviceOption[]>([DEFAULT_AUDIO_DEVICE_OPTION])
 const defaultAudioProcessing: AudioProcessingSettings = {
   dspEnabled: false,
+  directMode: false,
   clipGuard: true,
   fftEnabled: true,
   fftResolution: 8192,
@@ -283,8 +284,12 @@ const PLAYBACK_TOGGLE_INTENT_GRACE_MS = 1200
 const NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS = 2500
 const NATIVE_PLAYBACK_INFO_POST_CONFIRMATION_GRACE_MS = 500
 const NATIVE_PLAYBACK_INFO_REFRESH_DELAY_MS = 80
+const START_FILE_PLAYBACK_INFO_REFRESH_ATTEMPTS = 4
+const START_FILE_PLAYBACK_INFO_REFRESH_DELAY_MS = 120
 let playbackToggleIntent: { playing: boolean; expiresAt: number } | null = null
 let nativePlaybackInfoIntent: NativePlaybackInfoIntent | null = null
+let startFilePlaybackInfoRefreshGeneration = 0
+let rendererResumePlaybackInfoRefresh: Promise<void> | null = null
 const bpmAnalysisRequests = new Set<string>()
 
 function isActiveLoad(loadToken: number, track: Track): boolean {
@@ -1716,6 +1721,7 @@ const TIME_UPDATE_INTERVAL_MS = 250
 const PLAYBACK_POSITION_CONFIRMATION_TOLERANCE_SECONDS = 1.5
 const PLAYBACK_POSITION_TRANSITION_GUARD_MS = 3000
 const RENDERER_CLOCK_STALE_AFTER_MS = 500
+const RENDERER_CLOCK_MAX_UNOBSERVED_GAP_MS = 1500
 const NATIVE_PAUSE_CONFIRMATION_MS = 500
 const VISUALIZATION_UPDATE_INTERVAL_MS = 200
 let latestPlaybackTime = 0
@@ -1912,9 +1918,14 @@ function tickRendererPlaybackClock(): void {
   if ((!isPlaying.value && !isLoading.value) || isCurrentTrackLiveStream()) return
   const now = getNowMs()
   if (now - lastAcceptedPlaybackSampleAt < RENDERER_CLOCK_STALE_AFTER_MS) return
+  const elapsedMs = Math.max(0, now - rendererClockAnchorAt)
+  if (elapsedMs > RENDERER_CLOCK_MAX_UNOBSERVED_GAP_MS) {
+    rendererClockAnchorPosition = currentTime.value
+    rendererClockAnchorAt = now
+    return
+  }
   const rate = Number.isFinite(playbackRate.value) ? playbackRate.value : 1
-  const estimated =
-    rendererClockAnchorPosition + Math.max(0, (now - rendererClockAnchorAt) / 1000) * rate
+  const estimated = rendererClockAnchorPosition + (elapsedMs / 1000) * rate
   const total = duration.value > 0 ? duration.value : (currentTrack.value?.duration ?? 0)
   const position = total > 0 ? Math.min(estimated, total) : estimated
   if (position <= currentTime.value) return
@@ -2228,7 +2239,7 @@ async function ensureCurrentTrackLyricsLoaded(
   triggerTrack: Track | null = currentTrack.value,
   allowProviderLookup = true
 ): Promise<void> {
-  if (!triggerTrack) return
+  if (!triggerTrack || currentTrack.value?.id !== triggerTrack.id) return
   // Per-track generation: concurrent loads for *different* tracks must not cancel
   // each other; only a newer load for the *same* id supersedes.
   const previousGeneration = lyricsLoadGenerationByTrackId.get(triggerTrack.id) ?? 0
@@ -2612,6 +2623,69 @@ async function handleProviderRematchFallback(
   return true
 }
 
+function retryCurrentTrackLyricsIfNeeded(): void {
+  const track = currentTrack.value
+  if (!track) return
+  const loading =
+    lyricsLoadState.value.trackId === track.id && lyricsLoadState.value.status === 'loading'
+  if (track.lyrics == null || loading) {
+    void ensureCurrentTrackLyricsLoaded(track, true)
+  }
+}
+
+async function refreshPlaybackInfoAfterStartFile(): Promise<void> {
+  const api = window.api?.audioEngine
+  if (!api) return
+
+  const refreshGeneration = ++startFilePlaybackInfoRefreshGeneration
+  const trackIdAtStart = currentTrack.value?.id ?? ''
+  for (let attempt = 0; attempt < START_FILE_PLAYBACK_INFO_REFRESH_ATTEMPTS; attempt += 1) {
+    if (currentTrack.value?.id !== trackIdAtStart) {
+      retryCurrentTrackLyricsIfNeeded()
+      return
+    }
+    try {
+      const info = await api.getPlaybackInfo()
+      if (refreshGeneration !== startFilePlaybackInfoRefreshGeneration) return
+      applyNativePlaybackInfo(info, { applyTrackWhenInactive: true })
+      if (currentTrack.value?.id !== trackIdAtStart) {
+        retryCurrentTrackLyricsIfNeeded()
+        return
+      }
+    } catch {
+      // A later attempt can observe the post-boundary native service snapshot.
+    }
+
+    if (attempt + 1 < START_FILE_PLAYBACK_INFO_REFRESH_ATTEMPTS) {
+      await new Promise<void>((resolve) =>
+        window.setTimeout(resolve, START_FILE_PLAYBACK_INFO_REFRESH_DELAY_MS)
+      )
+    }
+  }
+
+  if (refreshGeneration === startFilePlaybackInfoRefreshGeneration) {
+    retryCurrentTrackLyricsIfNeeded()
+  }
+}
+
+async function refreshPlaybackAfterRendererResume(): Promise<void> {
+  if (rendererResumePlaybackInfoRefresh) return rendererResumePlaybackInfoRefresh
+
+  rendererResumePlaybackInfoRefresh = (async () => {
+    try {
+      const info = await window.api?.audioEngine?.getPlaybackInfo()
+      if (info) applyNativePlaybackInfo(info, { applyTrackWhenInactive: true })
+    } catch {
+      // Playback events can resume independently after a short service delay.
+    } finally {
+      retryCurrentTrackLyricsIfNeeded()
+      rendererResumePlaybackInfoRefresh = null
+    }
+  })()
+
+  return rendererResumePlaybackInfoRefresh
+}
+
 function setupAudioEngineListeners(): void {
   if (listenersSetup) return
   listenersSetup = true
@@ -2695,20 +2769,20 @@ function setupAudioEngineListeners(): void {
       if (nativeQueueDelegated || isPlaying.value) {
         nativePlaybackActive = true
       }
-      void api
-        .getPlaybackInfo()
-        .then((info) => {
-          // Apply first. Do NOT clear the intent here — a delayed previous-track
-          // snapshot after an ignored apply used to re-enter and flash the old
-          // title/cover. applyNativePlaybackInfo marks confirmation on match;
-          // expiry / sticky guard handle the rest.
-          applyNativePlaybackInfo(info, { applyTrackWhenInactive: true })
-        })
-        .catch(() => {
-          // Leave intent in place so subsequent ticks stay filtered.
-        })
+      void refreshPlaybackInfoAfterStartFile()
     })
   )
+
+  const refreshAfterRendererResume = (): void => {
+    if (document.visibilityState === 'hidden') return
+    void refreshPlaybackAfterRendererResume()
+  }
+  document.addEventListener('visibilitychange', refreshAfterRendererResume)
+  window.addEventListener('focus', refreshAfterRendererResume)
+  cleanupFns.push(() => {
+    document.removeEventListener('visibilitychange', refreshAfterRendererResume)
+    window.removeEventListener('focus', refreshAfterRendererResume)
+  })
 
   cleanupFns.push(
     api.onPlaybackInfo((info) => {
@@ -2748,8 +2822,7 @@ function setupAudioEngineListeners(): void {
         if (event.outputRouteSynced) {
           setAudioEngineError(null)
         } else {
-          audioEngineError.value =
-            event.restoreErrors?.join('；') || '音频输出设备/后端未完全恢复'
+          audioEngineError.value = event.restoreErrors?.join('；') || '音频输出设备/后端未完全恢复'
         }
         setAudioServiceReadyNotice({
           outputRouteSynced: event.outputRouteSynced === true,
@@ -4614,7 +4687,7 @@ export function usePlayerStore(): {
 
   async function setAudioProcessing(settings: Partial<AudioProcessingSettings>): Promise<void> {
     const nextSettings = mergeAudioProcessingPatch(settings)
-    audioProcessing.value = nextSettings
+    const previousSettings = cloneAudioProcessingSettings(audioProcessing.value)
     try {
       audioProcessing.value = cloneAudioProcessingSettings(
         await window.api.audioEngine.setAudioProcessing(nextSettings)
@@ -4639,8 +4712,9 @@ export function usePlayerStore(): {
       )
       scheduleCrossfadeIfNeeded()
     } catch (err) {
+      audioProcessing.value = previousSettings
+      setAudioEngineError(err instanceof Error ? err.message : String(err))
       console.error('[audio-engine] Failed to update audio processing settings:', err)
-      await persistAudioProcessingFallback(nextSettings, err)
     }
   }
 

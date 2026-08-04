@@ -34,6 +34,8 @@ import {
 import { rendererFallbackAllowed } from './nativeBinding.ts'
 import type { DspGraphConfig } from '../../shared/dspGraph.ts'
 
+const MAX_SOFT_PLAYBACK_CLOCK_GAP_SECONDS = 1.5
+
 export interface PlaybackControllerHost {
   getNative(): NativeAudioBinding | null
   getAudioServiceBinding(): AudioEngineServiceNativeBinding | null
@@ -1264,9 +1266,10 @@ tick(): void {
     const previousPosition = this.playbackInfo.position
     const now = this.scheduler.now()
     const elapsed = Math.max(0, (now - this.lastTick) / 1000)
+    const softElapsed = elapsed > MAX_SOFT_PLAYBACK_CLOCK_GAP_SECONDS ? 0 : elapsed
     const rate = this.playbackInfo.playbackRate ?? 1
-    if (this.playbackInfo.state === 'playing' && elapsed > 0) {
-      const estimatedPosition = previousPosition + elapsed * rate
+    if (this.playbackInfo.state === 'playing' && softElapsed > 0) {
+      const estimatedPosition = previousPosition + softElapsed * rate
       this.playbackInfo.position =
         this.playbackInfo.duration > 0
           ? Math.min(estimatedPosition, this.playbackInfo.duration)
@@ -1333,7 +1336,9 @@ tick(): void {
   const now = this.scheduler.now()
   const elapsed = (now - this.lastTick) / 1000
   this.lastTick = now
-  this.playbackInfo.position += elapsed * (this.playbackInfo.playbackRate ?? 1)
+  const softElapsed =
+    elapsed > MAX_SOFT_PLAYBACK_CLOCK_GAP_SECONDS ? 0 : Math.max(0, elapsed)
+  this.playbackInfo.position += softElapsed * (this.playbackInfo.playbackRate ?? 1)
   if (
     this.playbackInfo.duration > 0 &&
     this.playbackInfo.position >= this.playbackInfo.duration

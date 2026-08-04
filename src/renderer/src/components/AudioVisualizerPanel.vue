@@ -14,7 +14,10 @@ const audioOutputDspStore = useAudioOutputDspStore()
 const { currentTrack, isPlaying, currentTime, duration } = playbackStore
 const { audioEngineReady } = storeToRefs(audioOutputDspStore)
 const { formatTime, togglePlay, next, prev, seek } = playbackStore
-const resolvedCover = useCover(computed(() => currentTrack.value?.cover ?? null))
+const resolvedCover = useCover(
+  computed(() => currentTrack.value?.cover ?? null),
+  computed(() => currentTrack.value?.coverSource ?? null)
+)
 
 const iframeRef = ref<HTMLIFrameElement | null>(null)
 const iframeReady = ref(false)
@@ -107,8 +110,9 @@ async function pollVisualizationFrame(): Promise<void> {
   try {
     const v = await window.api.audioEngine.getVisualizationData(visualizationOptions)
     if (visualizerUnmounted || !shouldPollVisualization.value) return
+    // Synthetic fallback data is deterministic UI scaffolding, not a real FFT.
+    // Never present it as if it described the current audio signal.
     if (v.tapStatus === 'synthetic-fallback') {
-      resetTempoEstimator()
       postInactiveVisualizationFrame()
       return
     }

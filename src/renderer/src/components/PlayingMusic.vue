@@ -20,14 +20,23 @@ import { useLyricsManagement } from '../stores/lyricsManagement'
 import CoverImg from './CoverImg.vue'
 import { buildLyricLines, findActiveLyricIndex } from '../utils/lyrics'
 import type { LyricLine } from '../utils/lyrics'
+import { getLyricFocusLineIndices } from '../utils/lyricFocusWindow'
 import { projectLyricDisplay, projectManagedLyrics } from '../../../shared/lyricsManagement.ts'
 import AudioVisualizerPanel from './AudioVisualizerPanel.vue'
 import PlayingLyricWords from './PlayingLyricWords.vue'
 import PlayingMusicTimeChip from './PlayingMusicTimeChip.vue'
+import LyricsAppearanceCustomizer from './LyricsAppearanceCustomizer.vue'
+import {
+  resolveLyricsFontFamily,
+  type LyricsHighlightEffect,
+  type LyricsStyleTarget
+} from '../../../shared/lyricsAppearance.ts'
 
 const playbackStore = usePlayerStore()
 const visualizationStore = useVisualizationStore()
-const { currentTrack, dominantColor, currentTime, lyricsLoadState } = playbackStore
+const { currentTrack, dominantColor, currentTime, lyricsLoadState, isPlaying, playbackRate } =
+  playbackStore
+const lyricWordClock = { currentTime, isPlaying, playbackRate }
 const { visualizerActive } = storeToRefs(visualizationStore)
 const { seek } = playbackStore
 const { settings } = useSettingsStore()
@@ -53,15 +62,102 @@ function customizePlayerAppearance(): void {
   emit('customizeAppearance')
 }
 
+function customizeLyricsAppearance(): void {
+  closeAppearanceMenu()
+  lyricsCustomizerOpen.value = true
+}
+
 const nowPlayingBackground = computed(() => settings.value.nowPlayingBackground)
-const lyricAlign = computed(() => settings.value.lyricAlign)
-const lyricDimOpacity = computed(() => settings.value.lyricDimOpacity / 100)
+const lyricsAppearance = computed(() => settings.value.lyricsAppearance)
+const lyricAlign = computed(() => lyricsAppearance.value.align)
+const lyricsCustomizerOpen = ref(false)
+
+const lyricTextStyle = computed(() => lyricsAppearance.value.styles)
+
+function lyricStyleVars(target: LyricsStyleTarget): Record<string, string> {
+  const style = lyricTextStyle.value[target]
+  const color =
+    style.colorMode === 'custom'
+      ? style.color
+      : target === 'active'
+        ? 'var(--te-playback-lyric-active-text, #fff)'
+        : target === 'translation'
+          ? 'var(--te-playback-lyric-translation, rgba(255, 255, 255, 0.58))'
+          : 'var(--te-playback-lyric-text, rgba(255, 255, 255, 0.42))'
+  const background =
+    style.backgroundStyle === 'none'
+      ? target === 'active'
+        ? 'var(--te-playback-lyric-active-surface, transparent)'
+        : 'transparent'
+      : `color-mix(in srgb, ${style.backgroundColor} ${style.backgroundOpacity}%, transparent)`
+  const highlight = style.highlightColor
+  const highlightEffect: Record<LyricsHighlightEffect, string> = {
+    none: 'none',
+    shadow: `0 3px ${Math.round(6 + style.highlightIntensity * 0.14)}px color-mix(in srgb, ${highlight} 45%, transparent)`,
+    glow: `0 0 ${Math.round(8 + style.highlightIntensity * 0.22)}px color-mix(in srgb, ${highlight} 58%, transparent)`,
+    outline: `0 0 1px ${highlight}, 0 0 ${Math.round(2 + style.highlightIntensity * 0.08)}px ${highlight}`
+  }
+  const backgroundImage =
+    style.backgroundStyle === 'gradient'
+      ? `linear-gradient(135deg, ${background}, transparent)`
+      : 'none'
+  const backdropFilter = style.backgroundStyle === 'glass' ? 'blur(16px) saturate(130%)' : 'none'
+  return {
+    '--lyric-style-font-family': resolveLyricsFontFamily(style),
+    '--lyric-style-font-size': `${style.fontSize}px`,
+    '--lyric-style-font-weight': String(style.fontWeight),
+    '--lyric-style-line-height': String(style.lineHeight),
+    '--lyric-style-align': style.align,
+    '--lyric-style-color': color,
+    '--lyric-style-opacity': String(style.opacity / 100),
+    '--lyric-style-background': background,
+    '--lyric-style-background-image': backgroundImage,
+    '--lyric-style-backdrop-filter': backdropFilter,
+    '--lyric-style-highlight': highlightEffect[style.highlightEffect]
+  }
+}
 
 const isBlurBackground = computed(() => nowPlayingBackground.value === 'blur')
 const isFluidBackground = computed(() => nowPlayingBackground.value === 'fluid')
 const isSolidBackground = computed(() => nowPlayingBackground.value === 'solid')
 
 const lyricAlignClass = computed(() => `lyric-align-${lyricAlign.value}`)
+const lyricStyle = computed<Record<string, string>>(() => {
+  const appearance = lyricsAppearance.value
+  const styles: Record<string, string> = {
+    '--te-lyric-font-size': `${appearance.fontSize}px`,
+    '--te-lyric-font-weight': String(appearance.fontWeight),
+    '--te-lyric-line-height': String(appearance.lineHeight),
+    '--lyric-dim': String(appearance.inactiveOpacity / 100)
+  }
+
+  if (appearance.fontFamily !== 'inherit') {
+    const fontFamily = {
+      system: "system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif",
+      inter: "'Inter', 'MiSans', 'Microsoft YaHei', sans-serif",
+      lxgw: "'LXGW WenKai', 'MiSans', 'Microsoft YaHei', sans-serif",
+      sarasa: "'Sarasa Gothic SC', 'MiSans', 'Microsoft YaHei', sans-serif",
+      comic: "'Comic Sans MS', 'MiSans', 'Microsoft YaHei', sans-serif"
+    }[appearance.fontFamily]
+    styles['--te-lyric-font-family'] = fontFamily
+  }
+
+  if (appearance.colorMode === 'custom') {
+    styles['--te-playback-lyric-text'] = appearance.textColor
+    styles['--te-playback-lyric-active-text'] = appearance.activeColor
+    styles['--te-playback-lyric-karaoke'] = appearance.karaokeColor
+    styles['--te-playback-lyric-translation'] =
+      `color-mix(in srgb, ${appearance.textColor} 72%, transparent)`
+    styles['--te-playback-lyric-translation-active'] =
+      `color-mix(in srgb, ${appearance.activeColor} 82%, transparent)`
+    styles['--te-playback-lyric-romanization'] =
+      `color-mix(in srgb, ${appearance.textColor} 58%, transparent)`
+    styles['--te-playback-lyric-romanization-active'] =
+      `color-mix(in srgb, ${appearance.activeColor} 72%, transparent)`
+  }
+
+  return styles
+})
 
 // Visualizer toggle: replaces the cover+lyrics layout with the native-engine
 // spectrum visualizer surface.
@@ -87,8 +183,9 @@ const coverIdentity = computed(
     `${currentTrack.value?.id ?? 'none'}:${currentTrack.value?.cover ?? ''}:${currentTrack.value?.coverSource ?? ''}`
 )
 const lyricsEl = ref<HTMLElement | null>(null)
-const lyricLineEls = ref<Array<HTMLElement | null>>([])
+const lyricLineEls = new Map<number, HTMLElement>()
 let lyricScrollRaf = 0
+let lyricScrollDelayTimer = 0
 let lyricCenterTimer = 0
 let lyricManualScrollTimer = 0
 let lyricManualScrollLocked = false
@@ -96,6 +193,8 @@ let lyricResizeObserver: ResizeObserver | null = null
 let restoringLyricScroll = false
 const LYRIC_SCROLL_DURATION_MS = 420
 const LYRIC_RESIZE_SCROLL_DURATION_MS = 260
+const LYRIC_SCROLL_DELAY_MS = 140
+const LYRIC_EXIT_DURATION_MS = 280
 const LYRIC_MANUAL_RETURN_DELAY_MS = 3000
 const LYRIC_ACTIVE_ANCHOR_RATIO = 0.58
 
@@ -133,12 +232,13 @@ async function restoreOrCenterLyrics(): Promise<void> {
   // element positions. On re-mount, nextTick resolves after Vue's virtual
   // DOM patch but the browser may not have performed layout yet.
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  manualLyricBrowse.value = false
   lyricManualScrollLocked = false
   cancelLyricScrollAnimation()
   if (activeLyricIndex.value >= 0) {
     // Retry up to 3 frames in case lyricLineEls isn't populated yet
     for (let attempt = 0; attempt < 3; attempt++) {
-      if (lyricLineEls.value[activeLyricIndex.value]) {
+      if (lyricLineEls.has(activeLyricIndex.value)) {
         focusLyricLine(activeLyricIndex.value, 0)
         return
       }
@@ -165,11 +265,14 @@ watch(
       if (prevId) {
         saveLyricScrollPosition(prevId)
       }
-      lyricLineEls.value = []
+      cancelLyricTransition()
+      cancelLyricScrollAnimation()
+      manualLyricBrowse.value = Boolean(id && lyricScrollPositions.has(id))
+      lyricLineEls.clear()
       await nextTick()
       if (lyricsEl.value) {
         if (restoreLyricScrollPosition()) {
-          // Restored saved scroll position for this track
+          scheduleLyricReturnToCenter()
         } else {
           lyricManualScrollLocked = false
           if (activeLyricIndex.value >= 0) {
@@ -187,6 +290,7 @@ watch(
       (currentTrack.value.lyrics !== prevLyrics ||
         currentTrack.value.translatedLyrics !== prevTranslatedLyrics)
     ) {
+      cancelLyricTransition()
       await nextTick()
       if (activeLyricIndex.value >= 0) {
         focusLyricLine(activeLyricIndex.value)
@@ -197,12 +301,14 @@ watch(
 
 onBeforeUnmount(() => {
   saveLyricScrollPosition()
+  clearLyricIndexTimer()
   cancelLyricScrollAnimation()
   if (lyricCenterTimer !== 0) {
     window.clearTimeout(lyricCenterTimer)
     lyricCenterTimer = 0
   }
   clearLyricManualScrollTimer()
+  cancelLyricTransition()
   lyricResizeObserver?.disconnect()
   lyricResizeObserver = null
 })
@@ -246,21 +352,119 @@ const lyricsStillLoading = computed(
 const lyricsPendingLabel = computed(() => (lyricsStillLoading.value ? '加载歌词…' : '暂无歌词'))
 const reserveLyricsColumn = computed(() => hasLyrics.value || lyricsStillLoading.value)
 const activeLyricIndex = ref(-1)
+const manualLyricBrowse = ref(false)
+const lyricLeavingIndex = ref(-1)
+const lyricEnteringIndex = ref(-1)
+let lyricTransitionTimer = 0
+let lyricIndexTimer = 0
+let lastObservedLyricTime = Number.NaN
+let predictedLyricTime = Number.NEGATIVE_INFINITY
 
-function syncActiveLyricIndex(): void {
+function resetPredictedLyricTime(): void {
+  lastObservedLyricTime = Number.NaN
+  predictedLyricTime = Number.NEGATIVE_INFINITY
+}
+
+function lyricTime(position = currentTime.value): number {
+  return position + currentLyricOffsetSeconds.value
+}
+
+function syncActiveLyricIndex(time = currentTime.value): void {
+  const observedTime = lyricTime(time)
+  if (observedTime < lastObservedLyricTime) predictedLyricTime = Number.NEGATIVE_INFINITY
+  lastObservedLyricTime = observedTime
   const nextIndex = findActiveLyricIndex(
     lyricLines.value,
-    currentTime.value + currentLyricOffsetSeconds.value
+    Math.max(observedTime, predictedLyricTime)
   )
   if (nextIndex !== activeLyricIndex.value) activeLyricIndex.value = nextIndex
 }
 
-watch([lyricLines, currentTime, currentLyricOffsetSeconds], syncActiveLyricIndex, {
-  immediate: true
+function clearLyricIndexTimer(): void {
+  if (lyricIndexTimer !== 0) {
+    window.clearTimeout(lyricIndexTimer)
+    lyricIndexTimer = 0
+  }
+}
+
+function scheduleLyricIndexBoundary(): void {
+  clearLyricIndexTimer()
+  if (!isPlaying.value) return
+
+  const rate = Number.isFinite(playbackRate.value) ? playbackRate.value : 1
+  if (rate <= 0) return
+
+  const referenceTime = Math.max(lyricTime(), predictedLyricTime)
+  let nextTime: number | null = null
+  for (
+    let index = Math.max(0, activeLyricIndex.value + 1);
+    index < lyricLines.value.length;
+    index += 1
+  ) {
+    const time = lyricLines.value[index].time
+    if (time != null && time > referenceTime + 0.0001) {
+      nextTime = time
+      break
+    }
+  }
+  if (nextTime == null) return
+
+  const delay = Math.max(0, ((nextTime - referenceTime) / rate) * 1000)
+  lyricIndexTimer = window.setTimeout(() => {
+    lyricIndexTimer = 0
+    if (!isPlaying.value) return
+    predictedLyricTime = Math.max(predictedLyricTime, nextTime)
+    syncActiveLyricIndex()
+    scheduleLyricIndexBoundary()
+  }, delay)
+}
+
+watch(
+  [lyricLines, currentTime, currentLyricOffsetSeconds],
+  ([lines, _time, offsetSeconds], previous) => {
+    if (previous && (lines !== previous[0] || offsetSeconds !== previous[2])) {
+      resetPredictedLyricTime()
+    }
+    syncActiveLyricIndex()
+    scheduleLyricIndexBoundary()
+  },
+  { immediate: true }
+)
+
+watch([isPlaying, playbackRate], () => {
+  scheduleLyricIndexBoundary()
+})
+
+function advanceActiveLyricIndex(time: number): void {
+  if (!Number.isFinite(time)) return
+  predictedLyricTime = Math.max(predictedLyricTime, time)
+  syncActiveLyricIndex()
+  scheduleLyricIndexBoundary()
+}
+
+const renderedLyricLines = computed(() => {
+  const lines = displayLyricLines.value
+  const indices = manualLyricBrowse.value
+    ? lines.map((_line, index) => index)
+    : getLyricFocusLineIndices(
+        lines.length,
+        activeLyricIndex.value,
+        lyricsAppearance.value.focusLineCount
+      )
+
+  // Keep the compact focus window authoritative during lyric handoff. Re-inserting
+  // a completed line after it leaves this window makes it a new flex item at the
+  // top of the list until the exit timer ends, which briefly stacks old lyrics.
+  // Lines that remain inside the window still receive the exiting class below.
+  return indices.map((index) => ({ index, line: lines[index] }))
 })
 
 function setLyricLineRef(index: number, el: Element | ComponentPublicInstance | null): void {
-  lyricLineEls.value[index] = el instanceof HTMLElement ? el : null
+  if (el instanceof HTMLElement) {
+    lyricLineEls.set(index, el)
+    return
+  }
+  lyricLineEls.delete(index)
 }
 
 function lyricTone(index: number): 'idle' | 'far' | 'mid' | 'near' | 'active' {
@@ -277,6 +481,8 @@ function lyricTone(index: number): 'idle' | 'far' | 'mid' | 'near' | 'active' {
 function jumpToLyric(time: number | null): void {
   if (time == null) return
   clearLyricManualScrollTimer()
+  cancelLyricTransition()
+  manualLyricBrowse.value = false
   lyricManualScrollLocked = false
   cancelLyricScrollAnimation()
   seek(Math.max(0, time - currentLyricOffsetSeconds.value))
@@ -291,11 +497,52 @@ function cancelLyricScrollAnimation(): void {
     window.cancelAnimationFrame(lyricScrollRaf)
     lyricScrollRaf = 0
   }
+  if (lyricScrollDelayTimer !== 0) {
+    window.clearTimeout(lyricScrollDelayTimer)
+    lyricScrollDelayTimer = 0
+  }
+}
+
+function cancelLyricTransition(): void {
+  if (lyricTransitionTimer !== 0) {
+    window.clearTimeout(lyricTransitionTimer)
+    lyricTransitionTimer = 0
+  }
+  lyricLeavingIndex.value = -1
+  lyricEnteringIndex.value = -1
+}
+
+function scheduleLyricTransition(previousIndex: number, nextIndex: number): void {
+  cancelLyricTransition()
+  lyricLeavingIndex.value = previousIndex
+  lyricEnteringIndex.value = nextIndex
+  lyricTransitionTimer = window.setTimeout(
+    () => {
+      lyricTransitionTimer = 0
+      lyricLeavingIndex.value = -1
+      lyricEnteringIndex.value = -1
+    },
+    LYRIC_SCROLL_DELAY_MS + LYRIC_EXIT_DURATION_MS + 80
+  )
+}
+
+function scheduleLyricScroll(index: number): void {
+  if (lyricScrollDelayTimer !== 0) {
+    window.clearTimeout(lyricScrollDelayTimer)
+  }
+  lyricScrollDelayTimer = window.setTimeout(async () => {
+    lyricScrollDelayTimer = 0
+    if (activeLyricIndex.value !== index || lyricManualScrollLocked) return
+    await nextTick()
+    if (activeLyricIndex.value === index && !lyricManualScrollLocked) {
+      focusLyricLine(index)
+    }
+  }, LYRIC_SCROLL_DELAY_MS)
 }
 
 function getLyricTargetTop(index: number): number | null {
   const container = lyricsEl.value
-  const line = lyricLineEls.value[index]
+  const line = lyricLineEls.get(index)
 
   if (!container || !line) return null
 
@@ -373,6 +620,7 @@ function scheduleLyricReturnToCenter(): void {
   clearLyricManualScrollTimer()
   lyricManualScrollTimer = window.setTimeout(async () => {
     lyricManualScrollTimer = 0
+    manualLyricBrowse.value = false
     lyricManualScrollLocked = false
     await nextTick()
     if (activeLyricIndex.value >= 0) {
@@ -382,7 +630,9 @@ function scheduleLyricReturnToCenter(): void {
 }
 
 function onLyricsManualScroll(): void {
+  manualLyricBrowse.value = true
   lyricManualScrollLocked = true
+  cancelLyricTransition()
   cancelLyricScrollAnimation()
   saveLyricScrollPosition()
   scheduleLyricReturnToCenter()
@@ -411,12 +661,34 @@ function onLyricLayoutResize(): void {
   scheduleActiveLyricCenter()
 }
 
-watch(activeLyricIndex, async (index) => {
+watch(activeLyricIndex, async (index, previousIndex) => {
   if (index < 0) return
-  if (lyricManualScrollLocked) return
+  if (lyricManualScrollLocked) {
+    cancelLyricTransition()
+    cancelLyricScrollAnimation()
+    return
+  }
+  if (previousIndex != null && previousIndex >= 0 && index > previousIndex) {
+    cancelLyricScrollAnimation()
+    scheduleLyricTransition(previousIndex, index)
+    scheduleLyricScroll(index)
+    return
+  }
+  cancelLyricTransition()
+  cancelLyricScrollAnimation()
   await nextTick()
   focusLyricLine(index)
 })
+
+watch(
+  () => lyricsAppearance.value.focusLineCount,
+  async () => {
+    if (lyricManualScrollLocked) return
+    cancelLyricTransition()
+    await nextTick()
+    if (activeLyricIndex.value >= 0) focusLyricLine(activeLyricIndex.value, 0)
+  }
+)
 
 watch(lyricsEl, (el, previousEl) => {
   if (previousEl) {
@@ -451,7 +723,7 @@ onBeforeUnmount(() => {
   <div
     class="playing-music"
     :class="`bg-${nowPlayingBackground}`"
-    :style="{ '--accent-color': dominantColor, '--lyric-dim': lyricDimOpacity }"
+    :style="{ '--accent-color': dominantColor }"
     @contextmenu.prevent="openAppearanceMenu"
   >
     <button
@@ -522,7 +794,11 @@ onBeforeUnmount(() => {
         <section
           v-if="reserveLyricsColumn"
           class="lyrics-column"
-          :class="{ 'lyrics-column--pending': !hasLyrics }"
+          :class="{
+            'lyrics-column--pending': !hasLyrics,
+            'lyrics-column--karaoke-disabled': !lyricsAppearance.karaokeEnabled
+          }"
+          :style="lyricStyle"
         >
           <div class="lyrics-head">
             <PlayingMusicTimeChip />
@@ -542,29 +818,49 @@ onBeforeUnmount(() => {
             </div>
             <div v-else class="lyrics-list">
               <button
-                v-for="(line, i) in displayLyricLines"
-                :key="`${line.time}-${i}`"
-                :ref="(el) => setLyricLineRef(i, el)"
+                v-for="item in renderedLyricLines"
+                :key="`${item.line.time}-${item.index}`"
+                :ref="(el) => setLyricLineRef(item.index, el)"
                 type="button"
                 class="lyric-row"
-                :class="[lyricTone(i), { 'is-plain': !line.timed }]"
-                :disabled="!line.timed"
+                :class="[
+                  lyricTone(item.index),
+                  {
+                    'is-plain': !item.line.timed,
+                    'lyric-row--custom-background':
+                      lyricTextStyle[item.index === activeLyricIndex ? 'active' : 'normal']
+                        .backgroundStyle !== 'none',
+                    'lyric-row--exiting': item.index === lyricLeavingIndex,
+                    'lyric-row--entering': item.index === lyricEnteringIndex
+                  }
+                ]"
+                :style="lyricStyleVars(item.index === activeLyricIndex ? 'active' : 'normal')"
+                :disabled="!item.line.timed"
                 @pointerdown.stop
-                @click="jumpToLyric(line.time)"
+                @click="jumpToLyric(item.line.time)"
               >
-                <PlayingLyricWords
-                  v-if="line.words?.length"
-                  :words="line.words ?? []"
-                  :active="i === activeLyricIndex"
-                  :offset-seconds="currentLyricOffsetSeconds"
-                />
-                <span v-else-if="line.text" class="lyric-text">{{ line.text }}</span>
-                <span v-if="line.translation" class="lyric-translation">{{
-                  line.translation
-                }}</span>
-                <span v-if="line.romanization" class="lyric-romanization">{{
-                  line.romanization
-                }}</span>
+                <span class="lyric-row-content">
+                  <PlayingLyricWords
+                    v-if="item.line.words?.length"
+                    :words="item.line.words ?? []"
+                    :active="item.index === activeLyricIndex"
+                    :offset-seconds="currentLyricOffsetSeconds"
+                    :next-line-time="displayLyricLines[item.index + 1]?.time ?? null"
+                    :clock="lyricWordClock"
+                    :karaoke-enabled="lyricsAppearance.karaokeEnabled"
+                    @reach-next-line="advanceActiveLyricIndex"
+                  />
+                  <span v-else-if="item.line.text" class="lyric-text">{{ item.line.text }}</span>
+                  <span
+                    v-if="item.line.translation"
+                    class="lyric-translation"
+                    :style="lyricStyleVars('translation')"
+                    >{{ item.line.translation }}</span
+                  >
+                  <span v-if="item.line.romanization" class="lyric-romanization">{{
+                    item.line.romanization
+                  }}</span>
+                </span>
               </button>
             </div>
           </div>
@@ -588,10 +884,19 @@ onBeforeUnmount(() => {
         }"
         @pointerdown.stop
       >
+        <button type="button" @click="customizeLyricsAppearance">
+          <i class="ph ph-text-aa"></i><span>个性化歌词</span>
+        </button>
         <button type="button" @click="customizePlayerAppearance">
           <i class="ph ph-palette"></i><span>定制此区域外观</span>
         </button>
       </div>
+    </Teleport>
+    <Teleport to="body">
+      <LyricsAppearanceCustomizer
+        :open="lyricsCustomizerOpen"
+        @close="lyricsCustomizerOpen = false"
+      />
     </Teleport>
   </div>
 </template>
@@ -614,7 +919,7 @@ onBeforeUnmount(() => {
 .player-appearance-menu {
   position: fixed;
   z-index: 10000;
-  width: 202px;
+  width: 218px;
   padding: 5px;
   border: 1px solid var(--te-card-border);
   border-radius: 6px;
@@ -830,7 +1135,12 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 18px;
   align-self: center;
-  /* U3: 移除写死的横向位移，避免各布局下封面与歌词列错位 */
+}
+
+@media (min-width: 1121px) {
+  :global(html[data-te-player-layout='standard'] .playing-music .cover-column) {
+    transform: translateX(clamp(42px, 5vw, 80px));
+  }
 }
 
 .cover-frame {
@@ -1009,6 +1319,8 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow-y: auto;
   padding-right: 8px;
+  -ms-overflow-style: none;
+  scrollbar-width: none !important;
   scroll-behavior: auto;
   overscroll-behavior: contain;
   mask-image: linear-gradient(
@@ -1032,8 +1344,14 @@ onBeforeUnmount(() => {
 }
 
 .lyrics-scroll::-webkit-scrollbar {
+  display: none !important;
   width: 0;
   height: 0;
+}
+
+.lyrics-scroll::-webkit-scrollbar-thumb {
+  border: 0 !important;
+  background: transparent !important;
 }
 
 .lyrics-list {
@@ -1055,18 +1373,30 @@ onBeforeUnmount(() => {
   gap: 5px;
   border: 1px solid transparent;
   border-radius: 18px;
-  background: transparent;
+  background: var(--lyric-style-background, transparent);
+  background-image: var(--lyric-style-background-image, none);
+  backdrop-filter: var(--lyric-style-backdrop-filter, none);
+  -webkit-backdrop-filter: var(--lyric-style-backdrop-filter, none);
   padding: 12px 20px;
-  text-align: center;
+  font-family: var(--lyric-style-font-family, var(--te-lyric-font-family, inherit));
+  font-weight: var(--lyric-style-font-weight, var(--te-lyric-font-weight, 600));
+  text-align: var(--lyric-style-align, center);
   cursor: pointer;
-  color: var(--te-playback-lyric-text, rgba(255, 255, 255, 0.42));
+  color: var(--lyric-style-color, var(--te-playback-lyric-text, rgba(255, 255, 255, 0.42)));
   transition:
     color var(--te-motion-hover) ease,
-    opacity var(--te-motion-hover) ease,
-    transform var(--te-motion-hover) var(--te-ease-soft),
     background var(--te-motion-hover) ease,
-    border-color var(--te-motion-hover) ease,
-    box-shadow var(--te-motion-hover) ease;
+    opacity var(--te-motion-hover) ease,
+    transform var(--te-motion-hover) var(--te-ease-soft);
+}
+
+.lyric-row-content {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
 }
 
 .lyric-row:hover {
@@ -1074,38 +1404,36 @@ onBeforeUnmount(() => {
 }
 
 .lyric-row.idle {
-  opacity: var(--lyric-dim, 0.56);
+  opacity: calc(var(--lyric-dim, 0.56) * var(--lyric-style-opacity, 1));
 }
 
 .lyric-row.far {
-  opacity: calc(var(--lyric-dim, 0.56) * 0.54);
+  opacity: calc(var(--lyric-dim, 0.56) * var(--lyric-style-opacity, 1) * 0.54);
 }
 
 .lyric-row.mid {
-  opacity: calc(var(--lyric-dim, 0.56) * 0.93);
+  opacity: calc(var(--lyric-dim, 0.56) * var(--lyric-style-opacity, 1) * 0.93);
 }
 
 .lyric-row.near {
-  opacity: calc(var(--lyric-dim, 0.56) * 1.5);
+  opacity: min(1, calc(var(--lyric-dim, 0.56) * var(--lyric-style-opacity, 1) * 1.5));
 }
 
 .lyric-row.active {
-  opacity: 1;
-  color: var(--te-playback-lyric-active-text, #fff);
-  transform: scale(1.012);
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--accent-color) 22%, transparent), transparent),
-    var(--te-playback-lyric-active-surface, rgba(255, 255, 255, 0.08));
-  border-color: var(--te-playback-lyric-active-border, rgba(255, 255, 255, 0.1));
-  box-shadow: var(--te-playback-lyric-active-shadow, 0 14px 28px rgba(0, 0, 0, 0.18));
+  opacity: var(--lyric-style-opacity, 1);
+  color: var(--lyric-style-color, var(--te-playback-lyric-active-text, #fff));
+  transform: scale(1.035);
+  background: var(--lyric-style-background, transparent);
+  border-color: var(--te-playback-lyric-active-border, transparent);
+  box-shadow: var(--te-playback-lyric-active-shadow, none);
 }
 
 .lyric-text {
   min-width: 0;
   width: 100%;
-  font-size: var(--te-lyric-font-size, 18px);
-  line-height: 1.85;
-  text-align: center;
+  font-size: clamp(12px, var(--lyric-style-font-size, var(--te-lyric-font-size, 18px)), 48px);
+  line-height: var(--lyric-style-line-height, var(--te-lyric-line-height, 1.85));
+  text-align: var(--lyric-style-align, center);
   word-break: break-word;
 }
 
@@ -1116,8 +1444,17 @@ onBeforeUnmount(() => {
 }
 
 .lyric-row.active .lyric-text {
-  font-size: calc(var(--te-lyric-font-size, 18px) + 4px);
-  font-weight: 600;
+  font-size: clamp(
+    12px,
+    var(--lyric-style-font-size, calc(var(--te-lyric-font-size, 18px) + 7px)),
+    48px
+  );
+  font-weight: var(--lyric-style-font-weight, var(--te-lyric-font-weight, 600));
+  letter-spacing: 0.012em;
+  text-shadow: var(
+    --lyric-style-highlight,
+    0 0 10px color-mix(in srgb, var(--te-playback-lyric-karaoke, #fff8df) 20%, transparent)
+  );
 }
 
 :global(html[data-te-motion='full'] .lyric-row.active .lyric-text) {
@@ -1131,39 +1468,112 @@ onBeforeUnmount(() => {
   }
 }
 
+:global(html[data-te-motion='full'] .lyric-row--exiting) {
+  pointer-events: none;
+}
+
+:global(html[data-te-motion='full'] .lyric-row--exiting .lyric-row-content) {
+  animation: te-lyric-line-exit var(--te-motion-panel) var(--te-ease-soft) both;
+}
+
+:global(html[data-te-motion='full'] .lyric-row--entering .lyric-row-content) {
+  animation: te-lyric-line-enter var(--te-motion-panel) var(--te-ease-spring) both;
+}
+
+@keyframes te-lyric-line-exit {
+  from {
+    opacity: 1;
+    transform: scale(1.035);
+  }
+  to {
+    opacity: 0.2;
+    transform: scale(0.98);
+  }
+}
+
+@keyframes te-lyric-line-enter {
+  from {
+    transform: translateY(12px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1.035);
+  }
+}
+
 .lyric-text--words {
   display: inline;
 }
 
 :deep(.lyric-word) {
-  transition:
-    color 0.12s ease,
-    opacity 0.12s ease;
+  --lyric-word-progress: 0%;
+  position: relative;
+  display: inline-block;
+  contain: paint;
+  color: color-mix(in srgb, currentColor 62%, transparent);
+  white-space: pre;
+}
+
+:deep(.lyric-word[data-progressing='true'])::after {
+  will-change: clip-path;
+}
+
+/* The reference uses a restrained white-to-warm-white karaoke sweep rather
+   than a saturated neon color. A clipped highlight layer keeps the text
+   layout stable while the fill advances with the word timestamp. */
+:deep(.lyric-word)::after {
+  position: absolute;
+  inset: 0;
+  color: var(--te-playback-lyric-karaoke, #fff8df);
+  white-space: pre;
+  opacity: var(--lyric-word-highlight-opacity, 0);
+  pointer-events: none;
+  clip-path: inset(0 calc(100% - var(--lyric-word-progress)) 0 0);
+  content: attr(data-word-text);
 }
 
 .lyric-row.active :deep(.lyric-word) {
-  opacity: 0.55;
+  opacity: 0.76;
 }
 
-:deep(.lyric-word--active) {
-  opacity: 1 !important;
-  color: color-mix(in srgb, var(--accent-color, #ffd700) 85%, #fff);
-  font-weight: 700;
-  text-shadow: 0 0 12px color-mix(in srgb, var(--accent-color, #ffd700) 45%, transparent);
+.lyrics-column--karaoke-disabled :deep(.lyric-word) {
+  color: inherit;
+}
+
+.lyrics-column--karaoke-disabled :deep(.lyric-word)::after {
+  display: none;
 }
 
 .lyric-translation {
   min-width: 0;
   width: 100%;
-  font-size: calc(var(--te-lyric-font-size, 18px) - 2px);
-  line-height: 1.45;
-  text-align: center;
-  color: var(--te-playback-lyric-translation, rgba(255, 255, 255, 0.58));
+  padding: 3px 7px;
+  border-radius: 9px;
+  font-family: var(--lyric-style-font-family, var(--te-lyric-font-family, inherit));
+  font-size: clamp(
+    12px,
+    var(--lyric-style-font-size, calc(var(--te-lyric-font-size, 18px) - 2px)),
+    48px
+  );
+  font-weight: var(--lyric-style-font-weight, 500);
+  line-height: var(--lyric-style-line-height, 1.45);
+  text-align: var(--lyric-style-align, center);
+  color: var(--lyric-style-color, var(--te-playback-lyric-translation, rgba(255, 255, 255, 0.58)));
+  opacity: var(--lyric-style-opacity, 1);
+  background: var(--lyric-style-background, transparent);
+  background-image: var(--lyric-style-background-image, none);
+  backdrop-filter: var(--lyric-style-backdrop-filter, none);
+  -webkit-backdrop-filter: var(--lyric-style-backdrop-filter, none);
+  text-shadow: var(--lyric-style-highlight, none);
   word-break: break-word;
+  transition: all var(--te-motion-hover) ease;
 }
 
 .lyric-row.active .lyric-translation {
-  color: var(--te-playback-lyric-translation-active, rgba(255, 255, 255, 0.82));
+  color: var(
+    --lyric-style-color,
+    var(--te-playback-lyric-translation-active, rgba(255, 255, 255, 0.82))
+  );
 }
 
 .lyric-romanization {

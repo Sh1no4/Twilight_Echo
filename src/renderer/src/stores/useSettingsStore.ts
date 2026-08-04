@@ -5,6 +5,12 @@ import {
 } from '../../../shared/miniPlayer.ts'
 import { createLegacyDspGraph } from '../../../shared/dspGraph.ts'
 import { DEFAULT_SLEEP_TIMER_SETTINGS } from '../../../shared/sleepTimer.ts'
+import {
+  DEFAULT_LYRICS_APPEARANCE,
+  cloneLyricsAppearance,
+  normalizeLyricsAppearance
+} from '../../../shared/lyricsAppearance.ts'
+import { DEFAULT_GENRE_SEPARATORS } from '../../../shared/genreSeparators.ts'
 import type {
   AppSettings,
   AudioOutputId,
@@ -23,6 +29,7 @@ function getFallbackAudioOutput(): AudioOutputId {
 
 const fallbackAudioProcessing: AudioProcessingSettings = {
   dspEnabled: false,
+  directMode: false,
   clipGuard: true,
   fftEnabled: true,
   fftResolution: 8192,
@@ -100,8 +107,9 @@ const fallbackSettings: AppSettings = {
     cardBlur: 24
   },
   useCoverTheme: true,
-  lyricFontSize: 18,
+  lyricsAppearance: cloneLyricsAppearance(DEFAULT_LYRICS_APPEARANCE),
   libraryFolders: [],
+  genreSeparators: DEFAULT_GENRE_SEPARATORS,
   watchLibrary: true,
   onlineLyricsFallback: false,
   smtcEnabled: true,
@@ -160,8 +168,6 @@ const fallbackSettings: AppSettings = {
     }
   },
   nowPlayingBackground: 'blur',
-  lyricAlign: 'center',
-  lyricDimOpacity: 40,
   playbackResumeMode: 'off',
   sleepTimer: DEFAULT_SLEEP_TIMER_SETTINGS,
   ncmPlaybackQuality: 'auto',
@@ -312,25 +318,26 @@ function clearLegacyThemeOwnedInlineStyles(): void {
   delete root.dataset.accent
 }
 
+function syncThemeAppearance(): void {
+  void import('./useThemeStore.ts').then(({ syncThemeSettingsAppearance }) => {
+    syncThemeSettingsAppearance(settings.value)
+  })
+}
+
 function applyDomSettings(): void {
   clearLegacyThemeOwnedInlineStyles()
+  syncThemeAppearance()
   document.documentElement.dataset.themePreference = settings.value.theme
   document.body.classList.toggle('te-no-blur', !settings.value.blurEffect)
   document.documentElement.dataset.windowTransparent = settings.value.windowTransparency
     ? 'on'
     : 'off'
   applyWindowTransparencyEffect()
-  document.documentElement.style.setProperty(
-    '--te-lyric-font-size',
-    `${settings.value.lyricFontSize}px`
-  )
+  document.documentElement.style.removeProperty('--te-lyric-font-size')
   document.documentElement.dataset.density = settings.value.uiDensity
   document.documentElement.dataset.nowPlayingBg = settings.value.nowPlayingBackground
-  document.documentElement.dataset.lyricAlign = settings.value.lyricAlign
-  document.documentElement.style.setProperty(
-    '--te-lyric-dim-opacity',
-    `${settings.value.lyricDimOpacity / 100}`
-  )
+  delete document.documentElement.dataset.lyricAlign
+  document.documentElement.style.removeProperty('--te-lyric-dim-opacity')
 }
 
 function applyWindowTransparencyEffect(): void {
@@ -362,6 +369,7 @@ function applySnapshot(snapshot: SettingsSnapshot): void {
       ...fallbackSettings.cachePolicy,
       ...(incoming.cachePolicy ?? {})
     },
+    lyricsAppearance: normalizeLyricsAppearance(incoming.lyricsAppearance),
     cardAppearance: {
       ...fallbackSettings.cardAppearance,
       ...(incoming.cardAppearance ?? {}),
@@ -492,6 +500,12 @@ export function useSettingsStore(): {
         cardAppearance: patch.cardAppearance
       }
       applyDomSettings()
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'lyricsAppearance') && patch.lyricsAppearance) {
+      settings.value = {
+        ...settings.value,
+        lyricsAppearance: cloneLyricsAppearance(patch.lyricsAppearance)
+      }
     }
     if (Object.prototype.hasOwnProperty.call(patch, 'miniPlayer') && patch.miniPlayer) {
       settings.value = {

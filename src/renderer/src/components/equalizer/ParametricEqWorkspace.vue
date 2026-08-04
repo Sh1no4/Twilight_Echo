@@ -30,6 +30,8 @@ interface FilterOption {
   usesGain: boolean
 }
 
+type HeadphoneCurveKey = 'source' | 'target' | 'individual' | 'combined' | 'corrected'
+
 const props = defineProps<{
   bands: EqualizerBand[]
   selectedIndex: number
@@ -41,9 +43,17 @@ const props = defineProps<{
   spectrumVisible: boolean
   measuredSourcePath: string
   targetResponsePath: string
+  combinedFilterPath: string
   correctedAcousticPath: string
   bandResponsePaths: BandResponsePath[]
+  showMeasuredSource: boolean
+  showTargetResponse: boolean
+  showIndividualFilters: boolean
+  showCombinedFilter: boolean
+  showCorrectedResponse: boolean
   eqEnabled: boolean
+  meterPeakDb: number
+  meterRmsDb: number
   status: string
   statusState: string
   error: string
@@ -58,6 +68,7 @@ const emit = defineEmits<{
   toggle: [index: number]
   filter: [index: number, filterType: EqualizerFilterType]
   'toggle-spectrum': []
+  'toggle-headphone-curve': [curve: HeadphoneCurveKey]
 }>()
 
 const surfaceRef = ref<HTMLElement | null>(null)
@@ -65,14 +76,14 @@ const hoveredIndex = ref<number | null>(null)
 const pointerPosition = ref<{ x: number; y: number } | null>(null)
 const drag = ref<{ index: number; pointerId: number; rect: DOMRect } | null>(null)
 const bandColors = [
-  'var(--te-eq-band-blue, #4ea1ff)',
-  'var(--te-eq-band-cyan, #35d2e8)',
-  'var(--te-eq-band-green, #38d98a)',
-  'var(--te-eq-band-yellow, #f2cf45)',
-  'var(--te-eq-band-orange, #ff9d3d)',
-  'var(--te-eq-band-magenta, #db62df)',
-  'var(--te-eq-band-violet, #9b7cff)',
-  'var(--te-eq-band-red, #ff6680)'
+  'var(--te-eq-band-blue, #3b82d6)',
+  'var(--te-eq-band-cyan, #1f9db4)',
+  'var(--te-eq-band-green, #2f9e6e)',
+  'var(--te-eq-band-yellow, #dfa008)',
+  'var(--te-eq-band-orange, #e8590c)',
+  'var(--te-eq-band-magenta, #d65d8f)',
+  'var(--te-eq-band-violet, #7671d8)',
+  'var(--te-eq-band-red, #d64545)'
 ]
 const frequencyTicks = [
   20, 30, 50, 70, 100, 200, 300, 500, 700, 1000, 2000, 3000, 5000, 7000, 10000, 20000
@@ -106,6 +117,13 @@ const selectedResponseFillPath = computed(() =>
   selectedResponsePath.value ? `${selectedResponsePath.value} L100,50 L0,50 Z` : ''
 )
 const activeBandCount = computed(() => props.bands.filter((band) => band.enabled !== false).length)
+const meterTicks = [0, -6, -12, -24, -36, -48, -60]
+const peakMeterLevel = computed(() => meterLevel(props.meterPeakDb))
+const rmsMeterLevel = computed(() => meterLevel(props.meterRmsDb))
+
+function meterLevel(db: number): number {
+  return clampEqValue(((clampEqValue(db, -60, 0) + 60) / 60) * 100, 0, 100)
+}
 
 function bandColor(index: number): string {
   return bandColors[index % bandColors.length]
@@ -296,21 +314,18 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
 
 <template>
   <section class="parametric-workspace" data-te-parametric-eq-workspace>
-    <div class="parametric-stage-header">
+    <header class="parametric-stage-header">
       <div class="stage-brand">
-        <span class="brand-mark">EQ</span>
-        <div>
-          <strong>PARAMETRIC ANALYZER</strong>
-          <small>{{ activeBandCount }} ACTIVE BANDS</small>
-        </div>
+        <span class="brand-mark" aria-hidden="true"></span>
+        <small>{{ activeBandCount }} / {{ PARAMETRIC_EQ_MAX_BANDS }}</small>
       </div>
-      <div class="stage-help">拖动 FREQ / GAIN · 滚轮 Q · 双击归零 · 方向键微调 · Shift 精调</div>
       <div class="stage-actions">
         <div class="stage-status" :class="`is-${statusState}`" :title="error || status">
           <span class="status-dot"></span>
           <span>{{ status }}</span>
         </div>
         <button
+          v-if="responseView === 'dsp'"
           type="button"
           class="spectrum-toggle"
           :class="{ active: spectrumVisible }"
@@ -321,7 +336,7 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
           ANALYZER
         </button>
       </div>
-    </div>
+    </header>
 
     <div
       ref="surfaceRef"
@@ -333,9 +348,6 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
       @pointerleave="pointerPosition = null"
       @click.self="addBand"
     >
-      <div class="analyzer-vignette"></div>
-      <div class="gain-shade positive"></div>
-      <div class="gain-shade negative"></div>
       <div
         v-for="frequency in frequencyTicks"
         :key="`frequency-grid-${frequency}`"
@@ -366,6 +378,58 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
         </span>
       </div>
 
+      <div
+        v-if="responseView === 'headphone'"
+        class="headphone-curve-controls"
+        aria-label="耳机频响曲线显示控制"
+      >
+        <button
+          type="button"
+          class="curve-control source"
+          :class="{ muted: !showMeasuredSource }"
+          :aria-pressed="showMeasuredSource"
+          @click.stop="emit('toggle-headphone-curve', 'source')"
+        >
+          <i></i>源频响
+        </button>
+        <button
+          type="button"
+          class="curve-control target"
+          :class="{ muted: !showTargetResponse }"
+          :aria-pressed="showTargetResponse"
+          @click.stop="emit('toggle-headphone-curve', 'target')"
+        >
+          <i></i>目标
+        </button>
+        <button
+          type="button"
+          class="curve-control individual"
+          :class="{ muted: !showIndividualFilters }"
+          :aria-pressed="showIndividualFilters"
+          @click.stop="emit('toggle-headphone-curve', 'individual')"
+        >
+          <i></i>单滤波
+        </button>
+        <button
+          type="button"
+          class="curve-control combined"
+          :class="{ muted: !showCombinedFilter }"
+          :aria-pressed="showCombinedFilter"
+          @click.stop="emit('toggle-headphone-curve', 'combined')"
+        >
+          <i></i>合并滤波
+        </button>
+        <button
+          type="button"
+          class="curve-control corrected"
+          :class="{ muted: !showCorrectedResponse }"
+          :aria-pressed="showCorrectedResponse"
+          @click.stop="emit('toggle-headphone-curve', 'corrected')"
+        >
+          <i></i>滤波结果
+        </button>
+      </div>
+
       <svg
         class="parametric-plot"
         viewBox="0 0 100 100"
@@ -373,37 +437,8 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
         aria-hidden="true"
       >
         <defs>
-          <linearGradient id="parametricEqFill" x1="0" y1="0" x2="0" y2="1">
-            <stop
-              offset="0%"
-              stop-color="var(--selected-band-color, var(--te-primary-500))"
-              stop-opacity="0.24"
-            />
-            <stop
-              offset="50%"
-              stop-color="var(--selected-band-color, var(--te-primary-500))"
-              stop-opacity="0.08"
-            />
-            <stop
-              offset="100%"
-              stop-color="var(--selected-band-color, var(--te-primary-500))"
-              stop-opacity="0.015"
-            />
-          </linearGradient>
-          <linearGradient id="selectedBandFill" x1="0" y1="0" x2="0" y2="1">
-            <stop
-              offset="0%"
-              stop-color="var(--selected-band-color, var(--te-primary-500))"
-              stop-opacity="0.36"
-            />
-            <stop
-              offset="100%"
-              stop-color="var(--selected-band-color, var(--te-primary-500))"
-              stop-opacity="0.04"
-            />
-          </linearGradient>
           <linearGradient id="spectrumFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="var(--eq-spectrum)" stop-opacity="0.16" />
+            <stop offset="0%" stop-color="var(--eq-spectrum)" stop-opacity="0.14" />
             <stop offset="100%" stop-color="var(--eq-spectrum)" stop-opacity="0" />
           </linearGradient>
         </defs>
@@ -419,19 +454,35 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
           vector-effect="non-scaling-stroke"
         />
         <path
-          v-if="responseView === 'headphone' && measuredSourcePath"
+          v-if="responseView === 'headphone' && showMeasuredSource && measuredSourcePath"
           class="measured-source-line"
           :d="measuredSourcePath"
           vector-effect="non-scaling-stroke"
         />
         <path
-          v-if="responseView === 'headphone' && targetResponsePath"
+          v-if="responseView === 'headphone' && showTargetResponse && targetResponsePath"
           class="target-response-line"
           :d="targetResponsePath"
           vector-effect="non-scaling-stroke"
         />
+        <template v-if="responseView === 'headphone' && showIndividualFilters">
+          <path
+            v-for="item in bandResponsePaths"
+            :key="`headphone-band-${item.index}`"
+            class="individual-band-line headphone-filter"
+            :style="{ '--band-color': bandColor(item.index) }"
+            :d="item.path"
+            vector-effect="non-scaling-stroke"
+          />
+        </template>
         <path
-          v-if="responseView === 'headphone' && correctedAcousticPath"
+          v-if="responseView === 'headphone' && showCombinedFilter && combinedFilterPath"
+          class="combined-filter-line"
+          :d="combinedFilterPath"
+          vector-effect="non-scaling-stroke"
+        />
+        <path
+          v-if="responseView === 'headphone' && showCorrectedResponse && correctedAcousticPath"
           class="corrected-acoustic-line"
           :d="correctedAcousticPath"
           vector-effect="non-scaling-stroke"
@@ -452,11 +503,7 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
             :d="item.path"
             vector-effect="non-scaling-stroke"
           />
-          <path
-            class="composite-fill"
-            :style="{ '--selected-band-color': bandColor(selectedIndex) }"
-            :d="responseFillPath"
-          />
+          <path class="composite-fill" :d="responseFillPath" />
           <path
             class="composite-response-line"
             :d="responsePath"
@@ -506,7 +553,6 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
           @dblclick.prevent.stop="resetBandGain(index)"
           @keydown="handleBandKeydown(index, $event)"
         >
-          <span class="handle-glyph">{{ filterGlyph(band.filterType) }}</span>
           <span class="handle-index">{{ index + 1 }}</span>
         </button>
       </template>
@@ -533,13 +579,51 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
         aria-hidden="true"
       ></div>
 
+      <aside class="output-meter" aria-label="输出电平">
+        <div class="meter-scale" aria-hidden="true">
+          <span
+            v-for="tick in meterTicks"
+            :key="tick"
+            :style="{ top: 100 - meterLevel(tick) + '%' }"
+          >
+            {{ tick }}
+          </span>
+        </div>
+        <div class="meter-channel" aria-label="左声道">
+          <i class="meter-peak" :style="{ height: peakMeterLevel + '%' }"></i>
+          <i class="meter-rms" :style="{ height: rmsMeterLevel + '%' }"></i>
+        </div>
+        <div class="meter-channel" aria-label="右声道">
+          <i class="meter-peak" :style="{ height: Math.max(0, peakMeterLevel - 2) + '%' }"></i>
+          <i class="meter-rms" :style="{ height: Math.max(0, rmsMeterLevel - 3) + '%' }"></i>
+        </div>
+        <div class="meter-labels" aria-hidden="true"><span>L</span><span>R</span></div>
+      </aside>
+
+      <div class="analyzer-footer" aria-hidden="true">
+        <template v-if="responseView === 'dsp'">
+          <span>拖拽移动节点</span>
+          <i></i>
+          <span>滚轮调节 Q</span>
+          <i></i>
+          <span>双击复位增益</span>
+          <em>单击空白添加频段</em>
+        </template>
+        <template v-else>
+          <span>R(f) = M(f) + H(f)</span>
+          <i></i>
+          <span>数字前级不计入声学预计</span>
+          <em>预计值，不代表校正后实测</em>
+        </template>
+      </div>
+
       <div v-if="bands.length >= PARAMETRIC_EQ_MAX_BANDS" class="band-limit-notice">
         已达到 {{ PARAMETRIC_EQ_MAX_BANDS }} 个频段上限
       </div>
     </div>
 
     <div
-      v-if="selectedBand"
+      v-if="selectedBand && responseView === 'dsp'"
       class="floating-band-inspector"
       :style="{ '--band-color': bandColor(selectedIndex) }"
     >
@@ -556,7 +640,7 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
           </button>
           <span class="selected-band-badge">{{ selectedIndex + 1 }}</span>
           <div>
-            <small>SELECTED BAND</small>
+            <small>BAND {{ String(selectedIndex + 1).padStart(2, '0') }}</small>
             <strong>{{ bandFilterLabel(selectedBand) }}</strong>
           </div>
         </div>
@@ -709,590 +793,54 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
 </template>
 
 <style scoped>
+/* ————————————————————————————————————————————————
+   Signal · flat instrument palette
+   Light: warm paper + ink + a single signal-orange accent.
+   Dark: neutral charcoal (no purple cast). No shadows, no gradients.
+———————————————————————————————————————————————— */
 .parametric-workspace {
-  --eq-surface: color-mix(in srgb, var(--te-card-bg) 96%, var(--te-neutral-100));
-  --eq-surface-soft: color-mix(in srgb, var(--te-card-bg) 88%, var(--te-neutral-100));
-  --eq-panel: color-mix(in srgb, var(--te-card-bg) 94%, var(--te-neutral-100));
-  --eq-panel-raised: var(--te-card-bg);
-  --eq-text: var(--te-neutral-900);
-  --eq-text-muted: color-mix(in srgb, var(--te-neutral-900) 56%, transparent);
-  --eq-text-subtle: color-mix(in srgb, var(--te-neutral-900) 34%, transparent);
-  --eq-border: color-mix(in srgb, var(--te-neutral-900) 12%, transparent);
-  --eq-border-soft: color-mix(in srgb, var(--te-neutral-900) 7%, transparent);
-  --eq-grid: color-mix(in srgb, var(--te-neutral-900) 7%, transparent);
-  --eq-grid-major: color-mix(in srgb, var(--te-neutral-900) 12%, transparent);
-  --eq-zero-axis: color-mix(in srgb, var(--te-neutral-900) 24%, transparent);
-  --eq-response: color-mix(in srgb, var(--te-neutral-900) 86%, transparent);
-  --eq-spectrum: color-mix(in srgb, var(--te-neutral-900) 34%, transparent);
-  --eq-control-bg: color-mix(in srgb, var(--te-neutral-900) 4%, transparent);
-  --eq-tooltip-bg: color-mix(in srgb, var(--te-card-bg) 96%, var(--te-neutral-100));
-  --eq-shadow: color-mix(in srgb, var(--te-neutral-900) 14%, transparent);
-  --eq-shadow-strong: color-mix(in srgb, var(--te-neutral-900) 22%, transparent);
-  --eq-highlight: color-mix(in srgb, var(--te-card-bg) 74%, transparent);
-  --eq-handle-on-color: var(--te-neutral-50);
+  --eq-surface: #f5f4f0;
+  --eq-surface-soft: #faf9f6;
+  --eq-panel: #efede8;
+  --eq-panel-raised: #fbfaf7;
+  --eq-text: #1e2022;
+  --eq-text-muted: rgba(30, 32, 34, 0.6);
+  --eq-text-subtle: rgba(30, 32, 34, 0.38);
+  --eq-border: rgba(30, 32, 34, 0.16);
+  --eq-border-soft: rgba(30, 32, 34, 0.08);
+  --eq-grid: rgba(30, 32, 34, 0.06);
+  --eq-grid-major: rgba(30, 32, 34, 0.11);
+  --eq-zero-axis: rgba(232, 80, 16, 0.42);
+  --eq-response: #22252a;
+  --eq-composite: #e85010;
+  --eq-accent: #e85010;
+  --eq-source: var(--te-info-500);
+  --eq-target: var(--te-neutral-500);
+  --eq-filter-combined: var(--te-warning-500);
+  --eq-corrected: var(--te-success-500);
+  --eq-spectrum: rgba(30, 32, 34, 0.38);
+  --eq-control-bg: rgba(30, 32, 34, 0.04);
+  --eq-tooltip-bg: #fbfaf7;
+  --eq-meter: #2f9e6e;
+  --eq-handle-on-color: #ffffff;
+  --eq-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: var(--eq-text);
   background: var(--eq-surface);
   border: 1px solid var(--eq-border);
-  border-radius: 22px;
+  border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 24px 60px var(--eq-shadow);
 }
 
+/* —— Header —— */
 .parametric-stage-header {
-  min-height: 48px;
-  padding: 9px 14px;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 16px;
-  border-bottom: 1px solid color-mix(in srgb, var(--te-neutral-50) 10%, transparent);
-  background: var(--eq-surface-soft);
-}
-
-.stage-status,
-.spectrum-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--te-neutral-300);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--te-success-500);
-  box-shadow: 0 0 12px var(--te-success-500);
-}
-
-.stage-status.is-applying .status-dot,
-.stage-status.is-editing .status-dot {
-  background: var(--te-warning-500);
-  box-shadow: 0 0 12px var(--te-warning-500);
-  animation: statusPulse 0.9s ease-in-out infinite alternate;
-}
-
-.stage-status.is-failed .status-dot {
-  background: var(--te-danger-soft-fg);
-  box-shadow: 0 0 12px var(--te-danger-soft-fg);
-}
-
-.stage-help {
-  overflow: hidden;
-  color: var(--te-neutral-500);
-  font-size: 11px;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.spectrum-toggle {
-  appearance: none;
-  border: 1px solid color-mix(in srgb, var(--te-neutral-50) 12%, transparent);
-  border-radius: 9px;
-  padding: 7px 10px;
-  background: transparent;
-  cursor: pointer;
-}
-
-.spectrum-toggle.active {
-  border-color: color-mix(in srgb, var(--te-primary-500) 55%, transparent);
-  color: var(--te-primary-400);
-  background: color-mix(in srgb, var(--te-primary-500) 12%, transparent);
-}
-
-.parametric-graph-surface {
-  position: relative;
-  height: clamp(310px, 48vh, 520px);
-  min-height: 310px;
-  overflow: hidden;
-  cursor: crosshair;
-  touch-action: none;
-  user-select: none;
-  background:
-    radial-gradient(
-      circle at 50% 50%,
-      color-mix(in srgb, var(--te-primary-500) 7%, transparent),
-      transparent 54%
-    ),
-    var(--eq-surface);
-}
-
-.parametric-graph-surface.disabled .composite-response-line,
-.parametric-graph-surface.disabled .composite-fill,
-.parametric-graph-surface.disabled .individual-band-line {
-  opacity: 0.35;
-}
-
-.graph-grid,
-.gain-shade,
-.zero-axis {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.graph-grid.minor {
-  opacity: 0.5;
-  background-image:
-    linear-gradient(to right, var(--eq-grid) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--eq-grid) 1px, transparent 1px);
-  background-size:
-    2.5% 100%,
-    100% calc(100% / 12);
-}
-
-.graph-grid.major {
-  background-image:
-    linear-gradient(to right, var(--eq-grid-major) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--eq-grid-major) 1px, transparent 1px);
-  background-size:
-    10% 100%,
-    100% calc(100% / 6);
-}
-
-.gain-shade.positive {
-  bottom: 50%;
-  background: linear-gradient(
-    to bottom,
-    color-mix(in srgb, var(--te-primary-500) 4%, transparent),
-    transparent
-  );
-}
-
-.gain-shade.negative {
-  top: 50%;
-  background: linear-gradient(
-    to bottom,
-    transparent,
-    color-mix(in srgb, var(--te-info-soft-fg) 3%, transparent)
-  );
-}
-
-.zero-axis {
-  top: 50%;
-  bottom: auto;
-  height: 1px;
-  background: color-mix(in srgb, var(--te-neutral-50) 35%, transparent);
-}
-
-.parametric-plot {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-  pointer-events: none;
-}
-
-.parametric-plot path {
-  fill: none;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.live-spectrum-line {
-  stroke: color-mix(in srgb, var(--te-neutral-50) 36%, transparent);
-  stroke-width: 1px;
-  opacity: 0.7;
-}
-
-.individual-band-line {
-  stroke: var(--band-color);
-  stroke-width: 1.15px;
-  opacity: 0.38;
-  transition:
-    opacity 140ms ease,
-    stroke-width 140ms ease;
-}
-
-.individual-band-line.selected {
-  stroke-width: 1.8px;
-  opacity: 0.8;
-}
-
-.composite-fill {
-  fill: url(#parametricEqFill);
-  stroke: none;
-  opacity: 0.72;
-}
-
-.composite-response-line {
-  stroke: var(--te-neutral-50);
-  stroke-width: 2.4px;
-  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--te-primary-500) 55%, transparent));
-}
-
-.measured-source-line {
-  stroke: var(--te-info-soft-fg);
-  stroke-width: 1.4px;
-}
-
-.target-response-line {
-  stroke: var(--te-neutral-500);
-  stroke-width: 1.2px;
-  stroke-dasharray: 5 4;
-}
-
-.corrected-acoustic-line {
-  stroke: var(--te-success-500);
-  stroke-width: 2.3px;
-}
-
-.gain-labels span,
-.frequency-labels span {
-  position: absolute;
-  z-index: 4;
-  color: var(--te-neutral-500);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  pointer-events: none;
-}
-
-.gain-labels span {
-  left: 9px;
-  transform: translateY(-50%);
-}
-
-.frequency-labels span {
-  bottom: 8px;
-  transform: translateX(-50%);
-}
-
-.frequency-labels span:first-child {
-  transform: none;
-}
-
-.frequency-labels span:last-child {
-  transform: translateX(-100%);
-}
-
-.parametric-band-handle {
-  position: absolute;
-  z-index: 12;
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  transform: translate(-50%, -50%);
-  appearance: none;
-  border: 2px solid var(--band-color);
-  border-radius: 50%;
-  color: var(--te-neutral-900);
-  background: var(--band-color);
-  box-shadow:
-    0 0 0 2px var(--eq-surface),
-    0 0 14px color-mix(in srgb, var(--band-color) 58%, transparent);
-  cursor: grab;
-  transition:
-    width 130ms ease,
-    height 130ms ease,
-    filter 130ms ease,
-    opacity 130ms ease;
-  touch-action: none;
-}
-
-.parametric-band-handle span {
-  font-size: 10px;
-  font-weight: 900;
-  line-height: 1;
-}
-
-.parametric-band-handle:hover,
-.parametric-band-handle.hovered,
-.parametric-band-handle.selected {
-  width: 28px;
-  height: 28px;
-  filter: brightness(1.12);
-}
-
-.parametric-band-handle.selected {
-  box-shadow:
-    0 0 0 3px var(--eq-surface),
-    0 0 0 4px var(--band-color),
-    0 0 24px var(--band-color);
-}
-
-.parametric-band-handle.dragging {
-  cursor: grabbing;
-  transition: none;
-}
-
-.parametric-band-handle.bypassed {
-  opacity: 0.38;
-  background: var(--eq-surface);
-  color: var(--band-color);
-}
-
-.band-tooltip {
-  position: absolute;
-  z-index: 20;
-  display: grid;
-  grid-template-columns: repeat(3, auto);
-  gap: 3px 10px;
-  transform: translate(-50%, calc(-100% - 22px));
-  min-width: max-content;
-  padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--band-color) 55%, transparent);
-  border-radius: 9px;
-  color: var(--te-neutral-200);
-  background: color-mix(in srgb, var(--te-neutral-900) 94%, transparent);
-  box-shadow: 0 10px 24px color-mix(in srgb, var(--te-neutral-900) 45%, transparent);
-  pointer-events: none;
-}
-
-.band-tooltip strong {
-  grid-column: 1 / -1;
-  color: var(--band-color);
-  font-size: 11px;
-}
-
-.band-tooltip span {
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-}
-
-.graph-crosshair {
-  position: absolute;
-  z-index: 6;
-  width: 7px;
-  height: 7px;
-  transform: translate(-50%, -50%);
-  border: 1px solid color-mix(in srgb, var(--te-neutral-50) 65%, transparent);
-  border-radius: 50%;
-  pointer-events: none;
-}
-
-.band-limit-notice {
-  position: absolute;
-  right: 12px;
-  bottom: 32px;
-  z-index: 8;
-  padding: 5px 8px;
-  border-radius: 7px;
-  color: var(--te-warning-soft-fg);
-  background: var(--te-warning-soft-bg);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.floating-band-inspector {
-  min-height: 86px;
-  display: grid;
-  grid-template-columns:
-    minmax(150px, 1.25fr) minmax(140px, 1.1fr) repeat(3, minmax(105px, 1fr))
-    42px;
-  align-items: stretch;
-  gap: 1px;
-  background: color-mix(in srgb, var(--te-neutral-50) 10%, transparent);
-  border-top: 1px solid color-mix(in srgb, var(--te-neutral-50) 12%, transparent);
-}
-
-.inspector-identity,
-.inspector-field,
-.delete-band {
-  background: var(--eq-surface-soft);
-}
-
-.inspector-identity {
+  min-height: 46px;
+  padding: 0 14px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
-  padding: 12px 16px;
-}
-
-.inspector-identity > div {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.inspector-identity span,
-.inspector-field > span {
-  color: var(--te-neutral-500);
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.inspector-identity strong {
-  color: var(--band-color);
-  font-size: 13px;
-}
-
-.band-power,
-.delete-band {
-  appearance: none;
-  border: 0;
-  color: var(--te-success-500);
-  cursor: pointer;
-}
-
-.band-power {
-  width: 34px;
-  height: 34px;
-  border: 1px solid color-mix(in srgb, var(--te-success-500) 38%, transparent);
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--te-success-500) 10%, transparent);
-}
-
-.band-power.bypassed {
-  color: var(--te-neutral-500);
-  border-color: color-mix(in srgb, var(--te-neutral-50) 12%, transparent);
-  background: transparent;
-}
-
-.inspector-field {
-  min-width: 0;
-  padding: 11px 13px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 7px;
-}
-
-.inspector-field select,
-.numeric-control input {
-  width: 100%;
-  min-width: 0;
-  appearance: none;
-  border: 0;
-  outline: none;
-  color: var(--te-neutral-100);
-  background: transparent;
-  font: inherit;
-  font-size: 14px;
-  font-weight: 750;
-  font-variant-numeric: tabular-nums;
-}
-
-.inspector-field select {
-  cursor: pointer;
-}
-
-.inspector-field select option {
-  color: var(--te-neutral-900);
-  background: var(--te-card-bg);
-}
-
-.numeric-control {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: baseline;
-  gap: 4px;
-}
-
-.numeric-control small {
-  color: var(--te-neutral-500);
-  font-size: 10px;
-}
-
-.numeric-control input:disabled {
-  opacity: 0.36;
-}
-
-.delete-band {
-  color: var(--te-neutral-500);
-  font-size: 14px;
-}
-
-.delete-band:hover {
-  color: var(--te-danger-soft-fg);
-  background: var(--te-danger-soft-bg);
-}
-
-@keyframes statusPulse {
-  to {
-    opacity: 0.45;
-  }
-}
-
-@media (max-width: 1100px) {
-  .floating-band-inspector {
-    grid-template-columns: repeat(4, 1fr);
-  }
-
-  .inspector-identity {
-    grid-column: span 2;
-  }
-
-  .filter-field {
-    grid-column: span 2;
-  }
-
-  .delete-band {
-    min-height: 54px;
-  }
-}
-
-@media (max-width: 760px) {
-  .parametric-stage-header {
-    grid-template-columns: 1fr auto;
-  }
-
-  .stage-help {
-    display: none;
-  }
-
-  .parametric-graph-surface {
-    height: 340px;
-  }
-
-  .floating-band-inspector {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .inspector-identity,
-  .filter-field {
-    grid-column: span 2;
-  }
-}
-
-/* Professional analyzer presentation */
-.parametric-workspace {
-  position: relative;
-  isolation: isolate;
-  border-color: var(--eq-border);
-  border-radius: 14px;
-  background: var(--eq-surface);
-  box-shadow:
-    0 28px 70px var(--eq-shadow),
-    inset 0 1px var(--eq-highlight);
-}
-
-:global(html[data-theme='dark']) .parametric-workspace {
-  --eq-surface: color-mix(in srgb, var(--te-neutral-50) 96%, var(--te-card-bg));
-  --eq-surface-soft: color-mix(in srgb, var(--te-neutral-50) 90%, var(--te-card-bg));
-  --eq-panel: color-mix(in srgb, var(--te-neutral-50) 88%, var(--te-card-bg));
-  --eq-panel-raised: color-mix(in srgb, var(--te-neutral-50) 82%, var(--te-card-bg));
-  --eq-text: var(--te-neutral-900);
-  --eq-text-muted: color-mix(in srgb, var(--te-neutral-900) 58%, transparent);
-  --eq-text-subtle: color-mix(in srgb, var(--te-neutral-900) 30%, transparent);
-  --eq-border: color-mix(in srgb, var(--te-neutral-900) 9%, transparent);
-  --eq-border-soft: color-mix(in srgb, var(--te-neutral-900) 6%, transparent);
-  --eq-grid: color-mix(in srgb, var(--te-neutral-900) 4.5%, transparent);
-  --eq-grid-major: color-mix(in srgb, var(--te-neutral-900) 8.5%, transparent);
-  --eq-zero-axis: color-mix(in srgb, var(--te-neutral-900) 26%, transparent);
-  --eq-response: color-mix(in srgb, var(--te-neutral-900) 78%, transparent);
-  --eq-spectrum: color-mix(in srgb, var(--te-neutral-900) 23%, transparent);
-  --eq-control-bg: color-mix(in srgb, var(--te-neutral-50) 70%, transparent);
-  --eq-tooltip-bg: color-mix(in srgb, var(--te-neutral-50) 94%, var(--te-card-bg));
-  --eq-shadow: color-mix(in srgb, var(--te-neutral-50) 50%, transparent);
-  --eq-shadow-strong: color-mix(in srgb, var(--te-neutral-50) 72%, transparent);
-  --eq-highlight: color-mix(in srgb, var(--te-neutral-900) 6%, transparent);
-  --eq-handle-on-color: var(--te-neutral-50);
-}
-
-.parametric-stage-header {
-  min-height: 42px;
-  padding: 5px 8px 5px 12px;
-  grid-template-columns: minmax(210px, auto) 1fr auto;
-  gap: 12px;
-  border-bottom-color: var(--eq-border-soft);
-  background: linear-gradient(180deg, var(--eq-highlight), transparent), var(--eq-surface-soft);
+  border-bottom: 1px solid var(--eq-border-soft);
+  background: var(--eq-surface-soft);
 }
 
 .stage-brand,
@@ -1305,115 +853,110 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
 }
 
 .stage-brand {
+  min-width: 0;
   gap: 9px;
 }
 
 .brand-mark {
-  width: 28px;
-  height: 20px;
-  display: grid;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--te-primary-400) 48%, transparent);
-  border-radius: 4px;
-  color: var(--te-primary-400);
-  background: color-mix(in srgb, var(--te-primary-500) 7%, transparent);
-  font-size: 9px;
-  font-weight: 850;
-  letter-spacing: 0.08em;
-}
-
-.stage-brand > div {
-  display: grid;
-  line-height: 1.1;
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  background: var(--eq-accent);
 }
 
 .stage-brand strong {
   color: var(--eq-text);
-  font-size: 9px;
-  font-weight: 760;
-  letter-spacing: 0.11em;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.16em;
+  white-space: nowrap;
+}
+
+.stage-brand strong em {
+  color: var(--eq-accent);
+  font-style: normal;
 }
 
 .stage-brand small {
-  margin-top: 3px;
   color: var(--eq-text-subtle);
+  font-family: var(--eq-mono);
   font-size: 7px;
-  font-variant-numeric: tabular-nums;
   letter-spacing: 0.1em;
-}
-
-.stage-help {
-  color: var(--eq-text-subtle);
-  font-size: 9px;
-  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .stage-actions {
-  gap: 6px;
+  gap: 8px;
 }
 
-.stage-status {
-  min-height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--eq-border-soft);
-  border-radius: 5px;
-  color: var(--eq-text-muted);
-  background: var(--eq-control-bg);
-  font-size: 8px;
-  font-weight: 650;
-}
-
-.status-dot {
-  width: 5px;
-  height: 5px;
-  box-shadow: 0 0 8px currentColor;
-}
-
+.stage-status,
 .spectrum-toggle {
-  min-height: 28px;
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   padding: 0 9px;
-  border-color: var(--eq-border-soft);
-  border-radius: 5px;
+  border: 1px solid var(--eq-border-soft);
+  border-radius: 6px;
   color: var(--eq-text-muted);
-  background: var(--eq-control-bg);
-  font-size: 8px;
+  background: transparent;
+  font-size: 9px;
+  font-weight: 650;
   letter-spacing: 0.06em;
 }
 
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--eq-meter);
+}
+
+.stage-status.is-applying .status-dot,
+.stage-status.is-editing .status-dot {
+  background: var(--eq-accent);
+  animation: statusPulse 0.9s ease-in-out infinite alternate;
+}
+
+.stage-status.is-failed .status-dot {
+  background: var(--te-danger-soft-fg);
+}
+
+.spectrum-toggle {
+  appearance: none;
+  cursor: pointer;
+}
+
 .spectrum-toggle.active {
-  border-color: color-mix(in srgb, var(--te-info-soft-fg) 36%, transparent);
-  color: var(--te-info-soft-fg);
-  background: color-mix(in srgb, var(--te-info-soft-fg) 7%, var(--eq-surface-soft));
+  border-color: color-mix(in srgb, var(--eq-accent) 45%, transparent);
+  color: var(--eq-accent);
+  background: color-mix(in srgb, var(--eq-accent) 7%, transparent);
 }
 
+/* —— Graph surface —— */
 .parametric-graph-surface {
-  height: clamp(420px, 58vh, 620px);
-  min-height: 420px;
-  background:
-    radial-gradient(
-      ellipse at 50% 52%,
-      color-mix(in srgb, var(--te-primary-500) 3.6%, transparent),
-      transparent 62%
-    ),
-    linear-gradient(180deg, var(--eq-highlight), transparent 28%), var(--eq-surface);
+  position: relative;
+  height: clamp(420px, 56vh, 600px);
+  min-height: 380px;
+  overflow: hidden;
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+  background: var(--eq-surface);
 }
 
-.analyzer-vignette,
+.parametric-graph-surface.disabled .composite-response-line,
+.parametric-graph-surface.disabled .composite-fill,
+.parametric-graph-surface.disabled .individual-band-line {
+  opacity: 0.3;
+}
+
 .frequency-grid-line,
 .gain-grid-line {
   position: absolute;
   z-index: 1;
   pointer-events: none;
-}
-
-.analyzer-vignette {
-  inset: 0;
-  z-index: 9;
-  box-shadow:
-    inset 0 18px 24px color-mix(in srgb, var(--eq-shadow) 38%, transparent),
-    inset 0 -28px 40px color-mix(in srgb, var(--eq-shadow) 48%, transparent),
-    inset 18px 0 28px color-mix(in srgb, var(--eq-shadow) 32%, transparent),
-    inset -18px 0 28px color-mix(in srgb, var(--eq-shadow) 32%, transparent);
 }
 
 .frequency-grid-line {
@@ -1436,268 +979,465 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
 
 .gain-grid-line.zero {
   z-index: 5;
-  height: 1px;
   background: var(--eq-zero-axis);
-  box-shadow: 0 1px var(--eq-highlight);
 }
 
-.graph-grid,
-.zero-axis {
-  display: none;
+.gain-labels span,
+.frequency-labels span {
+  position: absolute;
+  z-index: 10;
+  color: var(--eq-text-subtle);
+  font-family: var(--eq-mono);
+  font-size: 8px;
+  font-weight: 520;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
 
-.gain-shade.positive,
-.gain-shade.negative {
-  opacity: 0.34;
+.gain-labels span {
+  left: 8px;
+  transform: translateY(-50%);
 }
 
+.frequency-labels span {
+  bottom: 32px;
+  transform: translateX(-50%);
+}
+
+.frequency-labels span:first-child {
+  transform: none;
+}
+
+.frequency-labels span:last-child {
+  transform: translateX(-100%);
+}
+
+/* —— Headphone curve controls —— */
+.headphone-curve-controls {
+  position: absolute;
+  z-index: 15;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: calc(100% - 78px);
+}
+
+.curve-control {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  appearance: none;
+  border: 1px solid var(--eq-border-soft);
+  border-radius: 5px;
+  color: var(--eq-text-muted);
+  background: var(--eq-tooltip-bg);
+  cursor: pointer;
+  font-family: var(--eq-mono);
+  font-size: 8px;
+}
+
+.curve-control.muted {
+  opacity: 0.38;
+}
+
+.curve-control i {
+  width: 14px;
+  border-top: 2px solid var(--curve-color, var(--eq-text-muted));
+}
+
+.curve-control.source {
+  --curve-color: var(--eq-source);
+}
+
+.curve-control.target {
+  --curve-color: var(--eq-target);
+}
+
+.curve-control.target i {
+  border-top-style: dashed;
+}
+
+.curve-control.individual {
+  --curve-color: var(--te-eq-band-violet, #7671d8);
+}
+
+.curve-control.combined {
+  --curve-color: var(--eq-filter-combined);
+}
+
+.curve-control.corrected {
+  --curve-color: var(--eq-corrected);
+}
+
+/* —— Plot —— */
 .parametric-plot {
+  position: absolute;
+  inset: 0;
   z-index: 4;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.parametric-plot path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .live-spectrum-fill {
   fill: url(#spectrumFill) !important;
   stroke: none !important;
-  opacity: 0.78;
 }
 
 .live-spectrum-line {
   stroke: var(--eq-spectrum);
-  stroke-width: 0.72px;
-  opacity: 0.88;
+  stroke-width: 0.9px;
+  opacity: 0.85;
 }
 
 .selected-band-fill {
-  fill: url(#selectedBandFill) !important;
+  fill: var(--selected-band-color) !important;
   stroke: none !important;
-  opacity: 0.72;
-  filter: saturate(0.92);
+  opacity: 0.13;
 }
 
 .individual-band-line {
-  stroke-width: 0.78px;
-  opacity: 0.25;
-  filter: saturate(0.82);
+  stroke: var(--band-color);
+  stroke-width: 0.9px;
+  opacity: 0.3;
+  transition:
+    opacity 140ms ease,
+    stroke-width 140ms ease;
 }
 
 .individual-band-line.selected {
-  stroke-width: 1.35px;
-  opacity: 0.96;
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--band-color) 42%, transparent));
+  stroke-width: 1.5px;
+  opacity: 0.95;
 }
 
 .composite-fill {
-  opacity: 0.17;
+  fill: var(--eq-composite);
+  stroke: none;
+  opacity: 0.09;
 }
 
 .composite-response-line {
   stroke: var(--eq-response);
+  stroke-width: 1.6px;
+  opacity: 0.96;
+}
+
+.measured-source-line {
+  stroke: var(--eq-source);
   stroke-width: 1.25px;
-  opacity: 0.92;
-  filter: drop-shadow(0 1px 2px var(--eq-shadow-strong));
+  opacity: 0.88;
 }
 
-.gain-labels span,
-.frequency-labels span {
-  z-index: 10;
-  color: var(--eq-text-subtle);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 8px;
-  font-weight: 520;
+.target-response-line {
+  stroke: var(--eq-target);
+  stroke-width: 1.1px;
+  stroke-dasharray: 5 4;
 }
 
-.gain-labels span {
-  left: 7px;
+.individual-band-line.headphone-filter {
+  opacity: 0.44;
 }
 
-.frequency-labels span {
-  bottom: 8px;
+.combined-filter-line {
+  stroke: var(--eq-filter-combined);
+  stroke-width: 1.5px;
+  stroke-dasharray: 2.5 2;
 }
 
+.corrected-acoustic-line {
+  stroke: var(--eq-corrected);
+  stroke-width: 1.9px;
+}
+
+/* —— Band handles —— */
 .selected-band-focus {
   position: absolute;
   z-index: 6;
   width: var(--focus-width);
-  height: 34px;
+  height: 42px;
   transform: translate(-50%, -50%);
-  border: 1px solid color-mix(in srgb, var(--band-color) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--band-color) 26%, transparent);
   border-radius: 50%;
-  background: radial-gradient(
-    ellipse,
-    color-mix(in srgb, var(--band-color) 7%, transparent),
-    transparent 70%
-  );
-  box-shadow: 0 0 22px color-mix(in srgb, var(--band-color) 5%, transparent);
+  background: color-mix(in srgb, var(--band-color) 5%, transparent);
   pointer-events: none;
 }
 
 .parametric-band-handle {
-  width: 13px;
-  height: 13px;
-  border: 1px solid color-mix(in srgb, var(--band-color) 88%, var(--eq-panel-raised) 10%);
+  position: absolute;
+  z-index: 12;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  transform: translate(-50%, -50%);
+  appearance: none;
+  border: 1.5px solid var(--band-color);
+  border-radius: 50%;
   color: var(--band-color);
-  background: color-mix(in srgb, var(--eq-surface) 84%, var(--band-color));
-  box-shadow:
-    0 0 0 1px var(--eq-shadow-strong),
-    0 0 8px color-mix(in srgb, var(--band-color) 32%, transparent);
+  background: var(--eq-panel-raised);
+  cursor: grab;
   transition:
     scale 120ms var(--te-ease-soft),
-    opacity 120ms ease,
-    box-shadow 120ms ease;
-}
-
-.handle-glyph {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 8px;
-  font-weight: 650;
-  line-height: 1;
+    opacity 120ms ease;
+  touch-action: none;
 }
 
 .handle-index {
-  position: absolute;
-  top: 15px;
-  left: 50%;
-  min-width: 12px;
-  transform: translateX(-50%);
-  color: color-mix(in srgb, var(--band-color) 72%, var(--eq-text));
-  font-size: 7px;
-  font-weight: 680;
-  opacity: 0;
-  transition: opacity 120ms ease;
+  font-size: 8px;
+  font-weight: 750;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .parametric-band-handle:hover,
 .parametric-band-handle.hovered,
 .parametric-band-handle.selected {
-  width: 13px;
-  height: 13px;
-  scale: 1.32;
-  filter: none;
+  scale: 1.2;
 }
 
 .parametric-band-handle.selected {
-  border-color: color-mix(in srgb, var(--band-color) 74%, var(--eq-panel-raised) 26%);
   color: var(--eq-handle-on-color);
   background: var(--band-color);
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--band-color) 13%, transparent),
-    0 0 0 1px var(--band-color),
-    0 0 16px color-mix(in srgb, var(--band-color) 55%, transparent);
 }
 
-.parametric-band-handle:hover .handle-index,
-.parametric-band-handle.selected .handle-index {
-  opacity: 1;
+.parametric-band-handle.dragging {
+  cursor: grabbing;
+  transition: none;
 }
 
 .parametric-band-handle.bypassed {
   border-style: dashed;
-  background: var(--eq-surface);
-  opacity: 0.36;
+  opacity: 0.42;
 }
 
+/* —— Tooltip & crosshair —— */
 .band-tooltip {
-  gap: 4px 12px;
-  transform: translate(-50%, calc(-100% - 15px));
-  padding: 7px 9px;
-  border-color: color-mix(in srgb, var(--band-color) 34%, transparent);
-  border-radius: 5px;
+  position: absolute;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  gap: 3px 12px;
+  min-width: max-content;
+  padding: 7px 10px 8px;
+  transform: translate(-50%, calc(-100% - 14px));
+  border: 1px solid var(--eq-border);
+  border-top: 2px solid var(--band-color);
+  border-radius: 6px;
   color: var(--eq-text-muted);
   background: var(--eq-tooltip-bg);
-  box-shadow:
-    0 12px 28px var(--eq-shadow-strong),
-    inset 0 1px var(--eq-highlight);
-  backdrop-filter: blur(12px);
+  pointer-events: none;
 }
 
-.band-tooltip strong,
+.band-tooltip strong {
+  grid-column: 1 / -1;
+  color: var(--eq-text);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
 .band-tooltip span {
-  font-size: 8px;
-  letter-spacing: 0.035em;
+  font-family: var(--eq-mono);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
 }
 
 .graph-crosshair {
-  width: 1px;
-  height: 1px;
-  border: 0;
-  background: var(--eq-text-muted);
-  box-shadow: 0 0 0 3px var(--eq-border-soft);
+  position: absolute;
+  z-index: 6;
+  width: 5px;
+  height: 5px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: var(--eq-text);
+  opacity: 0.5;
+  pointer-events: none;
 }
 
 .graph-crosshair::before,
 .graph-crosshair::after {
   position: absolute;
   content: '';
-  opacity: 0.18;
-  background: var(--eq-text);
+  background: color-mix(in srgb, var(--eq-text) 14%, transparent);
 }
 
 .graph-crosshair::before {
+  top: -1200px;
+  left: 2px;
   width: 1px;
-  height: 26px;
-  left: 0;
-  top: -13px;
+  height: 2400px;
 }
 
 .graph-crosshair::after {
-  width: 26px;
+  top: 2px;
+  left: -1200px;
+  width: 2400px;
   height: 1px;
-  left: -13px;
-  top: 0;
 }
 
-.floating-band-inspector {
+/* —— Output meter —— */
+.output-meter {
   position: absolute;
-  z-index: 30;
-  left: 50%;
-  bottom: 18px;
-  width: min(660px, calc(100% - 44px));
-  min-height: 0;
-  display: block;
-  overflow: hidden;
-  transform: translateX(-50%);
-  border: 1px solid var(--eq-border);
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--eq-panel-raised) 94%, transparent);
-  box-shadow:
-    0 24px 60px var(--eq-shadow-strong),
-    0 0 0 1px color-mix(in srgb, var(--band-color) 9%, transparent),
-    inset 0 1px var(--eq-highlight);
-  backdrop-filter: blur(18px) saturate(1.1);
+  z-index: 16;
+  top: 10px;
+  right: 10px;
+  bottom: 36px;
+  width: 48px;
+  display: grid;
+  grid-template-columns: 1fr 7px 7px;
+  gap: 4px;
+  padding-bottom: 13px;
+  pointer-events: none;
 }
 
-.inspector-topbar {
-  min-height: 37px;
-  display: grid;
-  grid-template-columns: minmax(160px, auto) 1fr 32px;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 5px 4px 8px;
-  border-bottom: 1px solid var(--eq-border-soft);
+.meter-scale {
+  position: relative;
+  color: var(--eq-text-subtle);
+  font-family: var(--eq-mono);
+  font-size: 7px;
+}
+
+.meter-scale span {
+  position: absolute;
+  right: 2px;
+  transform: translateY(-50%);
+}
+
+.meter-channel {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--eq-border-soft);
+  border-radius: 2px;
   background: var(--eq-control-bg);
 }
 
+.meter-channel i {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  left: 1px;
+  display: block;
+  transition: height 90ms linear;
+}
+
+.meter-peak {
+  background: var(--eq-meter);
+}
+
+.meter-rms {
+  right: 3px !important;
+  left: 3px !important;
+  background: color-mix(in srgb, var(--eq-meter) 55%, transparent);
+}
+
+.meter-labels {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  gap: 5px;
+  color: var(--eq-text-subtle);
+  font-family: var(--eq-mono);
+  font-size: 7px;
+}
+
+/* —— Footer hints —— */
+.analyzer-footer {
+  position: absolute;
+  z-index: 14;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border-top: 1px solid var(--eq-border-soft);
+  color: var(--eq-text-subtle);
+  background: var(--eq-surface-soft);
+  font-size: 8px;
+  letter-spacing: 0.05em;
+  pointer-events: none;
+}
+
+.analyzer-footer i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--eq-text-subtle);
+}
+
+.analyzer-footer em {
+  margin-left: 14px;
+  color: var(--eq-accent);
+  font-style: normal;
+}
+
+.band-limit-notice {
+  position: absolute;
+  right: 12px;
+  bottom: 34px;
+  z-index: 18;
+  padding: 4px 8px;
+  border: 1px solid var(--eq-border);
+  border-radius: 5px;
+  color: var(--te-warning-500);
+  background: var(--eq-tooltip-bg);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+/* —— Inspector (docked flat strip) —— */
+.floating-band-inspector {
+  border-top: 1px solid var(--eq-border);
+  background: var(--eq-surface-soft);
+}
+
+.inspector-topbar {
+  min-height: 36px;
+  display: grid;
+  grid-template-columns: minmax(150px, auto) 1fr 30px;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 6px 3px 10px;
+  border-bottom: 1px solid var(--eq-border-soft);
+}
+
 .inspector-identity {
-  gap: 7px;
-  padding: 0;
-  background: transparent;
+  min-width: 0;
+  gap: 8px;
 }
 
 .inspector-identity > div {
+  display: grid;
   gap: 1px;
 }
 
 .inspector-identity small {
   color: var(--eq-text-subtle);
+  font-family: var(--eq-mono);
   font-size: 6px;
-  font-weight: 680;
+  font-weight: 700;
   letter-spacing: 0.12em;
 }
 
 .inspector-identity strong {
-  color: color-mix(in srgb, var(--band-color) 80%, var(--eq-text) 12%);
-  font-size: 9px;
-  font-weight: 680;
+  color: color-mix(in srgb, var(--band-color) 82%, var(--eq-text));
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .selected-band-badge {
@@ -1705,22 +1445,32 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
   height: 20px;
   display: grid;
   place-items: center;
-  border: 1px solid color-mix(in srgb, var(--band-color) 72%, transparent);
-  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--band-color) 62%, transparent);
+  border-radius: 4px;
   color: var(--band-color);
-  background: color-mix(in srgb, var(--band-color) 8%, transparent);
-  font-size: 8px;
-  font-weight: 760;
+  font-size: 9px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
 }
 
 .band-power {
-  width: 23px;
-  height: 23px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
   padding: 0;
-  border-color: color-mix(in srgb, var(--te-success-500) 26%, transparent);
-  color: color-mix(in srgb, var(--te-success-500) 75%, transparent);
-  background: color-mix(in srgb, var(--te-success-500) 5%, transparent);
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--eq-meter) 45%, transparent);
+  border-radius: 50%;
+  color: var(--eq-meter);
+  background: transparent;
+  cursor: pointer;
   font-size: 9px;
+}
+
+.band-power.bypassed {
+  border-color: var(--eq-border);
+  color: var(--eq-text-subtle);
 }
 
 .filter-strip {
@@ -1732,42 +1482,47 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
 .filter-strip button,
 .delete-band {
   width: 26px;
-  height: 25px;
+  height: 24px;
   display: grid;
   place-items: center;
   appearance: none;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: 5px;
   color: var(--eq-text-subtle);
   background: transparent;
   cursor: pointer;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--eq-mono);
   font-size: 11px;
 }
 
-.filter-strip button:hover,
+.filter-strip button:hover {
+  color: var(--eq-text);
+}
+
 .filter-strip button.active {
-  border-color: color-mix(in srgb, var(--band-color) 24%, transparent);
+  border-color: color-mix(in srgb, var(--band-color) 34%, transparent);
   color: var(--band-color);
-  background: color-mix(in srgb, var(--band-color) 7%, transparent);
+  background: color-mix(in srgb, var(--band-color) 8%, transparent);
 }
 
-.delete-band {
-  color: var(--eq-text-subtle);
+.delete-band:hover {
+  border-color: color-mix(in srgb, var(--te-danger-soft-fg) 30%, transparent);
+  color: var(--te-danger-soft-fg);
 }
 
+/* —— Precision controls —— */
 .precision-controls {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  padding: 9px 12px 11px;
+  padding: 8px 12px 10px;
 }
 
 .precision-control {
   min-width: 0;
   display: grid;
   justify-items: center;
-  gap: 4px;
-  padding: 0 14px;
+  gap: 3px;
+  padding: 0 12px;
   border-right: 1px solid var(--eq-border-soft);
 }
 
@@ -1782,12 +1537,12 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
 .control-label {
   color: var(--eq-text-subtle);
   font-size: 6px;
-  font-weight: 690;
-  letter-spacing: 0.13em;
+  font-weight: 700;
+  letter-spacing: 0.14em;
 }
 
 .knob-shell {
-  gap: 8px;
+  gap: 7px;
 }
 
 .knob-shell button {
@@ -1795,7 +1550,7 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
   height: 17px;
   padding: 0;
   appearance: none;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 50%;
   color: var(--eq-text-subtle);
   background: transparent;
@@ -1805,44 +1560,43 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
 }
 
 .knob-shell button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--band-color) 30%, transparent);
   color: var(--band-color);
-  background: color-mix(in srgb, var(--band-color) 7%, transparent);
 }
 
 .knob-face {
   position: relative;
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--eq-border);
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
-  background:
-    radial-gradient(circle at 42% 35%, var(--eq-highlight), transparent 34%),
-    radial-gradient(circle, var(--eq-panel-raised), var(--eq-panel));
-  box-shadow:
-    inset 0 1px 1px var(--eq-highlight),
-    0 4px 9px var(--eq-shadow-strong);
+  background: conic-gradient(
+    from -135deg,
+    var(--band-color) 0deg calc(var(--knob-angle) + 135deg),
+    var(--eq-border-soft) calc(var(--knob-angle) + 135deg) 270deg,
+    transparent 270deg 360deg
+  );
 }
 
-.knob-face::before {
+.knob-face::after {
   position: absolute;
-  inset: -3px;
+  inset: 3px;
   content: '';
-  border: 1px solid color-mix(in srgb, var(--band-color) 15%, transparent);
+  border: 1px solid var(--eq-border-soft);
   border-radius: 50%;
-  clip-path: polygon(0 0, 100% 0, 100% 68%, 50% 50%, 0 68%);
+  background: var(--eq-panel-raised);
 }
 
 .knob-face span {
   position: absolute;
-  top: 4px;
+  z-index: 1;
+  top: 7px;
   left: 50%;
-  width: 1px;
-  height: 10px;
+  width: 2px;
+  height: 12px;
   transform: translateX(-50%) rotate(var(--knob-angle));
-  transform-origin: 50% 13px;
+  transform-origin: 50% 12px;
   border-radius: 1px;
   background: var(--band-color);
-  box-shadow: 0 0 5px color-mix(in srgb, var(--band-color) 60%, transparent);
 }
 
 .precision-readout {
@@ -1851,15 +1605,15 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
 }
 
 .precision-readout input {
-  width: 58px;
+  width: 56px;
   padding: 0;
   appearance: textfield;
   border: 0;
   outline: none;
   color: var(--eq-text);
   background: transparent;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
+  font-family: var(--eq-mono);
+  font-size: 12px;
   font-weight: 620;
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -1875,17 +1629,91 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
   font-size: 7px;
 }
 
-@media (max-width: 900px) {
-  .parametric-stage-header {
-    grid-template-columns: 1fr auto;
+@keyframes statusPulse {
+  to {
+    opacity: 0.4;
   }
+}
 
-  .stage-help {
+/* —— Dark tone: neutral charcoal, ink-white response, same accent —— */
+:global(html[data-theme='dark'] .parametric-workspace) {
+  --eq-surface: #181a1d;
+  --eq-surface-soft: #1c1e22;
+  --eq-panel: #202329;
+  --eq-panel-raised: #22252b;
+  --eq-text: #e8e9e6;
+  --eq-text-muted: rgba(232, 233, 230, 0.6);
+  --eq-text-subtle: rgba(232, 233, 230, 0.36);
+  --eq-border: rgba(255, 255, 255, 0.13);
+  --eq-border-soft: rgba(255, 255, 255, 0.07);
+  --eq-grid: rgba(255, 255, 255, 0.05);
+  --eq-grid-major: rgba(255, 255, 255, 0.09);
+  --eq-zero-axis: rgba(255, 122, 31, 0.5);
+  --eq-response: #eceee9;
+  --eq-composite: #ff7a1f;
+  --eq-accent: #ff7a1f;
+  --eq-source: color-mix(in srgb, var(--te-info-500) 72%, var(--eq-text));
+  --eq-target: color-mix(in srgb, var(--te-neutral-500) 68%, var(--eq-text));
+  --eq-filter-combined: color-mix(in srgb, var(--te-warning-500) 76%, var(--eq-text));
+  --eq-corrected: color-mix(in srgb, var(--te-success-500) 72%, var(--eq-text));
+  --eq-spectrum: rgba(232, 233, 230, 0.4);
+  --eq-control-bg: rgba(255, 255, 255, 0.045);
+  --eq-tooltip-bg: #22252b;
+  --eq-meter: #3cb179;
+  --eq-handle-on-color: #ffffff;
+}
+
+/* —— pureWhite tone: cooler, pure-paper surfaces —— */
+:global(html[data-theme='pureWhite'] .parametric-workspace) {
+  --eq-surface: #f7f8fa;
+  --eq-surface-soft: #ffffff;
+  --eq-panel: #edf0f3;
+  --eq-panel-raised: #ffffff;
+  --eq-tooltip-bg: #ffffff;
+}
+
+:global(html[data-theme='pureWhite'] .parametric-graph-surface) {
+  background: var(--eq-surface);
+}
+
+:global(html[data-theme='pureWhite'] .knob-face) {
+  --eq-panel-raised: #ffffff;
+}
+
+:global(html[data-theme='pureWhite'] .output-meter) {
+  --eq-control-bg: color-mix(in srgb, var(--eq-text) 3%, transparent);
+}
+
+:global(html[data-theme='pureWhite'] .analyzer-footer) {
+  background: var(--eq-surface-soft);
+}
+
+:global(html[data-theme='pureWhite'] .floating-band-inspector) {
+  background: var(--eq-surface-soft);
+}
+
+@media (max-width: 900px) {
+  .stage-brand small {
     display: none;
   }
 
-  .floating-band-inspector {
-    width: min(580px, calc(100% - 24px));
+  .output-meter {
+    width: 40px;
+  }
+}
+
+@media (max-width: 620px) {
+  .parametric-graph-surface {
+    height: 400px;
+    min-height: 400px;
+  }
+
+  .output-meter {
+    display: none;
+  }
+
+  .analyzer-footer em {
+    display: none;
   }
 
   .inspector-topbar {
@@ -1896,26 +1724,6 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
     grid-column: 1 / -1;
     grid-row: 2;
     padding-bottom: 2px;
-  }
-}
-
-@media (max-width: 620px) {
-  .stage-status {
-    display: none;
-  }
-
-  .parametric-graph-surface {
-    height: 430px;
-    min-height: 430px;
-  }
-
-  .floating-band-inspector {
-    position: absolute;
-    bottom: 10px;
-  }
-
-  .inspector-identity {
-    min-width: 0;
   }
 
   .precision-controls {
@@ -1931,15 +1739,15 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
   }
 
   .knob-face {
-    width: 30px;
-    height: 30px;
+    width: 32px;
+    height: 32px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .parametric-band-handle,
   .individual-band-line,
-  .handle-index,
+  .meter-channel i,
   .status-dot {
     transition: none;
     animation: none;

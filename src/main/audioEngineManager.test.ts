@@ -1407,7 +1407,12 @@ test('gapless runtime fields and HiFi Active/Preload/Blocked wiring stay present
 test('setStereoImage patches default scene balance/phase and preserves it across setAudioProcessing', async () => {
   const nativeBinding = new FakeNativeBinding()
   const manager = makeManager(
-    { exclusiveMode: false, audioOutput: 'wasapi', audioDevice: 'auto' },
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto',
+      audioProcessing: { dspEnabled: true }
+    },
     nativeBinding
   )
 
@@ -1465,7 +1470,12 @@ test('setStereoImage patches default scene balance/phase and preserves it across
 test('setOutputStage patches default scene graph.outputStage and preserves it across setAudioProcessing', async () => {
   const nativeBinding = new FakeNativeBinding()
   const manager = makeManager(
-    { exclusiveMode: false, audioOutput: 'wasapi', audioDevice: 'auto' },
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto',
+      audioProcessing: { dspEnabled: true }
+    },
     nativeBinding
   )
 
@@ -1628,11 +1638,115 @@ test('DSP graph ACK failures remain observable and reject renderer-facing mutati
     () => manager.setOutputStage({ targetSampleRate: 96000 }),
     /native DSP graph rejected by service/
   )
+  assert.equal(manager.getOutputStage().targetSampleRate, 'device')
+  await assert.rejects(() => manager.setAudioProcessing({ dspEnabled: false }))
+  assert.equal(manager.getAudioProcessing().directMode, false)
+  assert.equal(manager.getAudioProcessing().dspEnabled, false)
   const status = await manager.getDspGraphStatus()
   assert.equal(status.applyState, 'failed')
-  assert.equal(status.requestedRevision, 1)
+  assert.ok((status.requestedRevision ?? 0) >= 1)
   assert.equal(status.appliedRevision, 0)
   assert.match(status.applyError ?? '', /native DSP graph rejected by service/)
+  manager.destroy()
+})
+
+test('direct mode submits an identity graph and restores rate/routing without changing volume', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto',
+      audioOutputConfig: { routingMode: 'stereo' },
+      audioProcessing: { dspEnabled: true, eqEnabled: true, crossfadeSeconds: 2 }
+    },
+    nativeBinding
+  )
+  const scene: DspScene = {
+    id: 'direct-mode-fixture',
+    name: 'Direct mode fixture',
+    enabled: true,
+    priority: 10,
+    rules: {},
+    graph: {
+      version: 2,
+      outputStage: {
+        targetSampleRate: 96000,
+        resamplerQuality: 'ultra',
+        dither: 'tpdf',
+        safetyClamp: true
+      },
+      nodes: [{ id: 'compressor', type: 'compressor', enabled: true, params: { ratio: 2 } }]
+    }
+  }
+  await manager.setDspScenes([scene], scene.id)
+  await manager.setVolume(0.8)
+  await manager.setPlaybackRate(1.25)
+
+  const direct = await manager.setAudioProcessing({ dspEnabled: false })
+  const directGraph = nativeBinding.lastDspGraphPayload?.graph as {
+    nodes?: unknown[]
+    outputStage?: { targetSampleRate?: unknown; resamplerQuality?: string; dither?: string }
+  }
+  assert.equal(direct.directMode, true)
+  assert.equal(direct.dspEnabled, false)
+  assert.deepEqual(directGraph.nodes, [])
+  assert.equal(directGraph.outputStage?.targetSampleRate, 'device')
+  assert.equal(directGraph.outputStage?.resamplerQuality, 'native')
+  assert.equal(directGraph.outputStage?.dither, 'off')
+  assert.equal(nativeBinding.lastDspConfig.dspEnabled, false)
+  // The read-only FFT tap must remain available while audio processing is bypassed.
+  assert.equal(nativeBinding.lastDspConfig.fftEnabled, true)
+  assert.equal(nativeBinding.lastDspConfig.crossfadeSeconds, 0)
+  assert.equal((await manager.getPlaybackInfo()).volume, 0.8)
+  assert.equal((await manager.getPlaybackInfo()).playbackRate, 1)
+  assert.equal(manager.getOutputConfig().routingMode, 'stereo')
+  assert.equal(manager.getEffectiveOutputConfig().routingMode, 'auto')
+  assert.equal(manager.getDspSceneState().effectiveBypassReason, 'Direct mode bypasses the DSP graph and output stage')
+
+  const restored = await manager.setAudioProcessing({ dspEnabled: true })
+  assert.equal(restored.directMode, false)
+  assert.equal((await manager.getPlaybackInfo()).playbackRate, 1.25)
+  assert.equal(manager.getEffectiveOutputConfig().routingMode, 'stereo')
+  assert.equal(
+    (nativeBinding.lastDspGraphPayload?.graph as { nodes?: Array<{ id?: string }> }).nodes?.[0]?.id,
+    'compressor'
+  )
+  manager.destroy()
+})
+
+test('module switches gate matching nodes in an active custom scene', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto',
+      audioProcessing: { dspEnabled: true, eqEnabled: false }
+    },
+    nativeBinding
+  )
+  const scene: DspScene = {
+    id: 'eq-gate-fixture',
+    name: 'EQ gate fixture',
+    enabled: true,
+    priority: 10,
+    rules: {},
+    graph: {
+      version: 2,
+      outputStage: { targetSampleRate: 'device', resamplerQuality: 'native', dither: 'off', safetyClamp: true },
+      nodes: [
+        { id: 'scene-eq', type: 'equalizer', enabled: true, params: { mode: 'graphic', bands: [] } },
+        { id: 'scene-compressor', type: 'compressor', enabled: true, params: { ratio: 2 } }
+      ]
+    }
+  }
+  await manager.setDspScenes([scene], scene.id)
+  const graph = nativeBinding.lastDspGraphPayload?.graph as {
+    nodes?: Array<{ id?: string; enabled?: boolean }>
+  }
+  assert.equal(graph.nodes?.find((node) => node.id === 'scene-eq')?.enabled, false)
+  assert.equal(graph.nodes?.find((node) => node.id === 'scene-compressor')?.enabled, true)
   manager.destroy()
 })
 
@@ -3631,6 +3745,57 @@ test('native tick keeps time-pos moving when GetPlaybackInfo briefly fails', asy
   nativeBinding.GetPlaybackInfo = previousGetPlaybackInfo
 })
 
+test('native tick preserves explicit paused and stopped transport states', async () => {
+  let now = 1500
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding,
+    {
+      now: () => now
+    }
+  )
+  const timePositions: number[] = []
+  manager.on('property-change', ({ name, data }) => {
+    if (name === 'time-pos') timePositions.push(data as number)
+  })
+
+  await manager.play('track.flac', 0)
+  const tickManager = manager as unknown as { tick: () => void }
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    state: 'paused',
+    position: 4
+  }
+  now += 250
+  tickManager.tick()
+  const pausedInfo = await manager.getPlaybackInfo()
+  assert.equal(pausedInfo.state, 'paused')
+  assert.equal(timePositions.at(-1), 4)
+
+  now += 1000
+  tickManager.tick()
+  const stillPausedInfo = await manager.getPlaybackInfo()
+  assert.equal(stillPausedInfo.state, 'paused')
+  assert.equal(timePositions.at(-1), 4)
+
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    state: 'stopped',
+    position: 4,
+    nativePlaybackActive: false
+  }
+  now += 250
+  tickManager.tick()
+  const stoppedInfo = await manager.getPlaybackInfo()
+  assert.equal(stoppedInfo.state, 'stopped')
+  assert.equal(timePositions.at(-1), 4)
+})
+
 test('native tick soft-advances past stale service GetPlaybackInfo cache', async () => {
   let now = 2000
   const nativeBinding = new FakeNativeBinding()
@@ -4126,6 +4291,36 @@ test('native tick skips repeated duration property changes until duration change
   }
   tickManager.tick()
   assert.deepEqual(durations, [120, 121])
+})
+
+test('cold start applies configured software volume before reporting the engine ready', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const readyVolumes: number[] = []
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      volume: 0.42,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding,
+    {
+      setImmediate: (callback) => {
+        callback()
+      }
+    }
+  )
+  manager.on('ready', () => readyVolumes.push(nativeBinding.playbackInfo.volume))
+
+  assert.equal((await manager.getPlaybackInfo()).volume, 0.42)
+  assert.equal(nativeBinding.playbackInfo.volume, 1)
+
+  await manager.start()
+
+  assert.equal(nativeBinding.volumeCalls, 1)
+  assert.equal(nativeBinding.playbackInfo.volume, 0.42)
+  assert.deepEqual(readyVolumes, [0.42])
+  manager.destroy()
 })
 
 test('setVolume skips native call and playback fanout when normalized volume is unchanged', async () => {
@@ -5519,6 +5714,10 @@ test('turning the DSP master switch off still bypasses processing modules', asyn
   assert.equal(processing.volumeNormalization, 'track')
   assert.equal(processing.crossfeedEnabled, true)
   assert.equal(nativeBinding.lastDspConfig.dspEnabled, false)
+  assert.equal(nativeBinding.lastDspConfig.eqEnabled, false)
+  assert.equal(nativeBinding.lastDspConfig.volumeNormalization, 'off')
+  assert.equal(nativeBinding.lastDspConfig.crossfeedEnabled, false)
+  assert.equal(nativeBinding.lastDspConfig.fftEnabled, true)
 })
 
 test('canonical outputInfo clears stale DoP mirrors on PCM DSD fallback', async () => {

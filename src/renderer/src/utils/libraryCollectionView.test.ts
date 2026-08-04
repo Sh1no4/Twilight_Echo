@@ -85,6 +85,17 @@ test('builds deduplicated genre choices case-insensitively', () => {
   assert.deepEqual(availableCollectionGenres(items), ['Jazz', 'Rock'])
 })
 
+test('splits multi-genre tags in collection filters with custom separators', () => {
+  const items = [item('A', [['Rock|Jazz', 1]]), item('B', [['Fusion/Rock', 2]])]
+  assert.deepEqual(availableCollectionGenres(items, '|'), ['Fusion/Rock', 'Jazz', 'Rock'])
+  assert.deepEqual(
+    applyLibraryCollectionView(items, { sort: 'name-asc', genre: 'Jazz' }, '|').map(
+      (entry) => entry.name
+    ),
+    ['A']
+  )
+})
+
 test('builds an A-Z index, disables absent letters, and finds jump targets', () => {
   const items = [item('Alpha', []), item('Beta', []), item('Björk', []), item('周杰伦', [])]
   assert.equal(collectionIndexLetter('Éclair'), 'E')

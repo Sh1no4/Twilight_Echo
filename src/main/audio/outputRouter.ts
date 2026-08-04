@@ -6,6 +6,7 @@ import type {
   AudioOutputId,
   AudioOutputOption,
   AudioOutputState,
+  ChannelRoutingMode,
   NativeAudioBinding,
   OutputConfig,
   OutputConfigApplyStatus,
@@ -58,6 +59,7 @@ export class OutputRouter {
   device: string
   exclusiveMode: boolean
   outputConfig: OutputConfig
+  private directRoutingOverride: ChannelRoutingMode | null = null
   outputConfigRevision = 0
   outputConfigApplyGeneration = 0
   outputConfigServiceGeneration = 0
@@ -222,7 +224,7 @@ export class OutputRouter {
         'output-config',
         `${contextPrefix}输出配置`,
         'SetOutputConfig',
-        JSON.stringify(this.outputConfig)
+        JSON.stringify(this.getEffectiveOutputConfig())
       )
     )
     const synced = results.every((result) => result.ok)
@@ -271,7 +273,7 @@ export class OutputRouter {
     const configSynced = await this.callNativeMaybeAsync(
       '切换输出配置',
       'SetOutputConfig',
-      JSON.stringify(this.outputConfig)
+      JSON.stringify(this.getEffectiveOutputConfig())
     )
     if (!configSynced) {
       this.exclusiveMode = previousExclusiveMode
@@ -404,6 +406,31 @@ export class OutputRouter {
     return { ...this.outputConfig }
   }
 
+  getEffectiveOutputConfig(): OutputConfig {
+    return this.effectiveOutputConfig(this.outputConfig)
+  }
+
+  async setDirectRoutingOverride(enabled: boolean): Promise<void> {
+    const nextOverride: ChannelRoutingMode | null = enabled ? 'auto' : null
+    if (this.directRoutingOverride === nextOverride) return
+
+    const previousOverride = this.directRoutingOverride
+    this.directRoutingOverride = nextOverride
+    this.nativeOutputRouteSynced = false
+    const applied = await this.callNativeMaybeAsync(
+      '应用直通声道路由',
+      'SetOutputConfig',
+      JSON.stringify(this.getEffectiveOutputConfig())
+    )
+    if (!applied) {
+      this.directRoutingOverride = previousOverride
+      throw new Error(`直通声道路由应用失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+    }
+    this.nativeOutputRouteSynced = true
+    this.playbackInfo.outputInfo.channelRoutingMode = this.getEffectiveOutputConfig().routingMode
+    this.playbackInfo.channelRoutingMode = this.getEffectiveOutputConfig().routingMode
+  }
+
   getOutputConfigApplyStatus(): OutputConfigApplyStatus {
     return { ...this.outputConfigApplyStatus }
   }
@@ -415,6 +442,7 @@ export class OutputRouter {
 
     const bufferSizeChanged = nextConfig.preferredBufferSize !== previousConfig.preferredBufferSize
     const needsReopen = bufferSizeChanged && this.output === 'asio'
+    const effectiveNextConfig = this.effectiveOutputConfig(nextConfig)
     this.nativeOutputRouteSynced = false
     if (needsReopen) {
       const reopened = await this.callNativeMaybeAsync(
@@ -430,7 +458,7 @@ export class OutputRouter {
     const configSynced = await this.callNativeMaybeAsync(
       '设置输出配置',
       'SetOutputConfig',
-      JSON.stringify(nextConfig)
+      JSON.stringify(effectiveNextConfig)
     )
     if (!configSynced) {
       this.outputConfig = previousConfig
@@ -438,8 +466,8 @@ export class OutputRouter {
     }
     this.outputConfig = nextConfig
     this.nativeOutputRouteSynced = true
-    this.playbackInfo.outputInfo.channelRoutingMode = this.outputConfig.routingMode
-    this.playbackInfo.channelRoutingMode = this.outputConfig.routingMode
+    this.playbackInfo.outputInfo.channelRoutingMode = effectiveNextConfig.routingMode
+    this.playbackInfo.channelRoutingMode = effectiveNextConfig.routingMode
     this.refreshOutputInfoFromNative(needsReopen)
     await this.applyNativeDspGraphOrThrow('输出配置切换后解析 DSP 场景')
     return true
@@ -503,7 +531,7 @@ export class OutputRouter {
       this.output,
       this.device,
       this.exclusiveMode,
-      this.outputConfig
+      this.getEffectiveOutputConfig()
     )
     this.playbackInfo.outputBackend = this.getNativeBackendId()
     this.playbackInfo.outputDevice = this.device
@@ -700,6 +728,12 @@ export class OutputRouter {
         ].join(':')
       )
       .join('|')
+  }
+
+  private effectiveOutputConfig(config: OutputConfig): OutputConfig {
+    return this.directRoutingOverride === null
+      ? { ...config }
+      : { ...config, routingMode: this.directRoutingOverride }
   }
 
   createDeviceCapabilityRefreshSignature(info: PlaybackInfo): string {

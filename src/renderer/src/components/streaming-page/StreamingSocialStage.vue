@@ -117,7 +117,7 @@ const emit = defineEmits<{
   tabChange: [key: string]
   playAll: []
   shufflePlay: []
-  playTrack: [track: Track, index: number]
+  playTrack: [track: Track, index: number, event?: MouseEvent]
   trackClick: [track: Track, index: number, event: MouseEvent]
   likeTrack: [track: Track, event: MouseEvent]
   batchFavorite: []
@@ -179,7 +179,7 @@ function onRowActivate(track: Track, index: number, event: MouseEvent): void {
 function onRowDblClick(track: Track, index: number, event: MouseEvent): void {
   event.preventDefault()
   if (props.trackActivationMode !== 'doubleClick') return
-  emit('playTrack', track, index)
+  emit('playTrack', track, index, event)
 }
 
 function onPlayRow(track: Track, index: number, event: MouseEvent): void {

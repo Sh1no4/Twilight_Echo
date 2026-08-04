@@ -21,8 +21,7 @@ export interface LyricLine {
 
 const LINE_TIMESTAMP_RE = /\[(\d{1,3}):(\d{2})(?:[.:](\d{2,3}))?\]/g
 const WORD_TIMESTAMP_RE = /<(\d{1,3}):(\d{2})(?:[.:](\d{2,3}))?>/g
-const YRC_LINE_RE =
-  /^\[(\d+),(\d+)\](.*)$/
+const YRC_LINE_RE = /^\[(\d+),(\d+)\](.*)$/
 const YRC_WORD_RE = /\((\d+),(\d+),\d+\)([^()[\]]*)/g
 /** NetEase lyric/new metadata & prose lines: {"t":-1,"c":[{"tx":"作词: "},{"tx":"ACO"}]} */
 const NETEASE_JSON_LINE_RE = /^\s*\{[\s\S]*"c"\s*:\s*\[[\s\S]*\]\s*\}\s*$/
@@ -408,4 +407,25 @@ export function findActiveWordIndex(words: readonly LyricWord[], currentTime: nu
     else break
   }
   return activeIndex
+}
+
+/**
+ * Return the left-to-right karaoke fill for a word.
+ *
+ * Word timestamps are absolute playback positions. YRC supplies an explicit
+ * end time, while older enhanced LRC usually only supplies the next word's
+ * start; accepting both keeps the renderer independent of the source format.
+ */
+export function getLyricWordProgress(
+  word: LyricWord,
+  nextWordTime: number | null | undefined,
+  currentTime: number
+): number {
+  if (!Number.isFinite(word.time) || !Number.isFinite(currentTime)) return 0
+  if (currentTime <= word.time) return 0
+
+  const endTime = word.endTime ?? nextWordTime ?? null
+  if (endTime == null || !Number.isFinite(endTime) || endTime <= word.time) return 1
+
+  return Math.min(1, Math.max(0, (currentTime - word.time) / (endTime - word.time)))
 }

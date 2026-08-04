@@ -12,6 +12,7 @@ import type { DspScene } from '../../shared/dspGraph'
 import type { SleepTimerSettings } from '../../shared/sleepTimer.ts'
 import type { ThemeSelection, ThemeWindowInheritance } from '../../shared/theme.ts'
 import type { MotionPreference } from '../../shared/motion.ts'
+import type { LyricsAppearanceSettings } from '../../shared/lyricsAppearance.ts'
 
 export type { MiniPlayerSettings } from '../../shared/miniPlayer'
 export type { MotionPreference } from '../../shared/motion.ts'
@@ -171,8 +172,9 @@ export interface AppSettings {
   windowTransparency: boolean
   windowTransparencyEffect: WindowTransparencyEffectSettings
   useCoverTheme: boolean
-  lyricFontSize: number
+  lyricsAppearance: LyricsAppearanceSettings
   libraryFolders: string[]
+  genreSeparators: string
   watchLibrary: boolean
   /** When true, empty local/provider lyrics may fall back to LRCLIB online search. */
   onlineLyricsFallback: boolean
@@ -186,8 +188,6 @@ export interface AppSettings {
   appBackground: AppBackgroundSettings
   cardAppearance: CardAppearanceSettings
   nowPlayingBackground: NowPlayingBackground
-  lyricAlign: LyricAlign
-  lyricDimOpacity: number
   playbackResumeMode: PlaybackResumeMode
   sleepTimer: SleepTimerSettings
   ncmPlaybackQuality: NcmPlaybackQuality

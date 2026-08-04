@@ -79,6 +79,7 @@ export const PARAMETRIC_EQ_Q_MAX = 20
 
 export const DEFAULT_AUDIO_PROCESSING: AudioProcessingSettings = {
   dspEnabled: false,
+  directMode: false,
   clipGuard: true,
   fftEnabled: true,
   fftResolution: 8192,
@@ -507,6 +508,7 @@ export function audioProcessingSettingsEqual(
 ): boolean {
   return (
     left.dspEnabled === right.dspEnabled &&
+    left.directMode === right.directMode &&
     left.clipGuard === right.clipGuard &&
     left.fftEnabled === right.fftEnabled &&
     left.fftResolution === right.fftResolution &&
@@ -818,6 +820,7 @@ export function normalizeAudioProcessingSettings(
 
   return {
     dspEnabled: settings?.dspEnabled === true,
+    directMode: settings?.directMode === true,
     clipGuard: settings?.clipGuard !== false,
     fftEnabled: settings?.fftEnabled !== false,
     fftResolution: clampNumber(settings?.fftResolution, 64, 8192, 8192),

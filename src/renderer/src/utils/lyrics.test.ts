@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-const { buildLyricLines, findActiveLyricIndex, parsePlainLyrics, parseTimedLrc } = (await import(
-  new URL('./lyrics.ts', import.meta.url).href
-)) as typeof import('./lyrics')
+const {
+  buildLyricLines,
+  findActiveLyricIndex,
+  getLyricWordProgress,
+  parsePlainLyrics,
+  parseTimedLrc
+} = (await import(new URL('./lyrics.ts', import.meta.url).href)) as typeof import('./lyrics')
 
 test('parseTimedLrc parses timestamped LRC lines', () => {
   assert.deepEqual(parseTimedLrc('[00:01.20]First line\n[00:03.50][00:04.00]Repeat'), [
@@ -88,6 +92,14 @@ test('parseTimedLrc parses NetEase YRC word lyrics', () => {
   assert.equal(lines[0]?.words?.[1]?.endTime, 10.8)
 })
 
+test('getLyricWordProgress maps timestamped words to a clamped karaoke fill', () => {
+  const word = { time: 10, endTime: 10.4, text: 'Hel' }
+  assert.equal(getLyricWordProgress(word, 10.5, 9.9), 0)
+  assert.ok(Math.abs(getLyricWordProgress(word, 10.5, 10.2) - 0.5) < 1e-9)
+  assert.equal(getLyricWordProgress(word, 10.5, 11), 1)
+  assert.equal(getLyricWordProgress({ time: 12, endTime: null, text: 'tail' }, null, 12.2), 1)
+})
+
 test('parseTimedLrc flattens NetEase lyric/new JSON credit lines into readable text', () => {
   const payload = [
     '{"t":-1,"c":[{"tx":"作词: "},{"tx":"ACO"}]}',
@@ -132,11 +144,7 @@ test('buildLyricLines pairs YRC word lyrics with drifted tlyric translations', (
     '[25590,3060](25590,330,0)Who (25920,120,0)am (26040,300,0)I',
     '[28800,3090](28800,210,0)You (29010,660,0)decide'
   ].join('\n')
-  const tlyric = [
-    '[00:20.92]yeah',
-    '[00:25.29]我是谁？',
-    '[00:28.42]你来决定'
-  ].join('\n')
+  const tlyric = ['[00:20.92]yeah', '[00:25.29]我是谁？', '[00:28.42]你来决定'].join('\n')
   const lines = buildLyricLines(yrc, tlyric)
   assert.equal(lines.length, 3)
   assert.equal(lines[0]?.translation, 'yeah')
@@ -157,23 +165,14 @@ test('buildLyricLines includes the exact 1500ms translation and romanization bou
 })
 
 test('buildLyricLines does not pair a translation that is far away', () => {
-  const lines = buildLyricLines(
-    '[10000,1000](10000,500,0)Line one',
-    '[00:25.29]二十多秒后的翻译'
-  )
+  const lines = buildLyricLines('[10000,1000](10000,500,0)Line one', '[00:25.29]二十多秒后的翻译')
   assert.equal(lines.length, 1)
   assert.equal(lines[0]?.translation, null)
 })
 
 test('buildLyricLines keeps exact matches and only uses each layer line once', () => {
-  const original = [
-    '[00:10.00]<00:10.00>Hel<00:10.40>lo',
-    '[00:12.00]Second'
-  ].join('\n')
-  const translation = [
-    '[00:10.02]你好',
-    '[00:12.00]第二句'
-  ].join('\n')
+  const original = ['[00:10.00]<00:10.00>Hel<00:10.40>lo', '[00:12.00]Second'].join('\n')
+  const translation = ['[00:10.02]你好', '[00:12.00]第二句'].join('\n')
   const lines = buildLyricLines(original, translation)
   // First line has no exact ms match; nearest is 10.02 within tolerance.
   assert.equal(lines[0]?.translation, '你好')

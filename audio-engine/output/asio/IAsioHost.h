@@ -73,6 +73,9 @@ struct AsioOpenResult {
   long latencyFrames = 0;
   std::string driverName;
   long driverVersion = 0;
+  // Native DSD drivers are inconsistent about ASIOFuture(kFutureGetIoFormat).
+  // Preserve the negotiation outcome separately from the runtime channel proof.
+  std::string nativeDsdNegotiation;
 };
 
 struct AsioHostDiagnostics {

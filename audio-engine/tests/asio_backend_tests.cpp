@@ -353,7 +353,7 @@ void testDopCarrierProfile() {
   assert(pcmFormatsExactMatch(provenFacts.candidateFormat, provenFacts.actualFormat));
 }
 
-void testDopRuntimeFactsUnprovenWithoutExplicitCapability() {
+void testDopRuntimeFactsProvenWithoutExplicitCapability() {
   auto host = std::make_unique<MockAsioHost>();
   auto device = makeMockAsioDevice("asio:dop-unproven", {352800}, 2, AudioSampleFormat::Int24In32Interleaved);
   device.dopCapable = false;
@@ -374,7 +374,7 @@ void testDopRuntimeFactsUnprovenWithoutExplicitCapability() {
 
   assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
   const DopRuntimeFacts facts = backend.dopRuntimeFacts();
-  assert(facts.state == DopRuntimeFactState::Unproven);
+  assert(facts.state == DopRuntimeFactState::Proven);
   assert(!facts.explicitlyCapable);
   assert(pcmFormatsExactMatch(facts.candidateFormat, facts.actualFormat));
 }
@@ -408,6 +408,49 @@ void testDopRuntimeFactsMismatchWhenActualFormatDiffers() {
   assert(facts.explicitlyCapable);
   assert(!hasConcreteAudioFormat(facts.actualFormat));
   assert(facts.reason.find("not a DoP carrier") != std::string::npos);
+}
+
+void testDopMarkerEvidence() {
+  auto run = [](bool validMarkers) {
+    auto host = std::make_unique<MockAsioHost>();
+    auto device = makeMockAsioDevice("asio:dop-marker", {176400}, 2, AudioSampleFormat::Int24In32Interleaved);
+    device.dopCapable = false;
+    device.sampleFormats = {AudioSampleFormat::Int24In32Interleaved};
+    device.bitDepths = {24};
+    device.preferredBufferSize = 4;
+    device.minBufferSize = 4;
+    device.maxBufferSize = 4;
+    host->devices.push_back(device);
+    auto* rawHost = host.get();
+    rawHost->channelFormats = {
+        AudioSampleFormat::Int24In32Interleaved,
+        AudioSampleFormat::Int24In32Interleaved};
+
+    AsioBackend backend(std::move(host));
+    std::string error;
+    assert(backend.open("asio:dop-marker", sourceFormat(176400, 24, 2, AudioSampleFormat::Int24In32Interleaved), &error));
+    assert(backend.startTyped(
+        [validMarkers](PcmBlock& block) {
+          for (size_t frame = 0; frame < block.frames; ++frame) {
+            const uint8_t marker = validMarkers ? ((frame & 1U) == 0U ? 0x05 : 0xfa) : 0x05;
+            for (size_t channel = 0; channel < 2; ++channel) {
+              block.data[(frame * 2 + channel) * 4 + 3] = marker;
+            }
+          }
+          return block.frames;
+        },
+        [](float*, size_t frames) { return frames; },
+        nullptr,
+        &error));
+    rawHost->triggerBufferSwitch(0);
+    return backend.outputInfo();
+  };
+
+  const OutputInfo confirmed = run(true);
+  assert(confirmed.diagnostics.dopRuntimeEvidence.find("confirmed") != std::string::npos);
+  const OutputInfo rejected = run(false);
+  assert(rejected.diagnostics.dopRuntimeEvidence.find("invalid") != std::string::npos);
+  assert(!rejected.diagnostics.processingBypassed);
 }
 
 void testNativeDsdCapabilityProfile() {
@@ -1328,8 +1371,9 @@ int main() {
   testOpenFailureAndFallbackFormats();
   testExtremeSampleRates();
   testDopCarrierProfile();
-  testDopRuntimeFactsUnprovenWithoutExplicitCapability();
+  testDopRuntimeFactsProvenWithoutExplicitCapability();
   testDopRuntimeFactsMismatchWhenActualFormatDiffers();
+  testDopMarkerEvidence();
   testNativeDsdCapabilityProfile();
   testNativeDsdRuntimeProven();
   testNativeDsdDriverSelectedWireTypeAndIdleTail();

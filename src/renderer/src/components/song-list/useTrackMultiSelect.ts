@@ -47,8 +47,8 @@ function isEditableTarget(target: EventTarget | null): boolean {
 /**
  * System-style multi-select for track tables:
  * - Ctrl/Cmd+Click: toggle selection (does not play)
- * - Shift+Click: range from anchor (does not play)
- * - plain click: returns a play intent and exits multi-select mode
+ * - Shift+Click: range from an existing Ctrl/Cmd selection (does not play)
+ * - plain click: toggles selection while selection mode is active; otherwise returns play intent
  * - checkbox / explicit selectOnly: manual multi-select
  * - right-click is intentionally not handled here and must not change selection
  * - Ctrl/Cmd+A: select all current list
@@ -69,11 +69,14 @@ export function useTrackMultiSelect({
   toggle: (trackId: string, index: number) => void
   selectRange: (toIndex: number) => void
   onRowClick: (track: Track, index: number, event: MouseEvent) => MultiSelectClickResult
+  shouldSuppressRowDoubleClick: (event: MouseEvent) => boolean
   getSelectedTracks: () => Track[]
   getSelectedTrackIds: () => string[]
 } {
   const selectedIds = ref<Set<string>>(new Set())
   const anchorIndex = ref<number | null>(null)
+  let suppressNextRowDoubleClick = false
+  let suppressDoubleClickTimer: ReturnType<typeof setTimeout> | null = null
 
   const selectedCount = computed(() => selectedIds.value.size)
   const hasSelection = computed(() => selectedIds.value.size > 0)
@@ -86,6 +89,12 @@ export function useTrackMultiSelect({
     if (selectedIds.value.size === 0 && anchorIndex.value == null) return
     selectedIds.value = new Set()
     anchorIndex.value = null
+  }
+
+  function clearDoubleClickSuppression(): void {
+    suppressNextRowDoubleClick = false
+    if (suppressDoubleClickTimer != null) clearTimeout(suppressDoubleClickTimer)
+    suppressDoubleClickTimer = null
   }
 
   function selectOnly(trackId: string, index: number): void {
@@ -123,23 +132,42 @@ export function useTrackMultiSelect({
     anchorIndex.value = list.length > 0 ? 0 : null
   }
 
+  function rememberSelectionClickForDoubleClick(): void {
+    if (suppressDoubleClickTimer != null) clearTimeout(suppressDoubleClickTimer)
+    suppressNextRowDoubleClick = true
+    suppressDoubleClickTimer = setTimeout(() => {
+      suppressNextRowDoubleClick = false
+      suppressDoubleClickTimer = null
+    }, 1000)
+  }
+
   function onRowClick(track: Track, index: number, event: MouseEvent): MultiSelectClickResult {
-    if (event.shiftKey) {
-      // Shift without an anchor starts a new range at this row.
-      if (anchorIndex.value == null && selectedIds.value.size === 0) {
-        selectOnly(track.id, index)
-      } else {
-        selectRange(index)
-      }
+    if (event.shiftKey && anchorIndex.value != null && selectedIds.value.size > 0) {
+      selectRange(index)
+      rememberSelectionClickForDoubleClick()
       return 'select'
     }
     if (event.ctrlKey || event.metaKey) {
       toggle(track.id, index)
+      rememberSelectionClickForDoubleClick()
       return 'select'
     }
-    // Plain click plays the track and exits multi-select mode.
-    clearSelection()
+    if (hasSelection.value) {
+      toggle(track.id, index)
+      rememberSelectionClickForDoubleClick()
+      return 'select'
+    }
+    clearDoubleClickSuppression()
     return 'play'
+  }
+
+  function shouldSuppressRowDoubleClick(event: MouseEvent): boolean {
+    if (event.ctrlKey || event.metaKey || event.shiftKey || hasSelection.value) return true
+    if (!suppressNextRowDoubleClick) return false
+    suppressNextRowDoubleClick = false
+    if (suppressDoubleClickTimer != null) clearTimeout(suppressDoubleClickTimer)
+    suppressDoubleClickTimer = null
+    return true
   }
 
   function getSelectedTracks(): Track[] {
@@ -200,6 +228,7 @@ export function useTrackMultiSelect({
     })
     onUnmounted(() => {
       window.removeEventListener('keydown', onKeyDown)
+      clearDoubleClickSuppression()
     })
   }
 
@@ -214,6 +243,7 @@ export function useTrackMultiSelect({
     toggle,
     selectRange,
     onRowClick,
+    shouldSuppressRowDoubleClick,
     getSelectedTracks,
     getSelectedTrackIds
   }

@@ -70,12 +70,20 @@ export function buildEffectiveAudioProcessingSettings(
   const user = normalizeAudioProcessingSettings(userProcessing)
   const compensation = normalizeHeadphoneCompensationSettings(headphoneCompensation)
 
-  if (!compensation.enabled || compensation.bands.length === 0) return user
+  // OPRA is an EQ contribution, not an independent processing module. Keep the
+  // saved profile available while the equalizer is bypassed, but never let it
+  // override either the DSP master switch or the equalizer switch.
+  if (
+    !user.dspEnabled ||
+    !user.eqEnabled ||
+    !compensation.enabled ||
+    compensation.bands.length === 0
+  ) {
+    return user
+  }
 
   return normalizeAudioProcessingSettings({
     ...user,
-    dspEnabled: true,
-    eqEnabled: true,
     eqMode: 'parametric',
     eqPreamp: user.eqPreamp + compensation.preampDb,
     eqBands: [...cloneEqualizerBands(compensation.bands), ...cloneEqualizerBands(user.eqBands)]

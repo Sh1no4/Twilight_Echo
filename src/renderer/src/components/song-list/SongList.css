@@ -34,11 +34,15 @@
   padding: calc(32px + 30px) min(4.4vw, 48px) 132px;
   overflow-y: auto;
   overflow-x: hidden;
-  background:
+  background-color: var(--te-local-bg);
+  background-image:
     radial-gradient(circle at 18% 7%, rgba(124, 77, 255, 0.045), transparent 34%),
     radial-gradient(circle at 53% 12%, rgba(255, 126, 182, 0.04), transparent 32%),
     radial-gradient(circle at 86% 12%, rgba(104, 132, 255, 0.038), transparent 36%),
-    var(--te-library-bg);
+    var(--te-local-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
   width: 100%;
   box-sizing: border-box;
   scrollbar-width: thin;
@@ -290,6 +294,63 @@
   gap: 18px;
   flex: 1.2 1 420px;
   min-width: 320px;
+}
+
+.online-search-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--te-neutral-600);
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.online-search-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.online-search-toggle-track {
+  position: relative;
+  width: 30px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--te-neutral-300);
+  box-shadow: inset 0 0 0 1px rgba(86, 70, 160, 0.1);
+  transition: background 0.18s ease;
+}
+
+.online-search-toggle-track::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(35, 30, 75, 0.25);
+  content: '';
+  transition: transform 0.18s ease;
+}
+
+.online-search-toggle input:checked + .online-search-toggle-track {
+  background: var(--te-primary-500);
+}
+
+.online-search-toggle input:checked + .online-search-toggle-track::after {
+  transform: translateX(12px);
+}
+
+.online-search-toggle input:focus-visible + .online-search-toggle-track {
+  outline: 2px solid var(--te-primary-500);
+  outline-offset: 2px;
 }
 
 .playlist-lifecycle-actions {
@@ -1520,6 +1581,10 @@
     min-width: 0;
     flex-basis: 100%;
     flex-wrap: wrap;
+  }
+
+  .online-search-toggle {
+    order: 1;
   }
 
   .collection-view-controls {

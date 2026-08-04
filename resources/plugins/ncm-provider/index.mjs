@@ -1378,6 +1378,10 @@ function getPlaybackUrlRequestPaths(songId, quality) {
   return [...levelPaths, ...bitratePaths]
 }
 
+function getUnblockedPlaybackUrlPath(songId) {
+  return `/song/url/match?id=${encodeURIComponent(String(songId))}`
+}
+
 function getPlaybackStreamItems(data) {
   if (Array.isArray(data?.data)) return data.data
   if (Array.isArray(data?.urls)) return data.urls
@@ -1410,7 +1414,28 @@ function getOfficialPlaybackUrl(data, streamItem) {
   return normalizePlaybackStreamUrl(streamItem?.url)
 }
 
-async function getPlaybackUrl(track, options = {}) {
+function getUnblockedPlaybackUrl(data) {
+  const topCode = Number(data?.code ?? data?.body?.code)
+  if (!Number.isFinite(topCode) || topCode !== 200) return null
+
+  // `/song/url/match` documents data as the matched URL string. Retain
+  // defensive compatibility for wrapped payloads and the optional proxy URL.
+  const candidates = [
+    data?.data,
+    data?.data?.url,
+    data?.body?.data,
+    data?.body?.data?.url,
+    data?.proxyUrl,
+    data?.body?.proxyUrl
+  ]
+  for (const candidate of candidates) {
+    const url = normalizePlaybackStreamUrl(candidate)
+    if (url) return url
+  }
+  return null
+}
+
+async function getPlaybackUrl(track, options = {}, requestContext) {
   const songId = getSongIdFromTrack(track)
   if (songId == null) throw new Error('Missing NetEase song ID, cannot play')
   const force = options?.force === true
@@ -1433,7 +1458,7 @@ async function getPlaybackUrl(track, options = {}) {
   let lastFailureMessage = ''
   for (const path of getPlaybackUrlRequestPaths(songId, quality)) {
     try {
-      const data = await requestAuthed(path)
+      const data = await requestAuthed(path, requestContext)
       const streamItems = getPlaybackStreamItems(data)
       const streamItem = streamItems[0] ?? {}
       // Only use a URL explicitly authorized by the signed-in account's official endpoint.
@@ -1446,8 +1471,24 @@ async function getPlaybackUrl(track, options = {}) {
       }
       lastFailureMessage = getPlaybackFailureMessage(data, streamItem) || lastFailureMessage
     } catch (error) {
-      lastFailureMessage = error instanceof Error ? error.message : String(error)
+      throwIfRequestAborted(requestContext)
+      lastFailureMessage = getErrorMessage(error)
     }
+  }
+
+  try {
+    const data = await requestAuthed(getUnblockedPlaybackUrlPath(songId), requestContext)
+    const url = getUnblockedPlaybackUrl(data)
+    if (url) {
+      streamUrlCache.set(cacheKey, url)
+      void ncmApi.cacheSong(songId, url, track?.fileName).catch(() => {})
+      return url
+    }
+    lastFailureMessage =
+      getPlaybackFailureMessage(data, {}) || '灰色歌曲解锁响应缺少有效的 HTTP(S) URL'
+  } catch (error) {
+    throwIfRequestAborted(requestContext)
+    lastFailureMessage = getErrorMessage(error)
   }
 
   if (lastFailureMessage) getContext().logger.warn(`网易云播放地址解析失败：${lastFailureMessage}`)

@@ -45,7 +45,10 @@ test('actual renderer player store keeps lyric sources and playback position tra
     await writeFile(runnerPath, electronRunnerSource(), 'utf8')
 
     const electronPath = require('electron') as string
+    const electronEnvironment = { ...process.env }
+    delete electronEnvironment.ELECTRON_RUN_AS_NODE
     const { stderr } = await execFileAsync(electronPath, ['--no-sandbox', runnerPath, htmlPath], {
+      env: electronEnvironment,
       timeout: 45_000,
       windowsHide: true
     })
@@ -83,11 +86,18 @@ let document = {
 }
 let revision = 1
 let deferProvider = false
-let resolveDeferredProvider
-let markDeferredProviderStarted
-const deferredProviderStarted = new Promise((resolve) => {
-  markDeferredProviderStarted = resolve
-})
+const deferredProviderResolvers = []
+const deferredProviderStartWaiters = []
+const waitForDeferredProviderStart = () =>
+  new Promise((resolve) => deferredProviderStartWaiters.push(resolve))
+const resolveDeferredProviders = () => {
+  while (deferredProviderResolvers.length > 0) {
+    deferredProviderResolvers.shift()({
+      lyrics: '[00:01.00]Stale provider lyrics',
+      translatedLyrics: '[00:01.00]Stale provider translation'
+    })
+  }
+}
 
 window.api = {
   ...window.api,
@@ -106,13 +116,9 @@ window.api = {
     call: async (_providerId, method) => {
       expect(method === 'getLyrics', 'forced resolver should request provider lyrics')
       if (deferProvider) {
-        markDeferredProviderStarted()
+        for (const resolve of deferredProviderStartWaiters.splice(0)) resolve()
         return await new Promise((resolve) => {
-          resolveDeferredProvider = () =>
-            resolve({
-              lyrics: '[00:01.00]Stale provider lyrics',
-              translatedLyrics: '[00:01.00]Stale provider translation'
-            })
+          deferredProviderResolvers.push(resolve)
         })
       }
       return { lyrics: '[00:01.00]Provider lyrics', translatedLyrics: '[00:01.00]Provider translation' }
@@ -157,12 +163,14 @@ window.runLyricsPlayerRuntime = async () => {
 
   deferProvider = true
   await management.selectSource(track.id, 'provider')
+  const deferredProviderStarted = waitForDeferredProviderStart()
   const staleProviderRefresh = player.refreshCurrentLyrics()
   await deferredProviderStarted
   await management.selectSource(track.id, 'auto')
   await player.refreshCurrentLyrics()
   expect(player.currentTrack.value.lyrics === '[00:01.00]Automatic lyrics', 'Auto did not win while a forced Provider lookup was pending')
-  resolveDeferredProvider()
+  deferProvider = false
+  resolveDeferredProviders()
   await staleProviderRefresh
   expect(player.currentTrack.value.lyrics === '[00:01.00]Automatic lyrics', 'stale Provider result overwrote the newer Auto selection')
 
@@ -184,6 +192,54 @@ window.runLyricsPlayerRuntime = async () => {
   await Promise.resolve()
   expect(player.currentTrack.value.id === nextTrack.id, 'native next did not switch the active track')
   expect(player.currentTime.value === 0, 'native next did not reset progress')
+
+  player.currentTrack.value = clone(track)
+  player.queue.value = [clone(track), clone(nextTrack)]
+  player.queueIndex.value = 0
+  window.__audioFixture.playbackInfo = {
+    state: 'playing', position: 179, duration: 180, source: track.id,
+    queueIndex: 0, nativePlaybackActive: true, volume: 1, playbackRate: 1
+  }
+  window.__audioFixture.emitStartFile()
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  window.__audioFixture.playbackInfo = {
+    state: 'playing', position: 0.25, duration: 180, source: nextTrack.id,
+    queueIndex: 1, nativePlaybackActive: true, volume: 1, playbackRate: 1
+  }
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  expect(player.currentTrack.value.id === nextTrack.id, 'start-file retry did not recover the next track identity')
+  expect(player.currentTime.value < 2, 'start-file retry did not reset the progress clock for the next track')
+
+  const stalledLyricsTrack = {
+    ...track,
+    id: 'fixture-provider:track-3',
+    lyrics: null,
+    translatedLyrics: null
+  }
+  deferProvider = true
+  const stalledLyricsStarted = waitForDeferredProviderStart()
+  player.currentTrack.value = clone(stalledLyricsTrack)
+  player.queue.value = [clone(stalledLyricsTrack)]
+  player.queueIndex.value = 0
+  window.__audioFixture.playbackInfo = {
+    state: 'playing', position: 1, duration: 180, source: stalledLyricsTrack.id,
+    queueIndex: 0, nativePlaybackActive: true, volume: 1, playbackRate: 1
+  }
+  await stalledLyricsStarted
+  expect(player.lyricsLoadState.value.status === 'loading', 'fixture did not enter pending lyrics state')
+  deferProvider = false
+  window.dispatchEvent(new Event('focus'))
+  await new Promise((resolve) => setTimeout(resolve, 280))
+  expect(player.currentTrack.value.lyrics === '[00:01.00]Provider lyrics', 'window resume did not retry stalled lyrics')
+  resolveDeferredProviders()
+
+  player.queue.value = [clone(track), clone(nextTrack)]
+  player.queueIndex.value = 0
+  window.__audioFixture.emitPlaybackInfo({
+    state: 'playing', position: 0, duration: 180, source: nextTrack.id,
+    queueIndex: 1, nativePlaybackActive: true, volume: 1, playbackRate: 1
+  })
+  await Promise.resolve()
 
   window.__audioFixture.emitProperty('time-pos', 42)
   await Promise.resolve()
@@ -243,6 +299,39 @@ window.runLyricsPlayerRuntime = async () => {
   window.clearInterval(stalePausedSamples)
   expect(player.isPlaying.value, 'stale paused playback-info disabled the shared playback clock')
   expect(player.currentTime.value > 100.5, 'stale paused playback-info froze playbar and lyric progress')
+
+  const confirmedPausePosition = player.currentTime.value
+  window.__audioFixture.emitPlaybackInfo({
+    state: 'paused', position: confirmedPausePosition, duration: 180, source: nextTrack.id,
+    queueIndex: 1, nativePlaybackActive: true, volume: 1, playbackRate: 1
+  })
+  await new Promise((resolve) => setTimeout(resolve, 650))
+  expect(!player.isPlaying.value, 'confirmed native pause should stop the shared playback clock')
+  window.__audioFixture.emitPlaybackInfo({
+    state: 'playing', position: confirmedPausePosition + 0.5, duration: 180, source: nextTrack.id,
+    queueIndex: 1, nativePlaybackActive: true, volume: 1, playbackRate: 1
+  })
+  // The renderer fallback clock intentionally waits 500ms after the last
+  // authoritative engine sample before it advances between native updates.
+  await new Promise((resolve) => setTimeout(resolve, 900))
+  expect(player.isPlaying.value, 'authoritative playing playback-info did not recover a confirmed stale pause')
+  expect(
+    player.currentTime.value > confirmedPausePosition + 0.5,
+    'playbar and lyric progress did not resume after authoritative playing recovery'
+  )
+
+  player.seek(120)
+  window.__audioFixture.emitProperty('time-pos', 120.25)
+  await new Promise((resolve) => setTimeout(resolve, 280))
+  const uiStallUntil = performance.now() + 2000
+  while (performance.now() < uiStallUntil) {}
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  window.__audioFixture.emitProperty('time-pos', 120.5)
+  await new Promise((resolve) => setTimeout(resolve, 280))
+  expect(
+    player.currentTime.value < 121.5,
+    'a renderer stall made the playbar overrun and reject the recovered engine position'
+  )
   console.log('LYRICS_PLAYER_RUNTIME_OK')
 }
 `
@@ -252,9 +341,10 @@ function runtimeHtml(bundleName: string): string {
   return `<!doctype html><html><body><script>
 window.process = { env: {} }
 window.__audioFixture = {
-  propertyCallbacks: [], playbackInfoCallbacks: [],
+  propertyCallbacks: [], playbackInfoCallbacks: [], startFileCallbacks: [],
   emitProperty(name, data) { for (const cb of this.propertyCallbacks) cb({ name, data }) },
   emitPlaybackInfo(info) { this.playbackInfo = info; for (const cb of this.playbackInfoCallbacks) cb(info) },
+  emitStartFile() { for (const cb of this.startFileCallbacks) cb() },
   playbackInfo: { state: 'stopped', position: 0, duration: 0, source: '', queueIndex: -1, nativePlaybackActive: false }
 }
 const subscribe = (list, cb) => { list.push(cb); return () => { const i = list.indexOf(cb); if (i >= 0) list.splice(i, 1) } }
@@ -263,7 +353,7 @@ window.api = {
   audioEngine: {
     onPropertyChange: (cb) => subscribe(window.__audioFixture.propertyCallbacks, cb),
     onPlaybackInfo: (cb) => subscribe(window.__audioFixture.playbackInfoCallbacks, cb),
-    onEndFile: noopSubscribe, onStartFile: noopSubscribe, onReady: noopSubscribe,
+    onEndFile: noopSubscribe, onStartFile: (cb) => subscribe(window.__audioFixture.startFileCallbacks, cb), onReady: noopSubscribe,
     onError: noopSubscribe, onDisconnected: noopSubscribe,
     getPlaybackInfo: async () => window.__audioFixture.playbackInfo,
     getAudioOutputState: async () => { throw new Error('fixture output unavailable') },

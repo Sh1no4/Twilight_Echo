@@ -44,6 +44,8 @@ export interface EqualizerBand {
 
 export interface AudioProcessingSettings {
   dspEnabled: boolean
+  /** Runtime direct path: preserve saved DSP settings while applying an identity graph. */
+  directMode: boolean
   clipGuard: boolean
   fftEnabled: boolean
   fftResolution: number
@@ -164,6 +166,8 @@ export interface OutputDiagnostics {
   transportSampleRate?: number
   typedRawPath?: boolean
   processingBypassed?: boolean
+  nativeDsdNegotiation?: string
+  dopRuntimeEvidence?: string
   firstBufferSummary?: string
   processArchitecture?: string
   asioBuildEnabled?: boolean
@@ -185,6 +189,8 @@ export interface AudioOutputState {
 
 export interface AudioEngineConfig {
   exclusiveMode: boolean
+  /** Initial software gain in [0, 1], restored before the engine reports ready. */
+  volume?: number
   audioOutput?: AudioOutputId
   audioDevice?: string
   audioOutputConfig?: Partial<OutputConfig>

@@ -80,6 +80,29 @@ std::string nativeDsdBufferSummary(size_t inspected, uint8_t idleByte, uint64_t 
   return summary;
 }
 
+bool hasAlternatingDopMarkers(
+    const uint8_t* data,
+    size_t frameCount,
+    int channels,
+    AudioSampleFormat format) {
+  if (!data || frameCount < 2 || channels <= 0 || !isDopCarrierSampleFormat(format)) {
+    return false;
+  }
+  const size_t bytesPerSample = audioSampleFormatBytes(format);
+  if (bytesPerSample < 3) return false;
+  const size_t channelCount = static_cast<size_t>(channels);
+  uint8_t expected = data[bytesPerSample - 1];
+  if (expected != 0x05 && expected != 0xfa) return false;
+  for (size_t frame = 0; frame < frameCount; ++frame) {
+    for (size_t channel = 0; channel < channelCount; ++channel) {
+      const size_t offset = (frame * channelCount + channel) * bytesPerSample;
+      if (data[offset + bytesPerSample - 1] != expected) return false;
+    }
+    expected = expected == 0x05 ? 0xfa : 0x05;
+  }
+  return true;
+}
+
 bool containsFormat(const std::vector<AudioSampleFormat>& formats, AudioSampleFormat format) {
   return std::find(formats.begin(), formats.end(), format) != formats.end();
 }
@@ -230,8 +253,11 @@ DopRuntimeFacts buildAsioDopRuntimeFacts(
   }
 
   if (!facts.explicitlyCapable) {
-    facts.state = DopRuntimeFactState::Unproven;
-    facts.reason = "ASIO carrier matched at runtime, but the driver did not explicitly prove DoP support";
+    // ASIO registration carries driver identity only. A number of production
+    // drivers do not advertise DoP there, despite accepting an exact carrier
+    // at runtime. The negotiated format is more reliable than that omission.
+    facts.state = DopRuntimeFactState::Proven;
+    facts.reason = "ASIO DoP carrier matched at runtime; the driver registry did not declare DoP support";
     return facts;
   }
 
@@ -400,6 +426,8 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
     firstNativeDsdInspectedBytes_.store(0, std::memory_order_relaxed);
     firstNativeDsdIdleByte_.store(0, std::memory_order_relaxed);
     firstNativeDsdHash_.store(0, std::memory_order_relaxed);
+    dopMarkerState_.store(0, std::memory_order_relaxed);
+    dopMarkerFramesVerified_.store(0, std::memory_order_relaxed);
     outputInfo_ = {};
     outputInfo_.exclusive = true;
     outputInfo_.accessMode = "exclusive";
@@ -493,6 +521,7 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
 
   AsioOpenResult result;
   if (!host_->open(openConfig_, &result, error)) {
+    diagnostics_.nativeDsdNegotiation = result.nativeDsdNegotiation;
     if (error) diagnostics_.lastError = *error;
     outputInfo_.backend = "asio";
     outputInfo_.actualBackend = "asio";
@@ -508,6 +537,8 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
     outputInfo_.diagnostics = diagnostics_;
     return false;
   }
+
+  diagnostics_.nativeDsdNegotiation = result.nativeDsdNegotiation;
 
   outputFormat_ = result.actualFormat;
   if (outputFormat_.sampleRate <= 0) outputFormat_.sampleRate = selected.sampleRate;
@@ -568,6 +599,7 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
       emptyFormat(),
       actualOutputFormatObserved_,
       actualOutputChannelFormatsMatch_);
+  diagnostics_.dopRuntimeEvidence = dopRuntimeFacts_.reason;
   nativeDsdRuntimeFacts_ = buildAsioNativeDsdRuntimeFacts(
       deviceInfo_,
       openConfig_.format,
@@ -576,6 +608,7 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
       actualOutputChannelFormatsMatch_,
       false);
   applyNativeDsdFactsToOutputInfo(&outputInfo_, nativeDsdRuntimeFacts_);
+  outputInfo_.diagnostics = diagnostics_;
   if (isNativeDsdRequest(openConfig_.format)) {
     diagnostics_.dsdTransport = "asio-native";
     diagnostics_.requestedWireFormat = sampleFormatToString(openConfig_.format.sampleFormat);
@@ -722,6 +755,23 @@ OutputInfo AsioBackend::outputInfo() const {
   info.diagnostics.lifetimeBufferDropCount += pendingBufferDrops;
   info.diagnostics.dsdShortReadCount += pendingDsdShortReads_.load(std::memory_order_relaxed);
   info.diagnostics.dsdIdleFrameCount += pendingDsdIdleFrames_.load(std::memory_order_relaxed);
+  if (isDopCarrierFormat(openConfig_.format)) {
+    const int markerState = dopMarkerState_.load(std::memory_order_acquire);
+    if (markerState == 1) {
+      info.diagnostics.dopRuntimeEvidence =
+          dopRuntimeFacts_.reason + "; DoP marker sequence confirmed in the first typed buffer";
+    } else if (markerState == 2) {
+      const std::string reason = "ASIO DoP marker sequence was invalid in the first typed buffer";
+      info.diagnostics.dopRuntimeEvidence = reason;
+      info.diagnostics.processingBypassed = false;
+      info.perfectReasonCode = "dop_marker_mismatch";
+      info.perfectReason = reason;
+      info.capabilityReason = reason;
+    } else {
+      info.diagnostics.dopRuntimeEvidence =
+          dopRuntimeFacts_.reason + "; waiting for first typed DoP marker sequence";
+    }
+  }
   if (firstNativeDsdBufferObserved_.load(std::memory_order_acquire)) {
     info.diagnostics.firstBufferSummary = nativeDsdBufferSummary(
         firstNativeDsdInspectedBytes_.load(std::memory_order_relaxed),
@@ -1008,6 +1058,7 @@ bool AsioBackend::createAndStartHost(std::string* error) {
         outputFormat_,
         actualOutputFormatObserved_,
         actualOutputChannelFormatsMatch_);
+    diagnostics_.dopRuntimeEvidence = dopRuntimeFacts_.reason;
     nativeDsdRuntimeFacts_ = buildAsioNativeDsdRuntimeFacts(
         deviceInfo_,
         openConfig_.format,
@@ -1016,6 +1067,7 @@ bool AsioBackend::createAndStartHost(std::string* error) {
         actualOutputChannelFormatsMatch_,
         false);
     applyNativeDsdFactsToOutputInfo(&outputInfo_, nativeDsdRuntimeFacts_);
+    outputInfo_.diagnostics = diagnostics_;
   }
   running_ = true;
   if (!host_->start(error)) {
@@ -1052,6 +1104,7 @@ bool AsioBackend::createAndStartHost(std::string* error) {
                                           : "native_dsd_runtime_unproven";
       applyNativeDsdFactsToOutputInfo(&outputInfo_, nativeDsdRuntimeFacts_);
     }
+    outputInfo_.diagnostics = diagnostics_;
   }
   return true;
 }
@@ -1109,6 +1162,16 @@ void AsioBackend::renderBuffer(long bufferIndex) {
       const size_t rendered = typedCallback(block);
       if (rendered > 0) {
         const size_t renderedFrames = std::min(rendered, frames);
+        if (isDopCarrierFormat(outputFormat) &&
+            dopMarkerState_.load(std::memory_order_relaxed) == 0 && renderedFrames >= 2) {
+          dopMarkerFramesVerified_.store(renderedFrames, std::memory_order_relaxed);
+          dopMarkerState_.store(
+              hasAlternatingDopMarkers(
+                  typedRenderScratch_.data(), renderedFrames, sourceChannels, outputFormat.sampleFormat)
+                  ? 1
+                  : 2,
+              std::memory_order_release);
+        }
         if (nativeDsdOutput &&
             !firstNativeDsdBufferClaimed_.exchange(true, std::memory_order_acq_rel)) {
           uint64_t hash = 1469598103934665603ULL;

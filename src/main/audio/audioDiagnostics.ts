@@ -52,9 +52,11 @@ export interface AudioDiagnosticSnapshot {
   playback: unknown
   outputState: unknown
   outputConfig: unknown
+  effectiveOutputConfig: unknown
   outputConfigApplyStatus: unknown
   configuredProcessing: unknown
   effectiveProcessing: unknown
+  engineProcessing: unknown
   headphoneCompensation: unknown
   dspSceneState: unknown
   dspGraphStatus: unknown
@@ -278,18 +280,19 @@ export function collectDsdPcmBlockers(input: {
   if (Math.abs(input.playback.volume - 1) > 0.001) {
     add({ code: 'volume_not_unity', value: input.playback.volume, origin: 'player' })
   }
+  const directMode = input.processing.directMode === true
   const playbackRate = input.playback.playbackRate ?? 1
-  if (Math.abs(playbackRate - 1) > 0.001) {
+  if (!directMode && Math.abs(playbackRate - 1) > 0.001) {
     add({ code: 'playback_rate_not_unity', value: playbackRate, origin: 'player' })
   }
-  if (input.processing.crossfadeSeconds > 0.0001) {
+  if (!directMode && input.processing.crossfadeSeconds > 0.0001) {
     add({
       code: 'crossfade_active',
       value: input.processing.crossfadeSeconds,
       origin: 'processing'
     })
   }
-  if (input.outputConfig.routingMode !== 'auto') {
+  if (!directMode && input.outputConfig.routingMode !== 'auto') {
     add({
       code: 'routing_not_auto',
       value: input.outputConfig.routingMode,
@@ -299,7 +302,7 @@ export function collectDsdPcmBlockers(input: {
   if (input.processing.dsdOutputMode === 'pcm') {
     add({ code: 'dsd_output_mode_pcm', value: 'pcm', origin: 'processing' })
   }
-  if (input.processing.dspEnabled && input.processing.volumeNormalization !== 'off') {
+  if (!directMode && input.processing.dspEnabled && input.processing.volumeNormalization !== 'off') {
     add({
       code:
         input.processing.volumeNormalization === 'loudnorm'
@@ -309,13 +312,14 @@ export function collectDsdPcmBlockers(input: {
       origin: 'processing'
     })
   }
-  if (input.processing.dspEnabled && input.processing.eqEnabled) {
+  if (!directMode && input.processing.dspEnabled && input.processing.eqEnabled) {
     add({ code: 'eq_active', origin: 'processing' })
   }
-  if (input.processing.dspEnabled && input.processing.convolverEnabled) {
+  if (!directMode && input.processing.dspEnabled && input.processing.convolverEnabled) {
     add({ code: 'convolver_active', origin: 'processing' })
   }
   if (
+    !directMode &&
     input.processing.dspEnabled &&
     input.processing.crossfeedEnabled &&
     input.processing.crossfeedStrength > 0
@@ -327,11 +331,12 @@ export function collectDsdPcmBlockers(input: {
     })
   }
 
-  for (const node of input.sceneState.graph.nodes) {
+  const effectiveGraph = input.sceneState.effectiveGraph ?? input.sceneState.graph
+  for (const node of effectiveGraph.nodes) {
     if (!node.enabled || node.type === 'meter') continue
     add({ code: `dsp_node_${node.type}`, value: node.id, origin: 'dsp-scene' })
   }
-  const outputStage = input.sceneState.graph.outputStage
+  const outputStage = effectiveGraph.outputStage
   if (outputStageIsActive(outputStage)) {
     if (outputStage.targetSampleRate !== 'device') {
       add({
@@ -351,10 +356,43 @@ export function collectDsdPcmBlockers(input: {
       add({ code: 'output_dither_active', value: outputStage.dither, origin: 'dsp-scene' })
     }
   }
-  if (input.sceneState.requiresPcmFallback && graphHasEnabledProcessing(input.sceneState.graph)) {
+  if (input.sceneState.requiresPcmFallback && graphHasEnabledProcessing(effectiveGraph)) {
     add({ code: 'dsp_scene_requires_pcm', origin: 'dsp-scene' })
   }
   return blockers
+}
+
+export function findFooDsdAsioBridgeSuggestion(input: {
+  playback: Pick<PlaybackInfo, 'isDsd' | 'dsdMode' | 'outputInfo'>
+  outputState?: Pick<AudioOutputState, 'output' | 'device' | 'deviceOptions'>
+}):
+  | {
+      bridgeId: string
+      bridgeLabel: string
+      selectedDevice: string
+      reason: string
+    }
+  | undefined {
+  const outputState = input.outputState
+  if (!outputState || outputState.output !== 'asio' || !input.playback.isDsd) return undefined
+  const bridge = outputState.deviceOptions.find((option) =>
+    `${option.id} ${option.label} ${option.name ?? ''} ${option.driverName ?? ''}`.toLowerCase().includes('foo_dsd_asio')
+  )
+  if (!bridge || outputState.device === bridge.id) return undefined
+  const nativeState = input.playback.outputInfo.nativeDsdRuntimeState
+  const failedDirectPath =
+    input.playback.dsdMode === 'pcm' ||
+    nativeState === 'unsupported' ||
+    nativeState === 'unproven' ||
+    nativeState === 'mismatch'
+  if (!failedDirectPath) return undefined
+  return {
+    bridgeId: bridge.id,
+    bridgeLabel: bridge.label,
+    selectedDevice: outputState.device,
+    reason:
+      'foo_dsd_asio is available but is not selected. It is an optional compatibility bridge; Twilight Echo will not switch to it or read foobar2000 settings automatically.'
+  }
 }
 
 export function createPlaybackDiagnosticEvent(input: {
@@ -383,6 +421,11 @@ export function createPlaybackDiagnosticEvent(input: {
       volume: playback.volume,
       playbackRate: playback.playbackRate ?? 1
     },
+    processing: {
+      directMode: input.processing.directMode,
+      effectiveGraph: input.sceneState.effectiveGraph ?? input.sceneState.graph,
+      bypassReason: input.sceneState.effectiveBypassReason ?? ''
+    },
     selectedOutput: input.selectedOutput,
     actualOutput: {
       backend: playback.actualBackend,
@@ -406,6 +449,13 @@ export function createPlaybackDiagnosticEvent(input: {
       explicitlyCapable: playback.outputInfo.nativeDsdExplicitlyCapable,
       advertisedSampleRates: playback.outputInfo.nativeDsdAdvertisedSampleRates,
       reason: playback.outputInfo.nativeDsdRuntimeReason
+    },
+    transportEvidence: {
+      nativeDsdNegotiation: playback.outputInfo.diagnostics.nativeDsdNegotiation ?? '',
+      dopRuntimeEvidence: playback.outputInfo.diagnostics.dopRuntimeEvidence ?? '',
+      actualWireFormat: playback.outputInfo.diagnostics.actualWireFormat ?? '',
+      typedRawPath: playback.outputInfo.diagnostics.typedRawPath === true,
+      processingBypassed: playback.outputInfo.diagnostics.processingBypassed === true
     },
     deviceCapabilities: {
       reason: playback.outputInfo.capabilityReason,

@@ -21,7 +21,8 @@ enum class IoFormatMode : int {
   Supported,
   UnsupportedDsd,
   ReportPcmAfterDsdSet,
-  FailAfterDsdSet
+  FailAfterDsdSet,
+  GetIoFormatUnsupported
 };
 
 class FakeAsioDriver final : public AsioDriver {
@@ -204,6 +205,7 @@ class FakeAsioDriver final : public AsioDriver {
       case kFutureCanDoIoFormat:
         return isSupportedIoFormat(format->formatType) ? kAsioOk : -1;
       case kFutureGetIoFormat:
+        if (ioFormatMode_ == IoFormatMode::GetIoFormatUnsupported) return -1;
         format->formatType = ioFormat_;
         return kAsioOk;
       case kFutureSetIoFormat:
@@ -276,6 +278,8 @@ extern "C" __declspec(dllexport) twilight::audio::asio_abi::AsioDriver* Twilight
       return twilight::audio::asio_abi::createFakeDriver(IoFormatMode::ReportPcmAfterDsdSet);
     case static_cast<int>(IoFormatMode::FailAfterDsdSet):
       return twilight::audio::asio_abi::createFakeDriver(IoFormatMode::FailAfterDsdSet);
+    case static_cast<int>(IoFormatMode::GetIoFormatUnsupported):
+      return twilight::audio::asio_abi::createFakeDriver(IoFormatMode::GetIoFormatUnsupported);
     default:
       return twilight::audio::asio_abi::createFakeDriver();
   }

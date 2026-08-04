@@ -13,6 +13,16 @@ test('song list omits header kickers from all non-dashboard local library views'
   assert.doesNotMatch(styles, /\.kicker-rule/)
 })
 
+test('folder view renders explicit empty and filtered-empty states instead of a blank page', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+
+  assert.match(source, /category === 'folders' && folders\.length === 0/)
+  assert.match(source, /暂无可显示的文件夹/)
+  assert.match(source, /媒体库管理/)
+  assert.match(source, /gridTotalCount === 0/)
+  assert.match(source, /没有符合搜索条件的内容/)
+})
+
 test('song list exposes local metadata match confidence from provider enrichment', () => {
   const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
 
@@ -53,13 +63,22 @@ test('song list wires local metadata rematch into the context menu', () => {
   assert.match(source, /重新匹配流媒体元数据/)
 })
 
-test('song list all songs search uses unified local and provider results', () => {
+test('song list local music search skips providers by default and can opt into online results', () => {
   const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('./song-list/SongList.css', import.meta.url), 'utf8')
 
   assert.match(source, /useUnifiedMusicSearch/)
+  assert.match(source, /const searchOnlineSongs = ref\(false\)/)
+  assert.match(
+    source,
+    /const shouldUseUnifiedSearch = computed\(\s*\(\) =>\s+showOnlineSearchToggle\.value && searchOnlineSongs\.value\s+\)/
+  )
   assert.match(source, /unifiedSearch\.search\(q/)
   assert.match(source, /unifiedSearch\.items\.value\.map\(\(item\) => item\.track\)/)
   assert.match(source, /props\.category === 'allSongs'/)
+  assert.match(source, /v-model="searchOnlineSongs"/)
+  assert.match(source, /搜索网络歌曲/)
+  assert.match(styles, /\.online-search-toggle/)
 })
 
 test('song list exposes unified search loading errors and provider health in the local search UI', () => {
@@ -203,6 +222,20 @@ test('song list supports batch favorite plus explicit local remove and recycle-b
   assert.match(styles, /\.selection-toolbar/)
   assert.match(styles, /\.track-select-checkbox/)
   assert.match(styles, /\.track-cover-cell/)
+})
+
+test('double-click activation keeps plain clicks out of multi-select mode', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  const handlerMatch = source.match(
+    /function onRowClick\([\s\S]*?\n}\n\nfunction onTrackSelectToggle/
+  )
+
+  assert.ok(handlerMatch)
+  const handler = handlerMatch[0]
+  assert.match(handler, /multiSelect\.onRowClick\(track, index, event\)/)
+  assert.match(handler, /trackActivationMode === 'doubleClick'\) return/)
+  assert.doesNotMatch(handler, /selectOnly\(/)
+  assert.match(source, /multiSelect\.shouldSuppressRowDoubleClick\(event\)/)
 })
 
 test('song list exposes exclusion management and restore controls', () => {

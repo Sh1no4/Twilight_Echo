@@ -54,6 +54,8 @@ test('DSP chart splits manual, OPRA, and effective total response curves', () =>
   assert.match(source, /class="equalizer-opra-response-line"/)
   assert.equal(source.match(/>总 DSP 合成<\/span>/g)?.length, 1)
   assert.match(source, /:response-path="responsePath"/)
+  assert.match(source, /:meter-peak-db="visualizationData\.peakDb"/)
+  assert.match(source, /:meter-rms-db="visualizationData\.rmsDb"/)
 })
 
 test('OPRA estimated source deviation is explicitly non-measured and excludes preamp', () => {
@@ -66,30 +68,52 @@ test('OPRA estimated source deviation is explicitly non-measured and excludes pr
   assert.match(source, /排除前级增益，不代表实测频响/)
 })
 
-test('AutoEq CSV import switches to a distinct measured headphone response view', () => {
+test('AutoEq CSV import switches to a distinct headphone response view with precise data semantics', () => {
   assert.match(source, /window\.api\.audioEngine\.importFrequencyResponse\(\)/)
   assert.match(source, /type ResponseView = 'dsp' \| 'headphone'/)
   assert.equal(source.match(/>\s*DSP 响应\s*<\/button>/g)?.length, 2)
   assert.equal(source.match(/>\s*耳机频响\s*<\/button>/g)?.length, 2)
-  assert.match(source, /源频响偏差（实测）/)
-  assert.match(source, /目标曲线（0 dB）/)
-  assert.match(source, /预计校正后频响/)
+  assert.match(source, /AutoEq smoothed 列/)
+  assert.match(source, /AutoEq raw 列/)
+  assert.doesNotMatch(source, /原始测量/)
 })
 
-test('headphone comparison uses target-relative measured data and excludes digital preamp', () => {
-  assert.match(source, /computeTargetRelativeFrequencyResponse\(/)
+test('headphone comparison exposes source, target, individual, combined, and corrected curves', () => {
+  assert.match(source, /computeFrequencyResponseComparison\(/)
   assert.match(
     source,
     /computeCompositeResponse\(displayEqBands\.value, 0,[\s\S]*?mode: displayEqMode\.value/
   )
+  assert.match(source, /源频响 M\(f\)/)
+  assert.match(source, /目标曲线 T\(f\)/)
+  assert.match(source, /单个滤波 Hn\(f\)/)
+  assert.match(source, /合并滤波 H\(f\)/)
+  assert.match(source, /滤波结果 R\(f\)/)
   assert.match(source, /class="equalizer-measured-source-line"/)
   assert.match(source, /class="equalizer-target-response-line"/)
+  assert.match(source, /class="equalizer-combined-filter-line"/)
   assert.match(source, /class="equalizer-corrected-acoustic-line"/)
-  assert.match(source, /排除数字前级 · 非校正后实测/)
+  assert.match(source, /R\(f\) = M\(f\) \+ H\(f\) · 排除数字前级 · 预计值，非校正后实测/)
 })
 
-test('resetting the EQ keeps OPRA stacked in the DSP scene equalizer node', () => {
-  assert.match(
+test('headphone curves have independent accessible visibility controls in both EQ workspaces', () => {
+  for (const state of [
+    'showMeasuredSource',
+    'showTargetResponse',
+    'showIndividualFilters',
+    'showCombinedFilter',
+    'showCorrectedResponse'
+  ]) {
+    assert.match(source, new RegExp(`const ${state} = ref\\(true\\)`))
+    assert.match(source, new RegExp(`:aria-pressed="${state}"`))
+  }
+  assert.match(source, /@toggle-headphone-curve="toggleHeadphoneCurve"/)
+  assert.match(source, /:band-response-paths="responseView === 'headphone' \? headphoneBandResponsePaths : bandResponsePaths"/)
+})
+
+test('scene EQ keeps OPRA parameters but obeys DSP and equalizer bypass switches', () => {
+  assert.match(source, /node\.enabled = nextSettings\.dspEnabled && nextSettings\.eqEnabled/)
+  assert.doesNotMatch(
     source,
     /node\.enabled = nextSettings\.eqEnabled \|\| opraCompensationEnabled\.value/
   )
@@ -118,15 +142,20 @@ test('parametric editor exposes direct manipulation and throttled DSP commits', 
   assert.match(source, /runEqApply/)
 })
 
-test('parametric page gives the analyzer a compact instrument-style hierarchy', () => {
+test('parametric page keeps one Chinese heading without duplicate English labels', () => {
   assert.match(source, /class="tab-pane active parametric-pane"/)
-  assert.match(source, /class="parametric-page-header"/)
-  assert.match(source, />DSP \/ EQUALIZATION</)
-  assert.match(source, />32 BAND · REAL-TIME</)
-  assert.match(source, /class="parametric-toolbar-label">ANALYZER SOURCE/)
+  assert.equal(source.match(/<header class="parametric-page-header">/g)?.length, 1)
+  assert.match(source, /<h1>参数均衡器<\/h1>/)
+  assert.match(source, />32 频段 · 实时处理</)
+  assert.doesNotMatch(source, />DSP \/ EQUALIZATION</)
+  assert.doesNotMatch(source, />32 BAND · REAL-TIME</)
+  assert.doesNotMatch(source, /class="parametric-toolbar-label">ANALYZER SOURCE/)
   assert.match(source, /\.parametric-pane \{[\s\S]*?gap: 10px/)
   assert.match(source, /\.parametric-toolbar-card \{[\s\S]*?border-radius: 8px/)
   assert.match(source, /@media \(max-width: 620px\)/)
+  assert.match(source, /:global\(html\[data-theme='pureWhite'\] \.parametric-pane\)/)
+  assert.match(source, /:global\(html\[data-theme='pureWhite'\] \.parametric-toolbar-card\)/)
+  assert.doesNotMatch(source, /:global\(html:not\(\[data-theme='dark'\]\)\)/)
 })
 
 test('parametric editor reuses native player visualization data and cleans up animation work', () => {

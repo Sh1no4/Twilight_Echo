@@ -10,6 +10,7 @@ import {
   AudioEngineManager,
   normalizeAudioProcessingSettings,
   type AudioProcessingSettings,
+  type AudioOutputState,
   type AudioOutputId,
   type AudioEngineQueueItem,
   type PlayMode,
@@ -36,6 +37,7 @@ import {
   AudioDiagnosticRecorder,
   collectDsdPcmBlockers,
   createPlaybackDiagnosticEvent,
+  findFooDsdAsioBridgeSuggestion,
   type AudioDiagnosticSnapshot
 } from './audioDiagnostics.ts'
 import {
@@ -286,7 +288,7 @@ function recordPlaybackDiagnostic(
     const details = createPlaybackDiagnosticEvent({
       playback: info,
       processing: getEffectiveAudioProcessing(),
-      outputConfig: engine.getOutputConfig(),
+      outputConfig: engine.getEffectiveOutputConfig(),
       sceneState: engine.getDspSceneState(),
       selectedOutput: {
         output: runtime.appSettings.audioOutput,
@@ -314,6 +316,7 @@ async function captureAudioDiagnosticSnapshot(): Promise<AudioDiagnosticSnapshot
   const configuredProcessing = runtime.appSettings.audioProcessing
   const effectiveProcessing = getEffectiveAudioProcessing()
   const outputConfig = engine.getOutputConfig()
+  const effectiveOutputConfig = engine.getEffectiveOutputConfig()
   const dspSceneState = engine.getDspSceneState()
   const playback = await captureDiagnosticValue(() => engine.getPlaybackInfo())
   const outputState = await captureDiagnosticValue(() => engine.getAudioOutputState())
@@ -326,20 +329,27 @@ async function captureAudioDiagnosticSnapshot(): Promise<AudioDiagnosticSnapshot
         blockers: collectDsdPcmBlockers({
           playback,
           processing: effectiveProcessing,
-          outputConfig,
+          outputConfig: effectiveOutputConfig,
           sceneState: dspSceneState
         }),
         nativeDsdRuntimeState: playback.outputInfo.nativeDsdRuntimeState,
-        nativeDsdRuntimeReason: playback.outputInfo.nativeDsdRuntimeReason
+        nativeDsdRuntimeReason: playback.outputInfo.nativeDsdRuntimeReason,
+        nativeDsdNegotiation: playback.outputInfo.diagnostics.nativeDsdNegotiation ?? '',
+        dopRuntimeEvidence: playback.outputInfo.diagnostics.dopRuntimeEvidence ?? '',
+        fooDsdAsioBridgeSuggestion: isAudioOutputState(outputState)
+          ? findFooDsdAsioBridgeSuggestion({ playback, outputState })
+          : undefined
       }
     : { unavailable: true }
   return {
     playback,
     outputState,
     outputConfig,
+    effectiveOutputConfig,
     outputConfigApplyStatus: engine.getOutputConfigApplyStatus(),
     configuredProcessing,
     effectiveProcessing,
+    engineProcessing: engine.getAudioProcessing(),
     headphoneCompensation: summarizeHeadphoneCompensation(),
     dspSceneState,
     dspGraphStatus,
@@ -369,6 +379,16 @@ function isPlaybackInfo(
   )
 }
 
+function isAudioOutputState(value: unknown): value is AudioOutputState {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      'output' in value &&
+      'device' in value &&
+      'deviceOptions' in value
+  )
+}
+
 export async function setupAudioEngineIpc(): Promise<void> {
   let initialAudioProcessing = getEffectiveAudioProcessing()
   try {
@@ -386,6 +406,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
   runtime.audioEngineManager = new AudioEngineManager(
     {
       exclusiveMode: runtime.appSettings.audioExclusiveMode,
+      volume: runtime.appSettings.softwareVolume,
       audioOutput: runtime.appSettings.audioOutput,
       audioDevice: runtime.appSettings.audioDevice,
       audioOutputConfig: runtime.appSettings.audioOutputConfig,
@@ -704,9 +725,16 @@ export async function setupAudioEngineIpc(): Promise<void> {
     'audioEngine:setAudioProcessing',
     async (_event, settings: Partial<AudioProcessingSettings>) => {
       assertTrustedIpcSender(_event, 'audio engine IPC')
+      const directMode =
+        settings.directMode === true || settings.dspEnabled === false
+          ? true
+          : settings.directMode === false || settings.dspEnabled === true
+            ? false
+            : runtime.appSettings.audioProcessing.directMode
       const normalized = await authorizeAudioProcessingSettings({
         ...runtime.appSettings.audioProcessing,
-        ...settings
+        ...settings,
+        directMode
       })
       await persistAndApplyAudioProcessingState(normalized)
       audioDiagnosticRecorder?.record('audio-processing-changed', {

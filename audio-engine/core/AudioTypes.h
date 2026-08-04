@@ -173,6 +173,8 @@ struct OutputInfo {
     int transportSampleRate = 0;
     bool typedRawPath = false;
     bool processingBypassed = false;
+    std::string nativeDsdNegotiation;
+    std::string dopRuntimeEvidence;
     std::string firstBufferSummary;
     std::string processArchitecture;
     bool asioBuildEnabled = false;

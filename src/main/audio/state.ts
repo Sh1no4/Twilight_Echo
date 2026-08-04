@@ -121,14 +121,17 @@ export async function applyEffectiveAudioProcessingToEngine(): Promise<AudioProc
 export async function persistAndApplyAudioProcessingState(
   processing: AudioProcessingSettings
 ): Promise<SettingsSnapshot> {
-  const snapshot = persistAudioProcessingState(processing)
   try {
-    await applyEffectiveAudioProcessingToEngine()
+    if (runtime.audioEngineManager) {
+      await runtime.audioEngineManager.setAudioProcessing(
+        buildEffectiveAudioProcessingSettings(processing, runtime.appSettings.headphoneCompensation)
+      )
+    }
   } catch (err) {
-    console.warn('应用合成 DSP 设置到音频引擎失败，已保留用户设置：', err)
+    console.warn('应用合成 DSP 设置到音频引擎失败，未保存用户设置：', err)
     throw err
   }
-  return snapshot
+  return persistAudioProcessingState(processing)
 }
 
 export function getWindowBackgroundColor(settings: AppSettings): string {

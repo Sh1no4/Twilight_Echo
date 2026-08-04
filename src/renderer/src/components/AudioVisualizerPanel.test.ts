@@ -67,10 +67,16 @@ test('audio visualizer display mapping uses deterministic low-frequency shelf co
     /return Math\.pow\(level, SPECTRUM_DISPLAY_GAMMA\) \* SPECTRUM_DISPLAY_HEADROOM/
   )
   assert.match(visualizer, /function buildLogFrequencyBinCenters\(barCount, sampleRate, fftSize\)/)
-  assert.match(visualizer, /function applyLowFrequencyShelfContour\(rawBars, binCenters, contourPhase\)/)
+  assert.match(
+    visualizer,
+    /function applyLowFrequencyShelfContour\(rawBars, binCenters, contourPhase\)/
+  )
   assert.match(visualizer, /LOW_FREQUENCY_CONTOUR_BASE_DEPTH/)
   assert.match(visualizer, /LOW_FREQUENCY_CONTOUR_FLAT_RANGE/)
-  assert.match(visualizer, /const tertiary = Math\.sin\(\(barIndex \+ 1\) \* 2\.37 \+ phase \* 0\.9\)/)
+  assert.match(
+    visualizer,
+    /const tertiary = Math\.sin\(\(barIndex \+ 1\) \* 2\.37 \+ phase \* 0\.9\)/
+  )
   assert.match(
     visualizer,
     /sourceLevels = applyLowFrequencyShelfContour\(rawComputedBars, binCenters, contourPhase\)/
@@ -80,10 +86,7 @@ test('audio visualizer display mapping uses deterministic low-frequency shelf co
     /sourceLevels = applyLowFrequencyShelfContour\(rawPrecomputedBars, binCenters, contourPhase\)/
   )
   assert.match(visualizer, /lowFrequencyContourPhase: contourPhase/)
-  assert.match(
-    visualizer,
-    /const val = visualizerDisplayLevel\(sourceLevels\[i\]\) \* 255/
-  )
+  assert.match(visualizer, /const val = visualizerDisplayLevel\(sourceLevels\[i\]\) \* 255/)
   assert.match(visualizer, /const targetHeight = \(val \/ 255\) \* height \* SPECTRUM_HEIGHT_SCALE/)
   assert.doesNotMatch(visualizer, /const targetHeight = \(val \/ 255\) \* \(height - 15\)/)
   assert.doesNotMatch(visualizer, /Math\.random/)
@@ -99,6 +102,21 @@ test('audio visualizer panel requests precomputed bars instead of posting full s
   assert.match(panel, /bars,/)
   assert.doesNotMatch(panel, /Float32Array\.from\(v\.spectrum\)/)
   assert.doesNotMatch(panel, /data: spectrum/)
+})
+
+test('audio visualizer hides synthetic fallback frames instead of presenting them as real FFT data', () => {
+  const panel = readFileSync(new URL('./AudioVisualizerPanel.vue', import.meta.url), 'utf8')
+
+  assert.match(
+    panel,
+    /if \(v\.tapStatus === 'synthetic-fallback'\) \{[\s\S]*postInactiveVisualizationFrame\(\)[\s\S]*return/
+  )
+  assert.doesNotMatch(
+    panel,
+    /if \(v\.tapStatus !== 'synthetic-fallback'\) \{[\s\S]*tempoEstimator\.pushFrame/
+  )
+  assert.match(panel, /const bars = Float32Array\.from\(v\.visualizerBars \?\? \[\]\)/)
+  assert.match(panel, /kind: 'spectrum',[\s\S]*bars,[\s\S]*active: v\.active/)
 })
 
 test('audio visualizer panel self-schedules sampling without timer backlog', () => {
@@ -202,6 +220,30 @@ test('audio visualizer shows the current album in the header source label', () =
   assert.doesNotMatch(visualizer, /<span class="source-text">From: 20<\/span>/)
 })
 
+test('audio visualizer re-grants durable covers and only reveals successfully loaded artwork', () => {
+  const panel = readFileSync(new URL('./AudioVisualizerPanel.vue', import.meta.url), 'utf8')
+  const visualizer = readFileSync(
+    new URL('../../../../resources/audio-visualizer/index.html', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(
+    panel,
+    /const resolvedCover = useCover\([\s\S]*currentTrack\.value\?\.cover \?\? null[\s\S]*currentTrack\.value\?\.coverSource \?\? null[\s\S]*\)/
+  )
+  assert.match(visualizer, /let albumCoverRequestId = 0/)
+  assert.match(visualizer, /function updateAlbumCover\(url\)/)
+  assert.match(visualizer, /const requestId = \+\+albumCoverRequestId/)
+  assert.match(visualizer, /const candidate = new Image\(\)/)
+  assert.match(visualizer, /candidate\.onload = \(\) => \{[\s\S]*requestId !== albumCoverRequestId/)
+  assert.match(visualizer, /currentImage\.replaceWith\(candidate\)/)
+  assert.match(visualizer, /candidate\.style\.visibility = 'visible'/)
+  assert.match(visualizer, /candidate\.onerror = \(\) => \{[\s\S]*removeAttribute\('src'\)/)
+  assert.match(visualizer, /case 'cover': \{[\s\S]*updateAlbumCover\(msg\.url\)/)
+  assert.match(visualizer, /id="album-cover-img" src="" alt=""/)
+  assert.doesNotMatch(visualizer, /albumCoverImg\.style\.visibility = 'visible'/)
+})
+
 test('audio visualizer render loops are bounded and avoid per-frame bar allocations', () => {
   const visualizer = readFileSync(
     new URL('../../../../resources/audio-visualizer/index.html', import.meta.url),
@@ -265,11 +307,17 @@ test('audio visualizer metadata typography follows target hierarchy without reco
   assert.match(visualizer, /titleEl\.classList\.remove\('single-line'\)/)
   assert.match(visualizer, /titleEl\.classList\.toggle\('single-line', lineTops\.size <= 1\)/)
   assert.match(visualizer, /updateHzLabels\(\);\s*syncTitleLineClass\(\);/)
-  assert.match(visualizer, /document\.getElementById\('display-title'\)\.innerText = track\.title \|\| '--';\s*syncTitleLineClass\(\);/)
+  assert.match(
+    visualizer,
+    /document\.getElementById\('display-title'\)\.innerText = track\.title \|\| '--';\s*syncTitleLineClass\(\);/
+  )
   assert.match(visualizer, /\.track-artist \{[\s\S]*font-size: 18px/)
   assert.match(visualizer, /\.track-artist::before \{[\s\S]*content: 'By'/)
   assert.match(visualizer, /\.quality-container \{[\s\S]*padding-top: 52px/)
-  assert.match(visualizer, /\.stats-grid-row \{[\s\S]*border-top: 1\.5px solid rgba\(0, 0, 0, 0\.18\)/)
+  assert.match(
+    visualizer,
+    /\.stats-grid-row \{[\s\S]*border-top: 1\.5px solid rgba\(0, 0, 0, 0\.18\)/
+  )
   assert.match(visualizer, /\.stats-grid-row \{[\s\S]*padding: 16px 0 18px 0/)
   assert.doesNotMatch(visualizer, /\.stats-grid-row \{[^}]*border-bottom/)
   assert.match(visualizer, /\.stat-col:not\(:last-child\) \{[\s\S]*border-right/)
@@ -371,17 +419,29 @@ test('audio visualizer has slow cover and playback orbit layers', () => {
   assert.match(visualizer, /\.controls-container \{[\s\S]*max-width: 430px/)
   assert.match(visualizer, /\.control-orbit-system \{[\s\S]*width: 500px/)
   assert.match(visualizer, /\.control-orbit-track\.inner \{[\s\S]*width: 94px/)
-  assert.match(visualizer, /\.control-orbit-track\.inner \{[\s\S]*border-color: rgba\(0, 0, 0, 0\.14\)/)
+  assert.match(
+    visualizer,
+    /\.control-orbit-track\.inner \{[\s\S]*border-color: rgba\(0, 0, 0, 0\.14\)/
+  )
   assert.match(visualizer, /\.control-orbit-track\.outer \{[\s\S]*width: 142px/)
-  assert.match(visualizer, /\.control-orbit-track\.outer \{[\s\S]*border-color: rgba\(0, 0, 0, 0\.16\)/)
+  assert.match(
+    visualizer,
+    /\.control-orbit-track\.outer \{[\s\S]*border-color: rgba\(0, 0, 0, 0\.16\)/
+  )
   assert.doesNotMatch(visualizer, /\.control-orbit-track\.outer::before/)
   assert.doesNotMatch(visualizer, /control-ring-drift/)
   assert.doesNotMatch(visualizer, /\.control-orbit-track\.main/)
   assert.doesNotMatch(visualizer, /class="control-orbit-track main"/)
   assert.match(visualizer, /\.control-orbit-node\.gray::before \{[\s\S]*rgba\(72, 74, 78, 0\.68\)/)
-  assert.match(visualizer, /\.control-orbit-node \{[\s\S]*animation: orbit-spin 22s linear infinite/)
+  assert.match(
+    visualizer,
+    /\.control-orbit-node \{[\s\S]*animation: orbit-spin 22s linear infinite/
+  )
   assert.match(visualizer, /\.control-orbit-node \{[\s\S]*animation-play-state: paused/)
-  assert.match(visualizer, /body\.is-playing \.control-orbit-node \{[\s\S]*animation-play-state: running/)
+  assert.match(
+    visualizer,
+    /body\.is-playing \.control-orbit-node \{[\s\S]*animation-play-state: running/
+  )
   assert.doesNotMatch(visualizer, /class="control-orbit-node [^"]*slow/)
   assert.doesNotMatch(visualizer, /class="control-orbit-node [^"]*drift/)
   assert.match(visualizer, /--orbit-radius: 71px/)

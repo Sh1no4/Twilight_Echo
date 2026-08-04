@@ -51,6 +51,12 @@ import { normalizeThemeSelection, normalizeThemeWindowInheritance } from '../../
 import { normalizeMotionPreference } from '../../shared/motion.ts'
 import { DEFAULT_SLEEP_TIMER_SETTINGS, type SleepTimerSettings } from '../../shared/sleepTimer.ts'
 import {
+  DEFAULT_LYRICS_APPEARANCE,
+  cloneLyricsAppearance,
+  normalizeLyricsAppearance
+} from '../../shared/lyricsAppearance.ts'
+import { DEFAULT_GENRE_SEPARATORS, normalizeGenreSeparators } from '../../shared/genreSeparators.ts'
+import {
   loadSettingsFile,
   writeSettingsFile,
   type SettingsFileLoadIssue
@@ -120,8 +126,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     cardBlur: 24
   },
   useCoverTheme: true,
-  lyricFontSize: 18,
+  lyricsAppearance: cloneLyricsAppearance(DEFAULT_LYRICS_APPEARANCE),
   libraryFolders: [],
+  genreSeparators: DEFAULT_GENRE_SEPARATORS,
   watchLibrary: true,
   onlineLyricsFallback: false,
   smtcEnabled: true,
@@ -180,8 +187,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
     }
   },
   nowPlayingBackground: 'blur',
-  lyricAlign: 'center',
-  lyricDimOpacity: 40,
   playbackResumeMode: 'off',
   sleepTimer: DEFAULT_SLEEP_TIMER_SETTINGS,
   ncmPlaybackQuality: 'auto',
@@ -610,6 +615,7 @@ export function normalizeSleepTimerSettings(raw: unknown): SleepTimerSettings {
 }
 
 export function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
+  const rawSettings = settings as Record<string, unknown>
   const audioProcessing = normalizeAudioProcessingSettings(settings.audioProcessing)
   const dspScenes = normalizeDspScenes(settings.dspScenes, audioProcessing)
   const rawCachePath =
@@ -668,8 +674,9 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     windowTransparency: settings.windowTransparency === true,
     windowTransparencyEffect: normalizeWindowTransparencyEffect(settings.windowTransparencyEffect),
     useCoverTheme: settings.useCoverTheme !== false,
-    lyricFontSize: clampNumber(settings.lyricFontSize, 14, 28, DEFAULT_SETTINGS.lyricFontSize),
+    lyricsAppearance: normalizeLyricsAppearance(settings.lyricsAppearance, rawSettings),
     libraryFolders: normalizeStringArray(settings.libraryFolders),
+    genreSeparators: normalizeGenreSeparators(settings.genreSeparators),
     watchLibrary: settings.watchLibrary !== false,
     onlineLyricsFallback: settings.onlineLyricsFallback === true,
     smtcEnabled: settings.smtcEnabled !== false,
@@ -687,13 +694,6 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     appBackground: normalizeAppBackground(settings.appBackground),
     cardAppearance: normalizeCardAppearance(settings.cardAppearance),
     nowPlayingBackground: normalizeNowPlayingBackground(settings.nowPlayingBackground),
-    lyricAlign: settings.lyricAlign === 'left' ? 'left' : 'center',
-    lyricDimOpacity: clampNumber(
-      settings.lyricDimOpacity,
-      10,
-      100,
-      DEFAULT_SETTINGS.lyricDimOpacity
-    ),
     playbackResumeMode: normalizePlaybackResumeMode(settings.playbackResumeMode),
     sleepTimer: normalizeSleepTimerSettings(settings.sleepTimer),
     ncmPlaybackQuality: normalizeNcmPlaybackQuality(settings.ncmPlaybackQuality),

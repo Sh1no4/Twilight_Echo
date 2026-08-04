@@ -139,6 +139,12 @@ outputs/
 /out-package-*/
 /out-release-*/
 /out-strip-quarantine-*/
+/out-eq-validation-*/
+/out-folder-genre-validation-*/
+/out-fonts-pre-unpack-*/
+/out-frequency-response-validation-*/
+/out-lyric-*/
+/out-lyrics-*/
 *.cer
 *.crt
 *.p7b

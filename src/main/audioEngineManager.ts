@@ -134,6 +134,7 @@ export class AudioEngineManager extends EventEmitter {
   private audioServiceReadyRestoreSerial = 0
   private lastNativeError = ''
   private pendingNativeSource: string | null = null
+  private directModePlaybackRateRestore: number | null = null
 
   constructor(
     config: AudioEngineConfig = { exclusiveMode: false },
@@ -186,6 +187,7 @@ export class AudioEngineManager extends EventEmitter {
       this.exclusiveMode,
       this.outputConfig
     )
+    initialPlaybackInfo.volume = clampNumber(config.volume, 0, 1, 1)
     this.playback = new PlaybackController(
       {
         getNative: () => this.native,
@@ -275,6 +277,8 @@ export class AudioEngineManager extends EventEmitter {
         updateNativeInfoSnapshot: () => this.updateNativeInfoSnapshot(),
         syncLoudnormModeTransition: (previousMode, nextMode) =>
           this.syncLoudnormModeTransition(previousMode, nextMode),
+        applyDirectModeRuntimeOverrides: (enabled) =>
+          this.applyDirectModeRuntimeOverrides(enabled),
         tryNative: (context, action) => this.tryNative(context, action)
       },
       config,
@@ -365,7 +369,7 @@ export class AudioEngineManager extends EventEmitter {
     this.dsp.nativeConvolverIrPath = value
   }
   private get nativeDspPluginChainJson(): string {
-    return this.dsp.nativeDspPluginChainJson
+    return this.dsp.getEffectiveNativeDspPluginChainJson()
   }
   private set lastNativeDspPluginStatusCache(
     value: { readAt: number; status: unknown } | null
@@ -581,6 +585,13 @@ export class AudioEngineManager extends EventEmitter {
     const routeRestore = await this.restoreAudioServiceOutputRoute('初始化')
     this.nativeOutputRouteSynced = routeRestore.synced
     await this.applyNativeDspSettings('初始化 DSP 配置', {}, false)
+    await this.restoreAudioServiceOutputRouteStep(
+      'volume',
+      '初始化软件音量',
+      'SetVolume',
+      this.playbackInfo.volume
+    )
+    if (this.processing.directMode) await this.applyDirectModeRuntimeOverrides(true)
     this.startClock()
     this.scheduler.setImmediate(() => this.emit('ready'))
   }
@@ -965,6 +976,10 @@ export class AudioEngineManager extends EventEmitter {
     return this.outputRouter.getOutputConfig()
   }
 
+  getEffectiveOutputConfig(): OutputConfig {
+    return this.outputRouter.getEffectiveOutputConfig()
+  }
+
   getOutputConfigApplyStatus(): OutputConfigApplyStatus {
     return this.outputRouter.getOutputConfigApplyStatus()
   }
@@ -1052,6 +1067,10 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async setPlaybackRate(rate: number): Promise<void> {
+    if (this.processing.directMode) {
+      this.directModePlaybackRateRestore = clampNumber(rate, 0.5, 2, 1)
+      return this.playback.setPlaybackRate(1)
+    }
     return this.playback.setPlaybackRate(rate)
   }
 
@@ -1276,6 +1295,33 @@ export class AudioEngineManager extends EventEmitter {
     })
   }
 
+  private async applyDirectModeRuntimeOverrides(enabled: boolean): Promise<void> {
+    if (enabled) {
+      if (this.directModePlaybackRateRestore === null) {
+        this.directModePlaybackRateRestore = this.playbackInfo.playbackRate ?? 1
+      }
+      await this.outputRouter.setDirectRoutingOverride(true)
+      try {
+        await this.playback.setPlaybackRate(1)
+      } catch (error) {
+        await this.outputRouter.setDirectRoutingOverride(false)
+        this.directModePlaybackRateRestore = null
+        throw error
+      }
+    } else {
+      const restoreRate = this.directModePlaybackRateRestore ?? (this.playbackInfo.playbackRate ?? 1)
+      await this.outputRouter.setDirectRoutingOverride(false)
+      try {
+        await this.playback.setPlaybackRate(restoreRate)
+        this.directModePlaybackRateRestore = null
+      } catch (error) {
+        await this.outputRouter.setDirectRoutingOverride(true)
+        throw error
+      }
+    }
+    this.updateOutputPerfect()
+    this.publishPlaybackInfo()
+  }
 
   private updateOutputPerfect(): void {
     if (this.nativePlaybackActive) {
@@ -1283,24 +1329,31 @@ export class AudioEngineManager extends EventEmitter {
       return
     }
 
-    const sceneResolution = this.refreshResolvedDspScene()
+    const sceneState = this.dsp.getDspSceneState()
+    const effectiveGraph = sceneState.effectiveGraph ?? sceneState.graph
     const sceneDspActive =
-      graphHasEnabledProcessing(sceneResolution.graph) &&
-      !(sceneResolution.requiresPcmFallback && this.processing.dsdOutputMode !== 'pcm')
+      graphHasEnabledProcessing(effectiveGraph) &&
+      !(sceneState.requiresPcmFallback && this.processing.dsdOutputMode !== 'pcm')
+    const crossfadeSeconds = this.processing.directMode ? 0 : this.processing.crossfadeSeconds
     const dspActive =
       sceneDspActive ||
-      this.processing.crossfadeSeconds > 0 ||
+      crossfadeSeconds > 0 ||
       Math.abs(this.playbackInfo.volume - 1) > 0.001 ||
       Math.abs((this.playbackInfo.playbackRate ?? 1) - 1) > 0.001
     const replayGainActive =
-      this.processing.dspEnabled && this.processing.volumeNormalization !== 'off'
-    const eqActive = this.processing.dspEnabled && this.processing.eqEnabled
-    const convolverActive = this.processing.dspEnabled && this.playbackInfo.convolverActive
+      !this.processing.directMode &&
+      this.processing.dspEnabled &&
+      this.processing.volumeNormalization !== 'off'
+    const eqActive =
+      !this.processing.directMode && this.processing.dspEnabled && this.processing.eqEnabled
+    const convolverActive =
+      !this.processing.directMode && this.processing.dspEnabled && this.playbackInfo.convolverActive
     const crossfeedActive =
+      !this.processing.directMode &&
       this.processing.dspEnabled &&
       this.processing.crossfeedEnabled &&
       this.processing.crossfeedStrength > 0
-    const crossfadeActive = this.processing.crossfadeSeconds > 0
+    const crossfadeActive = crossfadeSeconds > 0
     const supportsOutputPerfect = this.playbackInfo.outputInfo.supportsOutputPerfect === true
     const outputFormatMatchesSource =
       this.playbackInfo.sourceSampleRate > 0 &&
@@ -1327,7 +1380,7 @@ export class AudioEngineManager extends EventEmitter {
     this.playbackInfo.crossfeedActive = crossfeedActive
     this.playbackInfo.crossfeedStrength = crossfeedActive ? this.processing.crossfeedStrength : 0
     this.playbackInfo.crossfadeActive = crossfadeActive
-    this.playbackInfo.crossfadeSeconds = crossfadeActive ? this.processing.crossfadeSeconds : 0
+    this.playbackInfo.crossfadeSeconds = crossfadeActive ? crossfadeSeconds : 0
     this.playbackInfo.dspActive = dspActive
     this.playbackInfo.outputInfo = {
       ...this.playbackInfo.outputInfo,

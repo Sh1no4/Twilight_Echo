@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  computeFrequencyResponseComparison,
   computeTargetRelativeFrequencyResponse,
   parseAutoEqCsv,
   sampleFrequencyCurveAt
@@ -62,6 +63,36 @@ test('interpolates response linearly in logarithmic frequency space', () => {
   assert.equal(sampleFrequencyCurveAt(curve, 100), -6)
   assert.equal(sampleFrequencyCurveAt(curve, 50), null)
   assert.equal(sampleFrequencyCurveAt(curve, 2000), null)
+})
+
+test('computes absolute source, target, combined filter, and corrected response curves', () => {
+  const imported = parseAutoEqCsv(
+    'frequency,raw,target\n100,-5,-2\n1000,4,1\n10000,2,3\n',
+    'measurement.csv'
+  )
+  const filterResponse = [
+    { frequency: 100, db: 2 },
+    { frequency: 1000, db: -4 },
+    { frequency: 10000, db: 0.5 }
+  ]
+  const result = computeFrequencyResponseComparison(imported, filterResponse, [100, 1000, 10000])
+
+  assert.deepEqual(result.source, [
+    { frequency: 100, db: -5 },
+    { frequency: 1000, db: 4 },
+    { frequency: 10000, db: 2 }
+  ])
+  assert.deepEqual(result.target, [
+    { frequency: 100, db: -2 },
+    { frequency: 1000, db: 1 },
+    { frequency: 10000, db: 3 }
+  ])
+  assert.deepEqual(result.combinedFilter, filterResponse)
+  assert.deepEqual(result.corrected, [
+    { frequency: 100, db: -3 },
+    { frequency: 1000, db: 0 },
+    { frequency: 10000, db: 2.5 }
+  ])
 })
 
 test('computes measured source and DSP-corrected curves relative to a zero dB target', () => {

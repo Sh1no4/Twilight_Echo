@@ -30,6 +30,10 @@ test('audioEngine loadQueue IPC accepts renderer queue items with source field',
   )
 })
 
+test('audio engine cold start passes persisted software volume into the manager', () => {
+  assert.match(source, /volume: runtime\.appSettings\.softwareVolume/)
+})
+
 test('audioEngine IPC normalizes untrusted renderer parameters', () => {
   assert.match(source, /const MAX_AUDIO_QUEUE_ITEMS = 5000/)
   assert.match(

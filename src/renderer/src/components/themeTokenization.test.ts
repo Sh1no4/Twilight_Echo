@@ -186,7 +186,7 @@ test('settings appearance choices override the active theme and provide usable d
   assert.match(themeStore, /cacheSettingsAppearance\(bootstrap\.settings\)/)
   assert.match(
     themeStore,
-    /window\.api\.settings\.onChanged\(\(next\) => \{[\s\S]*cacheSettingsAppearance\(next\.settings\)/
+    /window\.api\.settings\.onChanged\(\(next\) => \{[\s\S]*syncThemeSettingsAppearance\(next\.settings\)/
   )
   assert.match(themeStore, /applySettingsThemeMode\(next\.settings\.theme\)/)
   assert.match(themeStore, /applySettingsAccentColor\(tone, variables\)/)
