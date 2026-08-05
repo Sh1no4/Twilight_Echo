@@ -333,7 +333,7 @@ networkSources: {
 | M1 | P1 骨架 + WebDAV 全链路 | 3–5 |
 | M2 | FTP/FTPS + SFTP/SCP adapter + 下载缓存 | 3–5 |
 | M3 | 虚拟媒体库（递归入库/元数据/封面） | 3–4（✅ 已实现：标签/封面解析在媒体库视图手动触发） |
-| M4 | UI 完善 + 书签 + 缓存管理 + 手工验收 | 2–3（✅ 已实现：书签/缓存统计与清理/媒体库时长展示；封面展示待本地库集成） |
+| M4 | UI 完善 + 书签 + 缓存管理 + 手工验收 | 2–3（✅ 已实现：书签/缓存统计与清理/媒体库时长与封面展示） |
 | M5 | P2 SMB/NFS（先系统挂载方案） | 3–6（✅ 已实现：SMB = Windows `net use` / Linux `gio mount` 匿名；NFS = Linux `mount -t nfs`，运行时需 root） |
 | M6 | P3 DLNA 浏览/直投 | 3–5（✅ 浏览已实现：ContentDirectory Browse + res 直连播放；投送到渲染器复用现有 castBackend） |
 

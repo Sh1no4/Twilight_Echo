@@ -7,6 +7,7 @@ import type {
   NetworkPlaybackPlan,
   NetworkSourceProfileSummary
 } from '../../../shared/networkSources.ts'
+import NetworkCoverThumb from './network-sources/NetworkCoverThumb.vue'
 
 defineEmits<{ back: [] }>()
 
@@ -541,8 +542,11 @@ onMounted(() => {
         <span v-if="libraryLoading" class="network-browsing" aria-live="polite">加载中…</span>
       </div>
       <ul v-if="libraryEntries.length > 0" class="network-entry-list">
-        <li v-for="item in libraryEntries" :key="item.entry.id" class="network-entry">
-          <span class="network-entry-kind"><i class="pi pi-music"></i></span>
+        <li v-for="item in libraryEntries" :key="item.entry.id" class="network-entry network-entry-cover">
+          <NetworkCoverThumb
+            :profile-id="item.entry.profileId"
+            :entry-id="item.entry.id"
+          />
           <button type="button" class="network-entry-name" @click="playEntry(item.entry)">
             {{ item.entry.metadata?.title ?? item.entry.name }}
           </button>
@@ -913,6 +917,10 @@ onMounted(() => {
   min-height: 40px;
   padding: 4px 6px;
   border-radius: 9px;
+}
+
+.network-entry-cover {
+  grid-template-columns: 34px minmax(0, 1fr) auto auto;
 }
 
 .network-entry:hover {

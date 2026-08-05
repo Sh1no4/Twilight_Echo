@@ -1694,6 +1694,7 @@ interface WindowAPI {
         entry: import('../shared/networkSources.ts').NetworkEntry
       }>
     >
+    coverDataUrl: (profileId: string, entryId: string) => Promise<string | null>
   }
   remote: {
     getStatus: () => Promise<import('../shared/remoteControl.ts').RemoteControlStatus>

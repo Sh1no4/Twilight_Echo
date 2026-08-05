@@ -14,6 +14,7 @@ import {
 import { runtime } from '../core/runtime.ts'
 import { NetworkSourceFailure } from './errors.ts'
 import { clearDirectory, getDirectorySize, networkCacheDir } from './networkCache.ts'
+import { readCoverDataUrl } from './networkCover.ts'
 import { createNetworkProfileStore, type CredentialCodec } from './profileStore.ts'
 import { createNetworkLibrary } from './networkLibrary.ts'
 import { createNetworkSourcesManager, type NetworkSourcesManager } from './sourcesManager.ts'
@@ -184,6 +185,18 @@ export function setupNetworkSourceIpc(): void {
     assertTrusted(event)
     return sources.searchLibrary(normalizeOptionalIpcString(query, 'query', 256))
   })
+
+  ipcMain.handle(
+    'networkSources:coverDataUrl',
+    (event, id: unknown, entryId: unknown) => {
+      assertTrusted(event)
+      normalizeProfileId(id)
+      const normalizedEntryId = normalizeIpcString(entryId, 'entry id', 128)
+      const musicCacheRoot =
+        runtime.appSettings.musicCachePath || join(app.getPath('userData'), 'music-cache')
+      return readCoverDataUrl(normalizedEntryId, join(musicCacheRoot, 'cover-cache'))
+    }
+  )
 
   ipcMain.handle('networkSources:cacheInfo', (event) => {
     assertTrusted(event)

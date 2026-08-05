@@ -968,7 +968,9 @@ const api = {
         profileName: string
         entry: import('../shared/networkSources.ts').NetworkEntry
       }>
-    > => ipcRenderer.invoke('networkSources:searchLibrary', query)
+    > => ipcRenderer.invoke('networkSources:searchLibrary', query),
+    coverDataUrl: (profileId: string, entryId: string): Promise<string | null> =>
+      ipcRenderer.invoke('networkSources:coverDataUrl', profileId, entryId)
   },
   remote: {
     getStatus: (): Promise<import('../shared/remoteControl.ts').RemoteControlStatus> =>
