@@ -3,6 +3,7 @@ import type {
   NetworkSourceProfile,
   NetworkSourceProfileSummary
 } from '../../shared/networkSources.ts'
+import { hasControlCharacters } from './textValidation.ts'
 
 const MAX_REMOTE_PATH_LENGTH = 4096
 
@@ -16,7 +17,7 @@ export function normalizeRemotePath(input: string): string {
   if (typeof input !== 'string') throw new Error('remote path must be a string')
   const raw = input.trim()
   if (raw.length > MAX_REMOTE_PATH_LENGTH) throw new Error('remote path is too long')
-  if (/[\u0000-\u001f\u007f]/.test(raw)) throw new Error('remote path contains control characters')
+  if (hasControlCharacters(raw)) throw new Error('remote path contains control characters')
 
   const segments: string[] = []
   for (const segment of raw.split('/')) {

@@ -26,7 +26,7 @@ export type SftpBatchRunner = (
   deps: { host: string; port: number; username: string; keyPath: string }
 ) => Promise<SftpBatchResult>
 
-const LS_LINE = /^([\-dl])([rwxsStT\-]{9})\s+\d+\s+\S+\s+\S+\s+(\d+)\s+[A-Za-z]{3}\s+\d{1,2}\s+(?:\d{2}:\d{2}|\d{4})\s+(.+)$/
+const LS_LINE = /^([-dl])([rwxsStT-]{9})\s+\d+\s+\S+\s+\S+\s+(\d+)\s+[A-Za-z]{3}\s+\d{1,2}\s+(?:\d{2}:\d{2}|\d{4})\s+(.+)$/
 
 /** 解析 OpenSSH `sftp ls -l` 输出（与 Unix `ls -l` 同格式）。 */
 export function parseLsOutput(output: string): SftpLsItem[] {

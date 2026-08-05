@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { normalizeRemotePath, redactProfile } from './networkPath.ts'
 import { NetworkSourceFailure } from './errors.ts'
+import { hasControlCharacters } from './textValidation.ts'
 import type { NetworkAuth } from './adapters/types.ts'
 import type {
   NetworkProtocol,
@@ -48,7 +49,7 @@ function normalizeName(value: unknown): string {
   if (typeof value !== 'string') throw new NetworkSourceFailure('invalidProfile', '名称必须是字符串')
   const name = value.trim()
   if (!name || name.length > 64) throw new NetworkSourceFailure('invalidProfile', '名称长度需在 1–64 之间')
-  if (/[\u0000-\u001f\u007f]/.test(name)) {
+  if (hasControlCharacters(name)) {
     throw new NetworkSourceFailure('invalidProfile', '名称包含非法字符')
   }
   return name
@@ -57,7 +58,7 @@ function normalizeName(value: unknown): string {
 function normalizeHost(value: unknown): string {
   if (typeof value !== 'string') throw new NetworkSourceFailure('invalidProfile', '地址必须是字符串')
   const host = value.trim().replace(/^https?:\/\//i, '')
-  if (!host || host.length > 253 || /[\u0000-\u001f\u007f]/.test(host)) {
+  if (!host || host.length > 253 || hasControlCharacters(host)) {
     throw new NetworkSourceFailure('invalidProfile', '地址不合法')
   }
   return host
@@ -74,7 +75,7 @@ function normalizePort(value: unknown): number | null {
 
 function normalizeUsername(value: unknown): string | undefined {
   if (value == null || value === '') return undefined
-  if (typeof value !== 'string' || value.length > 128 || /[\u0000-\u001f\u007f]/.test(value)) {
+  if (typeof value !== 'string' || value.length > 128 || hasControlCharacters(value)) {
     throw new NetworkSourceFailure('invalidProfile', '用户名不合法')
   }
   return value.trim()
@@ -90,7 +91,7 @@ function validateAuth(auth: NetworkSourceProfileInput['auth']): void {
   }
   if (auth.kind === 'privateKey') {
     const keyPath = typeof auth.keyPath === 'string' ? auth.keyPath.trim() : ''
-    if (!keyPath || keyPath.length > 512 || /[\u0000-\u001f\u007f]/.test(keyPath)) {
+    if (!keyPath || keyPath.length > 512 || hasControlCharacters(keyPath)) {
       throw new NetworkSourceFailure('invalidProfile', '私钥路径不合法')
     }
     if (
