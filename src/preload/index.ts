@@ -959,7 +959,16 @@ const api = {
     cacheInfo: (): Promise<{ sizeBytes: number }> =>
       ipcRenderer.invoke('networkSources:cacheInfo'),
     clearCache: (): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke('networkSources:clearCache')
+      ipcRenderer.invoke('networkSources:clearCache'),
+    searchLibrary: (
+      query?: string
+    ): Promise<
+      Array<{
+        profileId: string
+        profileName: string
+        entry: import('../shared/networkSources.ts').NetworkEntry
+      }>
+    > => ipcRenderer.invoke('networkSources:searchLibrary', query)
   },
   remote: {
     getStatus: (): Promise<import('../shared/remoteControl.ts').RemoteControlStatus> =>

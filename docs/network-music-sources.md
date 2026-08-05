@@ -2,7 +2,7 @@
 
 > 关联 issue：[#20](https://github.com/asenyarzc-cpu/Twilight_Echo/issues/20)
 > 状态：设计稿 / 待排期。本文档用于指导后续分阶段实现，并作为 issue 回复与排期依据。
-> 实施进度：M1–M6 已全部落地（WebDAV/FTP/FTPS/SFTP/SCP/SMB/DLNA 浏览、虚拟媒体库、元数据/封面、书签/缓存管理）；
+> 实施进度：M1–M6 已全部落地（WebDAV/FTP/FTPS/SFTP/SCP/SMB/DLNA 浏览、虚拟媒体库、元数据/封面、书签/缓存管理、统一搜索并入网络媒体库）；
 > NFS 暂缓（需 root）；合并前按 `docs/network-music-sources-verification.md` 做真机验证。
 
 ## 1. 目标与范围

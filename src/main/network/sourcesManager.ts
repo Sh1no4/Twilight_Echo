@@ -45,6 +45,9 @@ export interface NetworkSourcesManager {
   enrichLibrary(
     profileId: string
   ): Promise<{ enriched: number; failed: number }>
+  searchLibrary(
+    query?: string
+  ): Promise<Array<{ profileId: string; profileName: string; entry: NetworkEntry }>>
 }
 
 const SCAN_LIMITS = {
@@ -183,6 +186,21 @@ export function createNetworkSourcesManager(deps: {
       }
       if (updated.length > 0) await library.updateEntries(profileId, updated)
       return { enriched: updated.length, failed }
+    },
+    async searchLibrary(query) {
+      const profiles = await store.listProfiles()
+      const results: Array<{
+        profileId: string
+        profileName: string
+        entry: NetworkEntry
+      }> = []
+      for (const profile of profiles) {
+        const entries = await library.listEntries(profile.id, query)
+        for (const entry of entries) {
+          results.push({ profileId: profile.id, profileName: profile.name, entry })
+        }
+      }
+      return results
     }
   }
 }

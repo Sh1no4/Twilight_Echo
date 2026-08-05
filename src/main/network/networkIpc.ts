@@ -179,6 +179,11 @@ export function setupNetworkSourceIpc(): void {
     return sources.enrichLibrary(normalizeProfileId(id))
   })
 
+  ipcMain.handle('networkSources:searchLibrary', (event, query: unknown) => {
+    assertTrusted(event)
+    return sources.searchLibrary(normalizeOptionalIpcString(query, 'query', 256))
+  })
+
   ipcMain.handle('networkSources:cacheInfo', (event) => {
     assertTrusted(event)
     const musicCacheRoot =

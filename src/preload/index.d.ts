@@ -1687,6 +1687,13 @@ interface WindowAPI {
     enrichLibrary: (profileId: string) => Promise<{ enriched: number; failed: number }>
     cacheInfo: () => Promise<{ sizeBytes: number }>
     clearCache: () => Promise<{ ok: boolean }>
+    searchLibrary: (query?: string) => Promise<
+      Array<{
+        profileId: string
+        profileName: string
+        entry: import('../shared/networkSources.ts').NetworkEntry
+      }>
+    >
   }
   remote: {
     getStatus: () => Promise<import('../shared/remoteControl.ts').RemoteControlStatus>

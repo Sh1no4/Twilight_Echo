@@ -313,3 +313,27 @@ test('sourcesManager enriches library entries with parsed metadata', async () =>
     await rm(cacheRoot, { recursive: true, force: true })
   }
 })
+
+test('sourcesManager searchLibrary queries across all profiles with names', async () => {
+  const cacheRoot = await mkdtemp(join(tmpdir(), 'manager-cache-'))
+  try {
+    const manager = createNetworkSourcesManager({
+      store: fakeStore,
+      cacheRoot,
+      coverCacheRoot: join(cacheRoot, 'cover'),
+      library: createNetworkLibrary({ filePath: join(cacheRoot, 'library.json') }),
+      getAdapter: (protocol) =>
+        protocol === 'webdav'
+          ? import('./adapters/webdavAdapter.ts').then((m) => m.createWebDavAdapter())
+          : Promise.resolve(null)
+    })
+    await manager.scanDirectory('p1', '/music')
+    const results = await manager.searchLibrary('tagged')
+    assert.equal(results.length, 1)
+    assert.equal(results[0].profileName, 'NAS')
+    assert.equal(results[0].entry.name, 'tagged.mp3')
+    assert.equal((await manager.searchLibrary()).length, 3)
+  } finally {
+    await rm(cacheRoot, { recursive: true, force: true })
+  }
+})
