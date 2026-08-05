@@ -1654,6 +1654,49 @@ interface WindowAPI {
     saveCookie: (cookie: string) => Promise<void>
     loadCookie: () => Promise<string>
   }
+  networkSources: {
+    listProfiles: () => Promise<import('../shared/networkSources.ts').NetworkSourceProfileSummary[]>
+    createProfile: (
+      input: import('../shared/networkSources.ts').NetworkSourceProfileInput
+    ) => Promise<import('../shared/networkSources.ts').NetworkSourceProfileSummary>
+    updateProfile: (
+      id: string,
+      patch: Partial<import('../shared/networkSources.ts').NetworkSourceProfileInput>
+    ) => Promise<import('../shared/networkSources.ts').NetworkSourceProfileSummary>
+    deleteProfile: (id: string) => Promise<void>
+    listDirectory: (
+      profileId: string,
+      remotePath: string
+    ) => Promise<import('../shared/networkSources.ts').NetworkEntry[]>
+    testConnection: (profileId: string) => Promise<{
+      ok: boolean
+      errorCode?: import('../shared/networkSources.ts').NetworkSourceErrorCode
+    }>
+    resolvePlayback: (
+      profileId: string,
+      entry: import('../shared/networkSources.ts').NetworkEntry
+    ) => Promise<import('../shared/networkSources.ts').NetworkPlaybackPlan>
+    scanDirectory: (
+      profileId: string,
+      remotePath: string
+    ) => Promise<{ added: number; total: number }>
+    listLibrary: (
+      profileId: string,
+      query?: string
+    ) => Promise<import('../shared/networkSources.ts').NetworkEntry[]>
+    removeLibraryEntry: (profileId: string, entryId: string) => Promise<void>
+    enrichLibrary: (profileId: string) => Promise<{ enriched: number; failed: number }>
+    cacheInfo: () => Promise<{ sizeBytes: number }>
+    clearCache: () => Promise<{ ok: boolean }>
+    searchLibrary: (query?: string) => Promise<
+      Array<{
+        profileId: string
+        profileName: string
+        entry: import('../shared/networkSources.ts').NetworkEntry
+      }>
+    >
+    coverDataUrl: (profileId: string, entryId: string) => Promise<string | null>
+  }
   remote: {
     getStatus: () => Promise<import('../shared/remoteControl.ts').RemoteControlStatus>
     setEnabled: (

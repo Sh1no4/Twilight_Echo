@@ -1,6 +1,7 @@
 import { toRaw } from 'vue'
 import type { Track } from '../types/music'
 import { unifiedSearchSongs, type UnifiedSearchResult } from '../utils/unifiedMusicSearch.ts'
+import type { NetworkEntry } from '../../../shared/networkSources.ts'
 
 export type MediaProviderCapability =
   | 'search'
@@ -340,6 +341,7 @@ export class MediaProviderRegistry {
   async searchAllSongs(options: {
     query: string
     localTracks: Track[]
+    networkEntries?: Array<{ profileName: string; entry: NetworkEntry }>
     limit?: number
     offset?: number
   }): Promise<UnifiedSearchResult> {

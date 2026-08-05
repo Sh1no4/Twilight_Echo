@@ -16,6 +16,9 @@ const SongList = defineAsyncComponent(() => import('./components/SongList.vue'))
 const PlayingMusic = defineAsyncComponent(() => import('./components/PlayingMusic.vue'))
 const StreamingPage = defineAsyncComponent(() => import('./components/StreamingPage.vue'))
 const RadioPodcastPage = defineAsyncComponent(() => import('./components/RadioPodcastPage.vue'))
+const NetworkSourcesPage = defineAsyncComponent(() =>
+  import('./components/NetworkSourcesPage.vue')
+)
 const LoginPage = defineAsyncComponent(() => import('./components/LoginPage.vue'))
 const SettingsPage = defineAsyncComponent(() => import('./components/SettingsPage.vue'))
 const ThemeStudioPage = defineAsyncComponent(() => import('./components/ThemeStudioPage.vue'))
@@ -61,6 +64,7 @@ const {
   showPlayingPage,
   showStreamingPage,
   showRadioPodcastPage,
+  showNetworkSourcesPage,
   showLoginPage,
   loginPageMode,
   loginInitialProviderId,
@@ -88,6 +92,8 @@ const {
   enterStreamingMode,
   enterRadioPodcastMode,
   closeRadioPodcastPage,
+  enterNetworkSourcesMode,
+  closeNetworkSourcesPage,
   returnToLocalMode,
   openLoginPage,
   closeLoginPage,
@@ -654,6 +660,7 @@ const titleSurface = computed<TitleSurface>(() => {
   if (showThemeStudioPage.value) return 'settings'
   if (showPluginPage.value) return 'settings'
   if (showStreamingPage.value) return 'streaming'
+  if (showNetworkSourcesPage.value) return 'streaming'
   if (activePluginPage.value) return 'settings'
   return 'default'
 })
@@ -686,6 +693,7 @@ const titleSurface = computed<TitleSurface>(() => {
         @select-plugin-page="onSelectPluginPage"
         @enter-streaming="enterStreamingLogin"
         @enter-radio-podcast="enterRadioPodcastMode"
+        @enter-network-sources="enterNetworkSourcesMode"
       />
     </div>
     <div class="app-shell-content">
@@ -739,6 +747,7 @@ const titleSurface = computed<TitleSurface>(() => {
       @login="handleStreamingLogin"
     />
     <RadioPodcastPage v-if="showRadioPodcastPage" @back="closeRadioPodcastPage" />
+    <NetworkSourcesPage v-if="showNetworkSourcesPage" @back="closeNetworkSourcesPage" />
     <Transition name="login-page">
       <LoginPage
         v-if="showLoginPage"

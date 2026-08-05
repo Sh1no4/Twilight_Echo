@@ -40,6 +40,7 @@ import { setupThemeIpc } from '../ipc/themes'
 import { resolveThemeAssetFile } from '../themes/themeArchive.ts'
 import { setupRadioMediaIpc, destroyRadioMediaIpc } from '../radio/radioMediaIpc.ts'
 import { setupRemoteIpc, destroyRemoteIpc } from '../remote/remoteIpc.ts'
+import { setupNetworkSourceIpc } from '../network/networkIpc.ts'
 import { installElectronSecurity } from '../security/electronSecurity.ts'
 import { createRemoteMediaRequestHandler } from '../security/remoteMediaGrants.ts'
 import { createWindow } from './window'
@@ -333,6 +334,7 @@ export function startApp(): void {
       setupNcmIpc()
       setupRadioMediaIpc()
       setupRemoteIpc()
+      setupNetworkSourceIpc()
       setupOpraIpc()
       setupPluginIpc()
       setupNcmApi()

@@ -225,7 +225,10 @@ test('song list supports batch favorite plus explicit local remove and recycle-b
 })
 
 test('double-click activation keeps plain clicks out of multi-select mode', () => {
-  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8').replace(
+    /\r\n/g,
+    '\n'
+  )
   const handlerMatch = source.match(
     /function onRowClick\([\s\S]*?\n}\n\nfunction onTrackSelectToggle/
   )
@@ -296,7 +299,10 @@ test('library header places the search box last so it renders right-most', () =>
 })
 
 test('library playback controls render below the table header', () => {
-  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8').replace(
+    /\r\n/g,
+    '\n'
+  )
 
   assert.doesNotMatch(source, /class="header-play-actions"/)
   const tableHeaderStart = source.lastIndexOf('<div class="song-list-header">')
@@ -312,7 +318,10 @@ test('library playback controls render below the table header', () => {
 })
 
 test('track table places the list number before artwork and reserves metadata track numbers for album details', () => {
-  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8').replace(
+    /\r\n/g,
+    '\n'
+  )
   const table = source.slice(source.indexOf('<table class="track-table">'))
   const header = table.slice(table.indexOf('<thead>'), table.indexOf('</thead>'))
   const row = table.slice(
