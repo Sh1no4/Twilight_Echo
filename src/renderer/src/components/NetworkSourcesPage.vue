@@ -465,7 +465,13 @@ onMounted(() => {
           @click="navigateTo(bookmark)"
         >
           {{ bookmark }}
-          <i class="pi pi-times" @click.stop="removeBookmark(bookmark)"></i>
+          <i
+            class="pi pi-times"
+            role="button"
+            aria-label="移除书签"
+            data-te-interactive
+            @click.stop="removeBookmark(bookmark)"
+          ></i>
         </span>
       </div>
       <div class="network-browser-toolbar">
