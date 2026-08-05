@@ -912,6 +912,37 @@ const api = {
     refreshAll: (): Promise<PodcastSubscriptionsDocument> =>
       ipcRenderer.invoke('podcast:refreshAll')
   },
+  networkSources: {
+    listProfiles: (): Promise<import('../shared/networkSources.ts').NetworkSourceProfileSummary[]> =>
+      ipcRenderer.invoke('networkSources:listProfiles'),
+    createProfile: (
+      input: import('../shared/networkSources.ts').NetworkSourceProfileInput
+    ): Promise<import('../shared/networkSources.ts').NetworkSourceProfileSummary> =>
+      ipcRenderer.invoke('networkSources:createProfile', input),
+    updateProfile: (
+      id: string,
+      patch: Partial<import('../shared/networkSources.ts').NetworkSourceProfileInput>
+    ): Promise<import('../shared/networkSources.ts').NetworkSourceProfileSummary> =>
+      ipcRenderer.invoke('networkSources:updateProfile', id, patch),
+    deleteProfile: (id: string): Promise<void> =>
+      ipcRenderer.invoke('networkSources:deleteProfile', id),
+    listDirectory: (
+      profileId: string,
+      remotePath: string
+    ): Promise<import('../shared/networkSources.ts').NetworkEntry[]> =>
+      ipcRenderer.invoke('networkSources:listDirectory', profileId, remotePath),
+    testConnection: (
+      profileId: string
+    ): Promise<{
+      ok: boolean
+      errorCode?: import('../shared/networkSources.ts').NetworkSourceErrorCode
+    }> => ipcRenderer.invoke('networkSources:testConnection', profileId),
+    resolvePlayback: (
+      profileId: string,
+      entry: import('../shared/networkSources.ts').NetworkEntry
+    ): Promise<import('../shared/networkSources.ts').NetworkPlaybackPlan> =>
+      ipcRenderer.invoke('networkSources:resolvePlayback', profileId, entry)
+  },
   remote: {
     getStatus: (): Promise<import('../shared/remoteControl.ts').RemoteControlStatus> =>
       ipcRenderer.invoke('remote:getStatus'),
