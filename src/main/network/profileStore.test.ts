@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -99,6 +99,29 @@ test('profile input validation rejects malformed profiles', async () => {
     await assert.rejects(() => store.createProfile(makeInput({ rootPath: '/music/../secret' })))
     await assert.rejects(() => store.createProfile(makeInput({ port: 70000 })))
     await assert.rejects(() => store.createProfile(makeInput({ name: '' })))
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('privateKey auth stores key path plainly and passphrase encrypted', async () => {
+  const { dir, store } = await makeStore()
+  try {
+    const created = await store.createProfile(
+      makeInput({
+        auth: { kind: 'privateKey', keyPath: 'C:/keys/id_ed25519', passphrase: 'pp-secret' }
+      })
+    )
+    const disk = await readFile(join(dir, 'profiles.json'), 'utf8')
+    assert.equal(disk.includes('pp-secret'), false)
+    assert.ok(disk.includes('id_ed25519'))
+    const auth = await store.resolveAuth(created.id)
+    assert.deepEqual(auth, {
+      kind: 'privateKey',
+      username: 'alice',
+      keyPath: 'C:/keys/id_ed25519',
+      passphrase: 'pp-secret'
+    })
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

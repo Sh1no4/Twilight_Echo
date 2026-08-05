@@ -82,10 +82,26 @@ function normalizeUsername(value: unknown): string | undefined {
 
 function validateAuth(auth: NetworkSourceProfileInput['auth']): void {
   if (auth.kind === 'anonymous') return
-  if (auth.kind !== 'password') throw new NetworkSourceFailure('invalidProfile', '暂不支持该认证方式')
-  if (typeof auth.password !== 'string' || auth.password.length > 512) {
-    throw new NetworkSourceFailure('invalidProfile', '密码不合法')
+  if (auth.kind === 'password') {
+    if (typeof auth.password !== 'string' || auth.password.length > 512) {
+      throw new NetworkSourceFailure('invalidProfile', '密码不合法')
+    }
+    return
   }
+  if (auth.kind === 'privateKey') {
+    const keyPath = typeof auth.keyPath === 'string' ? auth.keyPath.trim() : ''
+    if (!keyPath || keyPath.length > 512 || /[\u0000-\u001f\u007f]/.test(keyPath)) {
+      throw new NetworkSourceFailure('invalidProfile', '私钥路径不合法')
+    }
+    if (
+      auth.passphrase != null &&
+      (typeof auth.passphrase !== 'string' || auth.passphrase.length > 512)
+    ) {
+      throw new NetworkSourceFailure('invalidProfile', '私钥口令不合法')
+    }
+    return
+  }
+  throw new NetworkSourceFailure('invalidProfile', '暂不支持该认证方式')
 }
 
 function normalizeBookmarks(value: unknown): string[] {
@@ -142,7 +158,8 @@ export function createNetworkProfileStore(deps: {
 
   function toCredential(auth: NetworkSourceProfileInput['auth']): NetworkSourceProfile['credential'] {
     if (auth.kind === 'anonymous') return { kind: 'anonymous', encryptedId: '' }
-    return { kind: 'password', encryptedId: codec.encrypt(auth.password) }
+    if (auth.kind === 'password') return { kind: 'password', encryptedId: codec.encrypt(auth.password) }
+    return { kind: 'privateKey', encryptedId: auth.passphrase ? codec.encrypt(auth.passphrase) : '' }
   }
 
   return {
@@ -163,6 +180,8 @@ export function createNetworkProfileStore(deps: {
         port: normalizePort(input.port),
         rootPath: normalizeRemotePath(input.rootPath),
         username: normalizeUsername(input.username),
+        keyPath:
+          input.auth.kind === 'privateKey' ? input.auth.keyPath.trim() : input.keyPath?.trim(),
         credential: toCredential(input.auth),
         options: {
           readOnly: input.readOnly !== false,
@@ -193,9 +212,14 @@ export function createNetworkProfileStore(deps: {
         port: patch.port ?? profile.port,
         rootPath: patch.rootPath ?? profile.rootPath,
         username: patch.username === undefined ? profile.username : patch.username,
-        auth: patch.auth ?? (profile.credential.kind === 'anonymous'
-          ? { kind: 'anonymous' }
-          : { kind: 'password', password: '' }),
+        keyPath: patch.keyPath ?? profile.keyPath,
+        auth:
+          patch.auth ??
+          (profile.credential.kind === 'anonymous'
+            ? { kind: 'anonymous' }
+            : profile.credential.kind === 'privateKey'
+              ? { kind: 'privateKey', keyPath: profile.keyPath ?? '' }
+              : { kind: 'password', password: '' }),
         readOnly: patch.readOnly ?? profile.options.readOnly,
         bookmarks: patch.bookmarks ?? profile.bookmarks
       }
@@ -208,6 +232,8 @@ export function createNetworkProfileStore(deps: {
         port: normalizePort(merged.port),
         rootPath: normalizeRemotePath(merged.rootPath),
         username: normalizeUsername(merged.username),
+        keyPath:
+          merged.auth.kind === 'privateKey' ? merged.auth.keyPath.trim() : merged.keyPath?.trim(),
         credential: patch.auth ? toCredential(merged.auth) : profile.credential,
         options: { ...profile.options, readOnly: merged.readOnly !== false },
         bookmarks: normalizeBookmarks(merged.bookmarks)
@@ -225,6 +251,16 @@ export function createNetworkProfileStore(deps: {
     async resolveAuth(id: string): Promise<NetworkAuth> {
       const profile = await findProfile(id)
       if (profile.credential.kind === 'anonymous') return { kind: 'anonymous' }
+      if (profile.credential.kind === 'privateKey') {
+        return {
+          kind: 'privateKey',
+          username: profile.username,
+          keyPath: profile.keyPath ?? '',
+          passphrase: profile.credential.encryptedId
+            ? codec.decrypt(profile.credential.encryptedId)
+            : undefined
+        }
+      }
       return {
         kind: 'password',
         username: profile.username,

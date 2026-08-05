@@ -26,8 +26,10 @@ const form = ref({
   port: '',
   rootPath: '/',
   username: '',
-  authKind: 'anonymous' as 'anonymous' | 'password',
-  password: ''
+  authKind: 'anonymous' as 'anonymous' | 'password' | 'privateKey',
+  password: '',
+  keyPath: '',
+  passphrase: ''
 })
 
 const browsingProfile = ref<NetworkSourceProfileSummary | null>(null)
@@ -100,7 +102,10 @@ async function createProfile(): Promise<void> {
       auth:
         form.value.authKind === 'password'
           ? { kind: 'password', password: form.value.password }
-          : { kind: 'anonymous' }
+          : form.value.authKind === 'privateKey'
+            ? { kind: 'privateKey', keyPath: form.value.keyPath.trim(), passphrase: form.value.passphrase || undefined }
+            : { kind: 'anonymous' },
+      keyPath: form.value.authKind === 'privateKey' ? form.value.keyPath.trim() : undefined
     })
     showCreateForm.value = false
     form.value = {
@@ -111,7 +116,9 @@ async function createProfile(): Promise<void> {
       rootPath: '/',
       username: '',
       authKind: 'anonymous',
-      password: ''
+      password: '',
+      keyPath: '',
+      passphrase: ''
     }
     await loadProfiles()
     setNotice('网络源已添加')
@@ -585,7 +592,8 @@ onMounted(() => {
               <option value="webdav">WebDAV</option>
               <option value="ftp">FTP</option>
               <option value="ftps">FTPS（显式 TLS）</option>
-              <option value="sftp" disabled>SFTP / SCP（依赖待定）</option>
+              <option value="sftp">SFTP</option>
+              <option value="scp">SCP（SFTP 传输）</option>
               <option value="smb" disabled>SMB / NFS（即将支持）</option>
             </select>
           </label>
@@ -606,6 +614,7 @@ onMounted(() => {
             <select v-model="form.authKind">
               <option value="anonymous">匿名</option>
               <option value="password">用户名 + 密码</option>
+              <option value="privateKey">SSH 私钥</option>
             </select>
           </label>
           <label v-if="form.authKind === 'password'">
@@ -615,6 +624,14 @@ onMounted(() => {
           <label v-if="form.authKind === 'password'">
             密码
             <input v-model="form.password" type="password" autocomplete="current-password" />
+          </label>
+          <label v-if="form.authKind === 'privateKey'">
+            私钥路径
+            <input v-model.trim="form.keyPath" type="text" placeholder="C:\Users\me\.ssh\id_ed25519" />
+          </label>
+          <label v-if="form.authKind === 'privateKey'">
+            私钥口令（可选，仅支持 ssh-agent / 无口令密钥）
+            <input v-model="form.passphrase" type="password" autocomplete="off" />
           </label>
         </div>
         <div class="network-form-actions">

@@ -8,6 +8,7 @@ import type {
 export type NetworkAuth =
   | { kind: 'anonymous' }
   | { kind: 'password'; username?: string; password: string }
+  | { kind: 'privateKey'; username?: string; keyPath: string; passphrase?: string }
 
 /** 一个已建立的协议会话（HTTP 类协议为无状态，仍保持同一 seam）。 */
 export interface NetworkSourceSession {

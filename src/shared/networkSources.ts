@@ -29,6 +29,8 @@ export interface NetworkSourceProfile {
   port: number | null
   rootPath: string
   username?: string
+  /** SFTP 密钥认证时的私钥文件路径（非敏感，明文存储）。 */
+  keyPath?: string
   credential: NetworkCredentialRef
   options: {
     readOnly: boolean
@@ -49,7 +51,11 @@ export interface NetworkSourceProfileInput {
   port?: number | null
   rootPath: string
   username?: string
-  auth: { kind: 'anonymous' } | { kind: 'password'; password: string }
+  keyPath?: string
+  auth:
+    | { kind: 'anonymous' }
+    | { kind: 'password'; password: string }
+    | { kind: 'privateKey'; keyPath: string; passphrase?: string }
   readOnly?: boolean
   bookmarks?: string[]
 }
@@ -63,6 +69,7 @@ export interface NetworkSourceProfileSummary {
   port: number | null
   rootPath: string
   username?: string
+  keyPath?: string
   credentialKind: NetworkCredentialKind
   options: NetworkSourceProfile['options']
   bookmarks: string[]

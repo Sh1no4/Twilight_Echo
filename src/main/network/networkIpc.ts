@@ -19,6 +19,7 @@ import { createNetworkLibrary } from './networkLibrary.ts'
 import { createNetworkSourcesManager, type NetworkSourcesManager } from './sourcesManager.ts'
 import { createWebDavAdapter } from './adapters/webdavAdapter.ts'
 import { createFtpAdapter } from './adapters/ftpAdapter.ts'
+import { createSftpSystemAdapter } from './adapters/sftpSystemAdapter.ts'
 import type {
   NetworkEntry,
   NetworkSourceProfileInput
@@ -66,6 +67,7 @@ export function getNetworkSourcesManager(): NetworkSourcesManager {
       getAdapter: async (protocol) => {
         if (protocol === 'webdav') return createWebDavAdapter()
         if (protocol === 'ftp' || protocol === 'ftps') return createFtpAdapter()
+        if (protocol === 'sftp' || protocol === 'scp') return createSftpSystemAdapter()
         return null
       }
     })

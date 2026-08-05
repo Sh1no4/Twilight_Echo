@@ -3,26 +3,12 @@ import { request as httpsRequest } from 'node:https'
 import type { IncomingMessage } from 'node:http'
 import { buildNetworkEntryId, normalizeRemotePath } from '../networkPath.ts'
 import { NetworkSourceFailure } from '../errors.ts'
+import { entryKind } from '../entryKinds.ts'
 import type {
   NetworkEntry,
   NetworkSourceProfile
 } from '../../../shared/networkSources.ts'
 import type { NetworkAuth, NetworkSourceAdapter, NetworkSourceSession } from './types.ts'
-
-const AUDIO_EXTENSIONS = new Set([
-  'flac',
-  'mp3',
-  'm4a',
-  'aac',
-  'ogg',
-  'opus',
-  'wav',
-  'ape',
-  'wv',
-  'dsf',
-  'dff',
-  'dsd'
-])
 
 function isCollectionBlock(block: string): boolean {
   return /<(?:\w+:)?collection\s*\/?\s*>/i.test(block)
@@ -61,13 +47,6 @@ function nameOf(path: string): string {
   const cleaned = normalizeRemotePath(path)
   if (cleaned === '/') return '/'
   return cleaned.split('/').pop() ?? ''
-}
-
-function kindOf(name: string, mime: string | undefined, directory: boolean): NetworkEntry['kind'] {
-  if (directory) return 'directory'
-  const extension = name.includes('.') ? name.split('.').pop()?.toLowerCase() ?? '' : ''
-  if (mime?.startsWith('audio/') || AUDIO_EXTENSIONS.has(extension)) return 'audio'
-  return 'file'
 }
 
 function authHeader(auth: NetworkAuth): string | undefined {
@@ -161,7 +140,7 @@ export function createWebDavAdapter(): NetworkSourceAdapter {
               id: buildNetworkEntryId(profile.protocol, profile.id, path),
               profileId: profile.id,
               name: nameOf(path),
-              kind: kindOf(nameOf(path), item.mime, item.directory),
+              kind: entryKind(nameOf(path), { mime: item.mime, directory: item.directory }),
               path,
               sizeBytes: item.size,
               mtimeMs: item.mtimeMs,

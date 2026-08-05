@@ -218,7 +218,7 @@ onSourceEvent(cb): Unsubscribe // profile 增删 / 连接状态 / 传输进度
 | 1. 骨架与类型 | `sourcesManager` / `profileStore` / IPC / 设置域 | 无 |
 | 2. WebDAV adapter | PROPFIND 列目录、HEAD/GET 播放、PUT 不做；纯 Node `http/https`，零新依赖 | 无 |
 | 3. FTP/FTPS adapter | `basic-ftp`（纯 JS、被动模式、TLS） | 新增依赖 |
-| 4. SFTP/SCP adapter | `ssh2`（密钥/口令认证） | 受阻：ssh2 的可选原生依赖 `cpu-features` 会被 `electron-builder install-app-deps` 强制 node-gyp 编译，无 VS 构建工具的机器安装即失败；pnpm 补丁无法移除其 optional 解析（lockfile v9 保留原始依赖图）。待决策：改用系统 OpenSSH `sftp`（需密钥认证）或纯 JS 客户端，见 §10 |
+| 4. SFTP/SCP adapter | 系统 OpenSSH `sftp` 命令（`ssh2` 因 cpu-features 原生编译问题不可用，见 §10） | ✅ 已实现（仅密钥认证；带口令私钥需 ssh-agent / 无口令密钥；真机验证待做） |
 | 5. 下载缓存 | `network-cache` 目录 + 并发限制 + 断点续传（Range） | 任务 2-4 |
 | 6. 虚拟媒体库 | 目录递归入库、元数据（标签）探测、封面复用现有 `cover-cache` | 任务 5 |
 | 7. UI | 向导 + 浏览树 + 播放/入库 + 状态条 | 任务 1 |
@@ -316,7 +316,7 @@ networkSources: {
 
 | 问题 | 选项 | 影响 |
 | --- | --- | --- |
-| SFTP/SCP 实现路线 | 系统 `sftp` 命令（密钥认证） vs 纯 JS 客户端 | `ssh2` 因 cpu-features 原生编译问题不可用（已实测），需重新选型 |
+| SFTP/SCP 实现路线 | ✅ 已选：系统 OpenSSH `sftp` 命令（密钥认证） | `ssh2` 因 cpu-features 原生编译问题不可用（已实测）；系统 sftp 仅支持密钥认证，口令需 ssh-agent |
 | SMB/NFS 实现路线 | A 原生库 / B 系统挂载 | 打包体积、跨平台维护成本、权限 |
 | 播放体验 | 全部「下载后播」 vs WebDAV「直连 URL 播」 | 首播延迟、seek 支持、缓存占用 |
 | 网络源入库后的曲目身份 | 哈希路径是否稳定（重命名/重挂载） | 收藏/队列/历史持久性 |

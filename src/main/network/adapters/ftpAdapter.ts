@@ -2,26 +2,12 @@ import { Client, FileType, type FileInfo } from 'basic-ftp'
 import { PassThrough } from 'node:stream'
 import { buildNetworkEntryId, normalizeRemotePath } from '../networkPath.ts'
 import { NetworkSourceFailure } from '../errors.ts'
+import { entryKind } from '../entryKinds.ts'
 import type {
   NetworkEntry,
   NetworkSourceProfile
 } from '../../../shared/networkSources.ts'
 import type { NetworkAuth, NetworkSourceAdapter, NetworkSourceSession } from './types.ts'
-
-const AUDIO_EXTENSIONS = new Set([
-  'flac',
-  'mp3',
-  'm4a',
-  'aac',
-  'ogg',
-  'opus',
-  'wav',
-  'ape',
-  'wv',
-  'dsf',
-  'dff',
-  'dsd'
-])
 
 function toFailure(err: unknown): NetworkSourceFailure {
   if (err instanceof NetworkSourceFailure) return err
@@ -37,12 +23,6 @@ function toFailure(err: unknown): NetworkSourceFailure {
     return new NetworkSourceFailure('network', '无法连接 FTP 服务器')
   }
   return new NetworkSourceFailure('network', `FTP 请求失败：${(err as Error).message}`)
-}
-
-function kindOf(name: string, isDirectory: boolean): NetworkEntry['kind'] {
-  if (isDirectory) return 'directory'
-  const extension = name.includes('.') ? name.split('.').pop()?.toLowerCase() ?? '' : ''
-  return AUDIO_EXTENSIONS.has(extension) ? 'audio' : 'file'
 }
 
 export function createFtpAdapter(): NetworkSourceAdapter {
@@ -87,7 +67,7 @@ export function createFtpAdapter(): NetworkSourceAdapter {
           id: buildNetworkEntryId(profile.protocol, profile.id, normalized),
           profileId: profile.id,
           name,
-          kind: kindOf(name, directory),
+          kind: entryKind(name, { directory }),
           path: normalized,
           sizeBytes: directory ? undefined : info.size,
           mtimeMs: info.modifiedAt ? info.modifiedAt.getTime() : undefined
@@ -122,7 +102,7 @@ export function createFtpAdapter(): NetworkSourceAdapter {
               id: buildNetworkEntryId(profile.protocol, profile.id, path),
               profileId: profile.id,
               name,
-              kind: kindOf(name, false),
+              kind: entryKind(name, {}),
               path,
               sizeBytes: size,
               mtimeMs
