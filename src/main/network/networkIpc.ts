@@ -61,6 +61,7 @@ export function getNetworkSourcesManager(): NetworkSourcesManager {
         filePath: join(app.getPath('userData'), 'network-sources', 'library.json')
       }),
       cacheRoot: join(musicCacheRoot, 'network-cache'),
+      coverCacheRoot: join(musicCacheRoot, 'cover-cache'),
       getAdapter: async (protocol) => {
         if (protocol === 'webdav') return createWebDavAdapter()
         if (protocol === 'ftp' || protocol === 'ftps') return createFtpAdapter()
@@ -165,4 +166,9 @@ export function setupNetworkSourceIpc(): void {
       )
     }
   )
+
+  ipcMain.handle('networkSources:enrichLibrary', (event, id: unknown) => {
+    assertTrusted(event)
+    return sources.enrichLibrary(normalizeProfileId(id))
+  })
 }

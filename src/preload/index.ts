@@ -953,7 +953,9 @@ const api = {
     ): Promise<import('../shared/networkSources.ts').NetworkEntry[]> =>
       ipcRenderer.invoke('networkSources:listLibrary', profileId, query),
     removeLibraryEntry: (profileId: string, entryId: string): Promise<void> =>
-      ipcRenderer.invoke('networkSources:removeLibraryEntry', profileId, entryId)
+      ipcRenderer.invoke('networkSources:removeLibraryEntry', profileId, entryId),
+    enrichLibrary: (profileId: string): Promise<{ enriched: number; failed: number }> =>
+      ipcRenderer.invoke('networkSources:enrichLibrary', profileId)
   },
   remote: {
     getStatus: (): Promise<import('../shared/remoteControl.ts').RemoteControlStatus> =>

@@ -70,3 +70,24 @@ test('listEntries filters by query and removeEntry/removeProfile work', async ()
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test('updateEntries merges metadata onto existing entries by id', async () => {
+  const { dir, library } = await makeLibrary()
+  try {
+    await library.addEntries('p1', '/music', [makeEntry('/music/a.flac')])
+    await library.updateEntries('p1', [
+      {
+        ...makeEntry('/music/a.flac'),
+        metadata: { title: 'Song', artist: 'Artist', duration: 123.4 },
+        coverPath: '/cache/a.jpg'
+      }
+    ])
+    const entries = await library.listEntries('p1')
+    assert.equal(entries.length, 1)
+    assert.equal(entries[0].metadata?.title, 'Song')
+    assert.equal(entries[0].metadata?.duration, 123.4)
+    assert.equal(entries[0].coverPath, '/cache/a.jpg')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

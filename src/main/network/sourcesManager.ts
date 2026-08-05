@@ -1,5 +1,6 @@
 import { NetworkSourceFailure } from './errors.ts'
 import { downloadEntryToCache } from './networkCache.ts'
+import { enrichNetworkEntry } from './networkMetadata.ts'
 import { normalizeRemotePath } from './networkPath.ts'
 import type { NetworkLibraryIndex } from './networkLibrary.ts'
 import type {
@@ -41,6 +42,9 @@ export interface NetworkSourcesManager {
   ): Promise<{ added: number; total: number }>
   listLibrary(profileId: string, query?: string): Promise<NetworkEntry[]>
   removeLibraryEntry(profileId: string, entryId: string): Promise<void>
+  enrichLibrary(
+    profileId: string
+  ): Promise<{ enriched: number; failed: number }>
 }
 
 const SCAN_LIMITS = {
@@ -51,10 +55,11 @@ const SCAN_LIMITS = {
 export function createNetworkSourcesManager(deps: {
   store: NetworkProfileStore
   cacheRoot: string
+  coverCacheRoot: string
   getAdapter: (protocol: NetworkSourceProfile['protocol']) => Promise<NetworkSourceAdapter | null>
   library: NetworkLibraryIndex
 }): NetworkSourcesManager {
-  const { store, cacheRoot, getAdapter, library } = deps
+  const { store, cacheRoot, coverCacheRoot, getAdapter, library } = deps
 
   async function openSession(profileId: string): Promise<{
     profile: NetworkSourceProfile
@@ -152,6 +157,32 @@ export function createNetworkSourcesManager(deps: {
     },
     async removeLibraryEntry(profileId, entryId) {
       return library.removeEntry(profileId, entryId)
+    },
+    async enrichLibrary(profileId) {
+      const entries = await library.listEntries(profileId)
+      if (entries.length === 0) return { enriched: 0, failed: 0 }
+      const { session } = await openSession(profileId)
+      const updated: NetworkEntry[] = []
+      let failed = 0
+      try {
+        for (const entry of entries) {
+          const enriched = await enrichNetworkEntry({
+            session,
+            entry,
+            cacheRoot,
+            coverCacheRoot
+          })
+          if (enriched.metadata) {
+            updated.push(enriched)
+          } else {
+            failed += 1
+          }
+        }
+      } finally {
+        await session.close()
+      }
+      if (updated.length > 0) await library.updateEntries(profileId, updated)
+      return { enriched: updated.length, failed }
     }
   }
 }

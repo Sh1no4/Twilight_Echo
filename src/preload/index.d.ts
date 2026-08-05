@@ -1684,6 +1684,7 @@ interface WindowAPI {
       query?: string
     ) => Promise<import('../shared/networkSources.ts').NetworkEntry[]>
     removeLibraryEntry: (profileId: string, entryId: string) => Promise<void>
+    enrichLibrary: (profileId: string) => Promise<{ enriched: number; failed: number }>
   }
   remote: {
     getStatus: () => Promise<import('../shared/remoteControl.ts').RemoteControlStatus>

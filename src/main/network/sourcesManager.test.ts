@@ -13,6 +13,36 @@ import type {
 } from '../../shared/networkSources.ts'
 
 const FLAC_BYTES = Buffer.from('MANAGER-DATA')
+
+function syncsafe(value: number): Buffer {
+  return Buffer.from([
+    (value >> 21) & 0x7f,
+    (value >> 14) & 0x7f,
+    (value >> 7) & 0x7f,
+    value & 0x7f
+  ])
+}
+
+function textFrame(id: string, text: string): Buffer {
+  const data = Buffer.concat([Buffer.from([0]), Buffer.from(text, 'utf8')])
+  const header = Buffer.alloc(10)
+  header.write(id, 0, 'ascii')
+  header.writeUInt32BE(data.length, 4)
+  return Buffer.concat([header, data])
+}
+
+const TAGGED_MP3 = (() => {
+  const frames = Buffer.concat([
+    textFrame('TIT2', 'Test Title'),
+    textFrame('TPE1', 'Test Artist')
+  ])
+  const header = Buffer.concat([
+    Buffer.from('ID3', 'ascii'),
+    Buffer.from([3, 0, 0]),
+    syncsafe(frames.length)
+  ])
+  return Buffer.concat([header, frames, Buffer.from([0xff, 0xfb, 0x90, 0x64])])
+})()
 let server: Server
 let basePort = 0
 
@@ -77,6 +107,7 @@ const PROPFIND_XML = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
 <d:response><d:href>/music/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
 <d:response><d:href>/music/album/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
 <d:response><d:href>/music/a.flac</d:href><d:propstat><d:prop><d:getcontentlength>12</d:getcontentlength></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+<d:response><d:href>/music/tagged.mp3</d:href><d:propstat><d:prop><d:getcontentlength>${TAGGED_MP3.length}</d:getcontentlength></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
 </d:multistatus>`
 
 const ALBUM_XML = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
@@ -94,6 +125,11 @@ test.before(async () => {
     if (req.method === 'GET' && req.url === '/music/a.flac') {
       res.writeHead(200, { 'Content-Length': FLAC_BYTES.length })
       res.end(FLAC_BYTES)
+      return
+    }
+    if (req.method === 'GET' && req.url === '/music/tagged.mp3') {
+      res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Content-Length': TAGGED_MP3.length })
+      res.end(TAGGED_MP3)
       return
     }
     res.writeHead(404)
@@ -115,6 +151,7 @@ test('sourcesManager lists directories through the protocol adapter', async () =
     const manager = createNetworkSourcesManager({
       store: fakeStore,
       cacheRoot,
+      coverCacheRoot: join(cacheRoot, 'cover'),
       library: createNetworkLibrary({ filePath: join(cacheRoot, 'library.json') }),
       getAdapter: (protocol) =>
         protocol === 'webdav'
@@ -136,6 +173,7 @@ test('sourcesManager resolves anonymous webdav playback to a direct url', async 
     const manager = createNetworkSourcesManager({
       store: fakeStore,
       cacheRoot,
+      coverCacheRoot: join(cacheRoot, 'cover'),
       library: createNetworkLibrary({ filePath: join(cacheRoot, 'library.json') }),
       getAdapter: (protocol) =>
         protocol === 'webdav'
@@ -169,6 +207,7 @@ test('sourcesManager downloads authenticated webdav files to the cache for playb
         }
       },
       cacheRoot,
+      coverCacheRoot: join(cacheRoot, 'cover'),
       library: createNetworkLibrary({ filePath: join(cacheRoot, 'library.json') }),
       getAdapter: (protocol) =>
         protocol === 'webdav'
@@ -204,6 +243,7 @@ test('sourcesManager testConnection reports failures with structured codes', asy
         }
       },
       cacheRoot,
+      coverCacheRoot: join(cacheRoot, 'cover'),
       library: createNetworkLibrary({ filePath: join(cacheRoot, 'library.json') }),
       getAdapter: (protocol) =>
         protocol === 'webdav'
@@ -224,6 +264,7 @@ test('sourcesManager scans directories recursively into the virtual library', as
     const manager = createNetworkSourcesManager({
       store: fakeStore,
       cacheRoot,
+      coverCacheRoot: join(cacheRoot, 'cover'),
       library: createNetworkLibrary({ filePath: join(cacheRoot, 'library.json') }),
       getAdapter: (protocol) =>
         protocol === 'webdav'
@@ -231,15 +272,43 @@ test('sourcesManager scans directories recursively into the virtual library', as
           : Promise.resolve(null)
     })
     const result = await manager.scanDirectory('p1', '/music')
-    assert.equal(result.added, 2)
-    assert.equal(result.total, 2)
+    assert.equal(result.added, 3)
+    assert.equal(result.total, 3)
     const entries = await manager.listLibrary('p1')
-    assert.equal(entries.length, 2)
+    assert.equal(entries.length, 3)
     assert.ok(entries.some((entry) => entry.path === '/music/a.flac'))
+    assert.ok(entries.some((entry) => entry.path === '/music/tagged.mp3'))
     assert.ok(entries.some((entry) => entry.path === '/music/album/b.flac'))
 
     await manager.removeLibraryEntry('p1', entries[0].id)
-    assert.equal((await manager.listLibrary('p1')).length, 1)
+    assert.equal((await manager.listLibrary('p1')).length, 2)
+  } finally {
+    await rm(cacheRoot, { recursive: true, force: true })
+  }
+})
+
+test('sourcesManager enriches library entries with parsed metadata', async () => {
+  const cacheRoot = await mkdtemp(join(tmpdir(), 'manager-cache-'))
+  try {
+    const manager = createNetworkSourcesManager({
+      store: fakeStore,
+      cacheRoot,
+      coverCacheRoot: join(cacheRoot, 'cover'),
+      library: createNetworkLibrary({ filePath: join(cacheRoot, 'library.json') }),
+      getAdapter: (protocol) =>
+        protocol === 'webdav'
+          ? import('./adapters/webdavAdapter.ts').then((m) => m.createWebDavAdapter())
+          : Promise.resolve(null)
+    })
+    await manager.scanDirectory('p1', '/music')
+    const result = await manager.enrichLibrary('p1')
+    // a.flac 是不可解析的字节 → failed；tagged.mp3 解析出标签。
+    assert.equal(result.enriched, 1)
+    assert.equal(result.failed, 2)
+    const entries = await manager.listLibrary('p1')
+    const tagged = entries.find((entry) => entry.name === 'tagged.mp3')
+    assert.equal(tagged?.metadata?.title, 'Test Title')
+    assert.equal(tagged?.metadata?.artist, 'Test Artist')
   } finally {
     await rm(cacheRoot, { recursive: true, force: true })
   }

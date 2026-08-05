@@ -79,6 +79,21 @@ export interface NetworkEntry {
   sizeBytes?: number
   mtimeMs?: number
   mimeType?: string
+  /** 解析后的标签元数据（仅媒体库条目，浏览列表为空）。 */
+  metadata?: NetworkEntryMetadata
+  /** 封面文件在 cover-cache 中的绝对路径（解析后可选）。 */
+  coverPath?: string
+}
+
+export interface NetworkEntryMetadata {
+  title?: string
+  artist?: string
+  album?: string
+  duration?: number
+  format?: string
+  sampleRate?: number
+  bitrate?: number
+  bitDepth?: number
 }
 
 export interface NetworkPlaybackPlan {

@@ -17,6 +17,7 @@ export interface NetworkLibraryIndex {
     entries: NetworkEntry[]
   ): Promise<{ added: number; total: number }>
   listEntries(profileId: string, query?: string): Promise<NetworkEntry[]>
+  updateEntries(profileId: string, entries: NetworkEntry[]): Promise<void>
   removeEntry(profileId: string, entryId: string): Promise<void>
   removeProfile(profileId: string): Promise<void>
 }
@@ -78,6 +79,18 @@ export function createNetworkLibrary(deps: { filePath: string }): NetworkLibrary
       return profile.entries.filter((entry) =>
         entry.name.toLowerCase().includes(normalized)
       )
+    },
+    async updateEntries(profileId, entries) {
+      const document = await load()
+      const profile = document[profileId]
+      if (!profile || entries.length === 0) return
+      const byId = new Map(profile.entries.map((entry) => [entry.id, entry]))
+      for (const entry of entries) {
+        const existing = byId.get(entry.id)
+        byId.set(entry.id, existing ? { ...existing, ...entry } : entry)
+      }
+      document[profileId] = { ...profile, entries: [...byId.values()] }
+      await save(document)
     },
     async removeEntry(profileId, entryId) {
       const document = await load()

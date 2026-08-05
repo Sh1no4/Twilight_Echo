@@ -41,6 +41,7 @@ const viewMode = ref<'profiles' | 'library'>('profiles')
 const libraryQuery = ref('')
 const libraryEntries = ref<Array<{ profileName: string; entry: NetworkEntry }>>([])
 const libraryLoading = ref(false)
+const enriching = ref(false)
 
 const breadcrumbs = computed(() => {
   const parts = currentPath.value.split('/').filter(Boolean)
@@ -296,6 +297,27 @@ async function removeLibraryEntry(entry: NetworkEntry): Promise<void> {
   }
 }
 
+async function enrichLibraryAll(): Promise<void> {
+  if (!networkSourcesApi) return
+  enriching.value = true
+  error.value = ''
+  try {
+    let enriched = 0
+    let failed = 0
+    for (const profile of profiles.value) {
+      const result = await networkSourcesApi.enrichLibrary(profile.id)
+      enriched += result.enriched
+      failed += result.failed
+    }
+    await loadLibrary()
+    setNotice(`元数据解析完成：成功 ${enriched} 首，失败 ${failed} 首`)
+  } catch (err) {
+    setError(`元数据解析失败：${err instanceof Error ? err.message : String(err)}`)
+  } finally {
+    enriching.value = false
+  }
+}
+
 async function switchView(mode: 'profiles' | 'library'): Promise<void> {
   viewMode.value = mode
   if (mode === 'library') {
@@ -420,15 +442,25 @@ onMounted(() => {
           placeholder="搜索媒体库…"
           @input="loadLibrary"
         />
+        <button
+          type="button"
+          class="soft-button"
+          :disabled="enriching || libraryLoading"
+          @click="enrichLibraryAll"
+        >
+          {{ enriching ? '解析中…' : '解析元数据' }}
+        </button>
         <span v-if="libraryLoading" class="network-browsing" aria-live="polite">加载中…</span>
       </div>
       <ul v-if="libraryEntries.length > 0" class="network-entry-list">
         <li v-for="item in libraryEntries" :key="item.entry.id" class="network-entry">
           <span class="network-entry-kind"><i class="pi pi-music"></i></span>
           <button type="button" class="network-entry-name" @click="playEntry(item.entry)">
-            {{ item.entry.name }}
+            {{ item.entry.metadata?.title ?? item.entry.name }}
           </button>
-          <span class="network-entry-meta">{{ item.profileName }}</span>
+          <span class="network-entry-meta">
+            {{ item.entry.metadata?.artist ? `${item.entry.metadata.artist} · ` : '' }}{{ item.profileName }}
+          </span>
           <span class="network-entry-actions">
             <button type="button" class="pill-action" @click="playEntry(item.entry)">播放</button>
             <button type="button" class="pill-action" @click="enqueueEntry(item.entry)">加队列</button>
