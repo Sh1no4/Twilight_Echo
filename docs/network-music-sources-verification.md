@@ -65,5 +65,5 @@ Windows：`net use`；Linux：`gio mount`（仅匿名/已缓存凭据）。
 ## 7. 平台注意事项
 
 - SFTP/SMB 依赖系统命令（`sftp`、`net use`、`gio`），Windows 10+ 自带 OpenSSH；Linux 需 gvfs。
-- NFS 暂未实现（需要 root 权限的 `mount`，见施工文档 §10）。
+- NFS：Linux 下 `mount -t nfs`（需 root），验证时用 sudo 启动应用或预挂载后以本地目录方式使用。
 - DLNA 直连播放依赖服务器 res URL 可达性；需要认证的流暂不支持。

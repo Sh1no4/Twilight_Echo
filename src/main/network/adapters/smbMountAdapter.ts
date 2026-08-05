@@ -1,5 +1,6 @@
 import { createReadStream } from 'node:fs'
-import { readdir, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildNetworkEntryId, normalizeRemotePath } from '../networkPath.ts'
 import { NetworkSourceFailure } from '../errors.ts'
@@ -18,6 +19,14 @@ export type MountCommandRunner = (
   args: string[]
 ) => Promise<MountCommandResult>
 
+interface MountAdapterDeps {
+  platform?: NodeJS.Platform
+  runCommand?: MountCommandRunner
+  /** 挂载键（UNC / gvfs URI / NFS 挂载点）→ 本地路径映射，测试可注入。 */
+  localMap?: (mountKey: string, remotePath: string) => string
+  mountBaseDir?: string
+}
+
 /**
  * SMB 系统挂载 adapter（B 方案）：
  * - Windows：`net use \\host\share [password] /user:user`，本地路径为 UNC；
@@ -25,13 +34,25 @@ export type MountCommandRunner = (
  * - 挂载后按本地文件读取；close 时卸载。
  * NFS 需要 root 权限的 mount，另行评估（见施工文档 §10）。
  */
-export function createSmbMountAdapter(deps?: {
-  platform?: NodeJS.Platform
-  runCommand?: MountCommandRunner
-  localMap?: (uncOrUri: string, remotePath: string) => string
-}): NetworkSourceAdapter {
-  const platform = deps?.platform ?? process.platform
-  const runCommand = deps?.runCommand ?? defaultRunCommand
+export function createSmbMountAdapter(deps: MountAdapterDeps = {}): NetworkSourceAdapter {
+  return createMountAdapterForProtocol('smb', deps)
+}
+
+/**
+ * NFS 系统挂载 adapter（仅 Linux，需要 root 权限执行 mount -t nfs）。
+ * 挂载点临时目录在会话内创建，close 时 umount 并清理。
+ */
+export function createNfsMountAdapter(deps: MountAdapterDeps = {}): NetworkSourceAdapter {
+  return createMountAdapterForProtocol('nfs', deps)
+}
+
+function createMountAdapterForProtocol(
+  protocol: 'smb' | 'nfs',
+  deps: MountAdapterDeps
+): NetworkSourceAdapter {
+  const platform = deps.platform ?? process.platform
+  const runCommand = deps.runCommand ?? defaultRunCommand
+  const mountBaseDir = deps.mountBaseDir ?? tmpdir()
 
   function shareName(profile: NetworkSourceProfile): string {
     return normalizeRemotePath(profile.rootPath).replace(/^\//, '')
@@ -46,19 +67,14 @@ export function createSmbMountAdapter(deps?: {
     return `smb://${user}${profile.host}/${shareName(profile)}`
   }
 
-  function defaultLocalMap(profile: NetworkSourceProfile): (remotePath: string) => string {
-    if (platform === 'win32') {
-      const unc = uncFor(profile)
-      return (remotePath) => join(unc, remotePath.replace(/^\//, ''))
-    }
-    const uri = gioUri(profile)
-    return (remotePath) => join(uri, remotePath.replace(/^\//, ''))
+  function defaultLocalMap(mountKey: string): (remotePath: string) => string {
+    return (remotePath) => join(mountKey, remotePath.replace(/^\//, ''))
   }
 
   function throwForMountResult(result: MountCommandResult, action: string): void {
     if (result.code === 0) return
     const stderr = result.stderr
-    if (/access is denied|logon failure|invalid username/i.test(stderr)) {
+    if (/access denied|access is denied|logon failure|invalid username/i.test(stderr)) {
       throw new NetworkSourceFailure('auth', 'SMB 认证失败，请检查用户名或密码')
     }
     if (/network name cannot be found|not found|no such/i.test(stderr)) {
@@ -68,30 +84,73 @@ export function createSmbMountAdapter(deps?: {
   }
 
   return {
-    protocol: 'smb',
+    protocol,
     async createSession(
       profile: NetworkSourceProfile,
       auth: NetworkAuth
     ): Promise<NetworkSourceSession> {
-      if (platform !== 'win32' && platform !== 'linux') {
-        throw new NetworkSourceFailure('unsupportedProtocol', '当前系统不支持 SMB 系统挂载')
-      }
-      if (platform === 'linux' && auth.kind === 'password') {
-        throw new NetworkSourceFailure(
-          'auth',
-          'Linux 系统挂载仅支持匿名或已缓存凭据，请先在文件管理器连接该共享'
-        )
+      if (protocol === 'smb') {
+        if (platform !== 'win32' && platform !== 'linux') {
+          throw new NetworkSourceFailure('unsupportedProtocol', '当前系统不支持 SMB 系统挂载')
+        }
+        if (platform === 'linux' && auth.kind === 'password') {
+          throw new NetworkSourceFailure(
+            'auth',
+            'Linux 系统挂载仅支持匿名或已缓存凭据，请先在文件管理器连接该共享'
+          )
+        }
+      } else {
+        if (platform !== 'linux') {
+          throw new NetworkSourceFailure('unsupportedProtocol', 'NFS 系统挂载仅支持 Linux')
+        }
+        if (auth.kind !== 'anonymous') {
+          throw new NetworkSourceFailure('auth', 'NFS 无需认证')
+        }
       }
 
-      const localMap = deps?.localMap
-        ? (remotePath: string) => deps.localMap!(platform === 'win32' ? uncFor(profile) : gioUri(profile), remotePath)
-        : defaultLocalMap(profile)
+      let mountPoint: string | null = null
+      const localMap = deps.localMap
+        ? (remotePath: string) => {
+            const key =
+              protocol === 'nfs'
+                ? mountPoint ?? ''
+                : platform === 'win32'
+                  ? uncFor(profile)
+                  : gioUri(profile)
+            return deps.localMap!(key, remotePath)
+          }
+        : (remotePath: string) => {
+            const key =
+              protocol === 'nfs'
+                ? mountPoint ?? ''
+                : platform === 'win32'
+                  ? uncFor(profile)
+                  : gioUri(profile)
+            return defaultLocalMap(key)(remotePath)
+          }
 
       let mounted = false
 
       async function ensureMounted(): Promise<void> {
         if (mounted) return
-        if (platform === 'win32') {
+        if (protocol === 'nfs') {
+          mountPoint = await mkdtemp(join(mountBaseDir, 'twilight-nfs-'))
+          await mkdir(mountPoint, { recursive: true })
+          const exportPath = normalizeRemotePath(profile.rootPath)
+          const result = await runCommand('mount', [
+            '-t',
+            'nfs',
+            `${profile.host}:${exportPath}`,
+            mountPoint
+          ])
+          try {
+            throwForMountResult(result, '挂载')
+          } catch (err) {
+            await rm(mountPoint, { recursive: true, force: true }).catch(() => undefined)
+            mountPoint = null
+            throw err
+          }
+        } else if (platform === 'win32') {
           const unc = uncFor(profile)
           const password = auth.kind === 'password' ? auth.password : ''
           const user = auth.kind === 'password' ? auth.username ?? profile.username ?? 'guest' : 'guest'
@@ -164,7 +223,13 @@ export function createSmbMountAdapter(deps?: {
         },
         async close(): Promise<void> {
           if (!mounted) return
-          if (platform === 'win32') {
+          if (protocol === 'nfs') {
+            if (mountPoint) {
+              await runCommand('umount', [mountPoint]).catch(() => undefined)
+              await rm(mountPoint, { recursive: true, force: true }).catch(() => undefined)
+              mountPoint = null
+            }
+          } else if (platform === 'win32') {
             await runCommand('net', ['use', uncFor(profile), '/delete', '/y']).catch(() => undefined)
           } else {
             await runCommand('gio', ['mount', '-u', gioUri(profile)]).catch(() => undefined)

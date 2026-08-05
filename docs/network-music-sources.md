@@ -3,7 +3,7 @@
 > 关联 issue：[#20](https://github.com/asenyarzc-cpu/Twilight_Echo/issues/20)
 > 状态：设计稿 / 待排期。本文档用于指导后续分阶段实现，并作为 issue 回复与排期依据。
 > 实施进度：M1–M6 已全部落地（WebDAV/FTP/FTPS/SFTP/SCP/SMB/DLNA 浏览、虚拟媒体库、元数据/封面、书签/缓存管理、统一搜索并入网络媒体库）；
-> NFS 暂缓（需 root）；合并前按 `docs/network-music-sources-verification.md` 做真机验证。
+> NFS 已实现（Linux `mount -t nfs`，运行时需 root）；合并前按 `docs/network-music-sources-verification.md` 做真机验证。
 
 ## 1. 目标与范围
 
@@ -334,7 +334,7 @@ networkSources: {
 | M2 | FTP/FTPS + SFTP/SCP adapter + 下载缓存 | 3–5 |
 | M3 | 虚拟媒体库（递归入库/元数据/封面） | 3–4（✅ 已实现：标签/封面解析在媒体库视图手动触发） |
 | M4 | UI 完善 + 书签 + 缓存管理 + 手工验收 | 2–3（✅ 已实现：书签/缓存统计与清理/媒体库时长展示；封面展示待本地库集成） |
-| M5 | P2 SMB/NFS（先系统挂载方案） | 3–6（✅ SMB 已实现：Windows `net use` / Linux `gio mount` 匿名；NFS 需 root，暂缓） |
+| M5 | P2 SMB/NFS（先系统挂载方案） | 3–6（✅ 已实现：SMB = Windows `net use` / Linux `gio mount` 匿名；NFS = Linux `mount -t nfs`，运行时需 root） |
 | M6 | P3 DLNA 浏览/直投 | 3–5（✅ 浏览已实现：ContentDirectory Browse + res 直连播放；投送到渲染器复用现有 castBackend） |
 
 每完成一个里程碑独立发 PR，沿用仓库现有 review 流程；M1 可作为 issue #20 的第一阶段回复。
