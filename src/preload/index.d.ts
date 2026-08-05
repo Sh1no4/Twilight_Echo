@@ -1855,6 +1855,9 @@ interface WindowAPI {
     hide: () => void
     onState: (cb: (state: MiniPlayerStateSnapshot) => void) => () => void
   }
+  debug: {
+    appendNativeTrace: (message: string) => Promise<void>
+  }
 }
 
 declare global {

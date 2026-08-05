@@ -332,6 +332,28 @@ window.runLyricsPlayerRuntime = async () => {
     player.currentTime.value < 121.5,
     'a renderer stall made the playbar overrun and reject the recovered engine position'
   )
+
+  // A native gapless hand-off can emit start-file after a stale pause snapshot.
+  // The new file is already playing, so time-pos must reopen the shared clock
+  // even though the previous UI state was paused.
+  player.isPlaying.value = false
+  player.isLoading.value = false
+  window.__audioFixture.emitPlaybackInfo({
+    state: 'stopped', position: 0, duration: 180, source: nextTrack.id,
+    queueIndex: 1, nativePlaybackActive: false, volume: 1, playbackRate: 1
+  })
+  player.currentTrack.value = clone(nextTrack)
+  player.queue.value = [clone(track), clone(nextTrack)]
+  player.queueIndex.value = 1
+  player.currentTime.value = 0
+  window.__audioFixture.emitStartFile()
+  window.__audioFixture.emitProperty('time-pos', 0.2)
+  await new Promise((resolve) => setTimeout(resolve, 280))
+  window.__audioFixture.emitProperty('time-pos', 0.6)
+  await new Promise((resolve) => setTimeout(resolve, 280))
+  expect(player.isPlaying.value, 'start-file did not reopen the native playback clock')
+  expect(player.currentTime.value > 0.4, 'start-file time-pos did not advance the playbar')
+
   console.log('LYRICS_PLAYER_RUNTIME_OK')
 }
 `

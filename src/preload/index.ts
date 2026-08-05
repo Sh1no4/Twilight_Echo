@@ -1282,7 +1282,11 @@ const api = {
     }
   },
   miniPlayer: miniPlayerHostApi,
-  trayPlayer: trayPlayerWindowApi
+  trayPlayer: trayPlayerWindowApi,
+  debug: {
+    appendNativeTrace: (message: string): Promise<void> =>
+      ipcRenderer.invoke('debug:appendNativeTrace', message)
+  }
 }
 
 // Cover display in the mini player window goes through the shared coverLoader,

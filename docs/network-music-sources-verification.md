@@ -2,7 +2,7 @@
 
 > 配套施工文档：`docs/network-music-sources.md`。
 > 单元/集成测试已覆盖协议解析与接缝（`src/main/network/**/*.test.ts`，57/57 通过），
-> 但系统命令类（SFTP/SMB）与 SOAP 类（DLNA）依赖真实环境，合并前必须按本清单人工验证。
+> 但系统命令类（SFTP/SMB）与 SOAP 类（DLNA）依赖真实环境，发布前必须按本清单人工验证。
 
 ## 0. 准备
 
