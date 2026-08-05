@@ -1,4 +1,4 @@
-const { existsSync, copyFileSync, mkdirSync } = require('node:fs')
+const { copyFileSync, mkdirSync } = require('node:fs')
 const { join } = require('node:path')
 
 exports.default = async function afterPack(context) {

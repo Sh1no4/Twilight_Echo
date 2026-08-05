@@ -89,7 +89,7 @@ linux:
   maintainer: mrcwoods
   category: Audio
   icon: build/icon.png
-  executableName: TwilightEcho
+  executableName: music
   synopsis: Modern desktop music player
   description: >
     Twilight Echo is a modern desktop music player for local collections,

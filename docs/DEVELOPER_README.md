@@ -4,7 +4,7 @@
 
 ## 技术栈
 
-Twilight Echo 是 Electron + Vue 3 + TypeScript 应用，使用 electron-vite 构建，electron-builder 打包。当前包信息为 `TwilightEcho@1.0.2`，许可证为 Apache-2.0。
+Twilight Echo 是 Electron + Vue 3 + TypeScript 应用，使用 electron-vite 构建，electron-builder 打包。当前包信息为 `TwilightEcho@1.0.3`，许可证为 Apache-2.0。
 
 核心依赖：
 
@@ -162,6 +162,37 @@ pnpm install --frozen-lockfile
 ```bash
 pnpm run dev
 ```
+
+### Linux 输入法（fcitx5/ibus）说明
+
+KDE Plasma Wayland 会话下，KWin 只有在 `kwinrc` 的 `[Wayland]` 组配置了
+`InputMethod`（KDE 系统设置 → 虚拟键盘）时，才会向 Wayland 客户端暴露
+`zwp_input_method` 协议 —— 这是 Wayland 原生 text-input 通道的前提。未配置时，
+Chromium/Electron 在 Wayland 下无法通过 text-input 使用 fcitx5/ibus。
+
+处理方式（见 `src/main/imeBackend.ts` 与 `src/main/app/lifecycle.ts`）：
+
+- 检测到「Linux + Wayland + KWin/Plasma + 未配置输入法」时，应用以真实启动参数
+  `--ozone-platform=x11` 运行（X11/XWayland 后端），fcitx5 通过
+  `GTK_IM_MODULE`/XIM 链路工作，与 VS Code 等 Electron 应用一致。
+- 为什么必须用真实参数：Chromium 的 ozone 平台在 Electron 二进制启动阶段确定，
+  早于任何主进程 JS。环境变量（`OZONE_PLATFORM` 等）对 Electron 无效；
+  `app.commandLine.appendSwitch()` 只影响子进程（renderer/GPU），无法改变
+  browser 进程自身。
+- 开发/预览模式（`pnpm run dev` / `pnpm run start`）由
+  `scripts/run-electron-vite.cjs` 在启动时透传参数（electron-vite 的 `--` 透传
+  机制）；打包后的生产模式由 `src/main/index.ts` 的 `relaunchWithX11BackendIfNeeded()`
+  自重启并携带参数。
+- KWin 已配置输入法时，遵循 fcitx-im 官方建议使用 text-input-v1（KWin 对
+  text-input-v3 存在协议理解差异）；GNOME/Sway 等仅支持 v3 的 compositor 保持 v3。
+
+渲染层 IME 注意事项（`src/renderer/src/components/AnimatedInput.vue`）：
+
+- 自定义输入框不得在 IME composition 期间丢弃 `input` 事件：X11/XIM 路径下
+  commit 文本的 `input` 事件可能与 `compositionend` 时序不一致，只依赖
+  `compositionend` + `setTimeout(0)` 兜底会丢失已提交的中文。
+- 不要对需要中文输入的输入框使用 `type="search"`（Chromium 对 search 框有独立
+  IME/清除按钮处理，提交时序与 `type="text"` 不同），统一用 `type="text"`。
 
 类型检查与构建：
 
