@@ -1,6 +1,6 @@
 {
   "name": "TwilightEcho",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Twilight Echo music player",
   "license": "Apache-2.0",
   "main": "./out/main/index.js",
@@ -69,8 +69,8 @@
     "smoke:asio-native-dsd": "node scripts/asio-native-dsd-smoke.cjs",
     "smoke:audio-evidence": "node scripts/audio-smoke-evidence.cjs",
     "smoke:audio-performance": "node scripts/audio-performance-soak.cjs",
-    "start": "electron-vite preview",
-    "dev": "electron-vite dev",
+    "start": "node scripts/run-electron-vite.cjs preview",
+    "dev": "node scripts/run-electron-vite.cjs dev",
     "build": "pnpm run typecheck && electron-vite build && node scripts/strip-renderer-font-assets.cjs out/renderer && pnpm run verify:renderer-budgets",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "pnpm run build && node scripts/build-app-package.cjs --dir",

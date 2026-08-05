@@ -65,17 +65,39 @@ function syncScroll(): void {
   })
 }
 
-// Mirror native v-model semantics: hold updates while an IME composition is in
-// flight so the committed text animates in as one burst, not per pinyin key.
+// Mirror native v-model semantics. The native <input> always owns the true
+// value, so every input event carries the current text — including IME
+// composition updates and the final commit. We must NOT drop input events
+// while composing: on X11/XIM the input event for the committed text may
+// arrive after compositionend (or compositionend may not fire reliably),
+// so emitting from input keeps the committed text flowing into modelValue.
+// During composition the raw text is shown via the .is-composing class.
 function onInput(event: Event): void {
-  if (composing.value) return
   emit('update:modelValue', (event.target as HTMLInputElement).value)
   syncScroll()
 }
 
-function onCompositionEnd(event: Event): void {
+function commitCompositionValue(): void {
+  const value = inputEl.value?.value ?? ''
+  emit('update:modelValue', value)
+  syncScroll()
+}
+
+function onCompositionUpdate(): void {
+  composing.value = true
+  syncScroll()
+}
+
+function onCompositionEnd(): void {
   composing.value = false
-  onInput(event)
+  // Fallback: on some platforms the committed text is only visible after a
+  // tick (X11/XIM), or the final input event is dropped. Reading the value
+  // asynchronously guarantees the committed grapheme reaches modelValue.
+  window.setTimeout(commitCompositionValue, 0)
+}
+
+function onCompositionCancel(): void {
+  composing.value = false
 }
 </script>
 
@@ -94,7 +116,9 @@ function onCompositionEnd(event: Event): void {
       @input="onInput"
       @scroll="syncScroll"
       @compositionstart="composing = true"
+      @compositionupdate="onCompositionUpdate"
       @compositionend="onCompositionEnd"
+      @compositioncancel="onCompositionCancel"
     />
     <span class="animated-input-mirror" aria-hidden="true">
       <span class="animated-input-track" :style="{ transform: `translate3d(${-scrollX}px, 0, 0)` }">

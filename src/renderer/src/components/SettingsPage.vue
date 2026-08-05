@@ -10,6 +10,7 @@ import AnimatedInput from './AnimatedInput.vue'
 import {
   type SectionKey,
   type BooleanSettingKey,
+  type SettingsSearchEntry,
   sections,
   colorModeOptions,
   playbackResumeOptions,
@@ -422,18 +423,36 @@ const selectedPluginThemeKey = computed(() => {
 const pluginSettingsPanels = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'settingsPanel')
 )
-const filteredSettingsSections = computed(() => {
+const activeSearchIndex = ref(-1)
+const filteredSearchResults = computed(() => {
   const query = settingsSearchQuery.value.trim().toLowerCase()
   if (!query) return []
-  return SETTINGS_SEARCH_INDEX.filter((item) =>
-    `${item.title} ${item.terms}`.toLowerCase().includes(query)
-  )
+  const matches = SETTINGS_SEARCH_INDEX.map((entry) => {
+    const title = entry.title.toLowerCase()
+    const terms = entry.terms.toLowerCase()
+    let score = 0
+    if (title === query) score = 4
+    else if (title.startsWith(query)) score = 3
+    else if (title.includes(query)) score = 2
+    else if (terms.includes(query)) score = 1
+    return { entry, score }
+  })
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map(({ entry }) => entry)
+  return matches
+})
+// 结果集变化时修正选中索引，避免越界
+watch(filteredSearchResults, (matches) => {
+  if (activeSearchIndex.value >= matches.length) {
+    activeSearchIndex.value = matches.length > 0 ? 0 : -1
+  }
 })
 const hasSettingsSearchResults = computed(
-  () => settingsSearchQuery.value.trim().length > 0 && filteredSettingsSections.value.length > 0
+  () => settingsSearchQuery.value.trim().length > 0 && filteredSearchResults.value.length > 0
 )
 const hasSettingsSearchNoResults = computed(
-  () => settingsSearchQuery.value.trim().length > 0 && filteredSettingsSections.value.length === 0
+  () => settingsSearchQuery.value.trim().length > 0 && filteredSearchResults.value.length === 0
 )
 const selectedAudioOutput = computed(() =>
   audioOutputOptions.value.find((option) => option.id === audioOutput.value)
@@ -1828,9 +1847,90 @@ function scrollToSection(section: SectionKey): void {
   document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
-function scrollToSearchResult(section: SectionKey): void {
+function scrollToSearchResult(entry: SettingsSearchEntry): void {
   settingsSearchQuery.value = ''
-  scrollToSection(section)
+  scrollToSection(entry.section)
+  // 定位到具体的设置项
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const sectionEl = document.getElementById(entry.section)
+      if (!sectionEl) return
+      const target = findSettingItem(sectionEl, entry)
+      target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      highlightSettingItem(target)
+    })
+  })
+}
+
+function findSettingItem(
+  sectionEl: HTMLElement,
+  entry: SettingsSearchEntry
+): HTMLElement | null {
+  const matchText = (entry.match ?? entry.title).trim().toLowerCase()
+  // 优先匹配 .setting-item（常规设置项）
+  const settingItems = sectionEl.querySelectorAll<HTMLElement>('.setting-item')
+  for (const item of settingItems) {
+    const copy = item.querySelector('.setting-copy')
+    const strong = copy?.querySelector('strong')
+    if (strong && strong.textContent?.trim().toLowerCase().includes(matchText)) {
+      return item
+    }
+  }
+  // 回退：匹配 h3 区块标题（如 about 分区）
+  const headings = sectionEl.querySelectorAll<HTMLElement>('h3')
+  for (const heading of headings) {
+    if (heading.textContent?.trim().toLowerCase().includes(matchText)) {
+      return heading
+    }
+  }
+  // 再回退：匹配任意 strong / span / button 文本（about 的更新卡、赞助卡等）
+  const fallbacks = sectionEl.querySelectorAll<HTMLElement>('strong, span, button')
+  for (const el of fallbacks) {
+    if (el.textContent?.trim().toLowerCase().includes(matchText)) {
+      return el
+    }
+  }
+  return null
+}
+
+let searchHighlightTimer: number | null = null
+
+function highlightSettingItem(item: HTMLElement | null): void {
+  if (searchHighlightTimer !== null) {
+    window.clearTimeout(searchHighlightTimer)
+    searchHighlightTimer = null
+  }
+  document.querySelectorAll('.setting-item.search-target-flash').forEach((el) => {
+    el.classList.remove('search-target-flash')
+  })
+  if (!item) return
+  item.classList.add('search-target-flash')
+  searchHighlightTimer = window.setTimeout(() => {
+    item.classList.remove('search-target-flash')
+    searchHighlightTimer = null
+  }, 2200)
+}
+
+function moveSearchSelection(delta: number): void {
+  const results = filteredSearchResults.value
+  if (results.length === 0) return
+  const next = activeSearchIndex.value + delta
+  activeSearchIndex.value = ((next % results.length) + results.length) % results.length
+}
+
+function handleSettingsSearchEnter(): void {
+  const results = filteredSearchResults.value
+  if (results.length === 0) return
+  const target =
+    activeSearchIndex.value >= 0 && activeSearchIndex.value < results.length
+      ? results[activeSearchIndex.value]
+      : results[0]
+  scrollToSearchResult(target)
+}
+
+function clearSettingsSearch(): void {
+  settingsSearchQuery.value = ''
+  activeSearchIndex.value = -1
 }
 
 async function refreshShortcutStatuses(): Promise<void> {
@@ -1918,34 +2018,76 @@ onBeforeUnmount(() => {
     />
     <div class="settings-preview-layout">
       <nav class="settings-preview-nav" aria-label="设置分区">
-        <button
-          v-for="section in sections"
-          :key="section.key"
-          type="button"
-          class="preview-nav-item"
-          :class="{ active: activeSection === section.key }"
-          @click="scrollToSection(section.key)"
-        >
-          <i :class="section.icon"></i>
-          <span>{{ section.label }}</span>
-        </button>
-      </nav>
+          <div class="settings-nav-search-wrap">
+            <div class="settings-search-box settings-nav-search">
+              <i class="pi pi-search"></i>
+              <AnimatedInput
+                v-model="settingsSearchQuery"
+                type="text"
+                class="settings-search-input"
+                placeholder="搜索设置"
+                aria-label="搜索设置"
+                @focus="activeSearchIndex = filteredSearchResults.length > 0 ? 0 : -1"
+                @keydown.down.prevent="moveSearchSelection(1)"
+                @keydown.up.prevent="moveSearchSelection(-1)"
+                @keydown.enter.prevent="handleSettingsSearchEnter"
+                @keydown.esc.prevent="clearSettingsSearch"
+              />
+              <button
+                v-if="settingsSearchQuery"
+                type="button"
+                class="settings-search-clear"
+                @click="clearSettingsSearch"
+                aria-label="清除搜索"
+              >
+                <i class="pi pi-times"></i>
+              </button>
+            </div>
+            <div
+              v-if="hasSettingsSearchResults"
+              class="settings-nav-results"
+              role="listbox"
+              aria-label="搜索结果"
+            >
+              <button
+                v-for="(result, index) in filteredSearchResults"
+                :key="`${result.section}:${result.title}`"
+                type="button"
+                role="option"
+                :aria-selected="activeSearchIndex === index"
+                :class="{ active: activeSearchIndex === index }"
+                @mouseenter="activeSearchIndex = index"
+                @click="scrollToSearchResult(result)"
+              >
+                <i :class="sections.find((section) => section.key === result.section)?.icon"></i>
+                <span class="settings-nav-result-title">{{ result.title }}</span>
+                <small>{{
+                  sections.find((section) => section.key === result.section)?.label
+                }}</small>
+              </button>
+            </div>
+            <div v-else-if="hasSettingsSearchNoResults" class="settings-nav-empty">
+              没有找到匹配的设置
+            </div>
+          </div>
+          <button
+            v-for="section in sections"
+            :key="section.key"
+            type="button"
+            class="preview-nav-item"
+            :class="{ active: activeSection === section.key }"
+            @click="scrollToSection(section.key)"
+          >
+            <i :class="section.icon"></i>
+            <span>{{ section.label }}</span>
+          </button>
+        </nav>
 
       <div class="settings-preview-stack">
         <header class="settings-page-header">
           <h1 class="settings-page-title">设置</h1>
         </header>
         <section class="settings-command-bar glass-card">
-          <div class="settings-search-box">
-            <i class="pi pi-search"></i>
-            <AnimatedInput
-              v-model="settingsSearchQuery"
-              type="search"
-              class="settings-search-input"
-              placeholder="搜索设置"
-              aria-label="搜索设置"
-            />
-          </div>
           <div class="settings-command-actions">
             <button type="button" class="soft-button" @click="exportSettingsBackup">
               <i class="pi pi-download"></i>
@@ -1955,20 +2097,6 @@ onBeforeUnmount(() => {
               <i class="pi pi-upload"></i>
               导入设置
             </button>
-          </div>
-          <div v-if="hasSettingsSearchResults" class="settings-search-results">
-            <button
-              v-for="result in filteredSettingsSections"
-              :key="result.section"
-              type="button"
-              @click="scrollToSearchResult(result.section)"
-            >
-              <i :class="sections.find((section) => section.key === result.section)?.icon"></i>
-              {{ result.title }}
-            </button>
-          </div>
-          <div v-else-if="hasSettingsSearchNoResults" class="settings-search-empty">
-            没有找到匹配的设置
           </div>
           <div v-if="settingsNotice" class="settings-inline-notice">{{ settingsNotice }}</div>
           <div v-if="settingsError" class="settings-inline-error">{{ settingsError }}</div>
@@ -5540,13 +5668,35 @@ html[data-theme='dark'] .settings-preview-page .inherit-toggle,
 html[data-theme='dark'] .settings-preview-page .pill-action.ghost,
 html[data-theme='dark'] .settings-preview-page .dashed-button,
 html[data-theme='dark'] .settings-preview-page .settings-search-box,
-html[data-theme='dark'] .settings-preview-page .settings-search-empty,
+html[data-theme='dark'] .settings-preview-page .settings-nav-search,
 html[data-theme='dark'] .settings-preview-page .shortcut-status-row,
 html[data-theme='dark'] .settings-preview-page .read-only-pill {
   border-color: var(--te-card-border);
   background: var(--te-card-bg);
   color: rgba(226, 232, 240, 0.9);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+}
+
+html[data-theme='dark'] .settings-preview-page .settings-nav-results,
+html[data-theme='dark'] .settings-preview-page .settings-nav-empty {
+  border-color: var(--te-card-border);
+  background: var(--te-card-bg);
+  color: rgba(226, 232, 240, 0.9);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.42);
+}
+
+html[data-theme='dark'] .settings-preview-page .settings-nav-results button {
+  color: rgba(226, 232, 240, 0.88);
+}
+
+html[data-theme='dark'] .settings-preview-page .settings-nav-results button:hover,
+html[data-theme='dark'] .settings-preview-page .settings-nav-results button.active {
+  background: rgba(var(--te-primary-rgb), 0.16);
+  color: var(--te-primary-300);
+}
+
+html[data-theme='dark'] .settings-preview-page .settings-nav-results button small {
+  color: rgba(148, 163, 184, 0.72);
 }
 
 html[data-theme='dark'] .settings-preview-page .accordion-head,
@@ -5748,7 +5898,7 @@ html[data-theme='dark'] .settings-preview-page .inherit-toggle.active {
 html[data-theme='dark'] .settings-preview-page .dashed-button:hover,
 html[data-theme='dark'] .settings-preview-page .brand-soft-button:hover,
 html[data-theme='dark'] .settings-preview-page .preset-btn:hover,
-html[data-theme='dark'] .settings-preview-page .settings-search-results button {
+html[data-theme='dark'] .settings-preview-page .settings-nav-results button.active {
   border-color: rgba(var(--te-primary-rgb), 0.34);
   background: rgba(var(--te-primary-rgb), 0.14);
   color: var(--te-primary-300);
