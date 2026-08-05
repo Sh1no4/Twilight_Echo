@@ -218,7 +218,7 @@ onSourceEvent(cb): Unsubscribe // profile 增删 / 连接状态 / 传输进度
 | 1. 骨架与类型 | `sourcesManager` / `profileStore` / IPC / 设置域 | 无 |
 | 2. WebDAV adapter | PROPFIND 列目录、HEAD/GET 播放、PUT 不做；纯 Node `http/https`，零新依赖 | 无 |
 | 3. FTP/FTPS adapter | `basic-ftp`（纯 JS、被动模式、TLS） | 新增依赖 |
-| 4. SFTP/SCP adapter | `ssh2`（密钥/口令认证） | 新增依赖 |
+| 4. SFTP/SCP adapter | `ssh2`（密钥/口令认证） | 新增依赖（含可选原生模块 cpu-features；安装/审计评估后决定，当前未实现，见 §10） |
 | 5. 下载缓存 | `network-cache` 目录 + 并发限制 + 断点续传（Range） | 任务 2-4 |
 | 6. 虚拟媒体库 | 目录递归入库、元数据（标签）探测、封面复用现有 `cover-cache` | 任务 5 |
 | 7. UI | 向导 + 浏览树 + 播放/入库 + 状态条 | 任务 1 |

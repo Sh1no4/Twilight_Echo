@@ -20,7 +20,7 @@ const showCreateForm = ref(false)
 
 const creating = ref(false)
 const form = ref({
-  protocol: 'webdav' as 'webdav',
+  protocol: 'webdav' as 'webdav' | 'ftp' | 'ftps',
   name: '',
   host: '',
   port: '',
@@ -93,7 +93,7 @@ async function createProfile(): Promise<void> {
     })
     showCreateForm.value = false
     form.value = {
-      protocol: 'webdav',
+    protocol: 'webdav',
       name: '',
       host: '',
       port: '',
@@ -336,8 +336,9 @@ onMounted(() => {
             协议
             <select v-model="form.protocol">
               <option value="webdav">WebDAV</option>
-              <option value="ftp" disabled>FTP / FTPS（即将支持）</option>
-              <option value="sftp" disabled>SFTP / SCP（即将支持）</option>
+              <option value="ftp">FTP</option>
+              <option value="ftps">FTPS（显式 TLS）</option>
+              <option value="sftp" disabled>SFTP / SCP（依赖待定）</option>
               <option value="smb" disabled>SMB / NFS（即将支持）</option>
             </select>
           </label>

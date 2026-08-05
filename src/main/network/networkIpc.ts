@@ -15,6 +15,7 @@ import { NetworkSourceFailure } from './errors.ts'
 import { createNetworkProfileStore, type CredentialCodec } from './profileStore.ts'
 import { createNetworkSourcesManager, type NetworkSourcesManager } from './sourcesManager.ts'
 import { createWebDavAdapter } from './adapters/webdavAdapter.ts'
+import { createFtpAdapter } from './adapters/ftpAdapter.ts'
 import type {
   NetworkEntry,
   NetworkSourceProfileInput
@@ -55,8 +56,11 @@ export function getNetworkSourcesManager(): NetworkSourcesManager {
         codec: secureStorageCodec
       }),
       cacheRoot: join(musicCacheRoot, 'network-cache'),
-      getAdapter: async (protocol) =>
-        protocol === 'webdav' ? createWebDavAdapter() : null
+      getAdapter: async (protocol) => {
+        if (protocol === 'webdav') return createWebDavAdapter()
+        if (protocol === 'ftp' || protocol === 'ftps') return createFtpAdapter()
+        return null
+      }
     })
   }
   return manager
