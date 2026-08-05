@@ -1,4 +1,5 @@
 import { shallowRef, ref, computed, watch, type Ref, type ComputedRef } from 'vue'
+import { shouldApplyNativeTimePosition } from './playerProgressPolicy.ts'
 import type { PlaybackSession, Track } from '../types/music'
 import type {
   AudioDeviceOption,
@@ -2699,19 +2700,9 @@ function setupAudioEngineListeners(): void {
     api.onPropertyChange(({ name, data }) => {
       switch (name) {
         case 'time-pos':
-          // Prefer continuous progress paint over strict native flags. Drop only
-          // when there is no active session identity at all — brief demotions of
-          // nativePlaybackActive during track hand-off must not freeze the bar
-          // until the user pauses or expands the now-playing page.
-          if (
-            !currentTrack.value &&
-            !nativePlaybackActive &&
-            !nativeQueueDelegated &&
-            !isPlaying.value &&
-            !isLoading.value
-          ) {
-            break
-          }
+          // 兜底（HTMLAudio）模式下原生 time-pos 与 <audio> timeupdate 双源竞争，
+          // 会造成进度冻结；只在原生播放时应用原生时间。
+          if (!shouldApplyNativeTimePosition({ nativePlaybackActive, nativeQueueDelegated })) break
           if (typeof data === 'number' && isFinite(data)) {
             applyPlaybackPositionSample(data)
           }

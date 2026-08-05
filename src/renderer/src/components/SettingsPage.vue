@@ -685,7 +685,7 @@ function setProxyPort(event: Event): void {
 
 function toggleSetting(key: BooleanSettingKey): void {
   if (key === 'windowTransparency' && !windowTransparencySupported.value) {
-    settingsNotice.value = '当前 Wayland 会话不支持窗口透明，已自动使用不透明窗口。'
+    settingsNotice.value = '当前系统不支持窗口透明（Linux Wayland，或 Windows 未开启系统透明效果），已自动使用不透明窗口。'
     return
   }
   void updateSettings({ [key]: !settings.value[key] } as Partial<AppSettings>)
@@ -3782,7 +3782,7 @@ onBeforeUnmount(() => {
                 <strong>窗口透明</strong>
                 <span
                   >让窗口底层透明，显示系统模糊效果（Windows 11 22H2+ 使用原生亚克力模糊；Linux
-                  X11 需合成器支持，如 KWin / picom；Linux Wayland 暂不支持）。更改后需重启。</span
+                  X11 需合成器支持，如 KWin / picom；Linux Wayland、以及 Windows 未开启系统透明效果时暂不支持）。更改后需重启。</span
                 >
               </div>
               <span
@@ -3799,7 +3799,7 @@ onBeforeUnmount(() => {
               ></span>
             </div>
             <div v-if="transparencyUnsupported" class="settings-inline-warning" role="status">
-              当前 Linux Wayland 会话不支持透明窗口（Electron 限制），已自动回退为不透明窗口，应用仍可正常使用。
+              当前系统不支持透明窗口（Linux Wayland，或 Windows 未开启系统透明效果），已自动回退为不透明窗口，应用仍可正常使用。
             </div>
             <template v-if="settings.windowTransparency && transparencySupported">
               <hr />
