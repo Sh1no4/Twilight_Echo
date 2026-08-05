@@ -1675,3 +1675,26 @@ test('queue editing commands commit snapshots, persistence, and revision-fenced 
     /function saveQueueAsPlaylist[\s\S]*createPlaylistWithTracks\(name, \[\.\.\.queue\.value\]\)/
   )
 })
+
+test('single-song repeat replays the current track when playback ends in fallback mode', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const getPlaybackAudio = extractInternalFunctionBody(source, 'getPlaybackAudio')
+  const handlePlaybackEnded = extractInternalFunctionBody(source, 'handlePlaybackEnded')
+  const loadAndPlay = extractInternalFunctionBody(source, 'loadAndPlay')
+
+  // The HTMLAudio 'ended' event must feed handlePlaybackEnded.
+  assert.match(getPlaybackAudio, /audio.addEventListener\('ended',[\s\S]*handlePlaybackEnded\(\)/)
+  // Guard fields exist and are reset at the end of a successful load so the
+  // next natural end can trigger another replay.
+  assert.match(handlePlaybackEnded, /autoAdvanceInFlight \|\| advancingFromEndedTrackId === trackId/)
+  assert.match(handlePlaybackEnded, /advancingFromEndedTrackId = trackId/)
+  assert.match(handlePlaybackEnded, /autoAdvanceInFlight = true/)
+  // Repeat must restart the same track without consulting the queue.
+  const repeatBranch = handlePlaybackEnded.match(/if \(playMode\.value === 'repeat'\) \{[\s\S]*?\n  \}/)?.[0]
+  assert.ok(repeatBranch, "repeat branch should exist")
+  assert.match(repeatBranch, /void loadAndPlay\(track\)/)
+  assert.doesNotMatch(repeatBranch, /advanceAfterPlaybackEnded\(\)/)
+  // loadAndPlay must clear the guards on success so the loop can repeat.
+  assert.match(loadAndPlay, /advancingFromEndedTrackId = ''[\s\S]*autoAdvanceInFlight = false/)
+  assert.match(loadAndPlay, /loadedTrackId = track\.id/)
+})
