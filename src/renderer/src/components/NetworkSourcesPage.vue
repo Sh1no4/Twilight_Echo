@@ -42,6 +42,7 @@ const libraryQuery = ref('')
 const libraryEntries = ref<Array<{ profileName: string; entry: NetworkEntry }>>([])
 const libraryLoading = ref(false)
 const enriching = ref(false)
+const cacheSizeBytes = ref(0)
 
 const breadcrumbs = computed(() => {
   const parts = currentPath.value.split('/').filter(Boolean)
@@ -55,6 +56,9 @@ const breadcrumbs = computed(() => {
 })
 
 const audioEntries = computed(() => entries.value.filter((entry) => entry.kind === 'audio'))
+const currentPathBookmarked = computed(
+  () => browsingProfile.value?.bookmarks.includes(currentPath.value) ?? false
+)
 
 function setError(message: string): void {
   error.value = message
@@ -185,6 +189,14 @@ function formatBytes(bytes: number | undefined): string {
     unit = units[index]
   }
   return `${value.toFixed(1)} ${unit}`
+}
+
+function formatSeconds(seconds: number | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) return ''
+  const total = Math.round(seconds)
+  const minutes = Math.floor(total / 60)
+  const remainder = total % 60
+  return `${minutes}:${remainder.toString().padStart(2, '0')}`
 }
 
 function buildTrack(entry: NetworkEntry, plan: NetworkPlaybackPlan): Track {
@@ -326,8 +338,62 @@ async function switchView(mode: 'profiles' | 'library'): Promise<void> {
   }
 }
 
+async function toggleBookmark(): Promise<void> {
+  if (!networkSourcesApi || !browsingProfile.value) return
+  const bookmarks = new Set(browsingProfile.value.bookmarks)
+  if (bookmarks.has(currentPath.value)) {
+    bookmarks.delete(currentPath.value)
+  } else {
+    bookmarks.add(currentPath.value)
+  }
+  try {
+    const updated = await networkSourcesApi.updateProfile(browsingProfile.value.id, {
+      bookmarks: [...bookmarks]
+    })
+    browsingProfile.value = updated
+    setNotice(bookmarks.has(currentPath.value) ? '已收藏此目录' : '已取消收藏')
+  } catch (err) {
+    setError(`书签操作失败：${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+async function removeBookmark(path: string): Promise<void> {
+  if (!networkSourcesApi || !browsingProfile.value) return
+  const bookmarks = browsingProfile.value.bookmarks.filter((item) => item !== path)
+  try {
+    browsingProfile.value = await networkSourcesApi.updateProfile(browsingProfile.value.id, {
+      bookmarks
+    })
+  } catch (err) {
+    setError(`移除书签失败：${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+async function loadCacheInfo(): Promise<void> {
+  if (!networkSourcesApi) return
+  try {
+    const info = await networkSourcesApi.cacheInfo()
+    cacheSizeBytes.value = info.sizeBytes
+  } catch {
+    cacheSizeBytes.value = 0
+  }
+}
+
+async function clearNetworkCache(): Promise<void> {
+  if (!networkSourcesApi) return
+  if (!window.confirm('确定清空网络源下载缓存吗？已入库条目不受影响，下次播放会重新下载。')) return
+  try {
+    await networkSourcesApi.clearCache()
+    await loadCacheInfo()
+    setNotice('网络源缓存已清空')
+  } catch (err) {
+    setError(`清理缓存失败：${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
 onMounted(() => {
   void loadProfiles()
+  void loadCacheInfo()
 })
 </script>
 
@@ -379,6 +445,21 @@ onMounted(() => {
           {{ crumb.label }}
         </button>
       </nav>
+      <div class="network-bookmarks">
+        <button type="button" class="soft-button" @click="toggleBookmark">
+          {{ currentPathBookmarked ? '取消书签' : '收藏此目录' }}
+        </button>
+        <span
+          v-for="bookmark in browsingProfile.bookmarks"
+          :key="bookmark"
+          class="network-bookmark-chip"
+          role="button"
+          @click="navigateTo(bookmark)"
+        >
+          {{ bookmark }}
+          <i class="pi pi-times" @click.stop="removeBookmark(bookmark)"></i>
+        </span>
+      </div>
       <div class="network-browser-toolbar">
         <button
           type="button"
@@ -459,7 +540,15 @@ onMounted(() => {
             {{ item.entry.metadata?.title ?? item.entry.name }}
           </button>
           <span class="network-entry-meta">
-            {{ item.entry.metadata?.artist ? `${item.entry.metadata.artist} · ` : '' }}{{ item.profileName }}
+            {{
+              [
+                item.entry.metadata?.artist,
+                formatSeconds(item.entry.metadata?.duration),
+                item.profileName
+              ]
+                .filter(Boolean)
+                .join(' · ')
+            }}
           </span>
           <span class="network-entry-actions">
             <button type="button" class="pill-action" @click="playEntry(item.entry)">播放</button>
@@ -480,6 +569,8 @@ onMounted(() => {
         <button type="button" class="brand-soft-button" @click="showCreateForm = !showCreateForm">
           {{ showCreateForm ? '收起' : '添加网络源' }}
         </button>
+        <span class="network-cache-info">网络源缓存 {{ formatBytes(cacheSizeBytes) }}</span>
+        <button type="button" class="soft-button" @click="clearNetworkCache">清理缓存</button>
       </div>
 
       <form v-if="showCreateForm" class="network-create-form glass-card" @submit.prevent="createProfile">
@@ -727,6 +818,41 @@ onMounted(() => {
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
+}
+
+.network-bookmarks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.network-bookmark-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid rgba(var(--te-primary-rgb), 0.28);
+  border-radius: 999px;
+  background: rgba(var(--te-primary-rgb), 0.08);
+  color: var(--brand-600);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.network-bookmark-chip i {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.network-bookmark-chip i:hover {
+  opacity: 1;
+}
+
+.network-cache-info {
+  color: var(--te-settings-text-muted, #8a8f98);
+  font-size: 12px;
 }
 
 .network-crumb {

@@ -1,5 +1,5 @@
 import { createWriteStream } from 'node:fs'
-import { mkdir, rename, stat, unlink } from 'node:fs/promises'
+import { mkdir, readdir, rename, rm, stat, unlink } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import { NetworkSourceFailure } from './errors.ts'
 import type { NetworkSourceSession } from './adapters/types.ts'
@@ -44,4 +44,32 @@ export async function downloadEntryToCache(deps: {
     if (err instanceof NetworkSourceFailure) throw err
     throw new NetworkSourceFailure('network', `网络文件下载失败：${(err as Error).message}`)
   }
+}
+
+export function networkCacheDir(musicCacheRoot: string): string {
+  return join(musicCacheRoot, 'network-cache')
+}
+
+export async function getDirectorySize(directory: string): Promise<number> {
+  let total = 0
+  try {
+    const entries = await readdir(directory, { withFileTypes: true })
+    for (const entry of entries) {
+      const target = join(directory, entry.name)
+      if (entry.isDirectory()) {
+        total += await getDirectorySize(target)
+      } else {
+        const info = await stat(target)
+        total += info.size
+      }
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+  }
+  return total
+}
+
+export async function clearDirectory(directory: string): Promise<void> {
+  await rm(directory, { recursive: true, force: true })
+  await mkdir(directory, { recursive: true })
 }

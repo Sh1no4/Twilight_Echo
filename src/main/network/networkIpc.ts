@@ -13,6 +13,7 @@ import {
 } from '../security/secureStorage.ts'
 import { runtime } from '../core/runtime.ts'
 import { NetworkSourceFailure } from './errors.ts'
+import { clearDirectory, getDirectorySize, networkCacheDir } from './networkCache.ts'
 import { createNetworkProfileStore, type CredentialCodec } from './profileStore.ts'
 import { createNetworkLibrary } from './networkLibrary.ts'
 import { createNetworkSourcesManager, type NetworkSourcesManager } from './sourcesManager.ts'
@@ -170,5 +171,21 @@ export function setupNetworkSourceIpc(): void {
   ipcMain.handle('networkSources:enrichLibrary', (event, id: unknown) => {
     assertTrusted(event)
     return sources.enrichLibrary(normalizeProfileId(id))
+  })
+
+  ipcMain.handle('networkSources:cacheInfo', (event) => {
+    assertTrusted(event)
+    const musicCacheRoot =
+      runtime.appSettings.musicCachePath || join(app.getPath('userData'), 'music-cache')
+    return getDirectorySize(networkCacheDir(musicCacheRoot)).then((sizeBytes) => ({
+      sizeBytes
+    }))
+  })
+
+  ipcMain.handle('networkSources:clearCache', (event) => {
+    assertTrusted(event)
+    const musicCacheRoot =
+      runtime.appSettings.musicCachePath || join(app.getPath('userData'), 'music-cache')
+    return clearDirectory(networkCacheDir(musicCacheRoot)).then(() => ({ ok: true }))
   })
 }

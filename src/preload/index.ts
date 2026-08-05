@@ -955,7 +955,11 @@ const api = {
     removeLibraryEntry: (profileId: string, entryId: string): Promise<void> =>
       ipcRenderer.invoke('networkSources:removeLibraryEntry', profileId, entryId),
     enrichLibrary: (profileId: string): Promise<{ enriched: number; failed: number }> =>
-      ipcRenderer.invoke('networkSources:enrichLibrary', profileId)
+      ipcRenderer.invoke('networkSources:enrichLibrary', profileId),
+    cacheInfo: (): Promise<{ sizeBytes: number }> =>
+      ipcRenderer.invoke('networkSources:cacheInfo'),
+    clearCache: (): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('networkSources:clearCache')
   },
   remote: {
     getStatus: (): Promise<import('../shared/remoteControl.ts').RemoteControlStatus> =>

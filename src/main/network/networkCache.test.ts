@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { downloadEntryToCache } from './networkCache.ts'
+import { clearDirectory, getDirectorySize } from './networkCache.ts'
 import { createWebDavAdapter } from './adapters/webdavAdapter.ts'
 import { buildNetworkEntryId } from './networkPath.ts'
 import type { NetworkEntry, NetworkSourceProfile } from '../../shared/networkSources.ts'
@@ -93,6 +94,21 @@ test('downloadEntryToCache re-downloads when size mismatches the cache', async (
     const staleEntry = { ...makeEntry(), sizeBytes: 9999 }
     await downloadEntryToCache({ session, entry: staleEntry, cacheRoot })
     assert.equal(getCount, before + 2)
+    await session.close()
+  } finally {
+    await rm(cacheRoot, { recursive: true, force: true })
+  }
+})
+
+test('cache size reflects downloaded bytes and clearDirectory empties it', async () => {
+  const cacheRoot = await mkdtemp(join(tmpdir(), 'network-cache-'))
+  try {
+    const session = await createWebDavAdapter().createSession(makeProfile(), { kind: 'anonymous' })
+    await downloadEntryToCache({ session, entry: makeEntry(), cacheRoot })
+    const size = await getDirectorySize(cacheRoot)
+    assert.equal(size, FLAC_BYTES.length)
+    await clearDirectory(cacheRoot)
+    assert.equal(await getDirectorySize(cacheRoot), 0)
     await session.close()
   } finally {
     await rm(cacheRoot, { recursive: true, force: true })
