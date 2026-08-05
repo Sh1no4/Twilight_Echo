@@ -594,7 +594,8 @@ onMounted(() => {
               <option value="ftps">FTPS（显式 TLS）</option>
               <option value="sftp">SFTP</option>
               <option value="scp">SCP（SFTP 传输）</option>
-              <option value="smb" disabled>SMB / NFS（即将支持）</option>
+              <option value="smb">SMB（系统挂载）</option>
+              <option value="nfs" disabled>NFS（需 root，暂缓）</option>
             </select>
           </label>
           <label>
