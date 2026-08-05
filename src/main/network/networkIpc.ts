@@ -21,6 +21,7 @@ import { createWebDavAdapter } from './adapters/webdavAdapter.ts'
 import { createFtpAdapter } from './adapters/ftpAdapter.ts'
 import { createSftpSystemAdapter } from './adapters/sftpSystemAdapter.ts'
 import { createSmbMountAdapter } from './adapters/smbMountAdapter.ts'
+import { createDlnaAdapter } from './adapters/dlnaAdapter.ts'
 import type {
   NetworkEntry,
   NetworkSourceProfileInput
@@ -70,6 +71,7 @@ export function getNetworkSourcesManager(): NetworkSourcesManager {
         if (protocol === 'ftp' || protocol === 'ftps') return createFtpAdapter()
         if (protocol === 'sftp' || protocol === 'scp') return createSftpSystemAdapter()
         if (protocol === 'smb') return createSmbMountAdapter()
+        if (protocol === 'dlna') return createDlnaAdapter()
         return null
       }
     })

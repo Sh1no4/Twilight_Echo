@@ -595,6 +595,7 @@ onMounted(() => {
               <option value="sftp">SFTP</option>
               <option value="scp">SCP（SFTP 传输）</option>
               <option value="smb">SMB（系统挂载）</option>
+              <option value="dlna">DLNA（媒体服务器浏览）</option>
               <option value="nfs" disabled>NFS（需 root，暂缓）</option>
             </select>
           </label>
