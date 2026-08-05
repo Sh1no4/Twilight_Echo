@@ -1,5 +1,7 @@
 import { NetworkSourceFailure } from './errors.ts'
 import { downloadEntryToCache } from './networkCache.ts'
+import { normalizeRemotePath } from './networkPath.ts'
+import type { NetworkLibraryIndex } from './networkLibrary.ts'
 import type {
   NetworkSourceAdapter,
   NetworkSourceSession,
@@ -32,14 +34,27 @@ export interface NetworkSourcesManager {
     entry: NetworkEntry,
     signal?: AbortSignal
   ): Promise<NetworkPlaybackPlan>
+  scanDirectory(
+    profileId: string,
+    dirPath: string,
+    signal?: AbortSignal
+  ): Promise<{ added: number; total: number }>
+  listLibrary(profileId: string, query?: string): Promise<NetworkEntry[]>
+  removeLibraryEntry(profileId: string, entryId: string): Promise<void>
+}
+
+const SCAN_LIMITS = {
+  maxDepth: 8,
+  maxEntries: 5000
 }
 
 export function createNetworkSourcesManager(deps: {
   store: NetworkProfileStore
   cacheRoot: string
   getAdapter: (protocol: NetworkSourceProfile['protocol']) => Promise<NetworkSourceAdapter | null>
+  library: NetworkLibraryIndex
 }): NetworkSourcesManager {
-  const { store, cacheRoot, getAdapter } = deps
+  const { store, cacheRoot, getAdapter, library } = deps
 
   async function openSession(profileId: string): Promise<{
     profile: NetworkSourceProfile
@@ -103,6 +118,40 @@ export function createNetworkSourcesManager(deps: {
       } finally {
         await session.close()
       }
+    },
+    async scanDirectory(profileId, dirPath, signal) {
+      const { session } = await openSession(profileId)
+      const found: NetworkEntry[] = []
+      const visited = new Set<string>()
+      const root = normalizeRemotePath(dirPath)
+
+      async function walk(path: string, depth: number): Promise<void> {
+        if (depth > SCAN_LIMITS.maxDepth || found.length >= SCAN_LIMITS.maxEntries) return
+        const entries = await session.list(path, signal)
+        for (const entry of entries) {
+          if (found.length >= SCAN_LIMITS.maxEntries) return
+          if (entry.kind === 'audio') {
+            found.push(entry)
+          } else if (entry.kind === 'directory' && !visited.has(entry.path)) {
+            visited.add(entry.path)
+            await walk(entry.path, depth + 1)
+          }
+        }
+      }
+
+      try {
+        visited.add(root)
+        await walk(root, 0)
+        return library.addEntries(profileId, root, found)
+      } finally {
+        await session.close()
+      }
+    },
+    async listLibrary(profileId, query) {
+      return library.listEntries(profileId, query)
+    },
+    async removeLibraryEntry(profileId, entryId) {
+      return library.removeEntry(profileId, entryId)
     }
   }
 }

@@ -941,7 +941,19 @@ const api = {
       profileId: string,
       entry: import('../shared/networkSources.ts').NetworkEntry
     ): Promise<import('../shared/networkSources.ts').NetworkPlaybackPlan> =>
-      ipcRenderer.invoke('networkSources:resolvePlayback', profileId, entry)
+      ipcRenderer.invoke('networkSources:resolvePlayback', profileId, entry),
+    scanDirectory: (
+      profileId: string,
+      remotePath: string
+    ): Promise<{ added: number; total: number }> =>
+      ipcRenderer.invoke('networkSources:scanDirectory', profileId, remotePath),
+    listLibrary: (
+      profileId: string,
+      query?: string
+    ): Promise<import('../shared/networkSources.ts').NetworkEntry[]> =>
+      ipcRenderer.invoke('networkSources:listLibrary', profileId, query),
+    removeLibraryEntry: (profileId: string, entryId: string): Promise<void> =>
+      ipcRenderer.invoke('networkSources:removeLibraryEntry', profileId, entryId)
   },
   remote: {
     getStatus: (): Promise<import('../shared/remoteControl.ts').RemoteControlStatus> =>

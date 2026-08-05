@@ -2,6 +2,7 @@ import { app, ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { join } from 'node:path'
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
 import {
+  normalizeOptionalIpcString,
   normalizeIpcString,
   stringifyJsonForIpcStorage
 } from '../security/ipcValidation.ts'
@@ -13,6 +14,7 @@ import {
 import { runtime } from '../core/runtime.ts'
 import { NetworkSourceFailure } from './errors.ts'
 import { createNetworkProfileStore, type CredentialCodec } from './profileStore.ts'
+import { createNetworkLibrary } from './networkLibrary.ts'
 import { createNetworkSourcesManager, type NetworkSourcesManager } from './sourcesManager.ts'
 import { createWebDavAdapter } from './adapters/webdavAdapter.ts'
 import { createFtpAdapter } from './adapters/ftpAdapter.ts'
@@ -54,6 +56,9 @@ export function getNetworkSourcesManager(): NetworkSourcesManager {
       store: createNetworkProfileStore({
         filePath: join(app.getPath('userData'), 'network-sources', 'profiles.json'),
         codec: secureStorageCodec
+      }),
+      library: createNetworkLibrary({
+        filePath: join(app.getPath('userData'), 'network-sources', 'library.json')
       }),
       cacheRoot: join(musicCacheRoot, 'network-cache'),
       getAdapter: async (protocol) => {
@@ -133,4 +138,31 @@ export function setupNetworkSourceIpc(): void {
     assertTrusted(event)
     return sources.resolvePlayback(normalizeProfileId(id), normalizeEntry(entry))
   })
+
+  ipcMain.handle(
+    'networkSources:scanDirectory',
+    (event, id: unknown, remotePath: unknown) => {
+      assertTrusted(event)
+      return sources.scanDirectory(
+        normalizeProfileId(id),
+        normalizeIpcString(remotePath, 'remote path', 4096)
+      )
+    }
+  )
+
+  ipcMain.handle('networkSources:listLibrary', (event, id: unknown, query: unknown) => {
+    assertTrusted(event)
+    return sources.listLibrary(normalizeProfileId(id), normalizeOptionalIpcString(query, 'query', 256))
+  })
+
+  ipcMain.handle(
+    'networkSources:removeLibraryEntry',
+    (event, id: unknown, entryId: unknown) => {
+      assertTrusted(event)
+      return sources.removeLibraryEntry(
+        normalizeProfileId(id),
+        normalizeIpcString(entryId, 'entry id', 128)
+      )
+    }
+  )
 }

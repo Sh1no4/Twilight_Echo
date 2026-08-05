@@ -1675,6 +1675,15 @@ interface WindowAPI {
       profileId: string,
       entry: import('../shared/networkSources.ts').NetworkEntry
     ) => Promise<import('../shared/networkSources.ts').NetworkPlaybackPlan>
+    scanDirectory: (
+      profileId: string,
+      remotePath: string
+    ) => Promise<{ added: number; total: number }>
+    listLibrary: (
+      profileId: string,
+      query?: string
+    ) => Promise<import('../shared/networkSources.ts').NetworkEntry[]>
+    removeLibraryEntry: (profileId: string, entryId: string) => Promise<void>
   }
   remote: {
     getStatus: () => Promise<import('../shared/remoteControl.ts').RemoteControlStatus>

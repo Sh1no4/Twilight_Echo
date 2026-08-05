@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { createNetworkSourcesManager } from './sourcesManager.ts'
+import { createNetworkLibrary } from './networkLibrary.ts'
 import type { NetworkProfileStore } from './profileStore.ts'
 import type {
   NetworkEntry,
@@ -74,14 +75,20 @@ const fakeStore: NetworkProfileStore = {
 
 const PROPFIND_XML = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
 <d:response><d:href>/music/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+<d:response><d:href>/music/album/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
 <d:response><d:href>/music/a.flac</d:href><d:propstat><d:prop><d:getcontentlength>12</d:getcontentlength></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+</d:multistatus>`
+
+const ALBUM_XML = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
+<d:response><d:href>/music/album/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+<d:response><d:href>/music/album/b.flac</d:href><d:propstat><d:prop><d:getcontentlength>12</d:getcontentlength></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
 </d:multistatus>`
 
 test.before(async () => {
   server = createServer((req, res) => {
     if (req.method === 'PROPFIND') {
       res.writeHead(207, { 'Content-Type': 'application/xml' })
-      res.end(PROPFIND_XML)
+      res.end(req.url === '/music/album' ? ALBUM_XML : PROPFIND_XML)
       return
     }
     if (req.method === 'GET' && req.url === '/music/a.flac') {
@@ -108,6 +115,7 @@ test('sourcesManager lists directories through the protocol adapter', async () =
     const manager = createNetworkSourcesManager({
       store: fakeStore,
       cacheRoot,
+      library: createNetworkLibrary({ filePath: join(cacheRoot, 'library.json') }),
       getAdapter: (protocol) =>
         protocol === 'webdav'
           ? import('./adapters/webdavAdapter.ts').then((m) => m.createWebDavAdapter())
@@ -128,6 +136,7 @@ test('sourcesManager resolves anonymous webdav playback to a direct url', async 
     const manager = createNetworkSourcesManager({
       store: fakeStore,
       cacheRoot,
+      library: createNetworkLibrary({ filePath: join(cacheRoot, 'library.json') }),
       getAdapter: (protocol) =>
         protocol === 'webdav'
           ? import('./adapters/webdavAdapter.ts').then((m) => m.createWebDavAdapter())
@@ -160,6 +169,7 @@ test('sourcesManager downloads authenticated webdav files to the cache for playb
         }
       },
       cacheRoot,
+      library: createNetworkLibrary({ filePath: join(cacheRoot, 'library.json') }),
       getAdapter: (protocol) =>
         protocol === 'webdav'
           ? import('./adapters/webdavAdapter.ts').then((m) => m.createWebDavAdapter())
@@ -194,6 +204,7 @@ test('sourcesManager testConnection reports failures with structured codes', asy
         }
       },
       cacheRoot,
+      library: createNetworkLibrary({ filePath: join(cacheRoot, 'library.json') }),
       getAdapter: (protocol) =>
         protocol === 'webdav'
           ? import('./adapters/webdavAdapter.ts').then((m) => m.createWebDavAdapter())
@@ -202,6 +213,33 @@ test('sourcesManager testConnection reports failures with structured codes', asy
     // 服务器匿名可访问，因此连接测试应成功；这里验证的是不抛异常且 ok=true。
     const result = await manager.testConnection('p1')
     assert.equal(result.ok, true)
+  } finally {
+    await rm(cacheRoot, { recursive: true, force: true })
+  }
+})
+
+test('sourcesManager scans directories recursively into the virtual library', async () => {
+  const cacheRoot = await mkdtemp(join(tmpdir(), 'manager-cache-'))
+  try {
+    const manager = createNetworkSourcesManager({
+      store: fakeStore,
+      cacheRoot,
+      library: createNetworkLibrary({ filePath: join(cacheRoot, 'library.json') }),
+      getAdapter: (protocol) =>
+        protocol === 'webdav'
+          ? import('./adapters/webdavAdapter.ts').then((m) => m.createWebDavAdapter())
+          : Promise.resolve(null)
+    })
+    const result = await manager.scanDirectory('p1', '/music')
+    assert.equal(result.added, 2)
+    assert.equal(result.total, 2)
+    const entries = await manager.listLibrary('p1')
+    assert.equal(entries.length, 2)
+    assert.ok(entries.some((entry) => entry.path === '/music/a.flac'))
+    assert.ok(entries.some((entry) => entry.path === '/music/album/b.flac'))
+
+    await manager.removeLibraryEntry('p1', entries[0].id)
+    assert.equal((await manager.listLibrary('p1')).length, 1)
   } finally {
     await rm(cacheRoot, { recursive: true, force: true })
   }

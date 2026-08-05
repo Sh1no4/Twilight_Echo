@@ -34,7 +34,13 @@ const browsingProfile = ref<NetworkSourceProfileSummary | null>(null)
 const currentPath = ref('/')
 const entries = ref<NetworkEntry[]>([])
 const browsing = ref(false)
+const scanning = ref(false)
 const browsingError = ref('')
+
+const viewMode = ref<'profiles' | 'library'>('profiles')
+const libraryQuery = ref('')
+const libraryEntries = ref<Array<{ profileName: string; entry: NetworkEntry }>>([])
+const libraryLoading = ref(false)
 
 const breadcrumbs = computed(() => {
   const parts = currentPath.value.split('/').filter(Boolean)
@@ -198,14 +204,18 @@ function buildTrack(entry: NetworkEntry, plan: NetworkPlaybackPlan): Track {
   }
 }
 
-async function resolvePlan(entry: NetworkEntry): Promise<NetworkPlaybackPlan | null> {
-  if (!networkSourcesApi || !browsingProfile.value) return null
-  return networkSourcesApi.resolvePlayback(browsingProfile.value.id, entry)
+async function resolvePlan(
+  profileId: string,
+  entry: NetworkEntry
+): Promise<NetworkPlaybackPlan | null> {
+  if (!networkSourcesApi) return null
+  return networkSourcesApi.resolvePlayback(profileId, entry)
 }
 
 async function playEntry(entry: NetworkEntry): Promise<void> {
   const { playTrack } = usePlayerStore()
-  const plan = await resolvePlan(entry)
+  const profileId = browsingProfile.value?.id ?? entry.profileId
+  const plan = await resolvePlan(profileId, entry)
   if (!plan) return
   const track = buildTrack(entry, plan)
   playTrack(track, [track])
@@ -213,18 +223,21 @@ async function playEntry(entry: NetworkEntry): Promise<void> {
 
 async function enqueueEntry(entry: NetworkEntry): Promise<void> {
   const { enqueueTrack } = usePlayerStore()
-  const plan = await resolvePlan(entry)
+  const profileId = browsingProfile.value?.id ?? entry.profileId
+  const plan = await resolvePlan(profileId, entry)
   if (!plan) return
   enqueueTrack(buildTrack(entry, plan))
 }
 
 async function playAllInDirectory(): Promise<void> {
   const { playTrack } = usePlayerStore()
+  const profileId = browsingProfile.value?.id
+  if (!profileId) return
   const tracks: Track[] = []
   browsing.value = true
   try {
     for (const entry of audioEntries.value) {
-      const plan = await resolvePlan(entry)
+      const plan = await resolvePlan(profileId, entry)
       if (plan) tracks.push(buildTrack(entry, plan))
     }
   } catch (err) {
@@ -235,6 +248,59 @@ async function playAllInDirectory(): Promise<void> {
   if (tracks.length > 0) {
     playTrack(tracks[0], tracks)
     setNotice(`开始播放 ${tracks.length} 首`)
+  }
+}
+
+async function importCurrentDirectory(): Promise<void> {
+  if (!networkSourcesApi || !browsingProfile.value) return
+  scanning.value = true
+  browsingError.value = ''
+  try {
+    const result = await networkSourcesApi.scanDirectory(browsingProfile.value.id, currentPath.value)
+    setNotice(`入库完成：新增 ${result.added} 首，当前共 ${result.total} 首`)
+  } catch (err) {
+    browsingError.value = `入库失败：${err instanceof Error ? err.message : String(err)}`
+  } finally {
+    scanning.value = false
+  }
+}
+
+async function loadLibrary(): Promise<void> {
+  if (!networkSourcesApi) return
+  libraryLoading.value = true
+  error.value = ''
+  try {
+    const items: Array<{ profileName: string; entry: NetworkEntry }> = []
+    for (const profile of profiles.value) {
+      const entriesForProfile = await networkSourcesApi.listLibrary(profile.id, libraryQuery.value)
+      for (const entry of entriesForProfile) {
+        items.push({ profileName: profile.name, entry })
+      }
+    }
+    libraryEntries.value = items
+  } catch (err) {
+    setError(`读取媒体库失败：${err instanceof Error ? err.message : String(err)}`)
+  } finally {
+    libraryLoading.value = false
+  }
+}
+
+async function removeLibraryEntry(entry: NetworkEntry): Promise<void> {
+  if (!networkSourcesApi) return
+  try {
+    await networkSourcesApi.removeLibraryEntry(entry.profileId, entry.id)
+    libraryEntries.value = libraryEntries.value.filter((item) => item.entry.id !== entry.id)
+    setNotice('已从媒体库移除')
+  } catch (err) {
+    setError(`移除失败：${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+async function switchView(mode: 'profiles' | 'library'): Promise<void> {
+  viewMode.value = mode
+  if (mode === 'library') {
+    if (profiles.value.length === 0) await loadProfiles()
+    await loadLibrary()
   }
 }
 
@@ -251,6 +317,24 @@ onMounted(() => {
       </button>
       <h1>网络源</h1>
       <p class="network-hint">浏览 NAS / 远程服务器上的音乐，直接播放或加入队列。</p>
+      <div class="network-view-toggle">
+        <button
+          type="button"
+          class="soft-button"
+          :class="{ active: viewMode === 'profiles' }"
+          @click="switchView('profiles')"
+        >
+          网络源
+        </button>
+        <button
+          type="button"
+          class="soft-button"
+          :class="{ active: viewMode === 'library' }"
+          @click="switchView('library')"
+        >
+          媒体库
+        </button>
+      </div>
     </header>
 
     <div v-if="error" class="network-inline-error" role="alert">{{ error }}</div>
@@ -281,6 +365,14 @@ onMounted(() => {
           @click="playAllInDirectory"
         >
           播放全部（{{ audioEntries.length }}）
+        </button>
+        <button
+          type="button"
+          class="soft-button"
+          :disabled="scanning"
+          @click="importCurrentDirectory"
+        >
+          {{ scanning ? '入库中…' : '入库此目录' }}
         </button>
         <span v-if="browsing" class="network-browsing" aria-live="polite">加载中…</span>
       </div>
@@ -317,6 +409,38 @@ onMounted(() => {
         </li>
       </ul>
       <p v-else-if="!browsing && !browsingError" class="network-empty">该目录为空</p>
+    </section>
+
+    <section v-else-if="viewMode === 'library'" class="network-library glass-card">
+      <div class="network-browser-toolbar">
+        <input
+          v-model="libraryQuery"
+          type="text"
+          class="network-search-input"
+          placeholder="搜索媒体库…"
+          @input="loadLibrary"
+        />
+        <span v-if="libraryLoading" class="network-browsing" aria-live="polite">加载中…</span>
+      </div>
+      <ul v-if="libraryEntries.length > 0" class="network-entry-list">
+        <li v-for="item in libraryEntries" :key="item.entry.id" class="network-entry">
+          <span class="network-entry-kind"><i class="pi pi-music"></i></span>
+          <button type="button" class="network-entry-name" @click="playEntry(item.entry)">
+            {{ item.entry.name }}
+          </button>
+          <span class="network-entry-meta">{{ item.profileName }}</span>
+          <span class="network-entry-actions">
+            <button type="button" class="pill-action" @click="playEntry(item.entry)">播放</button>
+            <button type="button" class="pill-action" @click="enqueueEntry(item.entry)">加队列</button>
+            <button type="button" class="pill-action" @click="removeLibraryEntry(item.entry)">
+              移除
+            </button>
+          </span>
+        </li>
+      </ul>
+      <p v-else-if="!libraryLoading" class="network-empty">
+        媒体库为空：先在「网络源」里浏览目录并点击「入库此目录」。
+      </p>
     </section>
 
     <section v-else class="network-profiles">
@@ -422,6 +546,29 @@ onMounted(() => {
   margin: 0;
   color: var(--te-settings-text-muted, #8a8f98);
   font-size: 13px;
+}
+
+.network-view-toggle {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.network-view-toggle .active {
+  border-color: rgba(var(--te-primary-rgb), 0.34);
+  background: rgba(var(--te-primary-rgb), 0.1);
+  color: var(--brand-600);
+}
+
+.network-search-input {
+  min-height: 36px;
+  width: min(320px, 100%);
+  padding: 0 12px;
+  border: 1px solid var(--te-settings-control-border, rgba(15, 23, 42, 0.12));
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
 }
 
 .network-back {
