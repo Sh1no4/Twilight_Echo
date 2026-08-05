@@ -6,6 +6,7 @@ import { fetch as undiciFetch } from 'undici'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { runtime } from '../core/runtime'
 import { ensureMusicCacheDirectories } from '../cache/ncmCache'
+import { kwinHasInputMethodConfigured } from '../imeBackend'
 import {
   getCoverCacheContentType,
   isCoverCacheFileName,
@@ -69,6 +70,33 @@ export function startApp(): void {
   // Streaming provider URLs are resolved asynchronously after user commands.
   // Desktop playback must not be blocked by Chromium's web-page autoplay policy.
   app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+
+  // Linux Wayland 下的输入法（fcitx5/ibus）集成：
+  // - KWin 只有在系统设置里配置了「虚拟键盘/输入法」时才会暴露
+  //   zwp_input_method 协议（text-input 通道的前提）。未配置时，
+  //   Wayland 原生客户端的 text-input 完全不可用，导致 fcitx5 无法输入。
+  //   此时回退到 X11（XWayland）后端，让 fcitx5 通过 GTK_IM_MODULE /
+  //   XIM 的 dbus 前端工作（与 VS Code 等 Electron 应用一致）。
+  // - KWin 已配置输入法时，遵循 fcitx-im 官方建议使用 text-input-v1：
+  //   KWin 对 zwp_text_input_v3 的实现与 Chromium 存在协议理解差异。
+  // - GNOME/Sway 等仅支持 text-input-v3 的 compositor 保持 v3。
+  if (process.platform === 'linux' && process.env.XDG_SESSION_TYPE === 'wayland') {
+    const desktop = (
+      process.env.XDG_CURRENT_DESKTOP ||
+      process.env.XDG_SESSION_DESKTOP ||
+      ''
+    ).toLowerCase()
+    const isKWin = desktop.includes('kde') || desktop.includes('plasma')
+
+    if (isKWin && !kwinHasInputMethodConfigured()) {
+      app.commandLine.appendSwitch('ozone-platform', 'x11')
+    } else {
+      app.commandLine.appendSwitch('enable-features', 'UseOzonePlatform')
+      app.commandLine.appendSwitch('ozone-platform-hint', 'auto')
+      app.commandLine.appendSwitch('enable-wayland-ime')
+      app.commandLine.appendSwitch('wayland-text-input-version', isKWin ? '1' : '3')
+    }
+  }
 
   // Linux 上透明窗口需要显式启用透明视觉，否则整窗不渲染（纯透明）
   if (process.platform === 'linux' && runtime.appSettings.windowTransparency === true) {

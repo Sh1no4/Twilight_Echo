@@ -9,7 +9,11 @@ electronLanguages:
   - zh-TW
   - en-US
 icon: build/icon.png
-afterPack: scripts/after-pack-windows.cjs
+# Single after-pack hook that dispatches to platform-specific scripts
+# (scripts/after-pack.cjs -> after-pack-windows.cjs / after-pack-linux.cjs).
+# Keeps Windows (rcedit icon/version injection) and Linux (native libs)
+# packaging fully isolated.
+afterPack: scripts/after-pack.cjs
 files:
   - out/**
   - package.json
@@ -74,11 +78,22 @@ dmg:
   artifactName: ${name}-${version}.${ext}
 linux:
   target:
-    - AppImage
-    - snap
-    - deb
-  maintainer: electronjs.org
-  category: Utility
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+    - target: rpm
+      arch: [x64]
+    - target: tar.gz
+      arch: [x64]
+  maintainer: mrcwoods
+  category: Audio
+  icon: build/icon.png
+  executableName: music
+  synopsis: Modern desktop music player
+  description: >
+    Twilight Echo is a modern desktop music player for local collections,
+    streaming exploration, and HiFi playback.
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false
