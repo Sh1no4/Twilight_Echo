@@ -15,7 +15,11 @@ export interface NetworkSourceSession {
   protocol: NetworkProtocol
   list(remotePath: string, signal?: AbortSignal): Promise<NetworkEntry[]>
   stat(remotePath: string, signal?: AbortSignal): Promise<NetworkEntry | null>
-  readStream(remotePath: string, signal?: AbortSignal): Promise<NodeJS.ReadableStream>
+  readStream(
+    remotePath: string,
+    signal?: AbortSignal,
+    options?: { start?: number }
+  ): Promise<NodeJS.ReadableStream>
   /**
    * 返回可直接交给播放内核的 URL；需要认证或协议不支持 URL 播放时返回 null
    * （此时由 sourcesManager 下载到本地缓存再播）。

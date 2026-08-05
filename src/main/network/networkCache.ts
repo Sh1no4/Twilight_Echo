@@ -1,5 +1,5 @@
 import { createWriteStream } from 'node:fs'
-import { mkdir, readdir, rename, rm, stat, unlink } from 'node:fs/promises'
+import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import { extname, join } from 'node:path'
 import { NetworkSourceFailure } from './errors.ts'
 import type { NetworkSourceSession } from './adapters/types.ts'
@@ -27,11 +27,21 @@ export async function downloadEntryToCache(deps: {
     // 未缓存，继续下载
   }
 
-  const temp = `${target}.${process.pid}.${Date.now()}.tmp`
+  const temp = `${target}.part`
   try {
-    const stream = await session.readStream(entry.path, signal)
+    let partialSize = 0
+    try {
+      partialSize = (await stat(temp)).size
+    } catch {
+      // 无部分文件，从头下载
+    }
+    if (entry.sizeBytes != null && partialSize >= entry.sizeBytes) {
+      await rename(temp, target)
+      return target
+    }
+    const stream = await session.readStream(entry.path, signal, { start: partialSize })
     await new Promise<void>((resolve, reject) => {
-      const out = createWriteStream(temp)
+      const out = createWriteStream(temp, { flags: 'a' })
       stream.on('error', reject)
       out.on('error', reject)
       out.on('finish', resolve)
@@ -40,7 +50,6 @@ export async function downloadEntryToCache(deps: {
     await rename(temp, target)
     return target
   } catch (err) {
-    await unlink(temp).catch(() => undefined)
     if (err instanceof NetworkSourceFailure) throw err
     throw new NetworkSourceFailure('network', `网络文件下载失败：${(err as Error).message}`)
   }

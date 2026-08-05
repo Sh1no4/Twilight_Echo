@@ -54,6 +54,7 @@ async function startFtpServer(): Promise<TestFtpServer> {
     socket.on('error', () => undefined)
     socket.write('220 test ftp ready\r\n')
     let buffer = ''
+    let restartAt = 0
 
     function reply(line: string): void {
       socket.write(`${line}\r\n`)
@@ -119,6 +120,10 @@ async function startFtpServer(): Promise<TestFtpServer> {
           case 'PASS':
             reply(argument === PASSWORD ? '230 logged in' : '530 login incorrect')
             break
+          case 'REST':
+            restartAt = Number(argument) || 0
+            reply(`350 Restarting at ${restartAt}`)
+            break
           case 'TYPE':
             reply('200 type set')
             break
@@ -149,7 +154,11 @@ async function startFtpServer(): Promise<TestFtpServer> {
             break
           case 'RETR':
             if (argument.endsWith('a.flac')) {
-              void withData((socket) => socket.write(FLAC_BYTES.toString()))
+              const offset = restartAt
+              restartAt = 0
+              void withData((socket) =>
+                socket.write(FLAC_BYTES.subarray(offset).toString())
+              )
             } else {
               reply('550 no such file')
             }
@@ -257,5 +266,17 @@ test('ftp rejects wrong credentials with auth error and never allows direct urls
     { kind: 'password', username: USERNAME, password: PASSWORD }
   )
   assert.equal(await session.resolvePlaybackUrl('/a.flac'), null)
+  await session.close()
+})
+
+test('ftp readStream honors a restart offset', async () => {
+  const session = await createFtpAdapter().createSession(
+    makeProfile(server.port),
+    { kind: 'password', username: USERNAME, password: PASSWORD }
+  )
+  const stream = await session.readStream('/a.flac', undefined, { start: 4 })
+  const chunks: Buffer[] = []
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk))
+  assert.deepEqual(Buffer.concat(chunks), FLAC_BYTES.subarray(4))
   await session.close()
 })

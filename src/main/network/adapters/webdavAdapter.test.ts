@@ -97,6 +97,18 @@ test.before(async () => {
       return
     }
     if (req.method === 'GET' && req.url === '/music/a.flac') {
+      const range = req.headers.range
+      const match = typeof range === 'string' ? /^bytes=(\d+)-/.exec(range) : null
+      if (match) {
+        const start = Number(match[1])
+        const body = FLAC_BYTES.subarray(start)
+        res.writeHead(206, {
+          'Content-Range': `bytes ${start}-${FLAC_BYTES.length - 1}/${FLAC_BYTES.length}`,
+          'Content-Length': body.length
+        })
+        res.end(body)
+        return
+      }
       res.writeHead(200, { 'Content-Type': 'audio/flac', 'Content-Length': FLAC_BYTES.length })
       res.end(FLAC_BYTES)
       return
@@ -175,5 +187,18 @@ test('webdav rejects wrong credentials with auth error', async () => {
     assert.equal((err as { code: string }).code, 'auth')
     return true
   })
+  await session.close()
+})
+
+test('webdav readStream honors byte range resumes', async () => {
+  const session = await createWebDavAdapter().createSession(makeProfile(), {
+    kind: 'password',
+    username: 'alice',
+    password: 's3cret'
+  })
+  const stream = await session.readStream('/music/a.flac', undefined, { start: 4 })
+  const chunks: Buffer[] = []
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk))
+  assert.deepEqual(Buffer.concat(chunks), FLAC_BYTES.subarray(4))
   await session.close()
 })

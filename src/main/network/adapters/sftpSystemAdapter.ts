@@ -160,11 +160,15 @@ export function createSftpSystemAdapter(deps?: {
             sizeBytes: first.directory ? undefined : first.size
           }
         },
-        async readStream(remotePath: string): Promise<NodeJS.ReadableStream> {
+        async readStream(
+          remotePath: string,
+          _signal?: AbortSignal,
+          options?: { start?: number }
+        ): Promise<NodeJS.ReadableStream> {
           const path = normalizeRemotePath(remotePath)
           const local = join(tempRoot, `sftp-${Date.now()}-${tempCounter++}.tmp`)
           await run(`get ${quote(path)} ${quote(local)}\n`)
-          const stream = createReadStream(local)
+          const stream = createReadStream(local, { start: options?.start ?? 0 })
           stream.on('close', () => {
             void unlink(local).catch(() => undefined)
           })

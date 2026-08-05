@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -13,6 +13,7 @@ import type { NetworkEntry, NetworkSourceProfile } from '../../shared/networkSou
 const FLAC_BYTES = Buffer.from('FLAC-CACHE-DATA-0123456789')
 let server: Server
 let getCount = 0
+let rangeRequestSeen = false
 let basePort = 0
 
 function makeProfile(): NetworkSourceProfile {
@@ -51,6 +52,16 @@ test.before(async () => {
   server = createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/music/a.flac') {
       getCount += 1
+      const range = req.headers.range
+      const match = typeof range === 'string' ? /^bytes=(\d+)-/.exec(range) : null
+      if (match) {
+        rangeRequestSeen = true
+        const start = Number(match[1])
+        const body = FLAC_BYTES.subarray(start)
+        res.writeHead(206, { 'Content-Length': body.length })
+        res.end(body)
+        return
+      }
       res.writeHead(200, { 'Content-Length': FLAC_BYTES.length })
       res.end(FLAC_BYTES)
       return
@@ -109,6 +120,24 @@ test('cache size reflects downloaded bytes and clearDirectory empties it', async
     assert.equal(size, FLAC_BYTES.length)
     await clearDirectory(cacheRoot)
     assert.equal(await getDirectorySize(cacheRoot), 0)
+    await session.close()
+  } finally {
+    await rm(cacheRoot, { recursive: true, force: true })
+  }
+})
+
+test('downloadEntryToCache resumes from a partial file via byte range', async () => {
+  const cacheRoot = await mkdtemp(join(tmpdir(), 'network-cache-'))
+  try {
+    rangeRequestSeen = false
+    const session = await createWebDavAdapter().createSession(makeProfile(), { kind: 'anonymous' })
+    const entry = makeEntry()
+    const partPath = join(cacheRoot, `${entry.id}.flac.part`)
+    await mkdir(cacheRoot, { recursive: true })
+    await writeFile(partPath, FLAC_BYTES.subarray(0, 5))
+    const target = await downloadEntryToCache({ session, entry, cacheRoot })
+    assert.equal((await readFile(target)).toString(), FLAC_BYTES.toString())
+    assert.equal(rangeRequestSeen, true, '续传应发送 Range 请求')
     await session.close()
   } finally {
     await rm(cacheRoot, { recursive: true, force: true })

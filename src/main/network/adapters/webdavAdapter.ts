@@ -185,8 +185,16 @@ export function createWebDavAdapter(): NetworkSourceAdapter {
           const requested = normalizeRemotePath(remotePath)
           return entries.find((entry) => entry.path === requested) ?? entries[0] ?? null
         },
-        async readStream(remotePath: string, signal?: AbortSignal): Promise<NodeJS.ReadableStream> {
-          const res = await perform('GET', remotePath, {}, signal)
+        async readStream(
+          remotePath: string,
+          signal?: AbortSignal,
+          options?: { start?: number }
+        ): Promise<NodeJS.ReadableStream> {
+          const headers: Record<string, string> =
+            options?.start != null && options.start > 0
+              ? { Range: `bytes=${options.start}-` }
+              : {}
+          const res = await perform('GET', remotePath, headers, signal)
           throwForStatus(res.statusCode, remotePath)
           return res
         },

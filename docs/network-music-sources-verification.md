@@ -58,6 +58,7 @@ Windows：`net use`；Linux：`gio mount`（仅匿名/已缓存凭据）。
 - [ ] 媒体库：跨 profile 列出、搜索过滤、播放/加队列/移除
 - [ ] 书签：收藏/跳转/移除，重启后保留
 - [ ] 缓存管理：播放后「网络源缓存」大小增长；清理后归零且媒体库条目仍在
+- [ ] 断点续传：播放中取消/失败后再次播放，WebDAV/FTP 走 Range/REST 续传（观察 `.part` 文件与请求头）
 - [ ] 凭据安全：检查 `userData/network-sources/profiles.json`——口令/私钥口令均为密文；`library.json` 无凭据
 - [ ] 路径安全：在地址栏/书签里尝试 `../` 与含控制字符路径，应被拒绝
 - [ ] 断网/超时：所有操作给出结构化错误（auth/notFound/network/timeout），UI 不卡死

@@ -224,12 +224,17 @@ export function createDlnaAdapter(deps?: {
         async resolvePlaybackUrl(remotePath: string): Promise<string | null> {
           return resolveUrl(remotePath)
         },
-        async readStream(remotePath: string): Promise<NodeJS.ReadableStream> {
+        async readStream(
+          remotePath: string,
+          _signal?: AbortSignal,
+          options?: { start?: number }
+        ): Promise<NodeJS.ReadableStream> {
           const url = await resolveUrl(remotePath)
           if (!url) throw new NetworkSourceFailure('notFound', 'DLNA 条目没有可播放的媒体地址')
           const response = await transport.get(url)
           throwForStatus(response.status)
-          return Readable.from([response.body])
+          const start = options?.start ?? 0
+          return Readable.from([response.body.subarray(start)])
         },
         async close(): Promise<void> {
           // 无状态 HTTP，无需清理。

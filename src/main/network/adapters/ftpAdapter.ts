@@ -111,11 +111,19 @@ export function createFtpAdapter(): NetworkSourceAdapter {
             throw toFailure(err)
           }
         },
-        async readStream(remotePath: string): Promise<NodeJS.ReadableStream> {
+        async readStream(
+          remotePath: string,
+          _signal?: AbortSignal,
+          options?: { start?: number }
+        ): Promise<NodeJS.ReadableStream> {
           await ensureConnected()
           const stream = new PassThrough()
           try {
-            await client.downloadTo(stream, normalizeRemotePath(remotePath))
+            await client.downloadTo(
+              stream,
+              normalizeRemotePath(remotePath),
+              options?.start ?? 0
+            )
           } catch (err) {
             stream.destroy()
             throw toFailure(err)

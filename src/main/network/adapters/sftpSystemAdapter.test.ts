@@ -121,6 +121,21 @@ test('system sftp rejects password auth and streams downloads to temp files', as
   await session.close()
 })
 
+test('system sftp readStream honors a start offset', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'sftp-'))
+  const adapter = createSftpSystemAdapter({ runBatch: makeRunner(), tempDir })
+  const session = await adapter.createSession(makeProfile(), {
+    kind: 'privateKey',
+    username: 'alice',
+    keyPath: 'C:/keys/id_ed25519'
+  })
+  const stream = await session.readStream('/music/a.flac', undefined, { start: 5 })
+  const chunks: Buffer[] = []
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk))
+  assert.equal(Buffer.concat(chunks).toString(), 'SFTP-SYSTEM-DATA'.slice(5))
+  await session.close()
+})
+
 test('system sftp maps permission and missing-path errors', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'sftp-'))
   const authSession = await createSftpSystemAdapter({

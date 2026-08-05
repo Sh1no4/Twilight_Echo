@@ -214,9 +214,15 @@ function createMountAdapterForProtocol(
             throw new NetworkSourceFailure('network', `SMB stat 失败：${(err as Error).message}`)
           }
         },
-        async readStream(remotePath: string): Promise<NodeJS.ReadableStream> {
+        async readStream(
+          remotePath: string,
+          _signal?: AbortSignal,
+          options?: { start?: number }
+        ): Promise<NodeJS.ReadableStream> {
           await ensureMounted()
-          return createReadStream(localMap(normalizeRemotePath(remotePath)))
+          return createReadStream(localMap(normalizeRemotePath(remotePath)), {
+            start: options?.start ?? 0
+          })
         },
         async resolvePlaybackUrl(): Promise<string | null> {
           return null

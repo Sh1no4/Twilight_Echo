@@ -221,7 +221,7 @@ onSourceEvent(cb): Unsubscribe // profile 增删 / 连接状态 / 传输进度
 | 2. WebDAV adapter | PROPFIND 列目录、HEAD/GET 播放、PUT 不做；纯 Node `http/https`，零新依赖 | 无 |
 | 3. FTP/FTPS adapter | `basic-ftp`（纯 JS、被动模式、TLS） | 新增依赖 |
 | 4. SFTP/SCP adapter | 系统 OpenSSH `sftp` 命令（`ssh2` 因 cpu-features 原生编译问题不可用，见 §10） | ✅ 已实现（仅密钥认证；带口令私钥需 ssh-agent / 无口令密钥；真机验证待做） |
-| 5. 下载缓存 | `network-cache` 目录 + 并发限制 + 断点续传（Range） | 任务 2-4 |
+| 5. 下载缓存 | `network-cache` 目录 + 并发限制 + 断点续传（Range/REST） | ✅ 任务 2-4 |
 | 6. 虚拟媒体库 | 目录递归入库、元数据（标签）探测、封面复用现有 `cover-cache` | 任务 5 |
 | 7. UI | 向导 + 浏览树 + 播放/入库 + 状态条 | 任务 1 |
 | 8. 测试 | 单元 + 本地测试服务器集成（见 §9） | 全部 |
