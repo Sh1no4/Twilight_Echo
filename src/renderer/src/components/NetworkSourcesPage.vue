@@ -207,7 +207,11 @@ function formatSeconds(seconds: number | undefined): string {
   return `${minutes}:${remainder.toString().padStart(2, '0')}`
 }
 
-function buildTrack(entry: NetworkEntry, plan: NetworkPlaybackPlan): Track {
+function buildTrack(
+  profileId: string,
+  entry: NetworkEntry,
+  plan: NetworkPlaybackPlan
+): Track {
   const extension = entry.name.includes('.') ? entry.name.split('.').pop() ?? '' : ''
   return {
     id: entry.id,
@@ -221,6 +225,7 @@ function buildTrack(entry: NetworkEntry, plan: NetworkPlaybackPlan): Track {
     cover: null,
     lyrics: null,
     source: 'network',
+    networkSource: { profileId, entry },
     format: extension
   }
 }
@@ -238,7 +243,7 @@ async function playEntry(entry: NetworkEntry): Promise<void> {
   const profileId = browsingProfile.value?.id ?? entry.profileId
   const plan = await resolvePlan(profileId, entry)
   if (!plan) return
-  const track = buildTrack(entry, plan)
+  const track = buildTrack(profileId, entry, plan)
   playTrack(track, [track])
 }
 
@@ -247,7 +252,7 @@ async function enqueueEntry(entry: NetworkEntry): Promise<void> {
   const profileId = browsingProfile.value?.id ?? entry.profileId
   const plan = await resolvePlan(profileId, entry)
   if (!plan) return
-  enqueueTrack(buildTrack(entry, plan))
+  enqueueTrack(buildTrack(profileId, entry, plan))
 }
 
 async function playAllInDirectory(): Promise<void> {
@@ -259,7 +264,7 @@ async function playAllInDirectory(): Promise<void> {
   try {
     for (const entry of audioEntries.value) {
       const plan = await resolvePlan(profileId, entry)
-      if (plan) tracks.push(buildTrack(entry, plan))
+      if (plan) tracks.push(buildTrack(profileId, entry, plan))
     }
   } catch (err) {
     setError(`解析播放失败：${err instanceof Error ? err.message : String(err)}`)

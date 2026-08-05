@@ -63,8 +63,8 @@ export function createWebDavAdapter(): NetworkSourceAdapter {
   return {
     protocol: 'webdav',
     async createSession(profile: NetworkSourceProfile, auth: NetworkAuth): Promise<NetworkSourceSession> {
-      const port = profile.port ?? (profile.host.startsWith('https://') ? 443 : 80)
-      const scheme = profile.host.startsWith('https://') ? 'https' : 'http'
+      const scheme = profile.webdavScheme ?? (profile.port === 443 ? 'https' : 'http')
+      const port = profile.port ?? (scheme === 'https' ? 443 : 80)
       const cleanHost = profile.host.replace(/^https?:\/\//i, '')
       const authorization = authHeader(auth)
 

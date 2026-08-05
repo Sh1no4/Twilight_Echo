@@ -28,6 +28,8 @@ export interface NetworkSourceProfile {
   host: string
   port: number | null
   rootPath: string
+  /** WebDAV transport selected from the entered URL; defaults to http. */
+  webdavScheme?: 'http' | 'https'
   username?: string
   /** SFTP 密钥认证时的私钥文件路径（非敏感，明文存储）。 */
   keyPath?: string
@@ -50,6 +52,8 @@ export interface NetworkSourceProfileInput {
   host: string
   port?: number | null
   rootPath: string
+  /** Optional WebDAV transport override. URL schemes are inferred when omitted. */
+  webdavScheme?: 'http' | 'https'
   username?: string
   keyPath?: string
   auth:
@@ -68,6 +72,7 @@ export interface NetworkSourceProfileSummary {
   host: string
   port: number | null
   rootPath: string
+  webdavScheme?: 'http' | 'https'
   username?: string
   keyPath?: string
   credentialKind: NetworkCredentialKind

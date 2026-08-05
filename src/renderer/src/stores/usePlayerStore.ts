@@ -2518,6 +2518,24 @@ async function resolvePlayTarget(track: Track): Promise<string> {
     throw new Error('Unable to resolve podcast stream URL')
   }
 
+  if (source === 'network') {
+    // Browse-page tracks may already carry a resolved cache path/URL. Search
+    // and library tracks carry the profile/entry pair and resolve lazily here.
+    if (track.filePath) return track.filePath
+    const network = track.networkSource
+    if (!network || !window.api?.networkSources) {
+      throw new Error('Unable to resolve network stream URL')
+    }
+    const plan = await window.api.networkSources.resolvePlayback(
+      network.profileId,
+      network.entry
+    )
+    const target = plan.kind === 'direct-url' ? plan.url : plan.cacheFilePath
+    if (!target) throw new Error('Unable to resolve network stream URL')
+    track.filePath = target
+    return target
+  }
+
   const ncmPlaybackQuality = appSettings.value.ncmPlaybackQuality
   // Do not reuse a remote NCM URL when a managed disk cache may already exist;
   // the provider is the authority for cache-hit local paths.

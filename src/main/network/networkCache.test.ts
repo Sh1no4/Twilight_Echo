@@ -14,6 +14,7 @@ const FLAC_BYTES = Buffer.from('FLAC-CACHE-DATA-0123456789')
 let server: Server
 let getCount = 0
 let rangeRequestSeen = false
+let ignoreRangeRequests = false
 let basePort = 0
 
 function makeProfile(): NetworkSourceProfile {
@@ -56,6 +57,11 @@ test.before(async () => {
       const match = typeof range === 'string' ? /^bytes=(\d+)-/.exec(range) : null
       if (match) {
         rangeRequestSeen = true
+        if (ignoreRangeRequests) {
+          res.writeHead(200, { 'Content-Length': FLAC_BYTES.length })
+          res.end(FLAC_BYTES)
+          return
+        }
         const start = Number(match[1])
         const body = FLAC_BYTES.subarray(start)
         res.writeHead(206, { 'Content-Length': body.length })
@@ -96,14 +102,16 @@ test('downloadEntryToCache streams a remote file into a hashed cache path once',
   }
 })
 
-test('downloadEntryToCache re-downloads when size mismatches the cache', async () => {
+test('downloadEntryToCache rejects a download whose declared size does not match', async () => {
   const cacheRoot = await mkdtemp(join(tmpdir(), 'network-cache-'))
   const before = getCount
   try {
     const session = await createWebDavAdapter().createSession(makeProfile(), { kind: 'anonymous' })
     await downloadEntryToCache({ session, entry: makeEntry(), cacheRoot })
     const staleEntry = { ...makeEntry(), sizeBytes: 9999 }
-    await downloadEntryToCache({ session, entry: staleEntry, cacheRoot })
+    await assert.rejects(() => downloadEntryToCache({ session, entry: staleEntry, cacheRoot }), {
+      code: 'network'
+    })
     assert.equal(getCount, before + 2)
     await session.close()
   } finally {
@@ -140,6 +148,25 @@ test('downloadEntryToCache resumes from a partial file via byte range', async ()
     assert.equal(rangeRequestSeen, true, '续传应发送 Range 请求')
     await session.close()
   } finally {
+    await rm(cacheRoot, { recursive: true, force: true })
+  }
+})
+
+test('downloadEntryToCache resets a partial file when a server ignores Range', async () => {
+  const cacheRoot = await mkdtemp(join(tmpdir(), 'network-cache-'))
+  try {
+    rangeRequestSeen = false
+    ignoreRangeRequests = true
+    const session = await createWebDavAdapter().createSession(makeProfile(), { kind: 'anonymous' })
+    const entry = makeEntry()
+    await mkdir(cacheRoot, { recursive: true })
+    await writeFile(join(cacheRoot, `${entry.id}.flac.part`), FLAC_BYTES.subarray(0, 5))
+    const target = await downloadEntryToCache({ session, entry, cacheRoot })
+    assert.deepEqual(await readFile(target), FLAC_BYTES)
+    assert.equal(rangeRequestSeen, true)
+    await session.close()
+  } finally {
+    ignoreRangeRequests = false
     await rm(cacheRoot, { recursive: true, force: true })
   }
 })

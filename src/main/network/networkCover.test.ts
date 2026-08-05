@@ -27,6 +27,20 @@ test('readCoverDataUrl returns a data url for jpg and png covers', async () => {
   }
 })
 
+test('readCoverDataUrl recognizes the jpeg extension emitted by metadata extraction', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'network-cover-'))
+  try {
+    const id = 'b'.repeat(64)
+    await writeFile(join(dir, `${id}.jpeg`), Buffer.from('jpeg-cover'))
+    assert.equal(
+      await readCoverDataUrl(id, dir),
+      `data:image/jpeg;base64,${Buffer.from('jpeg-cover').toString('base64')}`
+    )
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('readCoverDataUrl returns null for missing covers and rejects invalid ids', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'network-cover-'))
   try {

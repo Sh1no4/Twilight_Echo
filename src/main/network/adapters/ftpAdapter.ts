@@ -48,8 +48,7 @@ export function createFtpAdapter(): NetworkSourceAdapter {
             port: profile.port ?? 21,
             user,
             password,
-            secure,
-            secureOptions: secure ? { rejectUnauthorized: false } : undefined
+            secure
           })
           connected = true
         } catch (err) {
@@ -113,11 +112,18 @@ export function createFtpAdapter(): NetworkSourceAdapter {
         },
         async readStream(
           remotePath: string,
-          _signal?: AbortSignal,
+          signal?: AbortSignal,
           options?: { start?: number }
         ): Promise<NodeJS.ReadableStream> {
+          if (signal?.aborted) throw new NetworkSourceFailure('timeout', '网络文件读取已取消')
           await ensureConnected()
           const stream = new PassThrough()
+          const onAbort = (): void => {
+            stream.destroy(new Error('download aborted'))
+            client.close()
+            connected = false
+          }
+          signal?.addEventListener('abort', onAbort, { once: true })
           try {
             await client.downloadTo(
               stream,
@@ -126,7 +132,10 @@ export function createFtpAdapter(): NetworkSourceAdapter {
             )
           } catch (err) {
             stream.destroy()
+            if (signal?.aborted) throw new NetworkSourceFailure('timeout', '网络文件读取已取消')
             throw toFailure(err)
+          } finally {
+            signal?.removeEventListener('abort', onAbort)
           }
           return stream
         },

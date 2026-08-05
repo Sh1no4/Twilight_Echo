@@ -14,6 +14,7 @@ export async function readCoverDataUrl(
   if (!ENTRY_ID_PATTERN.test(entryId)) return null
   const candidates: Array<{ extension: string; mime: string }> = [
     { extension: 'jpg', mime: 'image/jpeg' },
+    { extension: 'jpeg', mime: 'image/jpeg' },
     { extension: 'png', mime: 'image/png' }
   ]
   for (const candidate of candidates) {

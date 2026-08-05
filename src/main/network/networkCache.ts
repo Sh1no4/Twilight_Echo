@@ -35,20 +35,49 @@ export async function downloadEntryToCache(deps: {
     } catch {
       // 无部分文件，从头下载
     }
-    if (entry.sizeBytes != null && partialSize >= entry.sizeBytes) {
+    if (entry.sizeBytes != null && partialSize > entry.sizeBytes) {
+      await rm(temp, { force: true })
+      partialSize = 0
+    }
+    if (entry.sizeBytes != null && partialSize === entry.sizeBytes) {
       await rename(temp, target)
       return target
     }
-    const stream = await session.readStream(entry.path, signal, { start: partialSize })
-    await new Promise<void>((resolve, reject) => {
-      const out = createWriteStream(temp, { flags: 'a' })
-      stream.on('error', reject)
-      out.on('error', reject)
-      out.on('finish', resolve)
-      stream.pipe(out)
-    })
-    await rename(temp, target)
-    return target
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (signal?.aborted) throw new NetworkSourceFailure('timeout', '网络文件下载已取消')
+      const start = attempt === 0 ? partialSize : 0
+      if (start === 0 && attempt > 0) await rm(temp, { force: true })
+      const stream = await session.readStream(entry.path, signal, { start })
+      await new Promise<void>((resolve, reject) => {
+        const out = createWriteStream(temp, { flags: start > 0 ? 'a' : 'w' })
+        const onAbort = (): void => {
+          out.destroy(new Error('download aborted'))
+          const destroyable = stream as NodeJS.ReadableStream & {
+            destroy?: (error?: Error) => void
+          }
+          destroyable.destroy?.(new Error('download aborted'))
+        }
+        signal?.addEventListener('abort', onAbort, { once: true })
+        stream.on('error', reject)
+        out.on('error', reject)
+        out.on('finish', resolve)
+        out.on('close', () => signal?.removeEventListener('abort', onAbort))
+        stream.pipe(out)
+      })
+      const completedSize = (await stat(temp)).size
+      if (entry.sizeBytes == null || completedSize === entry.sizeBytes) {
+        await rename(temp, target)
+        return target
+      }
+      // A server that ignored Range returns the whole object. Reset once and
+      // retry from byte zero; never publish a concatenated/corrupt cache.
+      if (start > 0 && completedSize > entry.sizeBytes) continue
+      throw new NetworkSourceFailure(
+        'network',
+        `网络文件大小不匹配：预期 ${entry.sizeBytes}，实际 ${completedSize}`
+      )
+    }
+    throw new NetworkSourceFailure('network', '网络文件无法完成下载')
   } catch (err) {
     if (err instanceof NetworkSourceFailure) throw err
     throw new NetworkSourceFailure('network', `网络文件下载失败：${(err as Error).message}`)

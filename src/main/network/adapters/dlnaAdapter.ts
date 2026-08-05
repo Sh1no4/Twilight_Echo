@@ -177,7 +177,12 @@ export function createDlnaAdapter(deps?: {
         throw new NetworkSourceFailure('network', `DLNA 请求失败：HTTP ${status}`)
       }
 
-      async function browse(objectId: string, flag: string): Promise<DidlEntry[]> {
+      async function browse(
+        objectId: string,
+        flag: string,
+        signal?: AbortSignal
+      ): Promise<DidlEntry[]> {
+        if (signal?.aborted) throw new NetworkSourceFailure('timeout', '网络操作已取消')
         await ensureConnected()
         const response = await transport.post(
           controlUrl as string,
@@ -195,6 +200,7 @@ export function createDlnaAdapter(deps?: {
             }
           })
         )
+        if (signal?.aborted) throw new NetworkSourceFailure('timeout', '网络操作已取消')
         throwForStatus(response.status)
         const body = response.body.toString('utf8')
         const result = /<Result[^>]*>([\s\S]*?)<\/Result>/i.exec(body)?.[1] ?? ''
@@ -206,32 +212,33 @@ export function createDlnaAdapter(deps?: {
         return id || '0'
       }
 
-      async function resolveUrl(remotePath: string): Promise<string | null> {
-        const items = await browse(objectIdOf(remotePath), 'BrowseMetadata')
+      async function resolveUrl(remotePath: string, signal?: AbortSignal): Promise<string | null> {
+        const items = await browse(objectIdOf(remotePath), 'BrowseMetadata', signal)
         return items[0]?.res ?? null
       }
 
       return {
         protocol: profile.protocol,
-        async list(remotePath: string): Promise<NetworkEntry[]> {
-          const items = await browse(objectIdOf(remotePath), 'BrowseDirectChildren')
+        async list(remotePath: string, signal?: AbortSignal): Promise<NetworkEntry[]> {
+          const items = await browse(objectIdOf(remotePath), 'BrowseDirectChildren', signal)
           return items.map((item) => toEntry(profile, item))
         },
-        async stat(remotePath: string): Promise<NetworkEntry | null> {
-          const items = await browse(objectIdOf(remotePath), 'BrowseMetadata')
+        async stat(remotePath: string, signal?: AbortSignal): Promise<NetworkEntry | null> {
+          const items = await browse(objectIdOf(remotePath), 'BrowseMetadata', signal)
           return items[0] ? toEntry(profile, items[0]) : null
         },
-        async resolvePlaybackUrl(remotePath: string): Promise<string | null> {
-          return resolveUrl(remotePath)
+        async resolvePlaybackUrl(remotePath: string, signal?: AbortSignal): Promise<string | null> {
+          return resolveUrl(remotePath, signal)
         },
         async readStream(
           remotePath: string,
-          _signal?: AbortSignal,
+          signal?: AbortSignal,
           options?: { start?: number }
         ): Promise<NodeJS.ReadableStream> {
-          const url = await resolveUrl(remotePath)
+          const url = await resolveUrl(remotePath, signal)
           if (!url) throw new NetworkSourceFailure('notFound', 'DLNA 条目没有可播放的媒体地址')
           const response = await transport.get(url)
+          if (signal?.aborted) throw new NetworkSourceFailure('timeout', '网络文件读取已取消')
           throwForStatus(response.status)
           const start = options?.start ?? 0
           return Readable.from([response.body.subarray(start)])

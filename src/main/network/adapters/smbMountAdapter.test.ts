@@ -178,3 +178,24 @@ test('linux gio mount is anonymous-only and rejects password auth', async () => 
   })
   assert.deepEqual(runner.calls[0], { command: 'gio', args: ['mount', 'smb://nas.local/music'] })
 })
+
+test('linux smb maps a mounted GVFS share to its local filesystem path', async () => {
+  const mount = await mkdtemp(join(tmpdir(), 'gvfs-mount-'))
+  try {
+    await writeFile(join(mount, 'a.flac'), FLAC_BYTES)
+    const session = await createSmbMountAdapter({
+      platform: 'linux',
+      runCommand: makeRunner(),
+      findGvfsMount: async () => mount
+    }).createSession(makeProfile(), { kind: 'anonymous' })
+    const entries = await session.list('/')
+    assert.equal(entries[0]?.name, 'a.flac')
+    const stream = await session.readStream('/a.flac')
+    const chunks: Buffer[] = []
+    for await (const chunk of stream) chunks.push(Buffer.from(chunk))
+    assert.deepEqual(Buffer.concat(chunks), FLAC_BYTES)
+    await session.close()
+  } finally {
+    await rm(mount, { recursive: true, force: true })
+  }
+})

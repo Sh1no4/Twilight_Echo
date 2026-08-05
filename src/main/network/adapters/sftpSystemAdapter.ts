@@ -23,7 +23,8 @@ export interface SftpBatchResult {
 
 export type SftpBatchRunner = (
   batch: string,
-  deps: { host: string; port: number; username: string; keyPath: string }
+  deps: { host: string; port: number; username: string; keyPath: string },
+  signal?: AbortSignal
 ) => Promise<SftpBatchResult>
 
 const LS_LINE = /^([-dl])([rwxsStT-]{9})\s+\d+\s+\S+\s+\S+\s+(\d+)\s+[A-Za-z]{3}\s+\d{1,2}\s+(?:\d{2}:\d{2}|\d{4})\s+(.+)$/
@@ -51,7 +52,8 @@ function quote(path: string): string {
 
 async function defaultRunBatch(
   batch: string,
-  deps: { host: string; port: number; username: string; keyPath: string }
+  deps: { host: string; port: number; username: string; keyPath: string },
+  signal?: AbortSignal
 ): Promise<SftpBatchResult> {
   return new Promise((resolve) => {
     const child = execFile(
@@ -66,6 +68,11 @@ async function defaultRunBatch(
         })
       }
     )
+    const onAbort = (): void => {
+      child.kill()
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    child.once('close', () => signal?.removeEventListener('abort', onAbort))
     child.stdin?.write(batch)
     child.stdin?.end()
   })
@@ -103,13 +110,15 @@ export function createSftpSystemAdapter(deps?: {
         throw new NetworkSourceFailure('auth', 'SFTP 需要用户名与私钥路径')
       }
 
-      async function run(commands: string): Promise<string> {
+      async function run(commands: string, signal?: AbortSignal): Promise<string> {
+        if (signal?.aborted) throw new NetworkSourceFailure('timeout', '网络操作已取消')
         const result = await runBatch(commands, {
           host: profile.host,
           port: profile.port ?? 22,
           username,
           keyPath
-        })
+        }, signal)
+        if (signal?.aborted) throw new NetworkSourceFailure('timeout', '网络操作已取消')
         const stderr = result.stderr
         if (/permission denied|authentication|publickey/i.test(stderr)) {
           throw new NetworkSourceFailure('auth', 'SSH 认证失败，请检查私钥与用户名')
@@ -141,14 +150,14 @@ export function createSftpSystemAdapter(deps?: {
 
       return {
         protocol: profile.protocol,
-        async list(remotePath: string): Promise<NetworkEntry[]> {
+        async list(remotePath: string, signal?: AbortSignal): Promise<NetworkEntry[]> {
           const parent = normalizeRemotePath(remotePath)
-          const stdout = await run(`ls -l ${quote(parent)}\n`)
+          const stdout = await run(`ls -l ${quote(parent)}\n`, signal)
           return parseLsOutput(stdout).map((item) => toEntry(parent, item))
         },
-        async stat(remotePath: string): Promise<NetworkEntry | null> {
+        async stat(remotePath: string, signal?: AbortSignal): Promise<NetworkEntry | null> {
           const path = normalizeRemotePath(remotePath)
-          const stdout = await run(`ls -l ${quote(path)}\n`)
+          const stdout = await run(`ls -l ${quote(path)}\n`, signal)
           const first = parseLsOutput(stdout)[0]
           if (!first) return null
           return {
@@ -162,12 +171,13 @@ export function createSftpSystemAdapter(deps?: {
         },
         async readStream(
           remotePath: string,
-          _signal?: AbortSignal,
+          signal?: AbortSignal,
           options?: { start?: number }
         ): Promise<NodeJS.ReadableStream> {
           const path = normalizeRemotePath(remotePath)
           const local = join(tempRoot, `sftp-${Date.now()}-${tempCounter++}.tmp`)
-          await run(`get ${quote(path)} ${quote(local)}\n`)
+          await run(`get ${quote(path)} ${quote(local)}\n`, signal)
+          if (signal?.aborted) throw new NetworkSourceFailure('timeout', '网络文件读取已取消')
           const stream = createReadStream(local, { start: options?.start ?? 0 })
           stream.on('close', () => {
             void unlink(local).catch(() => undefined)

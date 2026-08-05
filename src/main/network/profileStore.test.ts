@@ -126,3 +126,16 @@ test('privateKey auth stores key path plainly and passphrase encrypted', async (
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test('WebDAV profiles preserve HTTPS selected by an entered URL', async () => {
+  const { dir, store } = await makeStore()
+  try {
+    const created = await store.createProfile(makeInput({ host: 'https://nas.example.test' }))
+    assert.equal(created.host, 'nas.example.test')
+    assert.equal(created.webdavScheme, 'https')
+    const persisted = await store.getProfile(created.id)
+    assert.equal(persisted.webdavScheme, 'https')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

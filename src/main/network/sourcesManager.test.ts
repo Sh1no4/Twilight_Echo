@@ -337,3 +337,30 @@ test('sourcesManager searchLibrary queries across all profiles with names', asyn
     await rm(cacheRoot, { recursive: true, force: true })
   }
 })
+
+test('sourcesManager removes the virtual library index when deleting a profile', async () => {
+  const cacheRoot = await mkdtemp(join(tmpdir(), 'manager-cache-'))
+  try {
+    const library = createNetworkLibrary({ filePath: join(cacheRoot, 'library.json') })
+    await library.addEntries('p1', '/music', [
+      {
+        id: 'entry-1',
+        profileId: 'p1',
+        name: 'a.flac',
+        kind: 'audio',
+        path: '/music/a.flac'
+      }
+    ])
+    const manager = createNetworkSourcesManager({
+      store: { ...fakeStore, async deleteProfile() {} },
+      cacheRoot,
+      coverCacheRoot: join(cacheRoot, 'cover'),
+      library,
+      getAdapter: () => Promise.resolve(null)
+    })
+    await manager.deleteProfile('p1')
+    assert.deepEqual(await library.listEntries('p1'), [])
+  } finally {
+    await rm(cacheRoot, { recursive: true, force: true })
+  }
+})

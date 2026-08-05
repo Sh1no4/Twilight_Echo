@@ -25,6 +25,8 @@ interface MountAdapterDeps {
   /** 挂载键（UNC / gvfs URI / NFS 挂载点）→ 本地路径映射，测试可注入。 */
   localMap?: (mountKey: string, remotePath: string) => string
   mountBaseDir?: string
+  gvfsRoot?: string
+  findGvfsMount?: (profile: NetworkSourceProfile) => Promise<string | null>
 }
 
 /**
@@ -69,6 +71,23 @@ function createMountAdapterForProtocol(
 
   function defaultLocalMap(mountKey: string): (remotePath: string) => string {
     return (remotePath) => join(mountKey, remotePath.replace(/^\//, ''))
+  }
+
+  async function findGvfsMount(profile: NetworkSourceProfile): Promise<string | null> {
+    const uid = typeof process.getuid === 'function' ? process.getuid() : null
+    const runtimeDir = process.env.XDG_RUNTIME_DIR ?? (uid == null ? null : `/run/user/${uid}`)
+    const gvfsDir = deps.gvfsRoot ?? (runtimeDir ? join(runtimeDir, 'gvfs') : null)
+    if (!gvfsDir) return null
+    const expected = `smb-share:server=${profile.host.toLowerCase()},share=${shareName(profile).toLowerCase()}`
+    try {
+      const entries = await readdir(gvfsDir, { withFileTypes: true })
+      const mount = entries.find(
+        (entry) => entry.isDirectory() && entry.name.toLowerCase() === expected
+      )
+      return mount ? join(gvfsDir, mount.name) : null
+    } catch {
+      return null
+    }
   }
 
   function throwForMountResult(result: MountCommandResult, action: string): void {
@@ -116,7 +135,7 @@ function createMountAdapterForProtocol(
                 ? mountPoint ?? ''
                 : platform === 'win32'
                   ? uncFor(profile)
-                  : gioUri(profile)
+                  : mountPoint ?? gioUri(profile)
             return deps.localMap!(key, remotePath)
           }
         : (remotePath: string) => {
@@ -125,7 +144,7 @@ function createMountAdapterForProtocol(
                 ? mountPoint ?? ''
                 : platform === 'win32'
                   ? uncFor(profile)
-                  : gioUri(profile)
+                  : mountPoint ?? gioUri(profile)
             return defaultLocalMap(key)(remotePath)
           }
 
@@ -160,6 +179,15 @@ function createMountAdapterForProtocol(
           const result = await runCommand('gio', ['mount', gioUri(profile)])
           throwForMountResult(result, '挂载')
         }
+        if (protocol === 'smb' && platform === 'linux' && !deps.localMap) {
+          mountPoint = await (deps.findGvfsMount ?? findGvfsMount)(profile)
+          if (!mountPoint) {
+            throw new NetworkSourceFailure(
+              'notFound',
+              'SMB 已挂载但未找到 GVFS 本地挂载点，请确认桌面会话已启用 GVFS'
+            )
+          }
+        }
         mounted = true
       }
 
@@ -178,7 +206,8 @@ function createMountAdapterForProtocol(
 
       return {
         protocol: profile.protocol,
-        async list(remotePath: string): Promise<NetworkEntry[]> {
+        async list(remotePath: string, signal?: AbortSignal): Promise<NetworkEntry[]> {
+          if (signal?.aborted) throw new NetworkSourceFailure('timeout', '网络操作已取消')
           await ensureMounted()
           const parent = normalizeRemotePath(remotePath)
           const local = localMap(parent)
@@ -201,7 +230,8 @@ function createMountAdapterForProtocol(
           }
           return entries
         },
-        async stat(remotePath: string): Promise<NetworkEntry | null> {
+        async stat(remotePath: string, signal?: AbortSignal): Promise<NetworkEntry | null> {
+          if (signal?.aborted) throw new NetworkSourceFailure('timeout', '网络操作已取消')
           await ensureMounted()
           const path = normalizeRemotePath(remotePath)
           try {
@@ -216,13 +246,18 @@ function createMountAdapterForProtocol(
         },
         async readStream(
           remotePath: string,
-          _signal?: AbortSignal,
+          signal?: AbortSignal,
           options?: { start?: number }
         ): Promise<NodeJS.ReadableStream> {
           await ensureMounted()
-          return createReadStream(localMap(normalizeRemotePath(remotePath)), {
+          if (signal?.aborted) throw new NetworkSourceFailure('timeout', '网络文件读取已取消')
+          const stream = createReadStream(localMap(normalizeRemotePath(remotePath)), {
             start: options?.start ?? 0
           })
+          signal?.addEventListener('abort', () => stream.destroy(new Error('read aborted')), {
+            once: true
+          })
+          return stream
         },
         async resolvePlaybackUrl(): Promise<string | null> {
           return null

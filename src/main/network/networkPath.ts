@@ -48,6 +48,7 @@ export function redactProfile(profile: NetworkSourceProfile): NetworkSourceProfi
     host: profile.host,
     port: profile.port,
     rootPath: profile.rootPath,
+    webdavScheme: profile.webdavScheme,
     username: profile.username,
     credentialKind: profile.credential.kind,
     options: { ...profile.options },

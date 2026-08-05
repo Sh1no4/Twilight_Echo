@@ -64,6 +64,18 @@ function normalizeHost(value: unknown): string {
   return host
 }
 
+function normalizeWebDavScheme(
+  protocol: NetworkProtocol,
+  host: unknown,
+  explicit: unknown
+): 'http' | 'https' | undefined {
+  if (protocol !== 'webdav') return undefined
+  if (typeof host === 'string' && /^https:\/\//i.test(host.trim())) return 'https'
+  if (typeof host === 'string' && /^http:\/\//i.test(host.trim())) return 'http'
+  if (explicit === 'http' || explicit === 'https') return explicit
+  return 'http'
+}
+
 function normalizePort(value: unknown): number | null {
   if (value == null || value === '') return null
   const port = typeof value === 'number' ? value : Number(value)
@@ -118,6 +130,12 @@ export function validateProfileInput(input: NetworkSourceProfileInput): void {
   }
   normalizeName(input.name)
   normalizeHost(input.host)
+  if (
+    input.webdavScheme !== undefined &&
+    (input.protocol !== 'webdav' || !['http', 'https'].includes(input.webdavScheme))
+  ) {
+    throw new NetworkSourceFailure('invalidProfile', 'WebDAV 传输协议配置不合法')
+  }
   normalizePort(input.port)
   normalizeRemotePath(input.rootPath)
   normalizeUsername(input.username)
@@ -180,6 +198,7 @@ export function createNetworkProfileStore(deps: {
         host: normalizeHost(input.host),
         port: normalizePort(input.port),
         rootPath: normalizeRemotePath(input.rootPath),
+        webdavScheme: normalizeWebDavScheme(input.protocol, input.host, input.webdavScheme),
         username: normalizeUsername(input.username),
         keyPath:
           input.auth.kind === 'privateKey' ? input.auth.keyPath.trim() : input.keyPath?.trim(),
@@ -212,6 +231,7 @@ export function createNetworkProfileStore(deps: {
         host: patch.host ?? profile.host,
         port: patch.port ?? profile.port,
         rootPath: patch.rootPath ?? profile.rootPath,
+        webdavScheme: patch.webdavScheme ?? profile.webdavScheme,
         username: patch.username === undefined ? profile.username : patch.username,
         keyPath: patch.keyPath ?? profile.keyPath,
         auth:
@@ -232,6 +252,7 @@ export function createNetworkProfileStore(deps: {
         host: normalizeHost(merged.host),
         port: normalizePort(merged.port),
         rootPath: normalizeRemotePath(merged.rootPath),
+        webdavScheme: normalizeWebDavScheme(merged.protocol, merged.host, merged.webdavScheme),
         username: normalizeUsername(merged.username),
         keyPath:
           merged.auth.kind === 'privateKey' ? merged.auth.keyPath.trim() : merged.keyPath?.trim(),

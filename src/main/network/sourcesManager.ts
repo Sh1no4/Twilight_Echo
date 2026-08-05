@@ -89,7 +89,8 @@ export function createNetworkSourcesManager(deps: {
       return store.updateProfile(id, patch)
     },
     async deleteProfile(id) {
-      return store.deleteProfile(id)
+      await store.deleteProfile(id)
+      await library.removeProfile(id)
     },
     async listDirectory(profileId, remotePath, signal) {
       const { session } = await openSession(profileId)
