@@ -809,6 +809,51 @@ function emitPage(nextOffset: number): void {
   gap: 20px 18px;
 }
 
+@media (max-width: 900px) {
+  .disc-mosaic {
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    gap: 14px 12px;
+  }
+
+  .disc-card-name {
+    font-size: 12.5px;
+  }
+
+  .disc-card-meta {
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 640px) {
+  .disc-mosaic {
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+    gap: 12px 10px;
+  }
+
+  .disc-card-name {
+    font-size: 11.5px;
+  }
+
+  .disc-card-meta {
+    font-size: 10.5px;
+  }
+
+  .disc-card-plays {
+    left: 6px;
+    bottom: 6px;
+    font-size: 9.5px;
+    padding: 2px 7px;
+  }
+
+  .disc-card-go {
+    right: 6px;
+    bottom: 6px;
+    width: 28px;
+    height: 28px;
+    font-size: 11px;
+  }
+}
+
 /* Featured cover story — spans a 2×2 cell of the wall */
 
 .disc-feature {
