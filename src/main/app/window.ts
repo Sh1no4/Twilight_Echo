@@ -133,6 +133,8 @@ export function createWindow(): void {
   runtime.mainWindow = new BrowserWindow({
     width: 1495,
     height: 883,
+    minWidth: 1298,
+    minHeight: 692,
     show: false,
     frame: false,
     transparent: transparent && !acrylic,

@@ -736,6 +736,22 @@
   padding: 2px 2px 8px;
 }
 
+/* Narrow-window adaptation: shrink card columns and inner text so cards
+   stay usable without overflowing or becoming oversized. */
+@media (max-width: 900px) {
+  .card-grid {
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+    gap: 16px 14px;
+  }
+}
+
+@media (max-width: 640px) {
+  .card-grid {
+    grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+    gap: 12px 10px;
+  }
+}
+
 /* Unified Card Component Styles */
 .artist-card,
 .album-card,
@@ -743,6 +759,7 @@
   display: flex;
   flex-direction: column;
   padding: 13px 13px 15px;
+  min-width: 0;
   border-radius: 18px;
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.56), rgba(248, 245, 255, 0.34)),
@@ -759,6 +776,22 @@
   -webkit-backdrop-filter: blur(20px) saturate(150%);
   overflow: hidden;
   position: relative;
+}
+
+@media (max-width: 900px) {
+  .artist-card,
+  .album-card,
+  .playlist-card {
+    padding: 10px 10px 12px;
+  }
+}
+
+@media (max-width: 640px) {
+  .artist-card,
+  .album-card,
+  .playlist-card {
+    padding: 8px 8px 10px;
+  }
 }
 
 .artist-card::before,
@@ -870,6 +903,42 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+@media (max-width: 900px) {
+  .artist-name,
+  .album-name,
+  .playlist-name {
+    font-size: 13px;
+  }
+
+  .artist-count,
+  .album-count,
+  .playlist-count {
+    font-size: 11px;
+  }
+
+  .playlist-source-summary {
+    font-size: 10.5px;
+  }
+}
+
+@media (max-width: 640px) {
+  .artist-name,
+  .album-name,
+  .playlist-name {
+    font-size: 12px;
+  }
+
+  .artist-count,
+  .album-count,
+  .playlist-count {
+    font-size: 10.5px;
+  }
+
+  .playlist-source-summary {
+    font-size: 10px;
+  }
 }
 
 /* Empty State */
