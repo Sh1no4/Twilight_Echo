@@ -39,6 +39,7 @@ export function useAppNavigation() {
   const showPlayingPage = ref(false)
   const showStreamingPage = ref(false)
   const showRadioPodcastPage = ref(false)
+  const showNetworkSourcesPage = ref(false)
   const showLoginPage = ref(false)
   const loginPageMode = ref<'login' | 'profile'>('login')
   const loginInitialProviderId = ref<string | null>(null)
@@ -60,6 +61,7 @@ export function useAppNavigation() {
   const showStreamingSurface = computed(
     () =>
       showStreamingPage.value &&
+      !showNetworkSourcesPage.value &&
       !showPlayingPage.value &&
       !showLoginPage.value &&
       !showSettingsPage.value &&
@@ -76,6 +78,7 @@ export function useAppNavigation() {
       !showPlayingPage.value &&
       !showStreamingPage.value &&
       !showRadioPodcastPage.value &&
+      !showNetworkSourcesPage.value &&
       !showLoginPage.value &&
       !showSettingsPage.value &&
       !showThemeStudioPage.value &&
@@ -110,6 +113,7 @@ export function useAppNavigation() {
     showPluginPage.value = false
     activePluginPage.value = null
     showRadioPodcastPage.value = false
+    showNetworkSourcesPage.value = false
   }
 
   function closePluginPage(): void {
@@ -127,6 +131,7 @@ export function useAppNavigation() {
     showEqualizerPage.value = false
     showPluginPage.value = false
     activePluginPage.value = page
+    showNetworkSourcesPage.value = false
   }
 
   function openPlayingPage(): void {
@@ -147,6 +152,7 @@ export function useAppNavigation() {
     showPluginPage.value = false
     activePluginPage.value = null
     showRadioPodcastPage.value = false
+    showNetworkSourcesPage.value = false
     showStreamingPage.value = true
   }
 
@@ -161,6 +167,7 @@ export function useAppNavigation() {
     menuOpen.value = false
     showPlayingPage.value = false
     showStreamingPage.value = false
+    showNetworkSourcesPage.value = false
     showSettingsPage.value = false
     showThemeStudioPage.value = false
     showEqualizerPage.value = false
@@ -175,6 +182,25 @@ export function useAppNavigation() {
     showRadioPodcastPage.value = false
   }
 
+  function enterNetworkSourcesMode(): void {
+    menuOpen.value = false
+    showPlayingPage.value = false
+    showStreamingPage.value = false
+    showRadioPodcastPage.value = false
+    showSettingsPage.value = false
+    showThemeStudioPage.value = false
+    showEqualizerPage.value = false
+    showDspRackPage.value = false
+    showPluginPage.value = false
+    activePluginPage.value = null
+    showLoginPage.value = false
+    showNetworkSourcesPage.value = true
+  }
+
+  function closeNetworkSourcesPage(): void {
+    showNetworkSourcesPage.value = false
+  }
+
   function openLoginPage(
     initialProviderId: string | null = null,
     options?: { profile?: boolean }
@@ -183,6 +209,7 @@ export function useAppNavigation() {
     showPlayingPage.value = false
     showStreamingPage.value = false
     showRadioPodcastPage.value = false
+    showNetworkSourcesPage.value = false
     showSettingsPage.value = false
     showThemeStudioPage.value = false
     showEqualizerPage.value = false
@@ -207,6 +234,7 @@ export function useAppNavigation() {
     showEqualizerPage.value = false
     showDspRackPage.value = false
     activePluginPage.value = null
+    showNetworkSourcesPage.value = false
     showSettingsPage.value = true
   }
 
@@ -228,6 +256,7 @@ export function useAppNavigation() {
     showEqualizerPage.value = false
     showDspRackPage.value = false
     activePluginPage.value = null
+    showNetworkSourcesPage.value = false
     showThemeStudioPage.value = true
   }
 
@@ -255,6 +284,7 @@ export function useAppNavigation() {
     showEqualizerPage.value = false
     showDspRackPage.value = false
     activePluginPage.value = null
+    showNetworkSourcesPage.value = false
     showPluginPage.value = true
   }
 
@@ -268,6 +298,7 @@ export function useAppNavigation() {
     showPluginPage.value = false
     showDspRackPage.value = false
     activePluginPage.value = null
+    showNetworkSourcesPage.value = false
     showEqualizerPage.value = true
   }
 
@@ -281,6 +312,7 @@ export function useAppNavigation() {
     showPluginPage.value = false
     showEqualizerPage.value = false
     activePluginPage.value = null
+    showNetworkSourcesPage.value = false
     showDspRackPage.value = true
   }
 
@@ -347,6 +379,7 @@ export function useAppNavigation() {
     showPlayingPage,
     showStreamingPage,
     showRadioPodcastPage,
+    showNetworkSourcesPage,
     showLoginPage,
     loginPageMode,
     loginInitialProviderId,
@@ -375,6 +408,8 @@ export function useAppNavigation() {
     enterStreamingMode,
     enterRadioPodcastMode,
     closeRadioPodcastPage,
+    enterNetworkSourcesMode,
+    closeNetworkSourcesPage,
     returnToLocalMode,
     openLoginPage,
     closeLoginPage,

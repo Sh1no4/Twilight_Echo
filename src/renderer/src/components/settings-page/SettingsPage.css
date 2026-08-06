@@ -465,6 +465,7 @@
 }
 
 .settings-inline-notice,
+.settings-inline-warning,
 .settings-inline-error {
   padding: 9px 12px;
   border-radius: 8px;
@@ -482,6 +483,12 @@
   border: 1px solid rgba(220, 38, 38, 0.26);
   background: rgba(220, 38, 38, 0.08);
   color: #dc2626;
+}
+
+.settings-inline-warning {
+  border: 1px solid rgba(217, 119, 6, 0.35);
+  background: rgba(217, 119, 6, 0.1);
+  color: #b45309;
 }
 
 .glass-card {
@@ -1252,6 +1259,25 @@ html[data-te-motion='full'] .toggle-switch.active::after {
   background: var(--te-card-bg);
   color: #1f2937;
   box-shadow: 0 1px 5px rgba(15, 23, 42, 0.08);
+}
+
+html[data-theme='dark'] .segmented-control,
+html[data-theme='dark'] .theme-segment {
+  border-color: var(--te-card-border);
+  background: var(--te-subtle-bg);
+  box-shadow: none;
+}
+
+html[data-theme='dark'] .segmented-control button,
+html[data-theme='dark'] .theme-segment button {
+  color: var(--te-settings-text-muted);
+}
+
+html[data-theme='dark'] .segmented-control button.active,
+html[data-theme='dark'] .theme-segment button.active {
+  background: var(--te-card-bg);
+  color: var(--te-settings-text);
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.22);
 }
 
 .dsd-route-control {

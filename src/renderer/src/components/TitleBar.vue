@@ -98,7 +98,7 @@ function close(): void {
         </svg>
       </button>
       <button class="control-btn maximize" title="最大化/还原" @click="toggleMaximize">
-        <svg width="13" height="13" viewBox="0 0 12 12" fill="none">
+        <svg width="14" height="14" viewBox="0 0 12 12" fill="none">
           <rect x="2.5" y="2.5" width="7" height="7" rx="1" stroke="currentColor" />
         </svg>
       </button>

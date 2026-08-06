@@ -2,6 +2,7 @@ import type { PlaybackResumeMode, PlayMode } from './settings'
 import type { NcmPlaybackQuality } from './settings'
 import type { SleepTimerState } from '../../../shared/sleepTimer.ts'
 import type { CueRange, ParsedCueSheet } from '../../../shared/cue.ts'
+import type { NetworkEntry } from '../../../shared/networkSources.ts'
 
 export type BuiltInTrackSource = 'local' | 'ncm'
 export type TrackSource = BuiltInTrackSource | (string & {})
@@ -78,6 +79,8 @@ export interface Track {
   metadataMatch?: TrackMetadataMatch | null
   source?: TrackSource
   ncmSongId?: number
+  /** 网络源条目（统一搜索结果使用；播放时经 resolvePlayback 解析出可播地址）。 */
+  networkSource?: { profileId: string; entry: NetworkEntry }
   streamUrl?: string | null
   streamQuality?: NcmPlaybackQuality
   format?: string

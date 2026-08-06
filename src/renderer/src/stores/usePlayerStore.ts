@@ -1,4 +1,5 @@
 import { shallowRef, ref, computed, watch, type Ref, type ComputedRef } from 'vue'
+import { shouldApplyNativeTimePosition } from './playerProgressPolicy.ts'
 import type { PlaybackSession, Track } from '../types/music'
 import type {
   AudioDeviceOption,
@@ -273,6 +274,13 @@ let playbackAudio: HTMLAudioElement | null = null
 let playbackObjectUrl: string | null = null
 let nativePlaybackActive = false
 let nativeQueueDelegated = false
+/**
+ * 原生引擎在授权/缓存层会把 source 解析成缓存文件或 CDN 直链，playback-info
+ * 回传的 source 与渲染层队列条目的 streamUrl/filePath 可能不一致。渲染层每次
+ * 实际发起播放时（loadAndPlay）都记录 source->track.id 映射，匹配 playback-info
+ * 时先按 source 查映射，保证原生自动切歌后 queueIndex/currentTrack 能同步。
+ */
+const nativeSourceToTrackId = new Map<string, string>()
 const nativeQueueRevisionFence = new NativeQueueRevisionFence()
 let activeLoadToken = 0
 let rendererFallbackInProgress = false
@@ -1119,6 +1127,14 @@ function patchTrackInQueues(updatedTrack: Track): void {
 }
 
 function findTrackIndexFromPlaybackInfo(info: NativePlaybackInfo): number {
+  const mappedTrackId =
+    typeof info.source === 'string' && info.source.length > 0
+      ? nativeSourceToTrackId.get(info.source)
+      : undefined
+  if (mappedTrackId) {
+    const mappedIndex = queue.value.findIndex((track) => track.id === mappedTrackId)
+    if (mappedIndex >= 0) return mappedIndex
+  }
   if (
     Number.isInteger(info.queueIndex) &&
     info.queueIndex >= 0 &&
@@ -1130,7 +1146,14 @@ function findTrackIndexFromPlaybackInfo(info: NativePlaybackInfo): number {
     const trackAt = queue.value[info.queueIndex]
     const source = typeof info.source === 'string' ? info.source.trim() : ''
     if (trackAt && source.length > 0) {
-      if (getTrackAudioSource(trackAt) === source || trackAt.id === source) {
+      if (
+        getTrackAudioSource(trackAt) === source ||
+        trackAt.id === source ||
+        cachedSourceMatchesTrack(trackAt, source) ||
+        // A delegated native queue owns queueIndex even when authorization or
+        // cache resolution rewrites the reported source.
+        nativeQueueDelegated
+      ) {
         return info.queueIndex
       }
       // queueIndex 与 source 不匹配，队列可能已被重排，回退到 source 查找
@@ -1141,8 +1164,27 @@ function findTrackIndexFromPlaybackInfo(info: NativePlaybackInfo): number {
 
   if (!info.source) return -1
   return queue.value.findIndex(
-    (track) => track.id === info.source || getTrackAudioSource(track) === info.source
+    (track) =>
+      track.id === info.source ||
+      getTrackAudioSource(track) === info.source ||
+      cachedSourceMatchesTrack(track, info.source)
   )
+}
+
+/**
+ * 原生引擎在授权/缓存层会把 twilight-media 源解析成磁盘缓存文件
+ * （如 music-cache\ncm-cache\1996755298.flac）。渲染层队列条目持有的是
+ * 逻辑 id（ncm:1996755298）或流 URL，直接比对会失配，导致原生自动切歌后
+ * queueIndex/currentTrack 无法同步（歌单高亮不动、进度条卡住）。这里从缓存
+ * 文件名提取纯数字 id，与逻辑 id 的数字段比对。
+ */
+function cachedSourceMatchesTrack(track: Track, source: string): boolean {
+  const normalized = source.replace(/\\/g, '/')
+  const fileName = normalized.slice(normalized.lastIndexOf('/') + 1)
+  const numericId = fileName.replace(/\.[^.]+$/, '')
+  if (!/^\d+$/.test(numericId)) return false
+  const idSuffix = `:${numericId}`
+  return track.id === numericId || track.id.endsWith(idSuffix)
 }
 
 function clearNativeStreamBufferingTimer(): void {
@@ -1235,6 +1277,7 @@ function applyNativePlaybackInfo(
     nativePlaybackActive = true
   } else if (
     info.nativePlaybackActive === false &&
+    playbackToggleIntent?.playing !== true &&
     (info.state === 'stopped' || (!isPlaying.value && !isLoading.value))
   ) {
     nativePlaybackActive = false
@@ -2475,6 +2518,24 @@ async function resolvePlayTarget(track: Track): Promise<string> {
     throw new Error('Unable to resolve podcast stream URL')
   }
 
+  if (source === 'network') {
+    // Browse-page tracks may already carry a resolved cache path/URL. Search
+    // and library tracks carry the profile/entry pair and resolve lazily here.
+    if (track.filePath) return track.filePath
+    const network = track.networkSource
+    if (!network || !window.api?.networkSources) {
+      throw new Error('Unable to resolve network stream URL')
+    }
+    const plan = await window.api.networkSources.resolvePlayback(
+      network.profileId,
+      network.entry
+    )
+    const target = plan.kind === 'direct-url' ? plan.url : plan.cacheFilePath
+    if (!target) throw new Error('Unable to resolve network stream URL')
+    track.filePath = target
+    return target
+  }
+
   const ncmPlaybackQuality = appSettings.value.ncmPlaybackQuality
   // Do not reuse a remote NCM URL when a managed disk cache may already exist;
   // the provider is the authority for cache-hit local paths.
@@ -2699,19 +2760,9 @@ function setupAudioEngineListeners(): void {
     api.onPropertyChange(({ name, data }) => {
       switch (name) {
         case 'time-pos':
-          // Prefer continuous progress paint over strict native flags. Drop only
-          // when there is no active session identity at all — brief demotions of
-          // nativePlaybackActive during track hand-off must not freeze the bar
-          // until the user pauses or expands the now-playing page.
-          if (
-            !currentTrack.value &&
-            !nativePlaybackActive &&
-            !nativeQueueDelegated &&
-            !isPlaying.value &&
-            !isLoading.value
-          ) {
-            break
-          }
+          // 兜底（HTMLAudio）模式下原生 time-pos 与 <audio> timeupdate 双源竞争，
+          // 会造成进度冻结；只在原生播放时应用原生时间。
+          if (!shouldApplyNativeTimePosition({ nativePlaybackActive, nativeQueueDelegated })) break
           if (typeof data === 'number' && isFinite(data)) {
             applyPlaybackPositionSample(data)
           }
@@ -2764,10 +2815,15 @@ function setupAudioEngineListeners(): void {
       pendingLoadStartTime = 0
       beginPlaybackPositionTransition(startAt)
       isLoading.value = false
-      // Keep accepting time-pos during the hand-off even if a stale snapshot
-      // temporarily reported nativePlaybackActive=false.
-      if (nativeQueueDelegated || isPlaying.value) {
+      // start-file is emitted by the native backend when the new file has
+      // entered its playback pipeline. Re-open both clocks immediately: a
+      // stale pause snapshot may have cleared isPlaying before this event, and
+      // leaving nativePlaybackActive false would make the time-pos policy drop
+      // every sample from the new track.
+      if (currentTrack.value && playbackToggleIntent?.playing !== false) {
+        setPlaybackToggleIntent(true)
         nativePlaybackActive = true
+        isPlaying.value = true
       }
       void refreshPlaybackInfoAfterStartFile()
     })
@@ -3168,6 +3224,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
       return
     }
     patchTrackInQueues(track)
+    nativeSourceToTrackId.set(playTarget, track.id)
     // resolvePlayTarget 只改写了传入的 track 对象，而 active currentTrack 是
     // 激活时的拷贝；若不回写，后续队列重同步（如切换播放模式）会因取不到
     // source 而误判“当前曲目不支持原生播放”→ stopNativeAudio → 误触发切歌。
@@ -3200,6 +3257,9 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         )
         if (!preparedQueue) {
           throw new Error('Native playback target is unavailable')
+        }
+        for (const item of preparedQueue.items) {
+          nativeSourceToTrackId.set(item.source, item.id)
         }
 
         await window.api.audioEngine.loadQueue(preparedQueue.items, preparedQueue.startIndex)

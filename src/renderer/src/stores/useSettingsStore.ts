@@ -237,6 +237,7 @@ const defaults = ref<SettingsSnapshot['defaults']>({ cachePath: '' })
 const paths = ref<SettingsSnapshot['paths'] | null>(null)
 const appVersion = ref('')
 const platform = ref('')
+const windowTransparencySupported = ref(false)
 const restartReasons = ref<string[]>([])
 const loaded = ref(false)
 const loading = ref(false)
@@ -330,9 +331,10 @@ function applyDomSettings(): void {
   syncThemeAppearance()
   document.documentElement.dataset.themePreference = settings.value.theme
   document.body.classList.toggle('te-no-blur', !settings.value.blurEffect)
-  document.documentElement.dataset.windowTransparent = settings.value.windowTransparency
-    ? 'on'
-    : 'off'
+  document.documentElement.dataset.platform = platform.value || 'unknown'
+  const transparencyActive =
+    settings.value.windowTransparency === true && windowTransparencySupported.value === true
+  document.documentElement.dataset.windowTransparent = transparencyActive ? 'on' : 'off'
   applyWindowTransparencyEffect()
   document.documentElement.style.removeProperty('--te-lyric-font-size')
   document.documentElement.dataset.density = settings.value.uiDensity
@@ -347,18 +349,24 @@ function applyWindowTransparencyEffect(): void {
     '--te-tp-surface-alpha',
     '--te-tp-surface-blur',
     '--te-tp-card-alpha',
-    '--te-tp-card-blur'
+    '--te-tp-card-blur',
+    '--te-tp-base-alpha'
   ]
-  if (!settings.value.windowTransparency) {
+  const active = settings.value.windowTransparency === true && windowTransparencySupported.value === true
+  if (!active) {
     for (const v of tpVars) root.style.removeProperty(v)
     return
   }
   const effect: WindowTransparencyEffectSettings =
     settings.value.windowTransparencyEffect ?? fallbackSettings.windowTransparencyEffect
-  root.style.setProperty('--te-tp-surface-alpha', `${(effect.surfaceOpacity / 100).toFixed(2)}`)
+  const surfaceAlpha = effect.surfaceOpacity / 100
+  // 底层基底保留一个不透明度下限，避免用户把表面不透明度调得过低时整窗内容消失。
+  const baseAlpha = Math.min(0.85, Math.max(0.55, surfaceAlpha))
+  root.style.setProperty('--te-tp-surface-alpha', surfaceAlpha.toFixed(2))
   root.style.setProperty('--te-tp-surface-blur', `${effect.surfaceBlur}px`)
   root.style.setProperty('--te-tp-card-alpha', `${(effect.cardOpacity / 100).toFixed(2)}`)
   root.style.setProperty('--te-tp-card-blur', `${effect.cardBlur}px`)
+  root.style.setProperty('--te-tp-base-alpha', baseAlpha.toFixed(2))
 }
 
 function applySnapshot(snapshot: SettingsSnapshot): void {
@@ -397,6 +405,7 @@ function applySnapshot(snapshot: SettingsSnapshot): void {
   paths.value = { ...snapshot.paths }
   appVersion.value = snapshot.appVersion
   platform.value = snapshot.platform
+  windowTransparencySupported.value = snapshot.windowTransparencySupported === true
   restartReasons.value = [...snapshot.restartReasons]
   loaded.value = true
   applyDomSettings()
@@ -429,6 +438,7 @@ export function useSettingsStore(): {
   paths: Ref<SettingsSnapshot['paths'] | null>
   appVersion: Ref<string>
   platform: Ref<string>
+  windowTransparencySupported: Ref<boolean>
   loaded: Ref<boolean>
   loading: Ref<boolean>
   saving: Ref<boolean>
@@ -663,6 +673,7 @@ export function useSettingsStore(): {
     paths,
     appVersion,
     platform,
+    windowTransparencySupported,
     loaded,
     loading,
     saving,

@@ -1,4 +1,6 @@
 import { app } from 'electron'
+import { execFileSync } from 'node:child_process'
+import { release } from 'node:os'
 import { stat, readdir } from 'fs/promises'
 import { join, resolve } from 'path'
 import { createLegacyDspGraph, normalizeDspScenes } from '../../shared/dspGraph'
@@ -777,6 +779,61 @@ export function getRestartReasons(settings: AppSettings, launch: AppSettings): s
   return reasons
 }
 
+// Win11 22H2 (build 22621) 及以上才支持 DWM 原生亚克力背板。
+export function isWindowsAcrylicBuild(): boolean {
+  if (process.platform !== 'win32') return false
+  const build = Number(release().split('.')[2] ?? 0)
+  return Number.isFinite(build) && build >= 22621
+}
+
+// 透明窗口支持判定：
+// - Linux Wayland：合成器忽略逐像素 alpha，内容可能整窗不渲染（黑屏）→ 不支持；
+// - Windows：逐像素透明（transparent: true）在 DWM/部分 GPU 下会整窗黑屏且卡住，
+//   只有系统开启"透明效果"、能用 DWM 原生亚克力时才安全 → 否则视为不支持；
+// - 其余平台（X11/macOS）支持。
+// 不支持的平台回退为不透明窗口，保证应用始终可见。
+export function supportsNativeWindowTransparency(): boolean {
+  if (process.platform === 'linux') {
+    if (process.env['WAYLAND_DISPLAY'] || process.env['XDG_SESSION_TYPE'] === 'wayland') {
+      return false
+    }
+    return true
+  }
+  if (process.platform === 'win32') {
+    return isWindowsAcrylicBuild() && isWindowsAcrylicBackdropAvailable()
+  }
+  return true
+}
+
+// Win11 的原生亚克力（backgroundMaterial）依赖系统"透明效果"开关：
+// 关闭时 DWM 不提供系统背板，Electron 会把窗口画成灰色。
+// 这里读注册表检测该开关，供窗口层决定是否使用亚克力（而非逐像素透明）。
+let windowsAcrylicBackdropAvailableCache: boolean | null = null
+export function isWindowsAcrylicBackdropAvailable(): boolean {
+  if (process.platform !== 'win32') return false
+  if (windowsAcrylicBackdropAvailableCache !== null) {
+    return windowsAcrylicBackdropAvailableCache
+  }
+  try {
+    const output = execFileSync(
+      'reg',
+      [
+        'query',
+        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize',
+        '/v',
+        'EnableTransparency'
+      ],
+      { encoding: 'utf8', timeout: 3000 }
+    )
+    const match = /EnableTransparency\s+REG_DWORD\s+0x([0-9a-f]+)/i.exec(output)
+    windowsAcrylicBackdropAvailableCache = match ? parseInt(match[1], 16) === 1 : true
+  } catch {
+    // 读不到注册表时不做强判，交给 Electron 的默认回退行为。
+    windowsAcrylicBackdropAvailableCache = true
+  }
+  return windowsAcrylicBackdropAvailableCache
+}
+
 export function createSettingsSnapshot(
   settings: AppSettings,
   launch: AppSettings
@@ -795,6 +852,7 @@ export function createSettingsSnapshot(
     },
     appVersion: app.getVersion(),
     platform: process.platform,
+    windowTransparencySupported: supportsNativeWindowTransparency(),
     restartRequired: restartReasons.length > 0,
     restartReasons
   }

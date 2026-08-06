@@ -4,7 +4,7 @@
 
 ## 技术栈
 
-Twilight Echo 是 Electron + Vue 3 + TypeScript 应用，使用 electron-vite 构建，electron-builder 打包。当前包信息为 `TwilightEcho@1.0.3`，许可证为 Apache-2.0。
+Twilight Echo 是 Electron + Vue 3 + TypeScript 应用，使用 electron-vite 构建，electron-builder 打包。当前包信息为 `TwilightEcho@1.1.3`，许可证为 Apache-2.0。
 
 核心依赖：
 

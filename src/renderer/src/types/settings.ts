@@ -372,6 +372,7 @@ export interface SettingsSnapshot {
   }
   appVersion: string
   platform: string
+  windowTransparencySupported: boolean
   restartRequired: boolean
   restartReasons: string[]
 }

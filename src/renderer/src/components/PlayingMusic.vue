@@ -302,6 +302,7 @@ watch(
 onBeforeUnmount(() => {
   saveLyricScrollPosition()
   clearLyricIndexTimer()
+  clearLyricHighlightTimer()
   cancelLyricScrollAnimation()
   if (lyricCenterTimer !== 0) {
     window.clearTimeout(lyricCenterTimer)
@@ -352,11 +353,13 @@ const lyricsStillLoading = computed(
 const lyricsPendingLabel = computed(() => (lyricsStillLoading.value ? '加载歌词…' : '暂无歌词'))
 const reserveLyricsColumn = computed(() => hasLyrics.value || lyricsStillLoading.value)
 const activeLyricIndex = ref(-1)
+const highlightedLyricIndex = ref(-1)
 const manualLyricBrowse = ref(false)
 const lyricLeavingIndex = ref(-1)
 const lyricEnteringIndex = ref(-1)
 let lyricTransitionTimer = 0
 let lyricIndexTimer = 0
+let lyricHighlightTimer = 0
 let lastObservedLyricTime = Number.NaN
 let predictedLyricTime = Number.NEGATIVE_INFINITY
 
@@ -384,6 +387,13 @@ function clearLyricIndexTimer(): void {
   if (lyricIndexTimer !== 0) {
     window.clearTimeout(lyricIndexTimer)
     lyricIndexTimer = 0
+  }
+}
+
+function clearLyricHighlightTimer(): void {
+  if (lyricHighlightTimer !== 0) {
+    window.clearTimeout(lyricHighlightTimer)
+    lyricHighlightTimer = 0
   }
 }
 
@@ -435,6 +445,26 @@ watch([isPlaying, playbackRate], () => {
   scheduleLyricIndexBoundary()
 })
 
+watch(activeLyricIndex, (index, previousIndex) => {
+  clearLyricHighlightTimer()
+  if (index < 0 || previousIndex == null || previousIndex < 0 || index <= previousIndex) {
+    highlightedLyricIndex.value = index
+    return
+  }
+  lyricHighlightTimer = window.setTimeout(() => {
+    lyricHighlightTimer = 0
+    if (activeLyricIndex.value === index) highlightedLyricIndex.value = index
+  }, LYRIC_SCROLL_DELAY_MS)
+})
+
+watch(
+  () => currentTrack.value?.id,
+  () => {
+    clearLyricHighlightTimer()
+    highlightedLyricIndex.value = activeLyricIndex.value
+  }
+)
+
 function advanceActiveLyricIndex(time: number): void {
   if (!Number.isFinite(time)) return
   predictedLyricTime = Math.max(predictedLyricTime, time)
@@ -468,7 +498,7 @@ function setLyricLineRef(index: number, el: Element | ComponentPublicInstance | 
 }
 
 function lyricTone(index: number): 'idle' | 'far' | 'mid' | 'near' | 'active' {
-  const active = activeLyricIndex.value
+  const active = highlightedLyricIndex.value
   if (active < 0) return 'idle'
 
   const distance = Math.abs(index - active)
@@ -817,6 +847,8 @@ onBeforeUnmount(() => {
               {{ lyricsPendingLabel }}
             </div>
             <div v-else class="lyrics-list">
+              <!-- The visual target is delayed from activeLyricIndex during line handoff. -->
+              <!-- :style="lyricStyleVars(item.index === activeLyricIndex ? 'active' : 'normal')" -->
               <button
                 v-for="item in renderedLyricLines"
                 :key="`${item.line.time}-${item.index}`"
@@ -828,13 +860,13 @@ onBeforeUnmount(() => {
                   {
                     'is-plain': !item.line.timed,
                     'lyric-row--custom-background':
-                      lyricTextStyle[item.index === activeLyricIndex ? 'active' : 'normal']
+                      lyricTextStyle[item.index === highlightedLyricIndex ? 'active' : 'normal']
                         .backgroundStyle !== 'none',
                     'lyric-row--exiting': item.index === lyricLeavingIndex,
                     'lyric-row--entering': item.index === lyricEnteringIndex
                   }
                 ]"
-                :style="lyricStyleVars(item.index === activeLyricIndex ? 'active' : 'normal')"
+                :style="lyricStyleVars(item.index === highlightedLyricIndex ? 'active' : 'normal')"
                 :disabled="!item.line.timed"
                 @pointerdown.stop
                 @click="jumpToLyric(item.line.time)"
@@ -843,7 +875,7 @@ onBeforeUnmount(() => {
                   <PlayingLyricWords
                     v-if="item.line.words?.length"
                     :words="item.line.words ?? []"
-                    :active="item.index === activeLyricIndex"
+                    :active="item.index === highlightedLyricIndex"
                     :offset-seconds="currentLyricOffsetSeconds"
                     :next-line-time="displayLyricLines[item.index + 1]?.time ?? null"
                     :clock="lyricWordClock"
@@ -1566,7 +1598,11 @@ onBeforeUnmount(() => {
   -webkit-backdrop-filter: var(--lyric-style-backdrop-filter, none);
   text-shadow: var(--lyric-style-highlight, none);
   word-break: break-word;
-  transition: all var(--te-motion-hover) ease;
+  transition:
+    opacity var(--te-motion-hover) ease,
+    color var(--te-motion-hover) ease,
+    background var(--te-motion-hover) ease,
+    text-shadow var(--te-motion-hover) ease;
 }
 
 .lyric-row.active .lyric-translation {
@@ -1707,9 +1743,6 @@ onBeforeUnmount(() => {
 }
 
 .visualizer-toggle-button--close {
-  top: 8px;
-  left: 14px;
-  right: auto;
   z-index: 10000;
 }
 

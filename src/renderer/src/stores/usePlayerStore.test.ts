@@ -642,10 +642,8 @@ test('togglePlayState and seek/volume fan out to cast when castTargetName is act
     /controlCast\?\.\(\s*nextPlaying \? \{ play: true \} : \{ pause: true \}\s*\)/
   )
   // Cast path must return before local engine toggle; avoid [\s\S]* spanning both branches.
-  const castingBranch = togglePlayState.match(
-    /if \(casting\) \{[\s\S]*?\n    \}\n    if \(nativePlaybackActive\)/
-  )?.[0]
-  assert.ok(castingBranch, 'casting branch should return before nativePlaybackActive')
+  const castingBranch = togglePlayState.match(/if \(casting\) \{[\s\S]*?\n    \}/)?.[0]
+  assert.ok(castingBranch, "casting branch should return before nativePlaybackActive")
   assert.match(castingBranch, /return/)
   assert.doesNotMatch(castingBranch, /audioEngine\.togglePause/)
   assert.doesNotMatch(castingBranch, /getPlaybackAudio/)
@@ -763,12 +761,14 @@ test('native queue switching guards the target track before applying playback-in
   assert.match(refreshPlaybackAfterRendererResume, /retryCurrentTrackLyricsIfNeeded\(\)/)
   assert.match(retryCurrentTrackLyricsIfNeeded, /lyricsLoadState\.value\.status === 'loading'/)
   assert.match(retryCurrentTrackLyricsIfNeeded, /ensureCurrentTrackLyricsLoaded\(track, true\)/)
-  // Accept time-pos whenever a track/session is active — do not freeze solely on
-  // nativePlaybackActive demotions during track hand-off.
+  // time-pos is routed through the shared fallback-aware policy: native engine
+  // and delegated queues drive progress, while HTMLAudio fallback ignores the
+  // native ghost clock so a second time source cannot freeze the bar.
   assert.match(
     setupAudioEngineListeners,
-    /!currentTrack\.value &&\s*!nativePlaybackActive &&\s*!nativeQueueDelegated &&\s*!isPlaying\.value &&\s*!isLoading\.value/
+    /shouldApplyNativeTimePosition\(\{\s*nativePlaybackActive,\s*nativeQueueDelegated\s*\}\)/
   )
+  assert.match(source, /import \{[^}]*shouldApplyNativeTimePosition[^}]*\} from '\.\/playerProgressPolicy\.ts'/)
   // onStartFile must apply playback-info but must not clear the switch intent —
   // clearing after an ignored previous-track snapshot re-opened the flash race.
   const onStartFile =
@@ -1674,4 +1674,27 @@ test('queue editing commands commit snapshots, persistence, and revision-fenced 
     source,
     /function saveQueueAsPlaylist[\s\S]*createPlaylistWithTracks\(name, \[\.\.\.queue\.value\]\)/
   )
+})
+
+test('single-song repeat replays the current track when playback ends in fallback mode', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const getPlaybackAudio = extractInternalFunctionBody(source, 'getPlaybackAudio')
+  const handlePlaybackEnded = extractInternalFunctionBody(source, 'handlePlaybackEnded')
+  const loadAndPlay = extractInternalFunctionBody(source, 'loadAndPlay')
+
+  // The HTMLAudio 'ended' event must feed handlePlaybackEnded.
+  assert.match(getPlaybackAudio, /audio.addEventListener\('ended',[\s\S]*handlePlaybackEnded\(\)/)
+  // Guard fields exist and are reset at the end of a successful load so the
+  // next natural end can trigger another replay.
+  assert.match(handlePlaybackEnded, /autoAdvanceInFlight \|\| advancingFromEndedTrackId === trackId/)
+  assert.match(handlePlaybackEnded, /advancingFromEndedTrackId = trackId/)
+  assert.match(handlePlaybackEnded, /autoAdvanceInFlight = true/)
+  // Repeat must restart the same track without consulting the queue.
+  const repeatBranch = handlePlaybackEnded.match(/if \(playMode\.value === 'repeat'\) \{[\s\S]*?\n  \}/)?.[0]
+  assert.ok(repeatBranch, "repeat branch should exist")
+  assert.match(repeatBranch, /void loadAndPlay\(track\)/)
+  assert.doesNotMatch(repeatBranch, /advanceAfterPlaybackEnded\(\)/)
+  // loadAndPlay must clear the guards on success so the loop can repeat.
+  assert.match(loadAndPlay, /advancingFromEndedTrackId = ''[\s\S]*autoAdvanceInFlight = false/)
+  assert.match(loadAndPlay, /loadedTrackId = track\.id/)
 })
