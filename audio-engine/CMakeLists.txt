@@ -89,6 +89,9 @@ target_include_directories(twilight_audio_engine
 
 target_compile_definitions(twilight_audio_engine PRIVATE TAE_BUILDING_LIBRARY=1)
 target_link_libraries(twilight_audio_engine PRIVATE ${CMAKE_DL_LIBS})
+if(UNIX AND NOT APPLE)
+  target_link_options(twilight_audio_engine PRIVATE "-Wl,-Bsymbolic")
+endif()
 
 find_path(EBUR128_INCLUDE_DIR ebur128.h)
 find_library(EBUR128_LIBRARY NAMES ebur128 libebur128)

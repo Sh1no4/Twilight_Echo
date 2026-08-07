@@ -138,6 +138,10 @@ void testMalformedCueRangesFailClosedInsteadOfBecomingWholeFilePlayback() {
       0,
       &error));
   assert(!queue.loadFromJson(
+      "[{\"source\":\"disc.flac\",\"cueRange\":{\"startSeconds\":1e9999,\"endSeconds\":60}}]",
+      0,
+      &error));
+  assert(!queue.loadFromJson(
       "[{\"source\":\"disc.flac\",\"cueRange\":{\"startSeconds\":0oops,\"endSeconds\":60}}]",
       0,
       &error));
