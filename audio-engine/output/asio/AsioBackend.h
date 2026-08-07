@@ -49,7 +49,7 @@ class AsioBackend final : public IOutputBackend {
   struct FormatCandidate;
 
   bool chooseFormat(const AsioDeviceInfo& device, const AudioFormat& requestedFormat, AudioFormat* selected) const;
-  long chooseBufferSize(const AsioDeviceInfo& device) const;
+  long chooseBufferSize(const AsioDeviceInfo& device, const AudioFormat& requestedFormat) const;
   int routedOutputChannels(const AsioDeviceInfo& device, int sourceChannels) const;
   void renderBuffer(long bufferIndex);
   void notifyOutputReady() noexcept;

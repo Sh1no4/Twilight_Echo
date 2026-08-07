@@ -22,8 +22,7 @@ enum class AsioDsdPacking : uint8_t {
   None,
   Lsb1,
   Msb1,
-  Ner8,
-  Int32LsbPacked
+  Ner8
 };
 
 struct AsioChannelFormat {

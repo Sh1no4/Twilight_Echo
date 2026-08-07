@@ -445,9 +445,7 @@ size_t dsdBytesToInterleaved(
 }
 
 uint64_t dsdRenderedFrameUnits(size_t byteFrames, const AudioFormat& format) {
-  if (!isDsdSampleFormat(format.sampleFormat)) return static_cast<uint64_t>(byteFrames);
-  const uint64_t bitsPerFrame = format.sampleFormat == AudioSampleFormat::DsdInt32LsbPacked ? 32U : 8U;
-  return static_cast<uint64_t>(byteFrames) * bitsPerFrame;
+  return static_cast<uint64_t>(byteFrames) * (isDsdSampleFormat(format.sampleFormat) ? 8U : 1U);
 }
 
 DsdBitOrder dsdBitOrderFromInfo(const DsdStreamInfo& info) {
@@ -754,8 +752,7 @@ struct AudioPipeline::DecodeStream {
       remainingVirtualPregapFrames = 0;
     }
     eof = remainingVirtualPregapFrames == 0 && remainingSegmentFrames && *remainingSegmentFrames == 0;
-    const int transportDivisor = decodeFormat.sampleFormat == AudioSampleFormat::DsdInt32LsbPacked ? 32 : 8;
-    buffer.reset(decodeFormat, static_cast<size_t>(std::max(dsd.dsdSampleRate / transportDivisor, 8192)));
+    buffer.reset(decodeFormat, static_cast<size_t>(std::max(dsd.dsdSampleRate / 8, 8192)));
     return true;
   }
 
@@ -923,8 +920,7 @@ struct AudioPipeline::DecodeStream {
 
   double segmentFrameRate() const {
     if (mode == Mode::NativeDsd && isDsdSampleFormat(decodeFormat.sampleFormat)) {
-      const double packing = decodeFormat.sampleFormat == AudioSampleFormat::DsdInt32LsbPacked ? 32.0 : 8.0;
-      return static_cast<double>(decodeFormat.sampleRate) / packing;
+      return static_cast<double>(decodeFormat.sampleRate) / 8.0;
     }
     return static_cast<double>(decodeFormat.sampleRate);
   }

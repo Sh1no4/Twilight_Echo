@@ -609,6 +609,27 @@ void testNativeDsdPerfectWhenBackendProvesPassthrough() {
   assert(result.perfectReason.empty());
 }
 
+void testNativeDsdDriverSelectedWireTypeCanBePerfect() {
+  auto native = baseEvaluation();
+  native.sourceFormat = pcm(11289600, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
+  native.decodedFormat = native.sourceFormat;
+  native.outputFormat = pcm(11289600, 1, 2, AudioSampleFormat::DsdInt8Msb1);
+  native.sourceDsd = true;
+  native.sourceLossless = true;
+  native.dsdMode = DsdMode::Native;
+  native.dsdRate = 256;
+  native.nativeDsdRequested = true;
+  native.nativeDsdPassthroughProven = true;
+
+  assert(!dsdFormatsExactMatch(native.decodedFormat, native.outputFormat));
+  const PerfectResult result = evaluatePerfect(native);
+  assert(result.formatMatched);
+  assert(result.sourceExact);
+  assert(result.outputPerfect);
+  assert(result.perfectReasonCode.empty());
+  assert(result.perfectReason.empty());
+}
+
 void testNativeDsdProcessingBlocksPerfect() {
   auto native = baseEvaluation();
   native.sourceFormat = pcm(2822400, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
@@ -738,6 +759,7 @@ int main() {
   testDopPerfectWhenBackendProvesPassthrough();
   testNativeDsdRequiresBackendProof();
   testNativeDsdPerfectWhenBackendProvesPassthrough();
+  testNativeDsdDriverSelectedWireTypeCanBePerfect();
   testNativeDsdProcessingBlocksPerfect();
   testDsdProcessingFallbackReason();
   testDsdDopRoutingSemanticChangeUsesRoutingFallbackCode();

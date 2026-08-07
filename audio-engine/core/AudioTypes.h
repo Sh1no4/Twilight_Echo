@@ -16,8 +16,7 @@ enum class AudioSampleFormat {
   Int32Interleaved,
   DsdInt8Lsb1,
   DsdInt8Msb1,
-  DsdInt8Ner8,
-  DsdInt32LsbPacked
+  DsdInt8Ner8
 };
 
 enum class DsdMode {

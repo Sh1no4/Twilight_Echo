@@ -45,10 +45,29 @@ std::unique_ptr<MockAsioHost> makeHost() {
   return host;
 }
 
+std::string readTextFile(const std::filesystem::path& path);
+
 void testAsioBooleanSemantics() {
   assert(!asio_abi::asioBoolIsTrue(asio_abi::kAsioFalse));
   assert(asio_abi::asioBoolIsTrue(asio_abi::kAsioTrue));
   assert(asio_abi::asioBoolIsTrue(static_cast<asio_abi::AsioBool>(0x71C42890U)));
+}
+
+void testAsioErrorSuccessSemantics() {
+  assert(asio_abi::asioErrorIsSuccess(asio_abi::kAsioOk));
+  assert(asio_abi::asioErrorIsSuccess(asio_abi::kAsioSuccess));
+  assert(!asio_abi::asioErrorIsSuccess(-995));
+}
+
+void testAsioDriverSessionUsesAsioErrorSuccessSemantics() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "output" / "asio" / "windows" / "AsioDriverSession.cpp";
+  const std::string source = readTextFile(sourcePath);
+
+  assert(source.find("asio_abi::asioErrorIsSuccess") != std::string::npos);
+  assert(source.find("!= asio_abi::kAsioOk") == std::string::npos);
+  assert(source.find("== asio_abi::kAsioOk") == std::string::npos);
 }
 
 void testAsioNativeDsdSampleRateSemantics() {
@@ -572,31 +591,38 @@ void testFooDsdAsioProxySelector() {
   assert(backend.outputInfo().deviceName == "foo_dsd_asio");
 }
 
-void testFiiOPackedDsdTransportRateAndLatency() {
+void testFiiODriverNameDoesNotRewriteStandardNativeDsdRequest() {
+  MockAsioHost::DsdProfile profile;
+  profile.nativeDsdCapable = true;
+  profile.nativeDsdSampleRates = {11289600};
+  profile.nativeDsdSampleFormats = {AudioSampleFormat::DsdInt8Lsb1};
   auto host = std::make_unique<MockAsioHost>();
-  auto device = makeMockAsioDevice("asio:fiio", {352800}, 2, AudioSampleFormat::Int32Interleaved);
+  auto device = makeMockAsioDevice(
+      "asio:fiio",
+      {48000},
+      2,
+      AudioSampleFormat::Int32Interleaved,
+      profile);
   device.name = "FiiO ASIO Driver";
   device.driverName = "FiiO ASIO Driver";
-  device.minBufferSize = 512;
-  device.maxBufferSize = 512;
-  device.preferredBufferSize = 512;
   host->devices.push_back(device);
   auto* rawHost = host.get();
+  rawHost->channelFormats = {
+      AudioSampleFormat::DsdInt8Lsb1,
+      AudioSampleFormat::DsdInt8Lsb1,
+  };
 
   AsioBackend backend(std::move(host));
   std::string error;
   const AudioFormat request = sourceFormat(11289600, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
   assert(backend.open("asio:fiio", request, &error));
   assert(rawHost->lastOpenConfig.format.sampleRate == 11289600);
-  assert(rawHost->lastOpenConfig.format.sampleFormat == AudioSampleFormat::DsdInt32LsbPacked);
-  assert(asio::driverSampleRate(rawHost->lastOpenConfig.format) == 352800);
-  assert(asio::callbackFrameRate(rawHost->lastOpenConfig.format) == 352800);
-  assert(backend.outputInfo().latencyInfo.bufferLatencyMs > 1.4);
-  assert(backend.outputInfo().latencyInfo.bufferLatencyMs < 1.5);
-
+  assert(rawHost->lastOpenConfig.format.sampleFormat == AudioSampleFormat::DsdInt8Lsb1);
+  assert(asio::driverSampleRate(rawHost->lastOpenConfig.format) == 11289600);
+  assert(asio::callbackFrameRate(rawHost->lastOpenConfig.format) == 1411200);
   assert(backend.startTyped(
       [](PcmBlock& block) {
-        assert(block.format.sampleFormat == AudioSampleFormat::DsdInt32LsbPacked);
+        assert(block.format.sampleFormat == AudioSampleFormat::DsdInt8Lsb1);
         std::memset(block.data, 0x69, block.byteSize);
         return block.frames;
       },
@@ -604,10 +630,7 @@ void testFiiOPackedDsdTransportRateAndLatency() {
       nullptr,
       &error));
   assert(backend.nativeDsdRuntimeFacts().state == NativeDsdRuntimeFactState::Proven);
-  rawHost->triggerBufferSwitch(0);
-  assert(backend.outputInfo().diagnostics.sessionUnderrunCount == 0);
 }
-
 void testNativeDsdRuntimeProven() {
   MockAsioHost::DsdProfile profile;
   profile.nativeDsdCapable = true;
@@ -1102,6 +1125,56 @@ void testBufferSizeMatrix() {
   }
 }
 
+void testNativeDsdBufferSizeWithoutCatalogRange() {
+  MockAsioHost::DsdProfile profile;
+  profile.nativeDsdCapable = true;
+  profile.nativeDsdSampleRates = {11289600};
+  profile.nativeDsdSampleFormats = {AudioSampleFormat::DsdInt8Lsb1};
+
+  const auto makeRangeUnknownHost = [&] {
+    auto host = std::make_unique<MockAsioHost>();
+    auto device = makeMockAsioDevice(
+        "asio:native-dsd-range-unknown",
+        {48000},
+        2,
+        AudioSampleFormat::Float32Interleaved,
+        profile);
+    device.minBufferSize = 0;
+    device.maxBufferSize = 0;
+    device.bufferGranularity = 0;
+    device.preferredBufferSize = 512;
+    host->devices.push_back(std::move(device));
+    return host;
+  };
+
+  {
+    auto host = makeRangeUnknownHost();
+    auto* rawHost = host.get();
+    AsioBackend backend(std::move(host));
+    std::string error;
+    assert(backend.open(
+        "asio:native-dsd-range-unknown",
+        sourceFormat(11289600, 1, 2, AudioSampleFormat::DsdInt8Lsb1),
+        &error));
+    assert(rawHost->lastOpenConfig.bufferSizeFrames == 2048);
+  }
+
+  {
+    auto host = makeRangeUnknownHost();
+    auto* rawHost = host.get();
+    AsioBackend backend(std::move(host));
+    OutputConfig config;
+    config.preferredBufferSize = 2048;
+    std::string error;
+    assert(backend.setOutputConfig(config, &error));
+    assert(backend.open(
+        "asio:native-dsd-range-unknown",
+        sourceFormat(11289600, 1, 2, AudioSampleFormat::DsdInt8Lsb1),
+        &error));
+    assert(rawHost->lastOpenConfig.bufferSizeFrames == 2048);
+  }
+}
+
 void testPacking() {
   {
     auto host = makeHost();
@@ -1477,6 +1550,8 @@ void testRealAsioSmokeOptIn() {
 
 int main() {
   testAsioBooleanSemantics();
+  testAsioErrorSuccessSemantics();
+  testAsioDriverSessionUsesAsioErrorSuccessSemantics();
   testAsioNativeDsdSampleRateSemantics();
   testAsioDriverActivationRequestsDriverClsid();
   testAsioRenderCallbackDoesNotResizeScratchBuffers();
@@ -1496,7 +1571,7 @@ int main() {
   testDopMarkerEvidence();
   testNativeDsdCapabilityProfile();
   testFooDsdAsioProxySelector();
-  testFiiOPackedDsdTransportRateAndLatency();
+  testFiiODriverNameDoesNotRewriteStandardNativeDsdRequest();
   testNativeDsdRuntimeProven();
   testNativeDsdDriverSelectedWireTypeAndIdleTail();
   testNativeDsdRuntimeDiscoveryWithoutCatalogCapability();
@@ -1513,6 +1588,7 @@ int main() {
   testPcmShortReadIsCountedOncePerCallback();
   testOutputReadyFailureDisablesRepeatedDriverCalls();
   testBufferSizeMatrix();
+  testNativeDsdBufferSizeWithoutCatalogRange();
   testPacking();
   testTypedPassthroughPacking();
   testStartFailurePaths();
