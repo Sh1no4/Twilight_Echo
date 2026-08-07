@@ -2060,14 +2060,18 @@ function mergeAlbumGroupsByReleaseEvidence(
     const firstTrack = group.tracks[0]
     const coverTrack = group.tracks.find((track) => !!track.cover)
     const coverIdentity = coverTrack ? getAlbumCoverIdentity(coverTrack) : ''
-    const releaseDirectory = firstTrack ? getAlbumReleaseDirectory(firstTrack) : ''
-    if (!firstTrack || !coverIdentity || !releaseDirectory) {
+    if (!firstTrack || !coverIdentity) {
       result.set(id, group)
       continue
     }
 
+    // Local releases are often stored in one directory per track, without an
+    // ancestor directory whose name matches the album tag. In that layout the
+    // normalized album title plus identical artwork is the strongest shared
+    // release evidence available. Explicit album ids and album artists never
+    // enter this fallback path, so their authoritative separation is preserved.
     const album = normalizeAlbumIdentityText(firstTrack.album || '未知专辑')
-    const evidenceKey = `${releaseDirectory}\u001f${coverIdentity}\u001f${album}`
+    const evidenceKey = `${coverIdentity}\u001f${album}`
     const targetId = fallbackIdByReleaseEvidence.get(evidenceKey)
     if (!targetId) {
       fallbackIdByReleaseEvidence.set(evidenceKey, id)
@@ -2085,22 +2089,6 @@ function mergeAlbumGroupsByReleaseEvidence(
   }
 
   return result
-}
-
-function getAlbumReleaseDirectory(track: Track): string {
-  const album = normalizeAlbumIdentityText(track.album || '未知专辑')
-  const directory = normalizeLibraryPath(track.dir?.trim() || parentDirectoryOf(track.filePath))
-  let candidate = directory
-
-  while (candidate) {
-    const name = candidate.slice(candidate.lastIndexOf('\\') + 1)
-    if (normalizeAlbumIdentityText(name) === album) return candidate
-    const parent = parentDirectoryOf(candidate)
-    if (!parent || parent === candidate) break
-    candidate = parent
-  }
-
-  return ''
 }
 
 function getAlbumCoverIdentity(track: Track): string {
