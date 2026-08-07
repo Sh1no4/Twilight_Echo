@@ -70,7 +70,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
           pnpm run build
-          pnpm exec electron-builder --mac --${{ matrix.arch }} --config electron-builder.yml
+          pnpm exec electron-builder --mac --${{ matrix.arch }} --config electron-builder.yml --publish never
 
       - name: Verify staged native engine in the packaged app
         run: |

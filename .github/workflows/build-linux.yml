@@ -78,7 +78,7 @@ jobs:
           ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
         run: |
           pnpm run build
-          pnpm exec electron-builder --linux --config electron-builder.yml
+          pnpm exec electron-builder --linux --config electron-builder.yml --publish never
 
       - name: Verify staged native engine in the unpacked app
         run: |
