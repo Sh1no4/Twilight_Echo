@@ -89,7 +89,9 @@ $RECYCLE.BIN/
 .cursorrules
 CLAUDE.md
 /AGENTS.md
-/.github/
+/.github/*
+!/.github/workflows/
+!/.github/workflows/**
 
 # AI agent session state / local tool state
 .workbuddy/
