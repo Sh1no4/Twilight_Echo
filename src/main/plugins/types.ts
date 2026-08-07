@@ -368,6 +368,7 @@ export type TwilightMediaProviderMethod =
   | 'fetchUserFolloweds'
   | 'fetchPlayRecords'
   | 'fetchRecentSongs'
+  | 'fetchIntelligenceList'
   | 'followArtist'
   | 'followUser'
   | 'likeTrack'

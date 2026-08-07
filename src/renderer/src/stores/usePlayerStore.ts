@@ -41,6 +41,7 @@ import { resolveLyricsWithSources } from '../utils/lyricSourceResolution.ts'
 import type { LyricResolverSource } from '../utils/lyricSourceResolution.ts'
 import { resolverLyricsInput } from '../utils/managedLyricsSource.ts'
 import { useLyricsManagement } from './lyricsManagement.ts'
+import { useNcmStore } from './useNcmStore.ts'
 import {
   getPodcastDefaultPlaybackRate,
   parsePodcastTrackId,
@@ -158,6 +159,21 @@ const queue = shallowRef<Track[]>([])
 const queueIndex = ref(-1)
 const playMode = ref<PlayMode>('sequential')
 const originalQueue = shallowRef<Track[]>([])
+const heartModeContext = ref<{ likedPlaylistId: number | null }>({ likedPlaylistId: null })
+let heartModeBaseQueue: Track[] = []
+let heartModeFetchRequest: Promise<number> | null = null
+let heartModeFetchGeneration = 0
+const HEART_MODE_REFILL_THRESHOLD = 3
+const HEART_MODE_REFILL_COUNT = 20
+// 心动模式只能在本应用内“我喜欢的音乐”流媒体歌单上下文中启用：必须是在点击
+// 收藏歌单后建立的队列（heartModeContext），且当前曲目必须是网易云流媒体。
+const heartModeAvailable = computed(
+  () =>
+    heartModeContext.value.likedPlaylistId != null &&
+    queue.value.length > 0 &&
+    currentTrack.value != null &&
+    getTrackSource(currentTrack.value) === 'ncm'
+)
 const personalizedStreamSession = ref<PersonalizedStreamSession | null>(null)
 const personalizedStreamRemaining = ref(0)
 const personalizedStreamEntryIds = new Set<string>()
@@ -1404,6 +1420,7 @@ async function syncNativeQueueState(snapshot: NativeQueueStateSnapshot): Promise
     snapshot.playMode === 'repeat' || snapshot.playMode === 'shuffle'
       ? snapshot.playMode
       : 'sequential'
+  const heartModeActive = snapshot.playMode === 'heart'
   const synchronized = await synchronizeLatestNativeQueue(
     nativeQueueRevisionFence,
     snapshot.revision,
@@ -1411,10 +1428,12 @@ async function syncNativeQueueState(snapshot: NativeQueueStateSnapshot): Promise
       prepare: () =>
         preparePlayerNativeQueue(
           {
-            queue: snapshot.queue,
+            // 心动模式由渲染层管理智能列表与边界续播，原生引擎只加载当前曲目，
+            // 避免原生引擎在列表耗尽时静默停止而无法触发渲染层补拉。
+            queue: heartModeActive ? [current] : snapshot.queue,
             currentTrack: current,
             currentTarget: getTrackAudioSource(current),
-            currentIndex: snapshot.currentIndex
+            currentIndex: heartModeActive ? 0 : snapshot.currentIndex
           },
           {
             isAudioFileAuthorized: window.api.fs.isAudioFileAuthorized
@@ -1433,7 +1452,7 @@ async function syncNativeQueueState(snapshot: NativeQueueStateSnapshot): Promise
     // 保持现有播放不变，让 loadAndPlay 走正常的“不可用→回退”路径。
     return
   }
-  nativeQueueDelegated = preparedQueue.delegated
+  nativeQueueDelegated = heartModeActive ? false : preparedQueue.delegated
 }
 
 function trackNativeQueueSyncRequest(request: Promise<void>): Promise<void> {
@@ -2110,6 +2129,10 @@ async function handlePlaybackEnded(): Promise<void> {
 
 async function advanceAfterPlaybackEnded(): Promise<void> {
   clearCrossfadeTimer()
+  if (playMode.value === 'heart') {
+    await advanceHeartPlayback()
+    return
+  }
   applyPendingRendererPlayModeAtBoundary()
   const nextIndex = queueIndex.value + 1
   if (nextIndex >= 0 && nextIndex < queue.value.length) {
@@ -3248,10 +3271,11 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
       try {
         const preparedQueue = await preparePlayerNativeQueue(
           {
-            queue: queue.value,
+            // 心动模式：渲染层自行驱动切歌与补拉，原生引擎只加载当前曲目。
+            queue: playMode.value === 'heart' ? [track] : queue.value,
             currentTrack: track,
             currentTarget: playTarget,
-            currentIndex: queueIndex.value
+            currentIndex: playMode.value === 'heart' ? 0 : queueIndex.value
           },
           {
             isAudioFileAuthorized: window.api.fs.isAudioFileAuthorized
@@ -3274,6 +3298,8 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
           return
         }
         nativeQueueDelegated = preparedQueue.delegated
+        // 心动模式由渲染层驱动切歌与补拉，原生队列不代管边界。
+        if (playMode.value === 'heart') nativeQueueDelegated = false
 
         const nativePlayMode =
           playMode.value === 'repeat' || playMode.value === 'shuffle'
@@ -3430,6 +3456,10 @@ function playQueueTrack(track: Track): void {
 function next(): void {
   if (queue.value.length === 0) return
   clearCrossfadeTimer()
+  if (playMode.value === 'heart') {
+    void advanceHeartPlayback()
+    return
+  }
 
   if (!castTargetUsn.value && nativePlaybackActive && isNativeQueueDelegated()) {
     void advanceNativePlayback('next')
@@ -3990,6 +4020,12 @@ function setupPlayerIntegrationSideEffects(): void {
     { immediate: true }
   )
 
+  watch(heartModeAvailable, (available) => {
+    if (!available && playMode.value === 'heart') {
+      exitHeartModeToSequential()
+    }
+  })
+
   watch(
     () => appSettings.value.softwareVolume,
     (savedVolume) => {
@@ -4124,6 +4160,7 @@ function isPersonalizedStreamSessionCurrent(session: PersonalizedStreamSession):
 function applyPendingRendererPlayModeAtBoundary(): void {
   if (!rendererPlayModeBoundaryPending) return
   rendererPlayModeBoundaryPending = false
+  if (playMode.value === 'heart') return
   const current = currentTrack.value
   if (!current || originalQueue.value.length === 0) return
 
@@ -4252,17 +4289,184 @@ function saveQueueAsPlaylist(
 }
 
 function cyclePlayMode(): void {
-  const modes: PlayMode[] = ['sequential', 'listLoop', 'repeat', 'shuffle']
-  const idx = modes.indexOf(playMode.value)
-  setPlayModeInternal(modes[(idx + 1) % modes.length])
+  const modes: PlayMode[] = ['sequential', 'listLoop', 'repeat', 'shuffle', 'heart']
+  const cycleModes = heartModeAvailable.value ? modes : modes.filter((mode) => mode !== 'heart')
+  const idx = cycleModes.indexOf(playMode.value)
+  if (idx === -1) {
+    setPlayModeInternal(cycleModes[0] ?? 'sequential')
+    return
+  }
+  setPlayModeInternal(cycleModes[(idx + 1) % cycleModes.length])
+}
+
+function setHeartModeContext(playlistId: number | null): void {
+  const normalized =
+    playlistId != null && Number.isFinite(Number(playlistId)) && Number(playlistId) > 0
+      ? Number(playlistId)
+      : null
+  heartModeContext.value = { likedPlaylistId: normalized }
+}
+
+function fetchHeartRecommendations(seedTrack: Track | null): Promise<Track[]> {
+  const playlistId = heartModeContext.value.likedPlaylistId
+  if (playlistId == null || !seedTrack?.ncmSongId) return Promise.resolve([])
+  return useNcmStore().fetchIntelligenceList({
+    songId: seedTrack.ncmSongId,
+    playlistId,
+    startSongId: seedTrack.ncmSongId,
+    count: HEART_MODE_REFILL_COUNT
+  })
+}
+
+function commitHeartQueue(nextQueue: Track[]): void {
+  const snapshots = toPlaybackQueueSnapshots(nextQueue)
+  queue.value = snapshots
+  originalQueue.value = [...snapshots]
+  queueIndex.value = 0
+  persistPlaybackSessionAfterQueueMutation()
+  void queueNativeQueueStateSync().catch((error) => {
+    setAudioEngineError(error instanceof Error ? error.message : String(error))
+  })
+}
+
+function enterHeartMode(options: { persist?: boolean } = {}): void {
+  void options
+  const seed = currentTrack.value
+  const likedPlaylistId = heartModeContext.value.likedPlaylistId
+  if (likedPlaylistId == null || !seed?.ncmSongId) return
+  heartModeBaseQueue = [...queue.value]
+  heartModeFetchGeneration += 1
+  const generation = heartModeFetchGeneration
+  playMode.value = 'heart'
+  rendererPlayModeBoundaryPending = false
+  commitHeartQueue([seed])
+  void refillHeartQueue(seed).then((added) => {
+    if (generation !== heartModeFetchGeneration || playMode.value !== 'heart') return
+    if (added === 0) {
+      console.error('[心动模式] 启动未返回推荐')
+      exitHeartModeToSequential()
+    }
+  })
+}
+
+function exitHeartModeToSequential(): void {
+  if (playMode.value !== 'heart') return
+  heartModeFetchGeneration += 1
+  heartModeFetchRequest = null
+  playMode.value = 'sequential'
+  rendererPlayModeBoundaryPending = false
+  if (heartModeBaseQueue.length > 0) {
+    const restored = toPlaybackQueueSnapshots(heartModeBaseQueue)
+    queue.value = restored
+    originalQueue.value = [...restored]
+    const currentId = currentTrack.value?.id
+    queueIndex.value = currentId
+      ? restored.findIndex((item) => item.id === currentId)
+      : 0
+    if (queueIndex.value < 0) queueIndex.value = 0
+    void queueNativeQueueStateSync().catch((error) => {
+      setAudioEngineError(error instanceof Error ? error.message : String(error))
+    })
+  }
+  heartModeBaseQueue = []
+}
+
+function exitHeartModeForManualQueueReplacement(): void {
+  if (playMode.value !== 'heart') return
+  heartModeFetchGeneration += 1
+  heartModeFetchRequest = null
+  playMode.value = 'sequential'
+  rendererPlayModeBoundaryPending = false
+  heartModeBaseQueue = []
+}
+
+async function refillHeartQueue(seedTrack: Track | null): Promise<number> {
+  if (playMode.value !== 'heart') return 0
+  if (heartModeFetchRequest) return heartModeFetchRequest
+  const playlistId = heartModeContext.value.likedPlaylistId
+  if (playlistId == null || !seedTrack?.ncmSongId) return 0
+  const generation = heartModeFetchGeneration
+  const request = (async () => {
+    try {
+      const recommended = await fetchHeartRecommendations(seedTrack)
+      if (generation !== heartModeFetchGeneration || playMode.value !== 'heart') return 0
+      const knownIds = new Set(queue.value.map((item) => item.id))
+      const additions = recommended.filter((item) => item.id && !knownIds.has(item.id))
+      if (additions.length === 0) return 0
+      const snapshots = toPlaybackQueueSnapshots(additions)
+      queue.value = [...queue.value, ...snapshots]
+      originalQueue.value = [...originalQueue.value, ...snapshots]
+      if (queueIndex.value < 0) {
+        queueIndex.value = 0
+        const track = queue.value[0]
+        if (track) playQueueTrack(track)
+      }
+      persistPlaybackSessionAfterQueueMutation()
+      void queueNativeQueueStateSync().catch((error) => {
+        setAudioEngineError(error instanceof Error ? error.message : String(error))
+      })
+      return additions.length
+    } catch (error) {
+      if (generation === heartModeFetchGeneration) {
+        console.error('[心动模式] 获取智能播放列表失败:', error)
+      }
+      return 0
+    } finally {
+      if (generation === heartModeFetchGeneration) heartModeFetchRequest = null
+    }
+  })()
+  heartModeFetchRequest = request
+  return request
+}
+
+function advanceHeartPlayback(): Promise<void> {
+  const nextIndex = queueIndex.value + 1
+  if (nextIndex >= 0 && nextIndex < queue.value.length) {
+    queueIndex.value = nextIndex
+    const track = queue.value[nextIndex]
+    if (track) {
+      playQueueTrack(track)
+      if (queueIndex.value >= queue.value.length - HEART_MODE_REFILL_THRESHOLD) {
+        void refillHeartQueue(track)
+      }
+    }
+    return Promise.resolve()
+  }
+  return refillHeartQueue(currentTrack.value).then(async () => {
+    if (playMode.value !== 'heart') {
+      await advanceAfterPlaybackEnded()
+      return
+    }
+    const afterRefillIndex = queueIndex.value + 1
+    if (afterRefillIndex >= 0 && afterRefillIndex < queue.value.length) {
+      queueIndex.value = afterRefillIndex
+      const track = queue.value[afterRefillIndex]
+      if (track) {
+        playQueueTrack(track)
+        return
+      }
+    }
+    isPlaying.value = false
+    isLoading.value = false
+    autoAdvanceInFlight = false
+  })
 }
 
 function setPlayModeInternal(mode: PlayMode, options: { persist?: boolean } = {}): void {
   if (mode === playMode.value) return
+  if (mode === 'heart') {
+    if (!heartModeAvailable.value) return
+    enterHeartMode(options)
+    return
+  }
+  if (playMode.value === 'heart') {
+    exitHeartModeToSequential()
+  }
   playMode.value = mode
   // Preserve the active track, position and queue identity. Renderer fallback
   // applies the new ordering only when next/EOF reaches a track boundary.
   rendererPlayModeBoundaryPending = true
+  // 心动模式分支在上面提前返回，因此这里只会持久化常规播放模式。
   if (options.persist !== false) {
     void updateSettings({ playMode: mode }).catch((err) => {
       console.error('[音频引擎] 保存播放模式失败:', err)
@@ -4383,7 +4587,8 @@ function createPlaybackSession(mode: PlaybackResumeMode): PlaybackSession | null
     version: 1,
     savedAt: new Date().toISOString(),
     mode,
-    playMode: playMode.value,
+    // 心动模式依赖登录态与收藏歌单上下文，恢复会话时统一回退到顺序播放。
+    playMode: playMode.value === 'heart' ? 'sequential' : playMode.value,
     track: cloneTrackForPlaybackSession(track),
     position,
     queue: queue.value.map(cloneTrackForPlaybackSession),
@@ -4540,6 +4745,8 @@ export function usePlayerStore(): {
   queue: Ref<Track[]>
   queueIndex: Ref<number>
   playMode: Ref<PlayMode>
+  heartModeAvailable: ComputedRef<boolean>
+  setHeartModeContext: (playlistId: number | null) => void
   personalizedStreamSession: Ref<PersonalizedStreamSession | null>
   personalizedStreamRemaining: Ref<number>
   audioEngineReady: Ref<boolean>
@@ -4579,8 +4786,17 @@ export function usePlayerStore(): {
     name: string,
     createPlaylistWithTracks: (name: string, tracks: Track[]) => string
   ) => string
-  playTrack: (track: Track, trackList?: Track[]) => void
-  playTrackFromPosition: (track: Track, positionSeconds: number, trackList?: Track[]) => void
+  playTrack: (
+    track: Track,
+    trackList?: Track[],
+    options?: { heartModePlaylistId?: number | null }
+  ) => void
+  playTrackFromPosition: (
+    track: Track,
+    positionSeconds: number,
+    trackList?: Track[],
+    options?: { heartModePlaylistId?: number | null }
+  ) => void
   togglePlay: () => Promise<void>
   next: () => void
   prev: () => void
@@ -4629,7 +4845,17 @@ export function usePlayerStore(): {
 } {
   setupPlayerIntegrationSideEffects()
 
-  function playTrack(track: Track, trackList?: Track[]): void {
+  function playTrack(
+    track: Track,
+    trackList?: Track[],
+    options?: { heartModePlaylistId?: number | null }
+  ): void {
+    if (trackList) {
+      setHeartModeContext(options?.heartModePlaylistId ?? null)
+      // 手动重建队列（例如点击歌单/专辑中的另一首）时退出心动模式，
+      // 以新队列为准继续顺序播放。
+      exitHeartModeForManualQueueReplacement()
+    }
     if (trackList || !isPersonalizedStreamTrack(track)) endPersonalizedStream()
     if (trackList) {
       const snapshots = toPlaybackQueueSnapshots(trackList)
@@ -4649,7 +4875,16 @@ export function usePlayerStore(): {
     void loadAndPlay(track)
   }
 
-  function playTrackFromPosition(track: Track, positionSeconds: number, trackList?: Track[]): void {
+  function playTrackFromPosition(
+    track: Track,
+    positionSeconds: number,
+    trackList?: Track[],
+    options?: { heartModePlaylistId?: number | null }
+  ): void {
+    if (trackList) {
+      setHeartModeContext(options?.heartModePlaylistId ?? null)
+      exitHeartModeForManualQueueReplacement()
+    }
     if (trackList || !isPersonalizedStreamTrack(track)) endPersonalizedStream()
     if (trackList) {
       const snapshots = toPlaybackQueueSnapshots(trackList)
@@ -4966,6 +5201,8 @@ export function usePlayerStore(): {
     queue,
     queueIndex,
     playMode,
+    heartModeAvailable,
+    setHeartModeContext,
     personalizedStreamSession,
     personalizedStreamRemaining,
     audioEngineReady,

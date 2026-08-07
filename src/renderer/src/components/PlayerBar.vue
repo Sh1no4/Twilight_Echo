@@ -23,6 +23,7 @@ import repeatIcon from '../assets/icons/single-song-repeat.svg'
 import listLoopIcon from '../assets/icons/list-loop-repeat.svg'
 import sequentialIcon from '../assets/icons/sequential-playback.svg'
 import shuffleIcon from '../assets/icons/shuffle.svg'
+import heartModeIcon from '../assets/icons/heart-mode.svg'
 import { useFavoriteButton } from './player-bar/useFavoriteButton'
 import { useFloatingPanels } from './player-bar/useFloatingPanels'
 import { useEscapeToClose } from '../app/useDismissLayer.ts'
@@ -573,7 +574,8 @@ const modeLabels: Record<string, string> = {
   sequential: '顺序播放',
   listLoop: '列表循环',
   repeat: '单曲循环',
-  shuffle: '随机播放'
+  shuffle: '随机播放',
+  heart: '心动模式'
 }
 
 const modeTitle = computed(() => modeLabels[playMode.value] ?? '')
@@ -1351,6 +1353,7 @@ onMounted(() => {
 
         <button
           class="ctrl-btn mode-btn-right player-misc-icon"
+          :class="{ 'heart-mode-active': playMode === 'heart' }"
           :title="modeTitle"
           :aria-label="modeTitle"
           @click="cyclePlayMode"
@@ -1358,6 +1361,7 @@ onMounted(() => {
           <img v-if="playMode === 'sequential'" :src="sequentialIcon" alt="顺序" />
           <img v-else-if="playMode === 'listLoop'" :src="listLoopIcon" alt="列表循环" />
           <img v-else-if="playMode === 'repeat'" :src="repeatIcon" alt="单曲循环" />
+          <img v-else-if="playMode === 'heart'" :src="heartModeIcon" alt="心动模式" />
           <img v-else :src="shuffleIcon" alt="随机" />
         </button>
 

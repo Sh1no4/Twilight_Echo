@@ -28,6 +28,13 @@ const PERSONAL_RADAR_PLAYLIST_ID = 3136952023
 let likedTracksCache = null
 let playlistCatalogueCache = null
 let likedSongIdListCache = null
+let cachedUserId = null
+let likedIdsFreshAt = 0
+let likedIdsRefreshInFlight = null
+let likedIdsRefreshRetryAt = 0
+let likedIdsRevision = 0
+const LIKED_IDS_REFRESH_TTL_MS = 60_000
+const LIKED_IDS_REFRESH_FAIL_BACKOFF_MS = 15_000
 let personalFmSeenSongIds = new Set()
 let likedSongIds = new Set()
 let ownedPlaylistIds = new Set()
@@ -107,6 +114,7 @@ export async function activate(context) {
     fetchUserFolloweds,
     fetchPlayRecords,
     fetchRecentSongs,
+    fetchIntelligenceList,
     followArtist,
     followUser,
     likeTrack,
@@ -197,6 +205,11 @@ function resetCaches() {
   likedTracksCache = null
   playlistCatalogueCache = null
   likedSongIdListCache = null
+  cachedUserId = null
+  likedIdsFreshAt = 0
+  likedIdsRefreshInFlight = null
+  likedIdsRefreshRetryAt = 0
+  likedIdsRevision += 1
   personalFmSeenSongIds = new Set()
   likedSongIds = new Set()
   ownedPlaylistIds = new Set()
@@ -645,6 +658,22 @@ function getSongItems(data) {
   return []
 }
 
+function getIntelligenceSongItems(data) {
+  // 心动模式/智能播放接口返回 { data: { data: [song...], songInfo } }，
+  // 兼容其余常见的歌曲列表结构，避免上游接口结构调整时丢失列表。
+  const candidates = [
+    data?.data?.data,
+    data?.data?.songs,
+    data?.data?.songList,
+    data?.data,
+    data?.songs
+  ]
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) return candidate
+  }
+  return getSongItems(data)
+}
+
 function getPagedMoreFlag(data) {
   const candidates = [data?.more, data?.hasMore, data?.data?.more, data?.data?.hasMore]
   const value = candidates.find((candidate) => typeof candidate === 'boolean')
@@ -780,6 +809,7 @@ async function checkLogin() {
         avatarUrl: profileData.avatarUrl,
         signature: profileData.signature
       })
+      cachedUserId = profileData.userId
       return { loggedIn: true, profile }
     }
     await saveCookie('')
@@ -1097,11 +1127,11 @@ async function fetchLikedTracks(force = false) {
   if (ids.length === 0) {
     likedTracksCache = []
     likedSongIdListCache = []
-    likedSongIds = new Set()
+    replaceLikedSongIds([])
     return []
   }
   likedSongIdListCache = ids
-  likedSongIds = new Set(ids)
+  replaceLikedSongIds(ids)
 
   const songs = await fetchSongDetailsByIds(ids, 'liked songs')
 
@@ -1117,6 +1147,53 @@ async function fetchLikedTracks(force = false) {
   return likedTracksCache
 }
 
+async function fetchIntelligenceList(options = {}) {
+  const songId = Number(options?.songId)
+  const playlistId = Number(options?.playlistId)
+  if (!Number.isFinite(songId) || songId <= 0 || !Number.isFinite(playlistId) || playlistId <= 0) {
+    throw new Error('心动模式需要有效的歌曲 ID 与歌单 ID')
+  }
+  const startSongId = Number(options?.startSongId)
+  const requestedCount = Number(options?.count)
+  const path = appendQueryParams('/playmode/intelligence/list', {
+    id: songId,
+    pid: playlistId,
+    sid: Number.isFinite(startSongId) && startSongId > 0 ? startSongId : songId,
+    count: Number.isFinite(requestedCount) && requestedCount > 0 ? Math.min(50, requestedCount) : 20
+  })
+  const data = await requestAuthedRead(path, {
+    attempts: 2,
+    label: `心动模式智能播放列表 ${songId}`
+  })
+  const items = getIntelligenceSongItems(data)
+  const tracks = items
+    .map((item) => {
+      // 心动模式列表项是推荐包装：{ id, alg, recommended, songInfo }，
+      // 歌曲元数据（name/ar/al/封面）位于 item.songInfo 内。
+      // 少数条目 songInfo 为 null 且没有顶层歌曲字段，直接跳过。
+      const song =
+        item && typeof item === 'object' && item.songInfo && typeof item.songInfo === 'object'
+          ? item.songInfo
+          : item && typeof item === 'object' && item.songInfo === null && typeof item.name !== 'string'
+            ? null
+            : item
+      if (!song) return null
+      try {
+        return normalizeTrack(song)
+      } catch {
+        return null
+      }
+    })
+    .filter(
+      (track) =>
+        track &&
+        Number.isFinite(track.ncmSongId) &&
+        track.ncmSongId > 0 &&
+        (track.title ?? '') !== '未知歌曲'
+    )
+  return tracks
+}
+
 async function fetchLikedTrackIds(force = false) {
   if (!force && likedSongIdListCache) return likedSongIdListCache
 
@@ -1129,7 +1206,7 @@ async function fetchLikedTrackIds(force = false) {
       )
       const ids = getPlaylistTrackIds(detailData)
       likedSongIdListCache = ids
-      likedSongIds = new Set(ids)
+      replaceLikedSongIds(ids)
       return ids
     }
   } catch (error) {
@@ -1147,7 +1224,7 @@ async function fetchLikedTrackIds(force = false) {
     const ids = getLikelistIds(data)
     if (ids.length > 0) {
       likedSongIdListCache = ids
-      likedSongIds = new Set(ids)
+      replaceLikedSongIds(ids)
       return ids
     }
   } catch (error) {
@@ -1155,7 +1232,7 @@ async function fetchLikedTrackIds(force = false) {
   }
 
   likedSongIdListCache = []
-  likedSongIds = new Set()
+  replaceLikedSongIds([])
   return []
 }
 
@@ -1922,12 +1999,15 @@ async function followUser(userId, follow, requestContext) {
 async function likeTrack(songId, like, requestContext) {
   const updateLikedState = () => {
     if (like) {
-      likedSongIds = new Set([...likedSongIds, Number(songId)])
+      replaceLikedSongIds([...likedSongIds, Number(songId)])
     } else {
       const next = new Set(likedSongIds)
       next.delete(Number(songId))
-      likedSongIds = next
+      replaceLikedSongIds(next)
     }
+    // 本地刚完成的点赞/取消是权威状态，避免紧接着的刷新把它冲掉。
+    likedIdsFreshAt = Date.now()
+    likedIdsRefreshRetryAt = 0
   }
   return runIdempotentProviderWrite(
     'likeTrack',
@@ -1942,9 +2022,48 @@ async function likeTrack(songId, like, requestContext) {
   )
 }
 
-function isTrackLiked(ncmSongId) {
+async function refreshLikedIdsIfStale() {
+  const now = Date.now()
+  if (now < likedIdsRefreshRetryAt) return
+  if (now - likedIdsFreshAt < LIKED_IDS_REFRESH_TTL_MS) return
+  if (likedIdsRefreshInFlight) return likedIdsRefreshInFlight
+  const refreshRevision = likedIdsRevision
+
+  likedIdsRefreshInFlight = (async () => {
+    try {
+      const userId = cachedUserId ?? (await ensureProfile()).userId
+      const data = await requestAuthedRead(`/likelist?uid=${userId}`, {
+        attempts: 2,
+        label: 'liked ids refresh'
+      })
+      const ids = getLikelistIds(data)
+      if (refreshRevision !== likedIdsRevision) return
+      // 空列表同样是权威结果（用户当前没有任何喜欢的歌曲）。
+      likedSongIdListCache = ids
+      replaceLikedSongIds(ids)
+      likedIdsFreshAt = Date.now()
+      likedIdsRefreshRetryAt = 0
+      cachedUserId = userId
+    } catch (error) {
+      getContext().logger.warn(`网易云喜欢状态刷新失败，回退到本地缓存：${getErrorMessage(error)}`)
+      if (refreshRevision === likedIdsRevision) {
+        likedIdsRefreshRetryAt = now + LIKED_IDS_REFRESH_FAIL_BACKOFF_MS
+      }
+    } finally {
+      likedIdsRefreshInFlight = null
+    }
+  })()
+
+  return likedIdsRefreshInFlight
+}
+
+async function isTrackLiked(ncmSongId) {
   const songId = Number(ncmSongId)
-  return Number.isFinite(songId) && likedSongIds.has(songId)
+  if (!Number.isFinite(songId) || songId <= 0) return false
+  // 按歌曲实时校验：先以短 TTL 刷新云端喜欢集合，再判断是否喜欢，
+  // 避免其他设备改过喜欢状态后本应用仍显示旧状态。
+  await refreshLikedIdsIfStale()
+  return likedSongIds.has(songId)
 }
 
 function requirePlaylistId(playlistId) {
@@ -2072,9 +2191,14 @@ async function removeTracksFromPlaylist(playlistId, trackIds, requestContext) {
 }
 
 function syncLikedIds(tracks) {
-  likedSongIds = new Set(
+  replaceLikedSongIds(
     tracks.map((track) => Number(track.ncmSongId)).filter((id) => Number.isFinite(id) && id > 0)
   )
+}
+
+function replaceLikedSongIds(ids) {
+  likedSongIds = new Set(ids)
+  likedIdsRevision += 1
 }
 
 // ── 听歌排行 (user/record) ──────────────────────────────────────────

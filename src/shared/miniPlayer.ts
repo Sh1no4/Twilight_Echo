@@ -91,7 +91,7 @@ export interface MiniPlayerTrackSnapshot {
   coverSource: string | null
 }
 
-export type MiniPlayerPlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle'
+export type MiniPlayerPlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle' | 'heart'
 
 export interface MiniPlayerStateSnapshot {
   track: MiniPlayerTrackSnapshot | null
@@ -635,7 +635,11 @@ function normalizeMiniPlayerPlayMode(
   value: unknown,
   fallback: MiniPlayerPlayMode | null = 'sequential'
 ): MiniPlayerPlayMode | null {
-  return value === 'sequential' || value === 'listLoop' || value === 'repeat' || value === 'shuffle'
+  return value === 'sequential' ||
+    value === 'listLoop' ||
+    value === 'repeat' ||
+    value === 'shuffle' ||
+    value === 'heart'
     ? value
     : fallback
 }

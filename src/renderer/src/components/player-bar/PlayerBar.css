@@ -1762,6 +1762,15 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   transition-duration: 0.1s;
 }
 
+.mode-btn-right.heart-mode-active,
+.mode-btn-right.heart-mode-active:hover,
+.player-bar-glass .mode-btn-right.heart-mode-active {
+  background: color-mix(in srgb, var(--te-favorite-500, #ef4444) 16%, transparent);
+}
+.mode-btn-right.heart-mode-active img {
+  opacity: 0.95;
+}
+
 .icon-btn {
   display: flex;
   align-items: center;

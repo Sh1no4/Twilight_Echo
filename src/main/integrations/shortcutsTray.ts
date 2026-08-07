@@ -79,7 +79,8 @@ const PLAY_MODE_LABELS: Record<MiniPlayerPlayMode, string> = {
   sequential: '顺序播放',
   listLoop: '列表循环',
   repeat: '单曲循环',
-  shuffle: '随机播放'
+  shuffle: '随机播放',
+  heart: '心动模式'
 }
 
 let trayMenuSignature: string | null = null

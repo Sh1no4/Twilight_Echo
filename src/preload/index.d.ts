@@ -103,7 +103,7 @@ interface AudioEngineEvent {
 }
 
 type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
-type PlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle'
+type PlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle' | 'heart'
 type PlayerShortcutAction =
   | 'previous'
   | 'next'
@@ -288,6 +288,7 @@ type TwilightMediaProviderMethod =
   | 'fetchUserFolloweds'
   | 'fetchPlayRecords'
   | 'fetchRecentSongs'
+  | 'fetchIntelligenceList'
   | 'followArtist'
   | 'followUser'
   | 'likeTrack'

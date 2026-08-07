@@ -474,7 +474,7 @@ test('settings page exposes search, backup, cache confirmation, and isolated plu
   const settingsPageSource = readSettingsPageSources()
 
   assert.match(settingsPageSource, /const settingsSearchQuery = ref\(''\)/)
-  assert.match(settingsPageSource, /const filteredSettingsSections = computed/)
+  assert.match(settingsPageSource, /const filteredSearchResults = computed/)
   assert.match(settingsPageSource, /function scrollToSearchResult/)
   assert.match(settingsPageSource, /function confirmClearCache/)
   assert.match(settingsPageSource, /确认清理缓存/)
@@ -558,7 +558,7 @@ test('settings page warns and disables transparency controls on unsupported plat
 
   assert.match(source, /const transparencyUnsupported = computed/)
   assert.match(source, /windowTransparencySupported\.value === false/)
-  assert.match(source, /当前 Linux Wayland 会话不支持透明窗口/)
+  assert.match(source, /当前系统不支持窗口透明（Linux Wayland，或 Windows 未开启系统透明效果）/)
   assert.match(source, /toggleSetting\('windowTransparency'\)/)
   assert.match(source, /aria-disabled="!transparencySupported"/)
 })
