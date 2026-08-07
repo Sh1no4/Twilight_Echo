@@ -477,22 +477,27 @@ test('renderer createPlayableUrl accepts twilight-media grant URLs without local
   )
 })
 
-test('resolved streaming targets are patched back into restored queues', () => {
+test('only the active streaming load commits its resolved target into shared track state', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
-  const loadAndPlay = source.match(/async function loadAndPlay[\s\S]*?\n}/)?.[0] ?? ''
+  const resolvePlayTarget = extractInternalFunctionBody(source, 'resolvePlayTarget')
+  const loadAndPlay = extractInternalFunctionBody(source, 'loadAndPlay')
+  const resolvedAt = loadAndPlay.indexOf('const playTarget = await resolvePlayTarget(track)')
+  const activeCheckAt = loadAndPlay.indexOf('if (!isActiveLoad(loadToken, track))', resolvedAt)
+  const commitAt = loadAndPlay.indexOf('track.streamUrl = playTarget', resolvedAt)
+  const patchAt = loadAndPlay.indexOf('patchTrackInQueues(track)', resolvedAt)
 
-  assert.match(loadAndPlay, /const playTarget = await resolvePlayTarget\(track\)/)
-  assert.match(loadAndPlay, /patchTrackInQueues\(track\)/)
-  assert.ok(
-    loadAndPlay.indexOf('patchTrackInQueues(track)') >
-      loadAndPlay.indexOf('resolvePlayTarget(track)'),
-    'queue should be patched after stream URL resolution mutates the track'
-  )
+  assert.doesNotMatch(resolvePlayTarget, /track\.streamUrl\s*=/)
+  assert.doesNotMatch(resolvePlayTarget, /track\.streamQuality\s*=(?!=)/)
+  assert.ok(resolvedAt >= 0, 'stream URL resolution should remain in loadAndPlay')
+  assert.ok(activeCheckAt > resolvedAt, 'resolved streams require a post-resolution generation check')
+  assert.ok(commitAt > activeCheckAt, 'stale stream resolutions must not mutate the shared track')
+  assert.ok(patchAt > commitAt, 'queue snapshots should update only after the active target commits')
 })
 
 test('NetEase streams re-resolve after a quality preference change', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const resolvePlayTarget = extractInternalFunctionBody(source, 'resolvePlayTarget')
+  const loadAndPlay = extractInternalFunctionBody(source, 'loadAndPlay')
 
   assert.match(
     resolvePlayTarget,
@@ -503,7 +508,10 @@ test('NetEase streams re-resolve after a quality preference change', () => {
     resolvePlayTarget,
     /source === 'ncm' \? \{ quality: ncmPlaybackQuality \} : undefined/
   )
-  assert.match(resolvePlayTarget, /track\.streamQuality = ncmPlaybackQuality/)
+  assert.match(
+    loadAndPlay,
+    /if \(getTrackSource\(track\) === 'ncm'\) \{\s*track\.streamQuality = appSettings\.value\.ncmPlaybackQuality/
+  )
   assert.match(resolvePlayTarget, /当前网易云账号没有可播放的音质/)
 })
 
@@ -574,6 +582,11 @@ test('player store prepares native queues before loading or synchronizing them',
   )
   assert.match(loadAndPlay, /const preparedQueue = await preparePlayerNativeQueue\(/)
   assert.match(loadAndPlay, /isAudioFileAuthorized: window\.api\.fs\.isAudioFileAuthorized/)
+  assert.match(
+    loadAndPlay,
+    /if \(!isActiveLoad\(loadToken, track\)\) \{[\s\S]*?return[\s\S]*?\}\s*await window\.api\.audioEngine\.loadQueue/,
+    'an old async queue preparation must not reach native LoadQueue'
+  )
   assert.match(loadAndPlay, /preparedQueue\.items,\s*preparedQueue\.startIndex/)
   assert.match(loadAndPlay, /nativeQueueDelegated = preparedQueue\.delegated/)
   assert.match(

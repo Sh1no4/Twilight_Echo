@@ -2516,8 +2516,6 @@ async function resolvePlayTarget(track: Track): Promise<string> {
     throw new Error(`Unable to resolve ${source} stream URL`)
   }
 
-  track.streamUrl = streamUrl
-  if (source === 'ncm') track.streamQuality = ncmPlaybackQuality
   return streamUrl
 }
 
@@ -3167,10 +3165,14 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
       releaseLoadIfOwned()
       return
     }
+    track.streamUrl = playTarget
+    if (getTrackSource(track) === 'ncm') {
+      track.streamQuality = appSettings.value.ncmPlaybackQuality
+    }
     patchTrackInQueues(track)
-    // resolvePlayTarget 只改写了传入的 track 对象，而 active currentTrack 是
-    // 激活时的拷贝；若不回写，后续队列重同步（如切换播放模式）会因取不到
-    // source 而误判“当前曲目不支持原生播放”→ stopNativeAudio → 误触发切歌。
+    // The active currentTrack is a copy created during activation. Mirror the
+    // resolved target after the generation check so later queue synchronization
+    // can identify the native source without allowing a stale load to overwrite it.
     if (currentTrack.value && currentTrack.value.id === track.id) {
       currentTrack.value = {
         ...currentTrack.value,
@@ -3200,6 +3202,10 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         )
         if (!preparedQueue) {
           throw new Error('Native playback target is unavailable')
+        }
+        if (!isActiveLoad(loadToken, track)) {
+          releaseLoadIfOwned()
+          return
         }
 
         await window.api.audioEngine.loadQueue(preparedQueue.items, preparedQueue.startIndex)
