@@ -665,7 +665,7 @@ const titleSurface = computed<TitleSurface>(() => {
       <TitleBar
         :glass="showPlayingPage"
         :streaming="showStreamingPage && !showPlayingPage"
-        :hide-start="showThemeStudioPage"
+        :hide-start="showThemeStudioPage || showLoginPage"
         :title-surface="titleSurface"
         :menu-open="titleMenuOpen"
         @toggle-menu="toggleMenu"
@@ -700,88 +700,88 @@ const titleSurface = computed<TitleSurface>(() => {
         }"
         :style="{ minHeight: mainContentMinHeight }"
       >
-    <Transition :name="songlistTransitionName" mode="out-in">
-      <LocalDashboard
-        v-if="localViewVisible && activeCategory === 'dashboard'"
-        key="local-dashboard"
-        @select-view="onSelectView"
-        @open-library-settings="openSettingsPage('general')"
-      />
-      <SongList
-        v-else-if="localViewVisible"
-        key="local-songlist"
-        :category="activeCategory"
-        :filter="activeFilter"
-        :has-player="hasPlayerBar"
-        :transition-name="songlistTransitionName"
-        @select-view="onSelectView"
-        @customize-appearance="openThemeStudioPage('library')"
-      />
-    </Transition>
-    <Transition name="playing-page">
-      <PlayingMusic
-        v-if="showPlayingPage"
-        :style="{ transformOrigin: coverTransformOrigin }"
-        @back="closePlayingPage"
-        @customize-appearance="openThemeStudioPage('player')"
-      />
-    </Transition>
-    <StreamingPage
-      v-if="streamingPageMounted"
-      v-show="showStreamingPage"
-      :active="showStreamingPage"
-      :menu-open="streamingMenuOpen"
-      :has-player="hasPlayerBar"
-      :initial-tab="streamingInitialTab ?? undefined"
-      :artist-navigation-request="streamingArtistRequest"
-      @toggle-menu="toggleStreamingMenu"
-      @back-to-local="returnToLocalMode"
-      @login="handleStreamingLogin"
-    />
-    <RadioPodcastPage v-if="showRadioPodcastPage" @back="closeRadioPodcastPage" />
-    <Transition name="login-page">
-      <LoginPage
-        v-if="showLoginPage"
-        :force-profile="loginPageMode === 'profile'"
-        :initial-provider-id="loginInitialProviderId"
-        @back="closeLoginPage"
-        @login-success="handleLoginSuccess"
-      />
-    </Transition>
-    <Transition name="settings-page">
-      <PluginPage v-if="showPluginPage" @back="hidePluginPage" />
-    </Transition>
-    <Transition name="settings-page">
-      <SettingsPage
-        v-if="showSettingsPage"
-        :initial-section="settingsInitialSection"
-        @back="closeSettingsPage"
-        @open-equalizer="openEqualizerPage"
-        @open-dsp-rack="openDspRackPage"
-        @open-theme-studio="openThemeStudioPage"
-        @reopen-onboarding="handleReopenOnboarding"
-      />
-    </Transition>
-    <Transition name="settings-page">
-      <ThemeStudioPage
-        v-if="showThemeStudioPage"
-        :initial-domain="themeStudioInitialDomain"
-        @back="closeThemeStudioPage"
-      />
-    </Transition>
-    <Transition name="settings-page">
-      <DspRackPage v-if="showDspRackPage" @back="closeDspRackPage" />
-    </Transition>
-    <Transition name="login-page">
-      <EqualizerPage v-if="showEqualizerPage" @back="closeEqualizerPage" />
-    </Transition>
-    <Transition name="login-page">
-      <PluginExtensionPage
-        v-if="activePluginPage"
-        :page="activePluginPage"
-        @back="closePluginPage"
-      />
-    </Transition>
+        <Transition :name="songlistTransitionName" mode="out-in">
+          <LocalDashboard
+            v-if="localViewVisible && activeCategory === 'dashboard'"
+            key="local-dashboard"
+            @select-view="onSelectView"
+            @open-library-settings="openSettingsPage('general')"
+          />
+          <SongList
+            v-else-if="localViewVisible"
+            key="local-songlist"
+            :category="activeCategory"
+            :filter="activeFilter"
+            :has-player="hasPlayerBar"
+            :transition-name="songlistTransitionName"
+            @select-view="onSelectView"
+            @customize-appearance="openThemeStudioPage('library')"
+          />
+        </Transition>
+        <Transition name="playing-page">
+          <PlayingMusic
+            v-if="showPlayingPage"
+            :style="{ transformOrigin: coverTransformOrigin }"
+            @back="closePlayingPage"
+            @customize-appearance="openThemeStudioPage('player')"
+          />
+        </Transition>
+        <StreamingPage
+          v-if="streamingPageMounted"
+          v-show="showStreamingPage"
+          :active="showStreamingPage"
+          :menu-open="streamingMenuOpen"
+          :has-player="hasPlayerBar"
+          :initial-tab="streamingInitialTab ?? undefined"
+          :artist-navigation-request="streamingArtistRequest"
+          @toggle-menu="toggleStreamingMenu"
+          @back-to-local="returnToLocalMode"
+          @login="handleStreamingLogin"
+        />
+        <RadioPodcastPage v-if="showRadioPodcastPage" @back="closeRadioPodcastPage" />
+        <Transition name="login-page">
+          <LoginPage
+            v-if="showLoginPage"
+            :force-profile="loginPageMode === 'profile'"
+            :initial-provider-id="loginInitialProviderId"
+            @back="closeLoginPage"
+            @login-success="handleLoginSuccess"
+          />
+        </Transition>
+        <Transition name="settings-page">
+          <PluginPage v-if="showPluginPage" @back="hidePluginPage" />
+        </Transition>
+        <Transition name="settings-page">
+          <SettingsPage
+            v-if="showSettingsPage"
+            :initial-section="settingsInitialSection"
+            @back="closeSettingsPage"
+            @open-equalizer="openEqualizerPage"
+            @open-dsp-rack="openDspRackPage"
+            @open-theme-studio="openThemeStudioPage"
+            @reopen-onboarding="handleReopenOnboarding"
+          />
+        </Transition>
+        <Transition name="settings-page">
+          <ThemeStudioPage
+            v-if="showThemeStudioPage"
+            :initial-domain="themeStudioInitialDomain"
+            @back="closeThemeStudioPage"
+          />
+        </Transition>
+        <Transition name="settings-page">
+          <DspRackPage v-if="showDspRackPage" @back="closeDspRackPage" />
+        </Transition>
+        <Transition name="login-page">
+          <EqualizerPage v-if="showEqualizerPage" @back="closeEqualizerPage" />
+        </Transition>
+        <Transition name="login-page">
+          <PluginExtensionPage
+            v-if="activePluginPage"
+            :page="activePluginPage"
+            @back="closePluginPage"
+          />
+        </Transition>
       </div>
     </div>
     <div class="app-shell-player">
