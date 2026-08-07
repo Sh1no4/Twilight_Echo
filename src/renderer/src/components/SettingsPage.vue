@@ -5666,7 +5666,6 @@ html[data-theme='dark'] .settings-preview-page .page-background-row,
 html[data-theme='dark'] .settings-preview-page .page-background-row.expanded,
 html[data-theme='dark'] .settings-preview-page .inherit-toggle,
 html[data-theme='dark'] .settings-preview-page .pill-action.ghost,
-html[data-theme='dark'] .settings-preview-page .dashed-button,
 html[data-theme='dark'] .settings-preview-page .settings-search-box,
 html[data-theme='dark'] .settings-preview-page .settings-nav-search,
 html[data-theme='dark'] .settings-preview-page .shortcut-status-row,
@@ -5882,11 +5881,18 @@ html[data-theme='dark'] .settings-preview-page .muted-button,
 html[data-theme='dark'] .settings-preview-page .soft-button,
 html[data-theme='dark'] .settings-preview-page .icon-button,
 html[data-theme='dark'] .settings-preview-page .brand-soft-button,
-html[data-theme='dark'] .settings-preview-page .inherit-toggle {
+html[data-theme='dark'] .settings-preview-page .inherit-toggle,
+html[data-theme='dark'] .settings-preview-page .dashed-button,
+html[data-theme='dark'] .settings-preview-page .folder-empty-hint {
   border-color: var(--te-card-border);
-  background: var(--te-subtle-bg);
+  background: var(--te-card-bg);
   color: rgba(203, 213, 225, 0.9);
   box-shadow: none;
+}
+
+html[data-theme='dark'] .settings-preview-page .folder-empty-hint {
+  border: 1px dashed var(--te-card-border);
+  border-radius: 12px;
 }
 
 html[data-theme='dark'] .settings-preview-page .inherit-toggle.active {
