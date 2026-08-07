@@ -24,6 +24,8 @@ jobs:
             ninja-build \
             pkg-config \
             libasound2-dev \
+            nasm \
+            yasm \
             curl \
             zip \
             unzip \
