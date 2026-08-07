@@ -68,7 +68,6 @@ import type {
   DesktopLyricsLayout,
   DesktopLyricsSettings,
   DsdOutputMode,
-  FooDsdAsioPortableStatus,
   LyricsAppearanceSettings,
   LyricAlign,
   MotionPreference,
@@ -457,49 +456,6 @@ const hasSettingsSearchNoResults = computed(
 const selectedAudioOutput = computed(() =>
   audioOutputOptions.value.find((option) => option.id === audioOutput.value)
 )
-const fooDsdAsioDevice = computed(() =>
-  audioDeviceOptions.value.find((device) =>
-    `${device.id} ${device.label} ${device.name ?? ''} ${device.driverName ?? ''}`
-      .toLowerCase()
-      .replaceAll('-', '_')
-      .includes('foo_dsd_asio')
-  )
-)
-const fooDsdAsioRegistered = computed(() => Boolean(fooDsdAsioDevice.value))
-const fooDsdAsioPortableStatus = ref<FooDsdAsioPortableStatus | null>(null)
-const fooDsdAsioPortableBusy = ref(false)
-const fooDsdAsioRegistrationText = computed(() =>
-  fooDsdAsioRegistered.value
-    ? '系统已注册 foo_dsd_asio ASIO 驱动'
-    : fooDsdAsioPortableStatus.value?.matched
-      ? '已识别 Foobar2000 便携版 DSD 组件；将由 Twilight Echo 直连当前 ASIO 驱动'
-      : '未检测到系统级 foo_dsd_asio 驱动'
-)
-
-async function refreshFooDsdAsioPortableStatus(): Promise<void> {
-  try {
-    fooDsdAsioPortableStatus.value = await window.api.audioEngine.getFooDsdAsioPortableStatus()
-  } catch {
-    fooDsdAsioPortableStatus.value = null
-  }
-}
-
-async function selectFooDsdAsioPortablePath(): Promise<void> {
-  if (fooDsdAsioPortableBusy.value) return
-  fooDsdAsioPortableBusy.value = true
-  settingsError.value = ''
-  try {
-    const status = await window.api.audioEngine.selectFooDsdAsioPortablePath()
-    if (!status) return
-    fooDsdAsioPortableStatus.value = status
-    if (status.rootPath) await loadSettings()
-    settingsNotice.value = status.message
-  } catch (cause) {
-    settingsError.value = cause instanceof Error ? cause.message : 'Foobar2000 便携版目录检测失败'
-  } finally {
-    fooDsdAsioPortableBusy.value = false
-  }
-}
 const exclusiveAvailable = computed(() => selectedAudioOutput.value?.supportsExclusive ?? false)
 const isUpmixActive = computed(
   () =>
@@ -1102,13 +1058,6 @@ function setCrossfeedCutoff(event: Event): void {
 }
 
 async function selectDsdOutputMode(value: DsdOutputMode): Promise<void> {
-  if (
-    value === 'foo_dsd_asio' &&
-    audioOutput.value !== 'asio' &&
-    audioOutputOptions.value.some((option) => option.id === 'asio')
-  ) {
-    await setAudioOutput('asio')
-  }
   await setAudioProcessing({ dsdOutputMode: value, dsdToPcm: value === 'pcm' })
 }
 
@@ -1962,7 +1911,6 @@ function updateActiveSection(): void {
 
 onMounted(async () => {
   await Promise.all([loadSettings(), refreshAudioOutputState(), themeStore.load()])
-  await refreshFooDsdAsioPortableStatus()
   await Promise.all([
     refreshCacheSize(),
     refreshBpmAnalysisCacheSize(),
@@ -2808,12 +2756,6 @@ onBeforeUnmount(() => {
               <div class="setting-item top-align dsd-route-setting">
                 <div class="setting-copy">
                   <strong>DSD 直通路由</strong>
-                  <span class="dsd-proxy-status" :class="{ available: fooDsdAsioRegistered }">
-                    <i
-                      :class="fooDsdAsioRegistered ? 'pi pi-check-circle' : 'pi pi-info-circle'"
-                    ></i>
-                    {{ fooDsdAsioRegistrationText }}
-                  </span>
                 </div>
                 <div
                   class="segmented-control dsd-route-control"
@@ -2833,44 +2775,6 @@ onBeforeUnmount(() => {
                     {{ option.label }}
                   </button>
                 </div>
-              </div>
-              <hr />
-              <div class="setting-item top-align foo-dsd-portable-panel">
-                <div class="setting-copy">
-                  <strong>Foobar2000 便携版兼容检测</strong>
-                  <span
-                    class="setting-substatus"
-                    :class="{ available: fooDsdAsioPortableStatus?.matched }"
-                  >
-                    {{ fooDsdAsioPortableStatus?.message ?? '尚未检测 Foobar2000 便携版目录' }}
-                  </span>
-                  <small v-if="fooDsdAsioPortableStatus?.rootPath" class="portable-path">
-                    {{ fooDsdAsioPortableStatus.rootPath }}
-                  </small>
-                  <small>
-                    便携版 DLL 是 Foobar 私有组件，不会注入本软件；匹配成功后仍由 Twilight Echo
-                    按当前 ASIO 设备独立协商 Native DSD，不会套用其他厂商协议。
-                  </small>
-                  <div v-if="fooDsdAsioPortableStatus?.rootPath" class="portable-component-row">
-                    <span :class="{ available: fooDsdAsioPortableStatus.hasAsioDsdComponent }">
-                      ASIO+DSD
-                    </span>
-                    <span :class="{ available: fooDsdAsioPortableStatus.hasSacdComponent }">
-                      SACD
-                    </span>
-                    <span :class="{ available: fooDsdAsioPortableStatus.portableModeEnabled }">
-                      Portable
-                    </span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  class="soft-button"
-                  :disabled="fooDsdAsioPortableBusy"
-                  @click="selectFooDsdAsioPortablePath"
-                >
-                  {{ fooDsdAsioPortableBusy ? '检测中…' : '选择便携版目录' }}
-                </button>
               </div>
               <hr />
               <div class="setting-item">

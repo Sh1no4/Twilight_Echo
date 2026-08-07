@@ -11,6 +11,7 @@ import { useMediaProviders } from '../providers'
 import { normalizeAccentColor } from '../utils/colorExtractor'
 import { useSmoothedValue } from '../utils/useSmoothedValue'
 import { HIFI_STATUS_COPY } from '../../../shared/audioProcessingOptions.ts'
+import { cloneLyricsAppearance } from '../../../shared/lyricsAppearance.ts'
 import type { LyricLayerSourceSelection } from '../../../shared/lyricsManagement.ts'
 import CoverImg from './CoverImg.vue'
 import HiFiSidebar from './player-bar/HiFiSidebar.vue'
@@ -144,7 +145,7 @@ const { uiContributions, syncExtensions } = useExtensionRegistry()
 const playerBarButtons = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'playerBarButton')
 )
-const { settings } = useSettingsStore()
+const { settings, updateSettings } = useSettingsStore()
 const lyricsManagement = useLyricsManagement()
 const desktopLyricsOn = ref(settings.value.desktopLyrics.enabled)
 const miniPlayerOpening = ref(false)
@@ -154,6 +155,9 @@ const managedLyricOverride = computed(() => lyricsManagement.entryFor(currentTra
 const originalLayerSelection = computed(() => lyricLayerSelection('originalSelection'))
 const translationLayerSelection = computed(() => lyricLayerSelection('translationSelection'))
 const showTranslation = computed(() => lyricsManagement.document.value.showTranslation)
+const lyricHighlightOn = computed(
+  () => settings.value.lyricsAppearance.styles.active.highlightEffect === 'glow'
+)
 
 async function toggleDesktopLyrics(): Promise<void> {
   const enabled = await window.api.desktopLyrics.toggle()
@@ -1022,6 +1026,18 @@ async function toggleTranslationVisibility(): Promise<void> {
   }
 }
 
+async function toggleLyricHighlight(): Promise<void> {
+  if (lyricControlsPending.value) return
+  lyricControlsPending.value = true
+  try {
+    const lyricsAppearance = cloneLyricsAppearance(settings.value.lyricsAppearance)
+    lyricsAppearance.styles.active.highlightEffect = lyricHighlightOn.value ? 'none' : 'glow'
+    await updateSettings({ lyricsAppearance })
+  } finally {
+    lyricControlsPending.value = false
+  }
+}
+
 onMounted(() => {
   if (!props.preview) void syncExtensions()
 })
@@ -1468,6 +1484,7 @@ onMounted(() => {
           :original-layer-selection="originalLayerSelection"
           :translation-layer-selection="translationLayerSelection"
           :show-translation="showTranslation"
+          :lyric-highlight-on="lyricHighlightOn"
           :lyric-controls-pending="lyricsReloading || lyricControlsPending"
           :player-bar-buttons="playerBarButtons"
           :is-live-stream="isLiveStream"
@@ -1519,6 +1536,7 @@ onMounted(() => {
           @reload-lyrics="onReloadLyrics"
           @set-lyric-layer-selection="setLyricLayerSelection"
           @toggle-translation-visibility="toggleTranslationVisibility"
+          @toggle-lyric-highlight="toggleLyricHighlight"
           @run-extension="runPlayerBarExtension"
           @cycle-playback-rate="cyclePlaybackRate"
           @toggle-ab-loop="toggleAbLoopAtCurrentTime"

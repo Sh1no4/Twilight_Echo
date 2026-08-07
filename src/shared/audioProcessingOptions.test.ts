@@ -33,12 +33,12 @@ test('volume normalization options always include distinct loudnorm (never track
   assert.equal(isVolumeNormalizationMode('track_alias'), false)
 })
 
-test('DSD output mode options cover native and foo_dsd_asio proxy routes', () => {
-  assert.deepEqual(dsdOutputModeValues(), ['auto', 'pcm', 'dop', 'native', 'foo_dsd_asio'])
-  assert.equal(DSD_OUTPUT_MODE_OPTIONS.length, 5)
+test('DSD output mode options cover direct output routes', () => {
+  assert.deepEqual(dsdOutputModeValues(), ['auto', 'pcm', 'dop', 'native'])
+  assert.equal(DSD_OUTPUT_MODE_OPTIONS.length, 4)
   assert.equal(isDsdOutputMode('dop'), true)
   assert.equal(isDsdOutputMode('native-dsd'), false)
-  assert.equal(isDsdOutputMode('foo_dsd_asio'), true)
+  assert.equal(isDsdOutputMode('unknown'), false)
 })
 
 test('loudnorm defaults and unity volume contract stay Stage-1 honest', () => {

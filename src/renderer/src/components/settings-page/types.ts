@@ -257,7 +257,6 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = ([
   // ── 播放 ──────────────────────────────────────────────
   { section: 'playback', title: '输出模式', terms: '输出 output 设备 音频 模式 声卡' },
   { section: 'playback', title: 'DSD 直通路由', terms: 'dsd 直通 路由 sacd 采样 原始' },
-  { section: 'playback', title: 'Foobar2000 便携版兼容检测', terms: 'foobar2000 便携 兼容 检测 解码' },
   { section: 'playback', title: '独占模式 (Exclusive)', terms: '独占 exclusive 输出 设备 绕过 混音' },
   { section: 'playback', title: '音量与削波保护', terms: '音量 削波 clip 保护 响度 安全' },
   { section: 'playback', title: '无缝播放 (Gapless Playback)', terms: '无缝 播放 gapless 间隙 连续 歌曲' },

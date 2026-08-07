@@ -21,7 +21,7 @@ export type ChannelRoutingMode =
   | 'mono-to-multichannel'
 /** PCM → DSD output-stage modulation; off keeps PCM sources on the float/typed PCM path. */
 export type PcmToDsdMode = 'off' | 'dsd64' | 'dsd128' | 'dsd256'
-export type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native' | 'foo_dsd_asio'
+export type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native'
 export type SacdProgramMode = 'auto' | 'stereo' | 'multichannel'
 export type EqualizerFilterType =
   | 'peak'

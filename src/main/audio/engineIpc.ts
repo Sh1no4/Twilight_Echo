@@ -10,7 +10,6 @@ import {
   AudioEngineManager,
   normalizeAudioProcessingSettings,
   type AudioProcessingSettings,
-  type AudioOutputState,
   type AudioOutputId,
   type AudioEngineQueueItem,
   type PlayMode,
@@ -37,7 +36,6 @@ import {
   AudioDiagnosticRecorder,
   collectDsdPcmBlockers,
   createPlaybackDiagnosticEvent,
-  findFooDsdAsioBridgeSuggestion,
   type AudioDiagnosticSnapshot
 } from './audioDiagnostics.ts'
 import {
@@ -46,10 +44,8 @@ import {
   broadcastPlayerLifecycleEvents,
   getEffectiveAudioProcessing,
   persistAndApplyAudioProcessingState,
-  persistDspSceneState,
-  updateAppSettings
+  persistDspSceneState
 } from './state'
-import { inspectFooDsdAsioPortable } from './fooDsdAsioPortable.ts'
 import {
   normalizeFiniteNumber,
   normalizeInteger,
@@ -337,10 +333,7 @@ async function captureAudioDiagnosticSnapshot(): Promise<AudioDiagnosticSnapshot
         nativeDsdRuntimeState: playback.outputInfo.nativeDsdRuntimeState,
         nativeDsdRuntimeReason: playback.outputInfo.nativeDsdRuntimeReason,
         nativeDsdNegotiation: playback.outputInfo.diagnostics.nativeDsdNegotiation ?? '',
-        dopRuntimeEvidence: playback.outputInfo.diagnostics.dopRuntimeEvidence ?? '',
-        fooDsdAsioBridgeSuggestion: isAudioOutputState(outputState)
-          ? findFooDsdAsioBridgeSuggestion({ playback, outputState })
-          : undefined
+        dopRuntimeEvidence: playback.outputInfo.diagnostics.dopRuntimeEvidence ?? ''
       }
     : { unavailable: true }
   return {
@@ -378,16 +371,6 @@ function isPlaybackInfo(
     'outputInfo' in value &&
     'volume' in value &&
     'state' in value
-  )
-}
-
-function isAudioOutputState(value: unknown): value is AudioOutputState {
-  return Boolean(
-    value &&
-      typeof value === 'object' &&
-      'output' in value &&
-      'device' in value &&
-      'deviceOptions' in value
   )
 }
 
@@ -521,30 +504,6 @@ export async function setupAudioEngineIpc(): Promise<void> {
   runtime.audioEngineManager.on('loudnorm-status', (event) => {
     audioDiagnosticRecorder?.record('loudnorm-status', event)
     runtime.mainWindow?.webContents.send('audioEngine:loudnorm-status', event)
-  })
-
-  ipcMain.handle('audioEngine:getFooDsdAsioPortableStatus', async (event) => {
-    assertTrustedIpcSender(event, 'audio engine IPC')
-    return await inspectFooDsdAsioPortable(runtime.appSettings.foobar2000PortablePath)
-  })
-
-  ipcMain.handle('audioEngine:selectFooDsdAsioPortablePath', async (event) => {
-    assertTrustedIpcSender(event, 'audio engine IPC')
-    const win = BrowserWindow.getFocusedWindow() ?? runtime.mainWindow
-    const options: Electron.OpenDialogOptions = {
-      title: '选择 Foobar2000 便携版目录',
-      properties: ['openDirectory']
-    }
-    const result = win
-      ? await dialog.showOpenDialog(win, options)
-      : await dialog.showOpenDialog(options)
-    if (result.canceled || result.filePaths.length === 0) return null
-    const status = await inspectFooDsdAsioPortable(result.filePaths[0])
-    if (status.rootPath) {
-      await updateAppSettings({ foobar2000PortablePath: status.rootPath })
-      return await inspectFooDsdAsioPortable(status.rootPath)
-    }
-    return status
   })
 
   ipcMain.handle('audioEngine:loadQueue', async (_event, items: unknown, startIndex?: number) => {

@@ -45,7 +45,6 @@ int bitDepthForFormat(AudioSampleFormat format) {
     case AudioSampleFormat::DsdInt8Lsb1:
     case AudioSampleFormat::DsdInt8Msb1:
     case AudioSampleFormat::DsdInt8Ner8:
-    case AudioSampleFormat::DsdInt32LsbPacked:
       return 1;
     case AudioSampleFormat::Int32Interleaved:
     case AudioSampleFormat::Float32Interleaved:
@@ -136,71 +135,29 @@ void traceAsioDriverCall(const char* phase) {
   if (trace) trace << phase << '\n';
 }
 
-void traceAsioRateProbe(asio_abi::AsioDriver* driver, const char* label, double rate, asio_abi::AsioError result) {
+void traceNativeDsdResult(
+    asio_abi::AsioDriver* driver,
+    const char* operation,
+    asio_abi::AsioError result,
+    std::optional<double> rate = std::nullopt,
+    const asio_abi::AsioIoFormat* ioFormat = nullptr) {
   const char* tracePath = std::getenv("TAE_ASIO_TRACE_PATH");
   if (!tracePath || tracePath[0] == '\0') return;
   std::ofstream trace(tracePath, std::ios::app);
   if (!trace) return;
   std::array<char, 1024> message{};
   if (driver) driver->getErrorMessage(message.data());
-  trace << label << " rate=" << rate << " result=" << result << " error=" << message.data() << '\n';
+  trace << "Native DSD " << operation << " result=" << result;
+  if (rate.has_value()) trace << " rate=" << *rate;
+  if (ioFormat) trace << " formatType=" << ioFormat->formatType;
+  trace << " error=" << message.data() << '\n';
 }
 
-void traceAsioFormatProbe(asio_abi::AsioDriver* driver, int rate) {
+void traceNativeDsdText(const char* operation, const std::string& text) {
   const char* tracePath = std::getenv("TAE_ASIO_TRACE_PATH");
-  if (!tracePath || tracePath[0] == '\0' || !driver) return;
+  if (!tracePath || tracePath[0] == '\0') return;
   std::ofstream trace(tracePath, std::ios::app);
-  if (!trace) return;
-
-  asio_abi::AsioIoFormat ioFormat{};
-  const auto ioResult = driver->future(asio_abi::kFutureGetIoFormat, &ioFormat);
-  std::array<char, 1024> message{};
-  driver->getErrorMessage(message.data());
-  trace << "Native DSD format probe rate=" << rate << " getIoFormat=" << ioResult
-        << " formatType=" << ioFormat.formatType << " error=" << message.data() << '\n';
-
-  asio_abi::AsioChannelInfo channelInfo{};
-  channelInfo.channel = 0;
-  channelInfo.isInput = asio_abi::kAsioFalse;
-  channelInfo.isActive = asio_abi::kAsioTrue;
-  const auto channelResult = driver->getChannelInfo(&channelInfo);
-  message.fill('\0');
-  driver->getErrorMessage(message.data());
-  trace << "Native DSD format probe rate=" << rate << " getChannelInfo=" << channelResult
-        << " sampleType=" << channelInfo.type << " error=" << message.data() << '\n';
-}
-
-void probeNativeDsdSemanticRates(asio_abi::AsioDriver* driver, int requestedRate, double restoreRate) {
-  if (!driver || requestedRate <= 0) return;
-  std::array<int, 8> candidates = {
-      requestedRate,
-      requestedRate / 8,
-      requestedRate / 16,
-      requestedRate / 32,
-      requestedRate / 64,
-      requestedRate / 128,
-      requestedRate / 256,
-      requestedRate / 512};
-  std::array<int, 8> seen{};
-  size_t seenCount = 0;
-  for (const int rate : candidates) {
-    if (rate <= 0 || std::find(seen.begin(), seen.begin() + static_cast<std::ptrdiff_t>(seenCount), rate) !=
-                           seen.begin() + static_cast<std::ptrdiff_t>(seenCount)) {
-      continue;
-    }
-    seen[seenCount++] = rate;
-    const auto result = driver->canSampleRate(static_cast<double>(rate));
-    traceAsioRateProbe(driver, "Native DSD semantic-rate probe", static_cast<double>(rate), result);
-    if (result == asio_abi::kAsioOk) {
-      const auto setResult = driver->setSampleRate(static_cast<double>(rate));
-      traceAsioRateProbe(driver, "Native DSD semantic-rate set probe", static_cast<double>(rate), setResult);
-      if (setResult == asio_abi::kAsioOk) traceAsioFormatProbe(driver, rate);
-      if (restoreRate > 0.0) {
-        const auto restoreResult = driver->setSampleRate(restoreRate);
-        traceAsioRateProbe(driver, "Native DSD semantic-rate restore probe", restoreRate, restoreResult);
-      }
-    }
-  }
+  if (trace) trace << "Native DSD " << operation << " " << text << '\n';
 }
 
 }  // namespace
@@ -226,6 +183,57 @@ struct AsioDriverSession::State final : AsioCallbackTarget {
   bool originalIoFormatKnown = false;
   bool sampleRateRestoreRequired = false;
 
+  bool selectNativeDsdSemanticRate(int driverRate, const char* order, std::string* error) {
+    const double requestedRate = static_cast<double>(driverRate);
+    const auto canRateResult = driver->canSampleRate(requestedRate);
+    traceNativeDsdResult(driver, (std::string(order) + " can-sample-rate").c_str(), canRateResult, requestedRate);
+    if (!asio_abi::asioErrorIsSuccess(canRateResult)) {
+      if (error) *error = "ASIO driver rejected the Native DSD semantic sample rate";
+      return false;
+    }
+
+    sampleRateRestoreRequired = true;
+    const auto setRateResult = driver->setSampleRate(requestedRate);
+    traceNativeDsdResult(driver, (std::string(order) + " set-sample-rate").c_str(), setRateResult, requestedRate);
+    if (!asio_abi::asioErrorIsSuccess(setRateResult)) {
+      if (error) *error = "ASIO driver could not select the Native DSD semantic sample rate";
+      return false;
+    }
+    return true;
+  }
+
+  bool selectNativeDsdIoFormat(const char* order, std::string* error) {
+    asio_abi::AsioIoFormat requestedIoFormat{};
+    requestedIoFormat.formatType = asio_abi::kAsioIoFormatDsd;
+    const auto canFormatResult = driver->future(asio_abi::kFutureCanDoIoFormat, &requestedIoFormat);
+    traceNativeDsdResult(driver, (std::string(order) + " can-io-format").c_str(), canFormatResult, std::nullopt, &requestedIoFormat);
+    if (!asio_abi::asioErrorIsSuccess(canFormatResult)) {
+      if (error) *error = "ASIO driver rejected Native DSD I/O format";
+      return false;
+    }
+
+    ioFormatRestoreRequired = true;
+    const auto setFormatResult = driver->future(asio_abi::kFutureSetIoFormat, &requestedIoFormat);
+    traceNativeDsdResult(driver, (std::string(order) + " set-io-format").c_str(), setFormatResult, std::nullopt, &requestedIoFormat);
+    if (!asio_abi::asioErrorIsSuccess(setFormatResult)) {
+      if (error) *error = "ASIO driver could not switch to Native DSD I/O format";
+      return false;
+    }
+    return true;
+  }
+
+  bool verifyNativeDsdIoFormat(const char* order, std::string* error) {
+    asio_abi::AsioIoFormat activeIoFormat{};
+    const auto getFormatResult = driver->future(asio_abi::kFutureGetIoFormat, &activeIoFormat);
+    traceNativeDsdResult(driver, (std::string(order) + " get-io-format").c_str(), getFormatResult, std::nullopt, &activeIoFormat);
+    if (asio_abi::asioErrorIsSuccess(getFormatResult) &&
+        activeIoFormat.formatType != asio_abi::kAsioIoFormatDsd) {
+      if (error) *error = "ASIO driver did not confirm Native DSD I/O format";
+      return false;
+    }
+    return true;
+  }
+
   bool configureNativeDsd(const AudioFormat& format, std::string* error) {
     if (!driver || !isDsdSampleFormat(format.sampleFormat)) {
       if (error) *error = "Native DSD configuration requires a raw DSD format";
@@ -237,17 +245,16 @@ struct AsioDriverSession::State final : AsioCallbackTarget {
       return false;
     }
 
-    traceAsioDriverCall("before Native DSD getSampleRate");
-    if (driver->getSampleRate(&originalSampleRate) != asio_abi::kAsioOk || originalSampleRate <= 0) {
+    const auto originalRateResult = driver->getSampleRate(&originalSampleRate);
+    traceNativeDsdResult(driver, "get-original-sample-rate", originalRateResult, originalSampleRate);
+    if (!asio_abi::asioErrorIsSuccess(originalRateResult) || originalSampleRate <= 0) {
       if (error) *error = "ASIO driver did not report a restorable PCM sample rate";
       return false;
     }
-    traceAsioDriverCall("after Native DSD getSampleRate");
 
-    traceAsioDriverCall("before Native DSD get I/O format");
     const auto getIoFormatResult = driver->future(asio_abi::kFutureGetIoFormat, &originalIoFormat);
-    traceAsioDriverCall("after Native DSD get I/O format");
-    if (getIoFormatResult == asio_abi::kAsioOk) {
+    traceNativeDsdResult(driver, "get-original-io-format", getIoFormatResult, std::nullopt, &originalIoFormat);
+    if (asio_abi::asioErrorIsSuccess(getIoFormatResult)) {
       originalIoFormatKnown = true;
       std::memset(originalIoFormat.reserved, 0, sizeof(originalIoFormat.reserved));
       if (originalIoFormat.formatType != asio_abi::kAsioIoFormatPcm) {
@@ -262,113 +269,48 @@ struct AsioDriverSession::State final : AsioCallbackTarget {
       nativeDsdNegotiation = "get-unsupported";
     }
 
-    if (format.sampleFormat == AudioSampleFormat::DsdInt32LsbPacked) {
-      if (originalIoFormatKnown && originalIoFormat.formatType != asio_abi::kAsioIoFormatPcm) {
-        nativeDsdNegotiation = "packed-get-non-pcm";
-        if (error) *error = "FiiO packed DSD requires a PCM ASIO I/O session";
-        return false;
-      }
-      traceAsioDriverCall("before FiiO packed DSD sample rate negotiation");
-      if (driver->canSampleRate(static_cast<double>(driverRate)) != asio_abi::kAsioOk ||
-          driver->setSampleRate(static_cast<double>(driverRate)) != asio_abi::kAsioOk) {
-        nativeDsdNegotiation = "packed-rate-failed";
-        if (error) *error = "FiiO packed DSD semantic rate is unsupported";
-        return false;
-      }
-      sampleRateRestoreRequired = true;
-      nativeDsdNegotiation = "fiiO-packed-int32";
-      traceAsioDriverCall("after FiiO packed DSD sample rate negotiation");
+    std::string formatFirstError;
+    if (selectNativeDsdIoFormat("format-first", &formatFirstError) &&
+        selectNativeDsdSemanticRate(driverRate, "format-first", &formatFirstError) &&
+        verifyNativeDsdIoFormat("format-first", &formatFirstError)) {
+      nativeDsdNegotiation = originalIoFormatKnown ? "format-first-confirmed" : "format-first-runtime-confirmed";
       return true;
     }
 
-    asio_abi::AsioIoFormat requestedIoFormat{};
-    requestedIoFormat.formatType = asio_abi::kAsioIoFormatDsd;
-    bool nativeRatePrimed = false;
-    traceAsioDriverCall("before Native DSD can I/O format");
-    if (driver->future(asio_abi::kFutureCanDoIoFormat, &requestedIoFormat) != asio_abi::kAsioOk) {
-      // Some hardware drivers (including FiiO's ASIO driver) only expose the
-      // DSD I/O format after the semantic DSD rate has been selected. Keep the
-      // standard probe first, then retry once with the rate primed.
-      nativeDsdNegotiation = "can-do-rejected";
-      probeNativeDsdSemanticRates(driver, driverRate, originalSampleRate);
-      traceAsioDriverCall("before Native DSD rate-first probe");
-      if (driver->canSampleRate(static_cast<double>(driverRate)) != asio_abi::kAsioOk) {
-        nativeDsdNegotiation = "can-do-rate-rejected";
-        if (error) *error = "ASIO driver rejected the Native DSD semantic sample rate while probing I/O format";
-        return false;
-      }
-      sampleRateRestoreRequired = true;
-      if (driver->setSampleRate(static_cast<double>(driverRate)) != asio_abi::kAsioOk) {
-        nativeDsdNegotiation = "can-do-rate-set-failed";
-        if (error) *error = "ASIO driver could not prime the Native DSD semantic sample rate";
-        return false;
-      }
-      traceAsioDriverCall("after Native DSD rate-first probe");
-      requestedIoFormat = {};
-      requestedIoFormat.formatType = asio_abi::kAsioIoFormatDsd;
-      traceAsioDriverCall("before Native DSD can I/O format after rate");
-      if (driver->future(asio_abi::kFutureCanDoIoFormat, &requestedIoFormat) != asio_abi::kAsioOk) {
-        nativeDsdNegotiation = "can-do-rejected-after-rate";
-        if (error) *error = "ASIO driver rejected Native DSD I/O format after selecting the semantic rate";
-        return false;
-      }
-      nativeDsdNegotiation = "can-do-after-rate";
-      nativeRatePrimed = true;
-    }
-    traceAsioDriverCall("after Native DSD can I/O format");
+    restoreNativeDsdConfiguration();
 
-    // A driver may partially switch before returning an error. Mark the
-    // original format for restoration before issuing SetIoFormat so close()
-    // can restore a known PCM session on that path.
-    ioFormatRestoreRequired = originalIoFormatKnown;
-    traceAsioDriverCall("before Native DSD set I/O format");
-    if (driver->future(asio_abi::kFutureSetIoFormat, &requestedIoFormat) != asio_abi::kAsioOk) {
-      nativeDsdNegotiation = "set-failed";
-      if (error) *error = "ASIO driver could not switch to Native DSD I/O format";
-      return false;
+    // A few drivers expose the DSD format only after the semantic rate has
+    // been primed. Keep that compatibility path as a fallback, but do not
+    // probe it first: a failed rate-first SetSampleRate can leave otherwise
+    // capable drivers in a state where buffer creation fails.
+    std::string rateFirstError;
+    if (selectNativeDsdSemanticRate(driverRate, "rate-first", &rateFirstError) &&
+        selectNativeDsdIoFormat("rate-first", &rateFirstError) &&
+        verifyNativeDsdIoFormat("rate-first", &rateFirstError)) {
+      nativeDsdNegotiation = originalIoFormatKnown ? "rate-first-confirmed" : "rate-first-runtime-confirmed";
+      return true;
     }
-    traceAsioDriverCall("after Native DSD set I/O format");
-    asio_abi::AsioIoFormat activeIoFormat{};
-    traceAsioDriverCall("before Native DSD verify I/O format");
-    const auto verifyIoFormatResult = driver->future(asio_abi::kFutureGetIoFormat, &activeIoFormat);
-    traceAsioDriverCall("after Native DSD verify I/O format");
-    if (verifyIoFormatResult == asio_abi::kAsioOk && activeIoFormat.formatType != asio_abi::kAsioIoFormatDsd) {
-      nativeDsdNegotiation = "verify-mismatch";
-      if (error) *error = "ASIO driver did not confirm Native DSD I/O format";
-      return false;
-    }
-    if (verifyIoFormatResult == asio_abi::kAsioOk) nativeDsdNegotiation = "get-confirmed";
 
-    if (!nativeRatePrimed) {
-      traceAsioDriverCall("before Native DSD sample rate negotiation");
-      if (driver->canSampleRate(static_cast<double>(driverRate)) != asio_abi::kAsioOk) {
-        nativeDsdNegotiation = "sample-rate-rejected";
-        if (error) *error = "ASIO driver rejected the Native DSD semantic sample rate";
-        return false;
-      }
-      sampleRateRestoreRequired = true;
-      if (driver->setSampleRate(static_cast<double>(driverRate)) != asio_abi::kAsioOk) {
-        nativeDsdNegotiation = "sample-rate-set-failed";
-        if (error) *error = "ASIO driver could not switch to the Native DSD semantic sample rate";
-        return false;
-      }
-      traceAsioDriverCall("after Native DSD sample rate negotiation");
+    restoreNativeDsdConfiguration();
+    nativeDsdNegotiation = "all-orders-failed";
+    if (error) {
+      *error = "ASIO Native DSD negotiation failed (format-first: " + formatFirstError + "; rate-first: " + rateFirstError + ")";
     }
-    return true;
+    return false;
   }
 
   void restoreNativeDsdConfiguration() {
     if (!driver) return;
-    if (ioFormatRestoreRequired && originalIoFormatKnown) {
-      traceAsioDriverCall("before Native DSD restore I/O format");
-      driver->future(asio_abi::kFutureSetIoFormat, &originalIoFormat);
-      traceAsioDriverCall("after Native DSD restore I/O format");
+    if (ioFormatRestoreRequired) {
+      asio_abi::AsioIoFormat restoreIoFormat = originalIoFormat;
+      if (!originalIoFormatKnown) restoreIoFormat.formatType = asio_abi::kAsioIoFormatPcm;
+      const auto restoreFormatResult = driver->future(asio_abi::kFutureSetIoFormat, &restoreIoFormat);
+      traceNativeDsdResult(driver, "restore-io-format", restoreFormatResult, std::nullopt, &restoreIoFormat);
       ioFormatRestoreRequired = false;
     }
     if (sampleRateRestoreRequired && originalSampleRate > 0) {
-      traceAsioDriverCall("before Native DSD restore sample rate");
-      driver->setSampleRate(originalSampleRate);
-      traceAsioDriverCall("after Native DSD restore sample rate");
+      const auto restoreRateResult = driver->setSampleRate(originalSampleRate);
+      traceNativeDsdResult(driver, "restore-sample-rate", restoreRateResult, originalSampleRate);
       sampleRateRestoreRequired = false;
     }
   }
@@ -471,7 +413,7 @@ bool AsioDriverSession::open(const AsioOpenConfig& config, AsioOpenResult* resul
         int32_t inputChannels = 0;
         int32_t outputChannels = 0;
         traceAsioDriverCall("before getChannels");
-        if (state->driver->getChannels(&inputChannels, &outputChannels) != asio_abi::kAsioOk ||
+        if (!asio_abi::asioErrorIsSuccess(state->driver->getChannels(&inputChannels, &outputChannels)) ||
             config.format.channelCount <= 0 || config.format.channelCount > outputChannels) {
           outcome.error = driverError(state->driver, "ASIO output channel configuration is unavailable");
           return outcome;
@@ -482,10 +424,14 @@ bool AsioDriverSession::open(const AsioOpenConfig& config, AsioOpenResult* resul
         int32_t preferred = 0;
         int32_t granularity = 0;
         traceAsioDriverCall("before getBufferSize");
-        if (state->driver->getBufferSize(&minimum, &maximum, &preferred, &granularity) != asio_abi::kAsioOk) {
+        if (!asio_abi::asioErrorIsSuccess(state->driver->getBufferSize(&minimum, &maximum, &preferred, &granularity))) {
           outcome.error = driverError(state->driver, "ASIO buffer size query failed");
           return outcome;
         }
+        traceNativeDsdText(
+            "buffer-size",
+            "minimum=" + std::to_string(minimum) + " maximum=" + std::to_string(maximum) +
+                " preferred=" + std::to_string(preferred) + " granularity=" + std::to_string(granularity));
         traceAsioDriverCall("after getBufferSize");
         state->bufferSize = chooseBufferSize(config.bufferSizeFrames, minimum, maximum, preferred, granularity);
         if (state->bufferSize <= 0) {
@@ -499,15 +445,16 @@ bool AsioDriverSession::open(const AsioOpenConfig& config, AsioOpenResult* resul
         const double requestedRate = static_cast<double>(driverRate);
         traceAsioDriverCall("before sample rate negotiation");
         if (requestedRate <= 0 ||
-            (!nativeDsdRequested && (state->driver->canSampleRate(requestedRate) != asio_abi::kAsioOk ||
-                                     state->driver->setSampleRate(requestedRate) != asio_abi::kAsioOk))) {
+            (!nativeDsdRequested &&
+             (!asio_abi::asioErrorIsSuccess(state->driver->canSampleRate(requestedRate)) ||
+              !asio_abi::asioErrorIsSuccess(state->driver->setSampleRate(requestedRate))))) {
           outcome.error = driverError(state->driver, "ASIO sample rate is unsupported");
           return outcome;
         }
         traceAsioDriverCall("after sample rate negotiation");
         double actualRate = 0;
         traceAsioDriverCall("before getSampleRate");
-        if (state->driver->getSampleRate(&actualRate) != asio_abi::kAsioOk || actualRate <= 0) {
+        if (!asio_abi::asioErrorIsSuccess(state->driver->getSampleRate(&actualRate)) || actualRate <= 0) {
           outcome.error = driverError(state->driver, "ASIO sample rate verification failed");
           return outcome;
         }
@@ -527,22 +474,17 @@ bool AsioDriverSession::open(const AsioOpenConfig& config, AsioOpenResult* resul
           info.channel = channel;
           info.isInput = asio_abi::kAsioFalse;
           info.isActive = asio_abi::kAsioTrue;
-          if (state->driver->getChannelInfo(&info) != asio_abi::kAsioOk) {
+          if (!asio_abi::asioErrorIsSuccess(state->driver->getChannelInfo(&info))) {
             outcome.error = driverError(state->driver, "ASIO output channel format query failed");
             return outcome;
           }
           auto format = channelFormatFor(info.type);
+          traceNativeDsdText(
+              "channel-info",
+              "channel=" + std::to_string(channel) + " sampleType=" + std::to_string(info.type));
           if (!format || !asio::isSupportedChannelFormat(*format)) {
             outcome.error = "unsupported_asio_sample_type";
             return outcome;
-          }
-          if (nativeDsdRequested && config.format.sampleFormat == AudioSampleFormat::DsdInt32LsbPacked &&
-              format->logicalFormat == AudioSampleFormat::Int32Interleaved) {
-            format->logicalFormat = AudioSampleFormat::DsdInt32LsbPacked;
-            format->containerBits = 32;
-            format->validBits = 32;
-            format->validBitsAreMostSignificant = false;
-            format->dsdPacking = AsioDsdPacking::Int32LsbPacked;
           }
           if (nativeDsdRequested && !isDsdSampleFormat(format->logicalFormat)) {
             state->nativeDsdNegotiation = "channel-format-mismatch";
@@ -565,7 +507,7 @@ bool AsioDriverSession::open(const AsioOpenConfig& config, AsioOpenResult* resul
         int32_t inputLatency = 0;
         int32_t outputLatency = 0;
         traceAsioDriverCall("before getLatencies");
-        if (state->driver->getLatencies(&inputLatency, &outputLatency) != asio_abi::kAsioOk) {
+        if (!asio_abi::asioErrorIsSuccess(state->driver->getLatencies(&inputLatency, &outputLatency))) {
           outcome.error = driverError(state->driver, "ASIO latency query failed");
           return outcome;
         }
@@ -579,10 +521,7 @@ bool AsioDriverSession::open(const AsioOpenConfig& config, AsioOpenResult* resul
         outcome.result.driverVersion = state->driver->getDriverVersion();
         const AudioSampleFormat actualSampleFormat = state->channelFormats.front().logicalFormat;
         const int actualSemanticRate = static_cast<int>(roundedRate);
-        const int expectedDriverRate = asio::driverSampleRate(config.format);
-        if (nativeDsdRequested &&
-            ((config.format.sampleFormat == AudioSampleFormat::DsdInt32LsbPacked && actualSemanticRate != expectedDriverRate) ||
-             (config.format.sampleFormat != AudioSampleFormat::DsdInt32LsbPacked && actualSemanticRate != config.format.sampleRate))) {
+        if (nativeDsdRequested && actualSemanticRate != config.format.sampleRate) {
           state->nativeDsdNegotiation = "sample-rate-mismatch";
           outcome.error = "ASIO driver returned a Native DSD semantic rate different from the requested stream";
           return outcome;
@@ -591,8 +530,7 @@ bool AsioDriverSession::open(const AsioOpenConfig& config, AsioOpenResult* resul
           state->nativeDsdNegotiation = "runtime-confirmed";
         }
         outcome.result.actualFormat = config.format;
-        outcome.result.actualFormat.sampleRate =
-            config.format.sampleFormat == AudioSampleFormat::DsdInt32LsbPacked ? config.format.sampleRate : actualSemanticRate;
+        outcome.result.actualFormat.sampleRate = actualSemanticRate;
         outcome.result.actualFormat.sampleFormat = actualSampleFormat;
         outcome.result.actualFormat.bitDepth = bitDepthForFormat(outcome.result.actualFormat.sampleFormat);
         outcome.result.bufferSizeFrames = state->bufferSize;
@@ -633,11 +571,17 @@ bool AsioDriverSession::createBuffers(
         if (!AsioCallbackRouter::install(state.get(), &installError)) return false;
         state->callbacks = AsioCallbackRouter::callbacks();
         traceAsioDriverCall("before createBuffers");
-        if (state->driver->createBuffers(
+        const auto createBuffersResult = state->driver->createBuffers(
                 state->buffers.data(),
                 static_cast<int32_t>(state->buffers.size()),
                 state->bufferSize,
-                &state->callbacks) != asio_abi::kAsioOk) {
+                &state->callbacks);
+        traceNativeDsdResult(
+            state->driver,
+            "create-buffers",
+            createBuffersResult,
+            static_cast<double>(state->bufferSize));
+        if (!asio_abi::asioErrorIsSuccess(createBuffersResult)) {
           AsioCallbackRouter::uninstall(state.get(), nullptr);
           state->buffers.clear();
           return false;
@@ -645,7 +589,7 @@ bool AsioDriverSession::createBuffers(
         traceAsioDriverCall("after createBuffers");
         int32_t inputLatency = 0;
         int32_t outputLatency = 0;
-        if (state->driver->getLatencies(&inputLatency, &outputLatency) == asio_abi::kAsioOk) {
+        if (asio_abi::asioErrorIsSuccess(state->driver->getLatencies(&inputLatency, &outputLatency))) {
           state->latency = outputLatency;
         }
         state->buffersCreated = true;
@@ -666,7 +610,7 @@ bool AsioDriverSession::start(std::string* error) {
         if (!state->driver || !state->buffersCreated || state->started) return false;
         state->running = true;
         traceAsioDriverCall("before start");
-        if (state->driver->start() != asio_abi::kAsioOk) {
+        if (!asio_abi::asioErrorIsSuccess(state->driver->start())) {
           state->running = false;
           return false;
         }
@@ -745,7 +689,7 @@ AsioChannelFormat AsioDriverSession::outputChannelFormat(long channel) const {
 
 bool AsioDriverSession::outputReady() {
   if (!state_->running.load(std::memory_order_acquire) || !state_->driver) return false;
-  return state_->driver->outputReady() == asio_abi::kAsioOk;
+  return asio_abi::asioErrorIsSuccess(state_->driver->outputReady());
 }
 
 }  // namespace twilight::audio::asio_windows

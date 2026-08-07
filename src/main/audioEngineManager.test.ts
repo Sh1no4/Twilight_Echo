@@ -1702,7 +1702,10 @@ test('direct mode submits an identity graph and restores rate/routing without ch
   assert.equal((await manager.getPlaybackInfo()).playbackRate, 1)
   assert.equal(manager.getOutputConfig().routingMode, 'stereo')
   assert.equal(manager.getEffectiveOutputConfig().routingMode, 'auto')
-  assert.equal(manager.getDspSceneState().effectiveBypassReason, 'Direct mode bypasses the DSP graph and output stage')
+  assert.equal(
+    manager.getDspSceneState().effectiveBypassReason,
+    'Direct mode bypasses the DSP graph and output stage'
+  )
 
   const restored = await manager.setAudioProcessing({ dspEnabled: true })
   assert.equal(restored.directMode, false)
@@ -1734,9 +1737,19 @@ test('module switches gate matching nodes in an active custom scene', async () =
     rules: {},
     graph: {
       version: 2,
-      outputStage: { targetSampleRate: 'device', resamplerQuality: 'native', dither: 'off', safetyClamp: true },
+      outputStage: {
+        targetSampleRate: 'device',
+        resamplerQuality: 'native',
+        dither: 'off',
+        safetyClamp: true
+      },
       nodes: [
-        { id: 'scene-eq', type: 'equalizer', enabled: true, params: { mode: 'graphic', bands: [] } },
+        {
+          id: 'scene-eq',
+          type: 'equalizer',
+          enabled: true,
+          params: { mode: 'graphic', bands: [] }
+        },
         { id: 'scene-compressor', type: 'compressor', enabled: true, params: { ratio: 2 } }
       ]
     }
@@ -3482,6 +3495,50 @@ test('audio service next waits for Next ack before falling back to Play', async 
   assert.equal(info.queueIndex, 1)
   assert.equal(info.source, 'second.flac')
 
+  manager.destroy()
+})
+
+test('audio service loadQueue waits for queue and play mode confirmations in order', async () => {
+  const service = new DeferredAudioServiceBinding(['LoadQueue', 'SetPlayMode'])
+  const manager = new AudioEngineManager(
+    { exclusiveMode: false },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+  const queue: AudioEngineQueueItem[] = [
+    { id: 'ncm:one', source: 'https://stream.example/one.flac', title: 'One' }
+  ]
+  let resolved = false
+
+  const loadPromise = manager.loadQueue(queue, 0).then(() => {
+    resolved = true
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(resolved, false)
+  assert.deepEqual(
+    service.deferredCalls.map((call) => call.method),
+    ['LoadQueue']
+  )
+  assert.deepEqual(service.queue, [])
+
+  service.resolveNextDeferredCall()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(resolved, false)
+  assert.deepEqual(service.queue, queue)
+  assert.deepEqual(
+    service.deferredCalls.map((call) => call.method),
+    ['SetPlayMode']
+  )
+
+  service.resolveNextDeferredCall()
+  await loadPromise
+
+  assert.equal(resolved, true)
   manager.destroy()
 })
 

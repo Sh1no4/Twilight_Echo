@@ -2577,8 +2577,6 @@ async function resolvePlayTarget(track: Track): Promise<string> {
     throw new Error(`Unable to resolve ${source} stream URL`)
   }
 
-  track.streamUrl = streamUrl
-  if (source === 'ncm') track.streamQuality = ncmPlaybackQuality
   return streamUrl
 }
 
@@ -3223,6 +3221,10 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
       releaseLoadIfOwned()
       return
     }
+    track.streamUrl = playTarget
+    if (getTrackSource(track) === 'ncm') {
+      track.streamQuality = appSettings.value.ncmPlaybackQuality
+    }
     patchTrackInQueues(track)
     nativeSourceToTrackId.set(playTarget, track.id)
     // resolvePlayTarget 只改写了传入的 track 对象，而 active currentTrack 是
@@ -3260,6 +3262,10 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         }
         for (const item of preparedQueue.items) {
           nativeSourceToTrackId.set(item.source, item.id)
+        }
+        if (!isActiveLoad(loadToken, track)) {
+          releaseLoadIfOwned()
+          return
         }
 
         await window.api.audioEngine.loadQueue(preparedQueue.items, preparedQueue.startIndex)

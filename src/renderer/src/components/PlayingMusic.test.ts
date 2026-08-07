@@ -62,7 +62,8 @@ test('active lyric uses enlarged text emphasis without a glass surface', () => {
     activeText,
     /font-weight: var\(--lyric-style-font-weight, var\(--te-lyric-font-weight, 600\)\)/
   )
-  assert.match(activeText, /text-shadow:/)
+  assert.match(activeText, /text-shadow: var\(--lyric-style-highlight, none\)/)
+  assert.doesNotMatch(activeText, /color-mix|0 0 10px/)
   assert.match(source, /:deep\(\.lyric-word\) \{[\s\S]*display: inline-block/)
   assert.match(source, /opacity: var\(--lyric-word-highlight-opacity, 0\)/)
   assert.match(source, /clip-path: inset\(0 calc\(100% - var\(--lyric-word-progress\)\) 0 0\)/)
@@ -105,17 +106,14 @@ test('now playing exposes independent lyric customization with live persisted pr
   assert.match(appearance, /styles: Record<LyricsStyleTarget, LyricsTextStyle>/)
   assert.match(appearance, /backgroundStyle: LyricsBackgroundStyle/)
   assert.match(appearance, /highlightEffect: LyricsHighlightEffect/)
+  assert.match(source, /glow: `0 0 1px[\s\S]*0 0 3px color-mix\(in srgb,[\s\S]*highlightIntensity/)
+  assert.doesNotMatch(source, /glow: `0 0 \$\{Math\.round\(8 \+ style\.highlightIntensity/)
 })
 
 test('lyric handoff keeps completed lines out of the top layout flow', () => {
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
   const renderedLines =
     source.match(/const renderedLyricLines = computed\(\(\) => \{[\s\S]*?\n\}\)/)?.[0] ?? ''
-  const exitKeyframes =
-    source.match(
-      /@keyframes te-lyric-line-exit \{[\s\S]*?(?=\n@keyframes te-lyric-line-enter)/
-    )?.[0] ?? ''
-
   assert.match(source, /const LYRIC_SCROLL_DELAY_MS = 140/)
   assert.match(source, /const LYRIC_EXIT_DURATION_MS = 280/)
   assert.match(source, /lyricLeavingIndex\.value = previousIndex/)
@@ -124,10 +122,12 @@ test('lyric handoff keeps completed lines out of the top layout flow', () => {
   assert.match(source, /'lyric-row--exiting': item\.index === lyricLeavingIndex/)
   assert.match(renderedLines, /getLyricFocusLineIndices/)
   assert.doesNotMatch(renderedLines, /indices\.push\(lyricLeavingIndex\.value\)/)
-  assert.match(source, /@keyframes te-lyric-line-exit/)
-  assert.doesNotMatch(exitKeyframes, /translateY\(/)
-  assert.match(exitKeyframes, /transform: scale\(0\.98\)/)
-  assert.match(source, /te-lyric-line-enter var\(--te-motion-panel\) var\(--te-ease-spring\) both/)
+  assert.match(
+    source,
+    /\.lyric-row--exiting \.lyric-row-content\),[\s\S]*\.lyric-row--entering \.lyric-row-content\)[\s\S]*animation: none/
+  )
+  assert.doesNotMatch(source, /@keyframes te-lyric-line-exit/)
+  assert.doesNotMatch(source, /@keyframes te-lyric-line-enter/)
 })
 
 test('clicking a timed lyric releases manual scroll lock before seeking', () => {
@@ -328,8 +328,17 @@ test('playbar lyrics section hosts the lyrics manager panel', () => {
   assert.match(sidebar, /:value="translationLayerSelection"/)
   assert.match(sidebar, /@click="emit\('toggleTranslationVisibility'\)"/)
   assert.match(playerBar, /:show-translation="showTranslation"/)
+  assert.match(sidebar, /<strong>当前歌词高光<\/strong>/)
+  assert.match(sidebar, /:aria-checked="lyricHighlightOn"/)
+  assert.match(sidebar, /@click="emit\('toggleLyricHighlight'\)"/)
+  assert.match(playerBar, /const lyricHighlightOn = computed/)
+  assert.match(playerBar, /lyricsAppearance\.styles\.active\.highlightEffect === 'glow'/)
+  assert.match(playerBar, /lyricsAppearance\.styles\.active\.highlightEffect =/)
+  assert.match(playerBar, /await updateSettings\(\{ lyricsAppearance \}\)/)
+  assert.match(playerBar, /:lyric-highlight-on="lyricHighlightOn"/)
   assert.match(playerBar, /@set-lyric-layer-selection="setLyricLayerSelection"/)
   assert.match(playerBar, /@toggle-translation-visibility="toggleTranslationVisibility"/)
+  assert.match(playerBar, /@toggle-lyric-highlight="toggleLyricHighlight"/)
 })
 
 test('desktop lyrics html exposes lyric source metadata on hover', () => {

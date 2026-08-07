@@ -723,6 +723,7 @@ test('polluted albumArtist equal to track artist still merges a multi-artist rel
         // Legacy scan pollution: albumArtist copied from track artist.
         albumArtist: 'Guest A',
         album: '依・睐-复刻',
+        cover: 'cover://release.jpg',
         filePath: 'C:\\music\\release\\a.flac',
         dir: 'C:\\music\\release'
       },
@@ -732,6 +733,7 @@ test('polluted albumArtist equal to track artist still merges a multi-artist rel
         artist: 'Guest B',
         albumArtist: 'Guest B',
         album: '依・睐-复刻',
+        cover: 'cover://release.jpg',
         filePath: 'C:\\music\\release\\b.flac',
         dir: 'C:\\music\\release'
       },
@@ -741,6 +743,7 @@ test('polluted albumArtist equal to track artist still merges a multi-artist rel
         artist: 'Guest C',
         albumArtist: 'Guest C',
         album: '依・睐-复刻',
+        cover: 'cover://other-release.jpg',
         filePath: 'C:\\music\\other\\c.flac',
         dir: 'C:\\music\\other'
       }
@@ -837,6 +840,45 @@ test('same-title tracks with shared cover merge across per-track directories', a
   assert.deepEqual(merged!.tracks.map((track) => track.id).sort(), [
     'split-release-a',
     'split-release-b'
+  ])
+
+  store.clearTracks()
+})
+
+test('same-title tracks with shared cover merge when no ancestor directory matches the album', async () => {
+  const store = setupStore()
+  const sharedCover = 'cover://nightcord-release.jpg'
+  await store.addTracks(
+    [
+      {
+        ...generateMockTracks(1)[0],
+        id: 'unmatched-layout-a',
+        artist: 'Artist A',
+        album: '25時、ナイトコードで。',
+        cover: sharedCover,
+        filePath: 'C:\\music\\catalog\\disc-01\\track-a.flac',
+        dir: 'C:\\music\\catalog\\disc-01'
+      },
+      {
+        ...generateMockTracks(1)[0],
+        id: 'unmatched-layout-b',
+        artist: 'Artist B',
+        album: '25時、ナイトコードで。',
+        cover: sharedCover,
+        filePath: 'C:\\music\\catalog\\disc-02\\track-b.flac',
+        dir: 'C:\\music\\catalog\\disc-02'
+      }
+    ],
+    { deferRebuild: false }
+  )
+  store.flushRebuild()
+
+  const albums = store.albums.value.filter((album) => album.name === '25時、ナイトコードで。')
+  assert.equal(albums.length, 1)
+  assert.equal(albums[0]?.trackCount, 2)
+  assert.deepEqual(albums[0]?.tracks.map((track) => track.id).sort(), [
+    'unmatched-layout-a',
+    'unmatched-layout-b'
   ])
 
   store.clearTracks()
