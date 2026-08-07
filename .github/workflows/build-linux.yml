@@ -53,13 +53,13 @@ jobs:
       - name: Cache vcpkg binary cache
         uses: actions/cache@v4
         with:
-          path: ${{ runner.home }}/.cache/vcpkg
+          path: /home/runner/.cache/vcpkg
           key: vcpkg-${{ runner.os }}-${{ hashFiles('audio-engine/vcpkg.json') }}
 
       - name: Build Linux audio engine (default preset + Node-API bridge)
-        env:
-          VCPKG_ROOT: ${{ runner.home }}/vcpkg
         run: |
+          # runner.home 不是有效的 Actions 上下文，这里直接用 $HOME。
+          export VCPKG_ROOT="$HOME/vcpkg"
           cmake -S audio-engine -B audio-engine/build/default \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
