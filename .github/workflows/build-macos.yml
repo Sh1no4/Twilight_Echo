@@ -66,7 +66,6 @@ jobs:
 
       - name: Build and package macOS target
         env:
-          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
           pnpm run build
