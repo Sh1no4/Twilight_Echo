@@ -12,7 +12,6 @@
 ## 音频、设备与发布
 
 - [Windows 发布门禁](./windows-release-gate.md)
-- [Windows HiFi 真实设备检查](./windows-phase-6c-smoke-checklist.md)
 - [真实设备音频证据规则](./audio-smoke-evidence.md)
 - [VST3 宿主工具链](./vst3-host-toolchain.md)
 
@@ -20,7 +19,6 @@
 
 - [插件开发导读](./PLUGIN_README.md)
 - [插件系统权威规范](./twilight-echo-plugin-spec.md)
-- [插件系统实施边界](./twilight-echo-plugin-plan.md)
 - [主题插件开发](./theme-plugin-authoring.md)
 
 ## 本地库与播放功能
@@ -36,7 +34,6 @@
 - [CUE 支持](./cue-support.md)
 - [标签与重复歌曲检测](./duplicate-detection.md)
 - [睡眠定时器与静音](./sleep-timer-and-mute.md)
-- [持久化基准](./persistence-benchmark.md)
 
 ## 法律与验证证据
 
