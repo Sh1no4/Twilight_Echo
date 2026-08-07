@@ -21,7 +21,7 @@ export type NcmPlaybackQuality = 'auto' | 'standard' | 'exhigh' | 'lossless' | '
 export type StartupHomePage = 'local' | 'streaming'
 export type TrackActivationMode = 'singleClick' | 'doubleClick'
 /** sequential stops at the tail; listLoop wraps; repeat loops one track; shuffle uses a shuffled cycle. */
-export type PlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle'
+export type PlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle' | 'heart'
 export type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 export type PlayerShortcutAction =
   | 'previous'

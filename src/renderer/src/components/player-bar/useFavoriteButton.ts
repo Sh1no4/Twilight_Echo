@@ -59,6 +59,9 @@ export function useFavoriteButton({
   const providerFavoriteAvailable = ref(false)
   const providerFavoriteLoading = ref(false)
   const providerFavoriteLiked = ref(false)
+  // 当前 provider 喜欢状态对应的曲目 id：切歌后旧曲目的状态绝不能
+  // 显示到新曲目上（心动模式等场景会频繁快速切歌）。
+  const providerFavoriteTrackId = ref<string | null>(null)
   let providerFavoriteRequestId = 0
 
   const defaultFavoritePlaylist = computed(() =>
@@ -83,7 +86,12 @@ export function useFavoriteButton({
   const favoriteButtonLiked = computed(() => {
     const track = currentTrack.value
     if (!track) return false
-    return isLocalTrack(track) ? localFavoriteLiked.value : providerFavoriteLiked.value
+    if (isLocalTrack(track)) return localFavoriteLiked.value
+    return (
+      providerFavoriteLiked.value &&
+      providerFavoriteTrackId.value != null &&
+      providerFavoriteTrackId.value === track.id
+    )
   })
 
   const favoriteButtonLoading = computed(() => {
@@ -99,6 +107,7 @@ export function useFavoriteButton({
     const requestId = ++providerFavoriteRequestId
     providerFavoriteAvailable.value = false
     providerFavoriteLiked.value = false
+    providerFavoriteTrackId.value = null
     if (!track || isLocalTrack(track)) return
 
     const providerId = getTrackProviderId(track)
@@ -119,6 +128,7 @@ export function useFavoriteButton({
       const liked = await provider.isTrackLiked(providerTrackId)
       if (requestId === providerFavoriteRequestId) {
         providerFavoriteLiked.value = liked
+        providerFavoriteTrackId.value = track.id
       }
     } catch (error) {
       console.warn(`Failed to read ${providerId} favorite state`, error)
@@ -170,6 +180,7 @@ export function useFavoriteButton({
       await provider.likeTrack(providerTrackId, nextLiked)
       if (currentTrack.value?.id === trackId) {
         providerFavoriteLiked.value = nextLiked
+        providerFavoriteTrackId.value = trackId
       }
     } catch (error) {
       console.warn(`Failed to toggle ${providerId} favorite state`, error)

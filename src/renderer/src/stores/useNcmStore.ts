@@ -215,6 +215,12 @@ export interface NcmStore {
   fetchUserFolloweds: (uid: number, limit?: number, offset?: number) => Promise<NcmUserSummary[]>
   fetchPlayRecords: (type?: number) => Promise<Track[]>
   fetchRecentSongs: (limit?: number) => Promise<Track[]>
+  fetchIntelligenceList: (options: {
+    songId: number
+    playlistId: number
+    startSongId?: number
+    count?: number
+  }) => Promise<Track[]>
   followArtist: (artistId: number, follow: boolean) => Promise<void>
   followUser: (userId: number, follow: boolean) => Promise<void>
   likeTrack: (songId: number, like: boolean) => Promise<void>
@@ -751,6 +757,15 @@ export function useNcmStore(): NcmStore {
     return callNcmProvider<Track[]>('fetchRecentSongs', [limit])
   }
 
+  async function fetchIntelligenceList(options: {
+    songId: number
+    playlistId: number
+    startSongId?: number
+    count?: number
+  }): Promise<Track[]> {
+    return callNcmProvider<Track[]>('fetchIntelligenceList', [options])
+  }
+
   async function followArtist(artistId: number, follow: boolean): Promise<void> {
     await callNcmProvider<void>('followArtist', [artistId, follow])
   }
@@ -873,6 +888,7 @@ export function useNcmStore(): NcmStore {
     fetchUserFolloweds,
     fetchPlayRecords,
     fetchRecentSongs,
+    fetchIntelligenceList,
     followArtist,
     followUser,
     likeTrack,

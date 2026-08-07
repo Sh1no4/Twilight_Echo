@@ -1475,7 +1475,7 @@ test('play mode is persisted in settings and restored on launch', () => {
 
   assert.match(
     settingsTypes,
-    /export type PlayMode = 'sequential' \| 'listLoop' \| 'repeat' \| 'shuffle'/
+    /export type PlayMode = 'sequential' \| 'listLoop' \| 'repeat' \| 'shuffle' \| 'heart'/
   )
   assert.match(settingsTypes, /playMode: PlayMode/)
   assert.match(settingsStoreSource, /playMode: 'sequential'/)
@@ -1532,12 +1532,43 @@ test('play mode is persisted in settings and restored on launch', () => {
   )
   assert.match(
     playerSource,
-    /const modes: PlayMode\[\] = \['sequential', 'listLoop', 'repeat', 'shuffle'\]/
+    /const modes: PlayMode\[\] = \['sequential', 'listLoop', 'repeat', 'shuffle', 'heart'\]/
   )
   assert.match(
     advanceAfterPlaybackEnded,
     /playMode\.value === 'listLoop' \|\| playMode\.value === 'shuffle'/
   )
+})
+
+test('heart mode is gated to the liked NCM playlist and drives smart-list playback', () => {
+  const playerSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const cyclePlayMode = extractInternalFunctionBody(playerSource, 'cyclePlayMode')
+  const setPlayModeInternal = extractInternalFunctionBody(playerSource, 'setPlayModeInternal')
+  const next = extractInternalFunctionBody(playerSource, 'next')
+  const advanceAfterPlaybackEnded = extractInternalFunctionBody(
+    playerSource,
+    'advanceAfterPlaybackEnded'
+  )
+  const syncNativeQueueState = extractInternalFunctionBody(playerSource, 'syncNativeQueueState')
+
+  // 可用性只取决于“我喜欢的音乐”歌单上下文 + 网易云流媒体曲目。
+  assert.match(
+    playerSource,
+    /heartModeContext\.value\.likedPlaylistId != null[\s\S]*getTrackSource\(currentTrack\.value\) === 'ncm'/
+  )
+  assert.match(playerSource, /function setHeartModeContext\(playlistId: number \| null\): void/)
+  assert.match(
+    cyclePlayMode,
+    /heartModeAvailable\.value \? modes : modes\.filter\(\(mode\) => mode !== 'heart'\)/
+  )
+  assert.match(setPlayModeInternal, /if \(mode === 'heart'\) \{[\s\S]*if \(!heartModeAvailable\.value\) return/)
+  assert.match(playerSource, /function fetchHeartRecommendations[\s\S]*fetchIntelligenceList/)
+  assert.match(playerSource, /function enterHeartMode[\s\S]*fetchHeartRecommendations/)
+  assert.match(next, /if \(playMode\.value === 'heart'\) \{[\s\S]*advanceHeartPlayback\(\)/)
+  assert.match(advanceAfterPlaybackEnded, /if \(playMode\.value === 'heart'\) \{[\s\S]*advanceHeartPlayback\(\)/)
+  // 心动模式边界由渲染层处理：原生引擎只加载当前曲目且不代管队列。
+  assert.match(syncNativeQueueState, /queue: heartModeActive \? \[current\] : snapshot\.queue/)
+  assert.match(syncNativeQueueState, /nativeQueueDelegated = heartModeActive \? false : preparedQueue\.delegated/)
 })
 
 test('playback end auto-advance stops at queue end without changing manual next wrap', () => {
