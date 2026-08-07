@@ -1124,11 +1124,10 @@ TAE_Result TwilightAudioEngine::setDspConfig(const std::string& dspJson) {
       if (info_.isDsd) {
         const bool wantsPcm = nextConfig.dsdOutputMode == DsdOutputMode::Pcm;
         const bool wantsNative =
-            nextConfig.dsdOutputMode == DsdOutputMode::Auto || nextConfig.dsdOutputMode == DsdOutputMode::Native ||
-            nextConfig.dsdOutputMode == DsdOutputMode::FooDsdAsio;
+            nextConfig.dsdOutputMode == DsdOutputMode::Auto || nextConfig.dsdOutputMode == DsdOutputMode::Native;
         const bool wantsDop =
             nextConfig.dsdOutputMode == DsdOutputMode::Auto || nextConfig.dsdOutputMode == DsdOutputMode::Dop ||
-            nextConfig.dsdOutputMode == DsdOutputMode::Native || nextConfig.dsdOutputMode == DsdOutputMode::FooDsdAsio;
+            nextConfig.dsdOutputMode == DsdOutputMode::Native;
         const bool modeChanged = previousConfig.dsdOutputMode != nextConfig.dsdOutputMode;
         const bool dopActive = pipeline_->isDopPathActive();
         const bool nativeActive = pipeline_->isNativeDsdPathActive();
@@ -1136,12 +1135,6 @@ TAE_Result TwilightAudioEngine::setDspConfig(const std::string& dspJson) {
           rerouteReason = "DSD output mode forced PCM";
           reroutePosition = info_.positionSeconds;
           rerouteState = info_.state;
-        } else if (modeChanged &&
-                   (nextConfig.dsdOutputMode == DsdOutputMode::FooDsdAsio ||
-                    previousConfig.dsdOutputMode == DsdOutputMode::FooDsdAsio)) {
-          reroutePosition = info_.positionSeconds;
-          rerouteState = info_.state;
-          rerouteReason = "Select foo_dsd_asio DSD proxy route";
         } else if (nativeActive && nextConfig.dsdOutputMode == DsdOutputMode::Dop) {
           reroutePosition = info_.positionSeconds;
           rerouteState = info_.state;
@@ -1247,14 +1240,10 @@ TAE_Result TwilightAudioEngine::applyDspState(
       if (info_.isDsd) {
         const bool wantsPcm = nextConfig.dsdOutputMode == DsdOutputMode::Pcm;
         const bool wantsNative =
-            nextConfig.dsdOutputMode == DsdOutputMode::Auto ||
-            nextConfig.dsdOutputMode == DsdOutputMode::Native ||
-            nextConfig.dsdOutputMode == DsdOutputMode::FooDsdAsio;
+            nextConfig.dsdOutputMode == DsdOutputMode::Auto || nextConfig.dsdOutputMode == DsdOutputMode::Native;
         const bool wantsDop =
-            nextConfig.dsdOutputMode == DsdOutputMode::Auto ||
-            nextConfig.dsdOutputMode == DsdOutputMode::Dop ||
-            nextConfig.dsdOutputMode == DsdOutputMode::Native ||
-            nextConfig.dsdOutputMode == DsdOutputMode::FooDsdAsio;
+            nextConfig.dsdOutputMode == DsdOutputMode::Auto || nextConfig.dsdOutputMode == DsdOutputMode::Dop ||
+            nextConfig.dsdOutputMode == DsdOutputMode::Native;
         const bool modeChanged = previousConfig.dsdOutputMode != nextConfig.dsdOutputMode;
         const bool dopActive = pipeline_->isDopPathActive();
         const bool nativeActive = pipeline_->isNativeDsdPathActive();
@@ -1262,12 +1251,6 @@ TAE_Result TwilightAudioEngine::applyDspState(
           rerouteReason = "DSD output mode forced PCM";
           reroutePosition = info_.positionSeconds;
           rerouteState = info_.state;
-        } else if (modeChanged &&
-                   (nextConfig.dsdOutputMode == DsdOutputMode::FooDsdAsio ||
-                    previousConfig.dsdOutputMode == DsdOutputMode::FooDsdAsio)) {
-          reroutePosition = info_.positionSeconds;
-          rerouteState = info_.state;
-          rerouteReason = "Select foo_dsd_asio DSD proxy route";
         } else if (nativeActive && nextConfig.dsdOutputMode == DsdOutputMode::Dop) {
           rerouteReason = "Re-enter DoP output mode";
           reroutePosition = info_.positionSeconds;
@@ -2086,12 +2069,10 @@ bool TwilightAudioEngine::shouldReroutePipelineLocked(
   const DspConfig& config = dspConfig_;
   if (info_.isDsd) {
     const bool wantsPcm = config.dsdOutputMode == DsdOutputMode::Pcm;
-  const bool wantsNative = config.dsdOutputMode == DsdOutputMode::Auto ||
-                           config.dsdOutputMode == DsdOutputMode::Native ||
-                           config.dsdOutputMode == DsdOutputMode::FooDsdAsio;
+    const bool wantsNative = config.dsdOutputMode == DsdOutputMode::Auto ||
+                             config.dsdOutputMode == DsdOutputMode::Native;
     const bool wantsDop = config.dsdOutputMode == DsdOutputMode::Auto || config.dsdOutputMode == DsdOutputMode::Dop ||
-                          config.dsdOutputMode == DsdOutputMode::Native ||
-                          config.dsdOutputMode == DsdOutputMode::FooDsdAsio;
+                          config.dsdOutputMode == DsdOutputMode::Native;
     const bool dopActive = pipeline_->isDopPathActive();
     const bool nativeActive = pipeline_->isNativeDsdPathActive();
     if ((dopActive || nativeActive) && wantsPcm) {

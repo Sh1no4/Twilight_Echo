@@ -362,39 +362,6 @@ export function collectDsdPcmBlockers(input: {
   return blockers
 }
 
-export function findFooDsdAsioBridgeSuggestion(input: {
-  playback: Pick<PlaybackInfo, 'isDsd' | 'dsdMode' | 'outputInfo'>
-  outputState?: Pick<AudioOutputState, 'output' | 'device' | 'deviceOptions'>
-}):
-  | {
-      bridgeId: string
-      bridgeLabel: string
-      selectedDevice: string
-      reason: string
-    }
-  | undefined {
-  const outputState = input.outputState
-  if (!outputState || outputState.output !== 'asio' || !input.playback.isDsd) return undefined
-  const bridge = outputState.deviceOptions.find((option) =>
-    `${option.id} ${option.label} ${option.name ?? ''} ${option.driverName ?? ''}`.toLowerCase().includes('foo_dsd_asio')
-  )
-  if (!bridge || outputState.device === bridge.id) return undefined
-  const nativeState = input.playback.outputInfo.nativeDsdRuntimeState
-  const failedDirectPath =
-    input.playback.dsdMode === 'pcm' ||
-    nativeState === 'unsupported' ||
-    nativeState === 'unproven' ||
-    nativeState === 'mismatch'
-  if (!failedDirectPath) return undefined
-  return {
-    bridgeId: bridge.id,
-    bridgeLabel: bridge.label,
-    selectedDevice: outputState.device,
-    reason:
-      'foo_dsd_asio is available but is not selected. Select the foo_dsd_asio DSD mode to use the proxy, or leave Auto enabled to try it after direct Native DSD fails.'
-  }
-}
-
 export function createPlaybackDiagnosticEvent(input: {
   playback: PlaybackInfo
   processing: AudioProcessingSettings

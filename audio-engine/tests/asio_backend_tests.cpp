@@ -569,28 +569,6 @@ void testNativeDsdCapabilityProfile() {
   }
 }
 
-void testFooDsdAsioProxySelector() {
-  MockAsioHost::DsdProfile profile;
-  profile.nativeDsdCapable = true;
-  profile.nativeDsdSampleRates = {2822400};
-  profile.nativeDsdSampleFormats = {AudioSampleFormat::DsdInt8Lsb1};
-  auto host = std::make_unique<MockAsioHost>();
-  auto proxy = makeMockAsioDevice("asio:foo-proxy", {2822400}, 2, AudioSampleFormat::DsdInt8Lsb1, profile);
-  proxy.name = "foo_dsd_asio";
-  host->devices.push_back(std::move(proxy));
-  auto* rawHost = host.get();
-  rawHost->channelFormats = {AudioSampleFormat::DsdInt8Lsb1, AudioSampleFormat::DsdInt8Lsb1};
-
-  AsioBackend backend(std::move(host));
-  std::string error;
-  assert(backend.open(
-      "foo_dsd_asio",
-      sourceFormat(2822400, 1, 2, AudioSampleFormat::DsdInt8Lsb1),
-      &error));
-  assert(rawHost->lastOpenConfig.deviceId == "asio:foo-proxy");
-  assert(backend.outputInfo().deviceName == "foo_dsd_asio");
-}
-
 void testFiiODriverNameDoesNotRewriteStandardNativeDsdRequest() {
   MockAsioHost::DsdProfile profile;
   profile.nativeDsdCapable = true;
@@ -1570,7 +1548,6 @@ int main() {
   testDopRuntimeFactsMismatchWhenActualFormatDiffers();
   testDopMarkerEvidence();
   testNativeDsdCapabilityProfile();
-  testFooDsdAsioProxySelector();
   testFiiODriverNameDoesNotRewriteStandardNativeDsdRequest();
   testNativeDsdRuntimeProven();
   testNativeDsdDriverSelectedWireTypeAndIdleTail();

@@ -38,7 +38,6 @@ class AsioBackend final : public IOutputBackend {
   DopRuntimeFacts dopRuntimeFacts() const override;
   NativeDsdRuntimeFacts nativeDsdRuntimeFacts() const override;
   std::string deviceName() const override;
-  bool supportsDsdProxyRoute() const override;
 
  private:
   struct RecoveryRequest {

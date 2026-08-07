@@ -195,7 +195,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   audioOutput:
     process.platform === 'darwin' ? 'coreaudio' : process.platform === 'linux' ? 'alsa' : 'wasapi',
   audioDevice: 'auto',
-  foobar2000PortablePath: '',
   audioExclusiveMode: false,
   audioOutputConfig: {
     preferredBufferSize: 0,
@@ -702,10 +701,6 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     softwareVolume: clampNumber(settings.softwareVolume, 0, 1, DEFAULT_SOFTWARE_VOLUME),
     audioOutput: normalizeAudioOutput(settings.audioOutput),
     audioDevice: normalizeAudioDevice(settings.audioDevice),
-    foobar2000PortablePath:
-      typeof settings.foobar2000PortablePath === 'string'
-        ? settings.foobar2000PortablePath.trim().slice(0, 8192)
-        : '',
     audioExclusiveMode: settings.audioExclusiveMode === true,
     audioOutputConfig: normalizeOutputConfig(settings.audioOutputConfig),
     audioProcessing,

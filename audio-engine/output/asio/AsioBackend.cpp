@@ -84,23 +84,6 @@ bool sameNativeDsdStream(const AudioFormat& requested, const AudioFormat& actual
          effectivePcmBitDepth(requested) == 1 && effectivePcmBitDepth(actual) == 1;
 }
 
-bool isFooDsdAsioSelector(const std::string& value) {
-  std::string normalized = value;
-  std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char character) {
-    return static_cast<char>(std::tolower(character));
-  });
-  return normalized == "foo_dsd_asio" || normalized == "asio:foo_dsd_asio" ||
-         normalized == "foo-dsd-asio" || normalized == "asio:foo-dsd-asio";
-}
-
-bool isFooDsdAsioDevice(const AsioDeviceInfo& device) {
-  std::string identity = device.name + " " + device.driverName + " " + device.id;
-  std::transform(identity.begin(), identity.end(), identity.begin(), [](unsigned char value) {
-    return static_cast<char>(std::tolower(value));
-  });
-  return identity.find("foo_dsd_asio") != std::string::npos || identity.find("foo-dsd-asio") != std::string::npos;
-}
-
 void appendDecimal(std::string& output, uint64_t value) {
   char digits[32] = {};
   const auto [end, error] = std::to_chars(digits, digits + sizeof(digits), value);
@@ -394,9 +377,7 @@ NativeDsdRuntimeFacts buildAsioNativeDsdRuntimeFacts(
   }
 
   facts.state = NativeDsdRuntimeFactState::Proven;
-  facts.reason = isFooDsdAsioDevice(device)
-                     ? "foo_dsd_asio proxy Native DSD stream started with a matching runtime rate"
-                     : requestedFormat.sampleFormat == actualFormat.sampleFormat
+  facts.reason = requestedFormat.sampleFormat == actualFormat.sampleFormat
                      ? "ASIO Native DSD stream started with a matching runtime rate"
                      : "ASIO Native DSD stream started with a matching rate and a driver-selected wire sample type";
   return facts;
@@ -523,10 +504,8 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   }
 
   const auto deviceIt = std::find_if(devices.begin(), devices.end(), [&](const AsioDeviceInfo& device) {
-    const bool proxySelector = isFooDsdAsioSelector(deviceId);
     return deviceId.empty() || deviceId == "auto" || device.id == deviceId || device.name == deviceId ||
-           device.driverName == deviceId || ("asio:" + device.driverName) == deviceId ||
-           (proxySelector && isFooDsdAsioDevice(device));
+           device.driverName == deviceId || ("asio:" + device.driverName) == deviceId;
   });
   if (deviceIt == devices.end()) {
     if (error) *error = "无法找到请求的 ASIO 设备：" + deviceId;
@@ -658,7 +637,7 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   applyNativeDsdFactsToOutputInfo(&outputInfo_, nativeDsdRuntimeFacts_);
   outputInfo_.diagnostics = diagnostics_;
   if (isNativeDsdRequest(openConfig_.format)) {
-    diagnostics_.dsdTransport = isFooDsdAsioDevice(deviceInfo_) ? "foo_dsd_asio" : "asio-native";
+    diagnostics_.dsdTransport = "asio-native";
     diagnostics_.requestedWireFormat = sampleFormatToString(openConfig_.format.sampleFormat);
     diagnostics_.actualWireFormat = sampleFormatToString(outputFormat_.sampleFormat);
     diagnostics_.containerBits = static_cast<int>(audioSampleFormatBytes(outputFormat_.sampleFormat) * 8);
@@ -849,14 +828,6 @@ NativeDsdRuntimeFacts AsioBackend::nativeDsdRuntimeFacts() const {
 
 std::string AsioBackend::deviceName() const {
   return deviceName_;
-}
-
-bool AsioBackend::supportsDsdProxyRoute() const {
-  if (!host_) return false;
-  const auto devices = host_->enumerateDevices();
-  return std::any_of(devices.begin(), devices.end(), [](const AsioDeviceInfo& device) {
-    return isFooDsdAsioDevice(device);
-  });
 }
 
 bool AsioBackend::chooseFormat(const AsioDeviceInfo& device, const AudioFormat& requestedFormat, AudioFormat* selected) const {

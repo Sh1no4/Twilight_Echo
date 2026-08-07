@@ -1316,24 +1316,6 @@ test('legacy dsdToPcm still maps to PCM when dsdOutputMode is absent', () => {
   assert.equal(normalized.dsdToPcm, true)
 })
 
-test('foo_dsd_asio remains an explicit DSD proxy route', () => {
-  const normalized = normalizeAudioProcessingSettings({ dsdOutputMode: 'foo_dsd_asio' })
-
-  assert.equal(normalized.dsdOutputMode, 'foo_dsd_asio')
-  assert.equal(normalized.dsdToPcm, false)
-})
-
-test('foo_dsd_asio is visible and selectable in primary playback settings', () => {
-  const settingsSource = readFileSync(
-    new URL('../renderer/src/components/SettingsPage.vue', import.meta.url),
-    'utf8'
-  )
-
-  assert.match(settingsSource, /class="segmented-control dsd-route-control"/)
-  assert.match(settingsSource, /@click="selectDsdOutputMode\(option\.value\)"/)
-  assert.match(settingsSource, /fooDsdAsioRegistrationText/)
-})
-
 test('loudnorm is preserved as a distinct volumeNormalization mode', () => {
   const normalized = normalizeAudioProcessingSettings({
     ...DEFAULT_AUDIO_PROCESSING,

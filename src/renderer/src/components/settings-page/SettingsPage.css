@@ -641,38 +641,6 @@
   line-height: 1.45;
 }
 
-.foo-dsd-portable-panel .setting-copy {
-  max-width: min(720px, 72vw);
-}
-
-.foo-dsd-portable-panel .setting-substatus.available {
-  color: #047857;
-}
-
-.portable-path {
-  overflow-wrap: anywhere;
-  color: var(--te-settings-text, #1a1a1a);
-}
-
-.portable-component-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 4px;
-}
-
-.portable-component-row span {
-  padding: 2px 7px;
-  border: 1px solid color-mix(in srgb, var(--te-settings-text-muted, #8a8f98) 38%, transparent);
-  border-radius: 999px;
-  font-size: 11px;
-}
-
-.portable-component-row span.available {
-  border-color: rgba(4, 120, 87, 0.35);
-  color: #047857;
-}
-
 .plugin-command-result {
   color: #047857;
   font-weight: 650;
@@ -1262,16 +1230,6 @@ html[data-te-motion='full'] .toggle-switch.active::after {
 
 .dsd-route-control button {
   white-space: nowrap;
-}
-
-.dsd-proxy-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.dsd-proxy-status.available {
-  color: var(--te-success, #16803c);
 }
 
 .theme-segment button {

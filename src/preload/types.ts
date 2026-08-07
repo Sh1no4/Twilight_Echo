@@ -439,7 +439,7 @@ export type ChannelRoutingMode =
   | 'stereo-to-7.1'
   | 'mono-to-stereo'
   | 'mono-to-multichannel'
-export type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native' | 'foo_dsd_asio'
+export type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native'
 export type SacdProgramMode = 'auto' | 'stereo' | 'multichannel'
 export type EqualizerFilterType =
   | 'peak'
@@ -774,7 +774,6 @@ export interface AppSettings {
   softwareVolume: number
   audioOutput: AudioOutputId
   audioDevice: string
-  foobar2000PortablePath: string
   audioExclusiveMode: boolean
   audioOutputConfig: OutputConfig
   audioProcessing: AudioProcessingSettings
@@ -791,17 +790,6 @@ export interface AppSettings {
   streamingActiveProvider: string
   remoteControlEnabled: boolean
   remoteControlPort: number
-}
-
-export interface FooDsdAsioPortableStatus {
-  configuredPath: string
-  rootPath: string
-  foobarExecutable: string
-  portableModeEnabled: boolean
-  hasAsioDsdComponent: boolean
-  hasSacdComponent: boolean
-  matched: boolean
-  message: string
 }
 
 export interface OpraCatalogStatus {
