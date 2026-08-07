@@ -1,0 +1,96 @@
+name: Build Linux packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  linux:
+    name: Linux (AppImage / deb / rpm / tar.gz)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            pkg-config \
+            libasound2-dev \
+            curl \
+            zip \
+            unzip \
+            tar
+          # AppImage 打包工具在部分镜像上需要 FUSE（Ubuntu 24.04 包名为 libfuse2t64）。
+          sudo apt-get install -y libfuse2t64 || sudo apt-get install -y libfuse2 || true
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Bootstrap vcpkg
+        run: |
+          git clone --depth 1 --branch 2026.07.29 https://github.com/microsoft/vcpkg.git "$HOME/vcpkg"
+          "$HOME/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+
+      - name: Cache vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.home }}/.cache/vcpkg
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('audio-engine/vcpkg.json') }}
+
+      - name: Build Linux audio engine (default preset + Node-API bridge)
+        env:
+          VCPKG_ROOT: ${{ runner.home }}/vcpkg
+        run: |
+          cmake -S audio-engine -B audio-engine/build/default \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DTAE_BUILD_NAPI=ON \
+            -DTAE_BUILD_TESTS=OFF
+          cmake --build audio-engine/build/default
+          test -f audio-engine/build/default/libtwilight-audio-engine.so
+          test -f audio-engine/build/default/twilight_audio_node.node
+
+      - name: Build renderer and package Linux targets
+        env:
+          # GitHub Runner 直接走 GitHub 源下载 Electron，避免 npmmirror 在海外机上的不稳定。
+          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+        run: |
+          pnpm run build
+          pnpm exec electron-builder --linux --config electron-builder.yml
+
+      - name: Verify staged native engine in the unpacked app
+        run: |
+          ls -la dist/linux-unpacked/resources/audio-engine/
+          test -f dist/linux-unpacked/resources/audio-engine/libtwilight-audio-engine.so
+          test -f dist/linux-unpacked/resources/audio-engine/twilight_audio_node.node
+
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: twilight-echo-linux
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.rpm
+            dist/*.tar.gz
+          if-no-files-found: error
