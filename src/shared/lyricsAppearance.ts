@@ -33,6 +33,7 @@ export interface LyricsTextStyle {
 }
 
 export interface LyricsAppearanceSettings {
+  schemaVersion: number
   /** Legacy/global quick controls retained for settings migration and compact controls. */
   fontFamily: LyricsAppearanceFontFamily
   fontSize: number
@@ -80,6 +81,8 @@ export function resolveLyricsFontFamily(
   return LYRICS_FONT_FAMILY_STACKS[style.fontFamily]
 }
 
+export const LYRICS_APPEARANCE_SCHEMA_VERSION = 2
+
 export const DEFAULT_LYRICS_TEXT_STYLES: Record<LyricsStyleTarget, LyricsTextStyle> = {
   normal: {
     fontFamily: 'inherit',
@@ -111,7 +114,7 @@ export const DEFAULT_LYRICS_TEXT_STYLES: Record<LyricsStyleTarget, LyricsTextSty
     backgroundStyle: 'none',
     backgroundColor: '#0f172a',
     backgroundOpacity: 0,
-    highlightEffect: 'glow',
+    highlightEffect: 'none',
     highlightColor: '#fff8df',
     highlightIntensity: 32
   },
@@ -135,6 +138,7 @@ export const DEFAULT_LYRICS_TEXT_STYLES: Record<LyricsStyleTarget, LyricsTextSty
 }
 
 export const DEFAULT_LYRICS_APPEARANCE: LyricsAppearanceSettings = {
+  schemaVersion: LYRICS_APPEARANCE_SCHEMA_VERSION,
   fontFamily: 'inherit',
   fontSize: 18,
   fontWeight: 600,
@@ -183,10 +187,19 @@ function normalizeFontFamily(
     : fallback
 }
 
-function normalizeTextStyle(raw: unknown, fallback: LyricsTextStyle): LyricsTextStyle {
+function normalizeTextStyle(
+  raw: unknown,
+  fallback: LyricsTextStyle,
+  migrateLegacyDefaultGlow = false
+): LyricsTextStyle {
   const value = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
   const backgroundStyles: readonly LyricsBackgroundStyle[] = ['none', 'solid', 'glass', 'gradient']
   const highlightEffects: readonly LyricsHighlightEffect[] = ['none', 'shadow', 'glow', 'outline']
+  const isLegacyDefaultGlow =
+    migrateLegacyDefaultGlow &&
+    value.highlightEffect === 'glow' &&
+    value.highlightColor === '#fff8df' &&
+    value.highlightIntensity === 32
   return {
     fontFamily: normalizeFontFamily(value.fontFamily, fallback.fontFamily),
     customFontFamily:
@@ -205,9 +218,11 @@ function normalizeTextStyle(raw: unknown, fallback: LyricsTextStyle): LyricsText
       : fallback.backgroundStyle,
     backgroundColor: normalizeColor(value.backgroundColor, fallback.backgroundColor),
     backgroundOpacity: clampNumber(value.backgroundOpacity, 0, 100, fallback.backgroundOpacity),
-    highlightEffect: highlightEffects.includes(value.highlightEffect as LyricsHighlightEffect)
-      ? (value.highlightEffect as LyricsHighlightEffect)
-      : fallback.highlightEffect,
+    highlightEffect: isLegacyDefaultGlow
+      ? 'none'
+      : highlightEffects.includes(value.highlightEffect as LyricsHighlightEffect)
+        ? (value.highlightEffect as LyricsHighlightEffect)
+        : fallback.highlightEffect,
     highlightColor: normalizeColor(value.highlightColor, fallback.highlightColor),
     highlightIntensity: clampNumber(value.highlightIntensity, 0, 100, fallback.highlightIntensity)
   }
@@ -306,8 +321,10 @@ export function normalizeLyricsAppearance(
     typeof value.styles === 'object' && value.styles !== null
       ? (value.styles as Record<string, unknown>)
       : {}
+  const migrateLegacyDefaultGlow = value.schemaVersion !== LYRICS_APPEARANCE_SCHEMA_VERSION
 
   return {
+    schemaVersion: LYRICS_APPEARANCE_SCHEMA_VERSION,
     fontFamily,
     fontSize,
     fontWeight,
@@ -332,9 +349,21 @@ export function normalizeLyricsAppearance(
     karaokeColor,
     karaokeEnabled: value.karaokeEnabled !== false,
     styles: {
-      normal: normalizeTextStyle(stylesValue.normal, migratedStyles.normal),
-      active: normalizeTextStyle(stylesValue.active, migratedStyles.active),
-      translation: normalizeTextStyle(stylesValue.translation, migratedStyles.translation)
+      normal: normalizeTextStyle(
+        stylesValue.normal,
+        migratedStyles.normal,
+        migrateLegacyDefaultGlow
+      ),
+      active: normalizeTextStyle(
+        stylesValue.active,
+        migratedStyles.active,
+        migrateLegacyDefaultGlow
+      ),
+      translation: normalizeTextStyle(
+        stylesValue.translation,
+        migratedStyles.translation,
+        migrateLegacyDefaultGlow
+      )
     }
   }
 }
