@@ -108,7 +108,8 @@ traversal, metadata/cache behavior, and the FTP/SFTP/SMB/WebDAV/NFS/DLNA adapter
 `test:playlist-lifecycle` drives the production SongList lifecycle composable through a real
 Electron/Vue/Pinia DOM. It covers all three export downloads, pre-read import limits, visible
 import/cover feedback, rename/copy/reorder/batch move/unique relocation, and authoritative CAS
-conflict recovery. `test:lyrics-management` covers import and save-dialog validation, atomic LRC replacement and backup
+conflict recovery. `test:lyrics-management` covers import and save-dialog validation, strict
+lyrics-encoding detection (UTF-8 BOM / UTF-8 / GBK / GB18030), atomic LRC replacement and backup
 recovery, versioned CAS persistence, source-selection races, manual three-track projection, and the
 real Electron/Vue lyrics-management UI. Both scripts are part of `test:no-real-device`; the Ubuntu
 required job runs their Electron UI tests under an explicitly installed `xvfb`/`xauth` virtual display.

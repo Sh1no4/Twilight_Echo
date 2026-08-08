@@ -101,6 +101,13 @@ test('local library scan persists ReplayGain and R128 tags onto Track records', 
   assert.match(source, /R128_ALBUM_GAIN/)
 })
 
+test('local library scan decodes sibling lyrics with the shared multi-encoding decoder', () => {
+  const source = readFileSync(new URL('./scan.ts', import.meta.url), 'utf8')
+
+  assert.match(source, /decodeLyrics\(readFileSync\(lrcPath\)\)\.text/)
+  assert.doesNotMatch(source, /readFileSync\(lrcPath,\s*['\"]utf-?8['\"]\)/)
+})
+
 test('music library legacy data migrates to schema v2 and survives a restart', () => {
   const root = mkdtempSync(join(tmpdir(), 'twilight-library-migration-'))
   const libraryFile = join(root, 'music-library.json')

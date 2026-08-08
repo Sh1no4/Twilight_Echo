@@ -16,8 +16,12 @@ edited original lyrics as a separate LRC file from the Lyrics manager.
   the selected track and never overwrites the resolver result held by the
   playback queue.
 - Import accepts a user-selected `.lrc` or `.txt` file through the main-process
-  dialog, strips a UTF-8 BOM, and rejects content above 1 MiB. The UI supports
-  editing original, translation, and romanization text before saving.
+  dialog, strips a UTF-8 BOM, and rejects content above 1 MiB. Lyrics files
+  may be UTF-8 with or without BOM, GBK, or GB18030; decoding is fatal, so
+  malformed byte sequences are rejected instead of becoming `U+FFFD` mojibake.
+  The same decoder powers the lazy external-LRC loader and SACD ISO sibling
+  lyrics during scans. The UI supports editing original, translation, and
+  romanization text before saving.
 - `Save LRC` opens a main-process Save dialog. The renderer cannot provide a
   destination path. Only non-empty, valid LRC text (at most 1 MiB) is written;
   an existing destination is copied to `<name>.lrc.bak`, data is fsynced to a
