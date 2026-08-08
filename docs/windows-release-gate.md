@@ -65,6 +65,7 @@ pnpm run audit:production -- --output output/release-evidence/production-depende
 pnpm run test:plugins
 pnpm run test:audio-manager
 pnpm run test:radio-remote
+pnpm run test:network-sources
 pnpm run test:tag-duplicate-management
 pnpm run test:duplicate-detection-benchmark
 pnpm run benchmark:duplicate-detection:ci -- --output output/release-evidence/duplicate-detection-benchmark.json --manifest output/release-evidence/duplicate-detection-benchmark.manifest.json
@@ -101,6 +102,8 @@ in parallel with other performance gates. All three commands are part of `test:n
 fallback, podcast parsing/persistence, remote-control authentication, UPnP/Chromecast discovery and
 control, media-token authorization, and renderer cover handles. `test:themes` validates the theme
 token contract, archive preflight, scheduling, plugin runtime integration, and large-list switching.
+`test:network-sources` covers network source profile persistence, path validation, directory
+traversal, metadata/cache behavior, and the FTP/SFTP/SMB/WebDAV/NFS/DLNA adapter matrix.
 
 `test:playlist-lifecycle` drives the production SongList lifecycle composable through a real
 Electron/Vue/Pinia DOM. It covers all three export downloads, pre-read import limits, visible

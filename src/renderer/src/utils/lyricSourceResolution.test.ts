@@ -140,6 +140,20 @@ test('lyric resolution keeps local lyrics when provider lookup fails', async () 
   assert.equal(result.translatedLyricsSource, null)
 })
 
+test('lyric resolution preserves a provider failure when no source returned lyrics', async () => {
+  const result = await resolveLyricsWithSources({
+    track: localTrack,
+    loadLocalLyrics: async () => null,
+    loadProviderLyrics: async () => {
+      throw new Error('provider unavailable')
+    }
+  })
+
+  assert.equal(result.lyrics, null)
+  assert.equal(result.translatedLyrics, null)
+  assert.equal(result.failure, 'provider')
+})
+
 test('lyric resolution can still use provider lyrics when local lookup fails', async () => {
   const result = await resolveLyricsWithSources({
     track: localTrack,

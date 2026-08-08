@@ -210,6 +210,34 @@ test('mini player state normalization keeps only the renderer snapshot contract'
   assert.equal(state.queueIndex, 2)
 })
 
+test('mini player state carries the active lyric line with its translation', () => {
+  const state = normalizeMiniPlayerStateSnapshot({
+    track: { id: 'ncm:1', title: 'Daydream' },
+    currentLyric: {
+      original: "I'll always be there for you",
+      translation: '我会一直在你身边',
+      extra: 'dropped'
+    },
+    currentTime: 42
+  })
+
+  assert.equal(state.currentLyric?.original, "I'll always be there for you")
+  assert.equal(state.currentLyric?.translation, '我会一直在你身边')
+  assert.equal('extra' in (state.currentLyric as object), false)
+
+  const withoutTranslation = normalizeMiniPlayerStateSnapshot({
+    currentLyric: { original: 'Solo line' }
+  })
+  assert.equal(withoutTranslation.currentLyric?.original, 'Solo line')
+  assert.equal(withoutTranslation.currentLyric?.translation, null)
+
+  const empty = normalizeMiniPlayerStateSnapshot({ currentLyric: null })
+  assert.equal(empty.currentLyric, null)
+
+  const blank = normalizeMiniPlayerStateSnapshot({ currentLyric: { original: '' } })
+  assert.equal(blank.currentLyric, null)
+})
+
 test('mini player track snapshot keeps large data: covers intact and drops unsafe cover sources', () => {
   const dataCover = `data:image/jpeg;base64,${'a'.repeat(200_000)}`
   const embedded = normalizeMiniPlayerStateSnapshot({

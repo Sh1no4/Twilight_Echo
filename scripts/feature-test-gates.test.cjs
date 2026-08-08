@@ -57,6 +57,24 @@ const radioRemoteTests = [
   'src/shared/remoteControl.test.ts'
 ]
 
+const networkSourceTests = [
+  'src/main/network/entryKinds.test.ts',
+  'src/main/network/networkCache.test.ts',
+  'src/main/network/networkCover.test.ts',
+  'src/main/network/networkLibrary.test.ts',
+  'src/main/network/networkMetadata.test.ts',
+  'src/main/network/networkPath.test.ts',
+  'src/main/network/profileStore.test.ts',
+  'src/main/network/sourcesManager.test.ts',
+  'src/main/network/textValidation.test.ts',
+  'src/main/network/adapters/dlnaAdapter.test.ts',
+  'src/main/network/adapters/ftpAdapter.test.ts',
+  'src/main/network/adapters/nfsMountAdapter.test.ts',
+  'src/main/network/adapters/sftpSystemAdapter.test.ts',
+  'src/main/network/adapters/smbMountAdapter.test.ts',
+  'src/main/network/adapters/webdavAdapter.test.ts'
+]
+
 const playlistLifecycleTests = [
   'src/renderer/src/components/SongList.playlist-lifecycle.behavior.test.ts',
   'src/renderer/src/stores/playlistCasPersistence.test.ts',
@@ -102,6 +120,13 @@ test('radio and remote gate owns library watcher, radio, podcast, cover, and rem
   const command = packageJson.scripts['test:radio-remote']
   assert.equal(typeof command, 'string')
   for (const file of radioRemoteTests) assert.match(command, new RegExp(escapeRegExp(file)))
+})
+
+test('network source gate owns profile, path, cache, metadata, and adapter tests', () => {
+  const command = packageJson.scripts['test:network-sources']
+  assert.equal(typeof command, 'string')
+  assert.match(command, /^node --experimental-strip-types --test /)
+  for (const file of networkSourceTests) assert.match(command, new RegExp(escapeRegExp(file)))
 })
 
 test('playlist lifecycle gate retains production DOM, persistence, format, and validation tests', () => {
@@ -166,6 +191,7 @@ test('Windows no-device and release gates cannot omit product suites or the live
   assert.match(noDevice, /pnpm run test:playlist-lifecycle/)
   assert.match(noDevice, /pnpm run test:lyrics-management/)
   assert.match(noDevice, /pnpm run test:radio-remote/)
+  assert.match(noDevice, /pnpm run test:network-sources/)
   assert.match(noDevice, /pnpm run test:tag-duplicate-management/)
   assert.match(noDevice, /pnpm run test:themes/)
   assert.match(noDevice, /pnpm run test:duplicate-detection-benchmark/)
@@ -173,6 +199,7 @@ test('Windows no-device and release gates cannot omit product suites or the live
   assert.match(windowsReleaseGate, /pnpm run test:playlist-lifecycle/)
   assert.match(windowsReleaseGate, /pnpm run test:lyrics-management/)
   assert.match(windowsReleaseGate, /pnpm run test:radio-remote/)
+  assert.match(windowsReleaseGate, /pnpm run test:network-sources/)
   assert.match(windowsReleaseGate, /pnpm run test:tag-duplicate-management/)
   assert.match(windowsReleaseGate, /pnpm run test:themes/)
   assert.match(windowsReleaseGate, /pnpm run test:duplicate-detection-benchmark/)
@@ -195,6 +222,7 @@ test('CI and the final integrated gate retain all newly owned regression suites'
     'test:sleep-timer',
     'test:cross-cutting-regressions',
     'test:radio-remote',
+    'test:network-sources',
     'test:themes'
   ]) {
     assert.match(workflow, new RegExp(`pnpm run ${escapeRegExp(script)}`))
@@ -215,6 +243,7 @@ test('Windows release documentation fail-closes on every newly owned regression 
     'test:sleep-timer',
     'test:cross-cutting-regressions',
     'test:radio-remote',
+    'test:network-sources',
     'test:themes'
   ]) {
     assert.match(commandBlock, new RegExp(`^pnpm run ${escapeRegExp(script)}$`, 'm'))

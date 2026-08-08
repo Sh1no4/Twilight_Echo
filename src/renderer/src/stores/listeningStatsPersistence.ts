@@ -58,8 +58,11 @@ export class ListeningStatsPersistence<T> {
 
   constructor(options: ListeningStatsPersistenceOptions<T>) {
     this.options = options
-    this.setTimer = options.setTimeout ?? globalThis.setTimeout
-    this.clearTimer = options.clearTimeout ?? globalThis.clearTimeout
+    // Detached timer references must keep the global receiver: in the Electron
+    // renderer, calling window.setTimeout through a plain member reference
+    // throws "Illegal invocation" instead of scheduling a flush.
+    this.setTimer = (options.setTimeout ?? globalThis.setTimeout).bind(globalThis)
+    this.clearTimer = (options.clearTimeout ?? globalThis.clearTimeout).bind(globalThis)
   }
 
   markDirty(): void {

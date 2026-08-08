@@ -5615,7 +5615,7 @@ html[data-theme='dark'] .settings-preview-page {
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
-  color: rgba(248, 250, 252, 0.95);
+  color: var(--te-text);
 }
 
 html[data-theme='dark'] .settings-preview-page::-webkit-scrollbar-thumb {
@@ -5627,14 +5627,14 @@ html[data-theme='dark'] .settings-preview-page::-webkit-scrollbar-thumb:hover {
 }
 
 html[data-theme='dark'] .settings-preview-page .preview-nav-item {
-  color: rgba(148, 163, 184, 0.86);
+  color: var(--te-text-muted);
 }
 
 html[data-theme='dark'] .settings-preview-page .preview-nav-item:hover,
 html[data-theme='dark'] .settings-preview-page .preview-nav-item.active {
   border-color: rgba(var(--te-primary-rgb), 0.28);
   background: var(--te-card-bg);
-  color: rgba(248, 250, 252, 0.95);
+  color: var(--te-text);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
 }
 
@@ -5732,7 +5732,7 @@ html[data-theme='dark'] .settings-preview-page .segmented-control button.active,
 html[data-theme='dark'] .settings-preview-page .theme-segment button.active,
 html[data-theme='dark'] .settings-preview-page .background-kind-toggle button.active {
   background: var(--te-card-bg);
-  color: rgba(248, 250, 252, 0.95);
+  color: var(--te-text);
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.22);
 }
 
@@ -5813,7 +5813,7 @@ html[data-theme='dark'] .settings-preview-page .background-editor-head strong,
 html[data-theme='dark'] .settings-preview-page .page-background-copy strong,
 html[data-theme='dark'] .settings-preview-page .signal-node.active .signal-node-name,
 html[data-theme='dark'] .settings-preview-page .shortcut-status-row span {
-  color: rgba(248, 250, 252, 0.95);
+  color: var(--te-text);
 }
 
 html[data-theme='dark'] .settings-preview-page .setting-copy span,

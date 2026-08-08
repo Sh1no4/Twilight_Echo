@@ -259,6 +259,7 @@ const {
   prev,
   seek,
   setVolume,
+  flushSoftwareVolumePersist,
   cyclePlayMode,
   setPlayMode,
   restorePlaybackSession,
@@ -496,6 +497,7 @@ onMounted(async () => {
         // This callback is awaited by the main-process close coordinator. It
         // closes the 250ms playlist debounce window before renderer teardown.
         await flushPlaylistsForExit()
+        await flushSoftwareVolumePersist()
         await playbackSessionPersistence.savePlaybackSessionForQuit()
       })
       playbackSessionPersistence.startAutosaveWatchers()

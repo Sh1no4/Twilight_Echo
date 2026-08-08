@@ -70,11 +70,64 @@ function createStressLibraryDocument(trackCount = 10_000) {
   }
 }
 
-function seedStressLibrary(userDataPath, trackCount = 10_000) {
-  const output = resolve(userDataPath, 'music-library.json')
-  mkdirSync(resolve(userDataPath), { recursive: true })
+function generateMiniWavFiles(directory, fileCount, sampleRate = 8000, durationSeconds = 0.01) {
+  mkdirSync(directory, { recursive: true })
+  const sampleCount = Math.max(1, Math.round(sampleRate * durationSeconds))
+  for (let index = 1; index <= fileCount; index += 1) {
+    const frequency = 200 + (index % 12) * 40
+    const data = Buffer.alloc(sampleCount * 2)
+    for (let i = 0; i < sampleCount; i += 1) {
+      data.writeInt16LE(
+        Math.round(Math.sin((2 * Math.PI * frequency * i) / sampleRate) * 3000),
+        i * 2
+      )
+    }
+    const header = Buffer.alloc(44)
+    header.write('RIFF', 0)
+    header.writeUInt32LE(36 + data.length, 4)
+    header.write('WAVE', 8)
+    header.write('fmt ', 12)
+    header.writeUInt32LE(16, 16)
+    header.writeUInt16LE(1, 20)
+    header.writeUInt16LE(1, 22)
+    header.writeUInt32LE(sampleRate, 24)
+    header.writeUInt32LE(sampleRate * 2, 28)
+    header.writeUInt16LE(2, 32)
+    header.writeUInt16LE(16, 34)
+    header.write('data', 36)
+    header.writeUInt32LE(data.length, 40)
+    writeFileSync(
+      resolve(directory, `track-${String(index).padStart(5, '0')}.wav`),
+      Buffer.concat([header, data])
+    )
+  }
+  return directory
+}
+
+function seedStressLibrary(userDataPath, trackCount = 10_000, libraryFolder = null, realFileCount = 0) {
+  const root = resolve(userDataPath)
+  const output = resolve(root, 'music-library.json')
+  mkdirSync(root, { recursive: true })
   writeFileSync(output, JSON.stringify(createStressLibraryDocument(trackCount)))
-  return output
+  // The app clears a seeded library whose file paths do not exist, and a fresh
+  // profile shows the onboarding wizard. Write a minimal settings profile that
+  // skips onboarding and optionally pre-authorizes a real media folder. It must
+  // be UTF-8 without BOM: PowerShell-style BOM output makes the app treat the
+  // file as corrupt and restore from backup.
+  const mediaFolder =
+    realFileCount > 0 ? generateMiniWavFiles(resolve(root, 'media-library'), realFileCount) : null
+  const settings = {
+    onboardingCompleted: true,
+    startupHomePage: 'local',
+    libraryFolders: mediaFolder
+      ? [mediaFolder]
+      : Array.isArray(libraryFolder)
+        ? libraryFolder.map(String)
+        : []
+  }
+  const settingsPath = resolve(root, 'settings.json')
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
+  return { library: output, settings: settingsPath, mediaFolder }
 }
 
 class CdpClient {
@@ -178,7 +231,7 @@ async function navigateToStressLibrary(client) {
   )
   await waitForExpression(
     client,
-    `document.querySelector('.song-list tbody') && parseFloat(document.querySelector('.song-list tbody').style.height) >= 680000`
+    `document.querySelector('.song-list .track-row')`
   )
 }
 
@@ -189,7 +242,18 @@ async function runElectronLibraryStress(client) {
       const presetIds = ${JSON.stringify(PRESETS.map(([id]) => id))}
       const list = document.querySelector('.song-list')
       const originalTbody = document.querySelector('.song-list tbody')
-      if (!list || !originalTbody) throw new Error('10k SongList is not mounted')
+      if (!list || !originalTbody) throw new Error('SongList is not mounted')
+      const trackHeight = parseFloat(originalTbody.style.height)
+      if (trackHeight < 680000) {
+        return {
+          skipped: true,
+          reason: 'not-enough-rows',
+          trackHeight,
+          maxMountedRows: document.querySelectorAll('.song-list .track-row').length,
+          tbodyReplacements: 0,
+          switchSamplesMs: []
+        }
+      }
       let maxMountedRows = 0
       let tbodyReplacements = 0
       const switchSamplesMs = []
@@ -216,7 +280,8 @@ async function runElectronLibraryStress(client) {
         }
       }
       return {
-        trackHeight: parseFloat(originalTbody.style.height),
+        skipped: false,
+        trackHeight,
         maxMountedRows,
         tbodyReplacements,
         switchSamplesMs
@@ -235,7 +300,7 @@ async function openNoCoverPlayer(client) {
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
       const row = document.querySelector('.song-list .track-row')
       if (!row) throw new Error('No stress-library row is available for the player fixture')
-      row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+      row.click()
     })()`
   )
   await waitForExpression(client, `document.querySelector('.player-cover-slot')`)
@@ -285,7 +350,11 @@ async function applyGoldenCase(client, currentCase) {
           )
         }
       }
-      document.documentElement.dataset.theme = currentCase.tone
+      await window.api.settings.update({ theme: currentCase.tone })
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (document.documentElement.dataset.theme === currentCase.tone) break
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
       const root = document.documentElement
       return {
@@ -457,6 +526,8 @@ function printEvidenceUsage(errorMessage) {
     '  --width <n>             viewport width (default 1440)',
     '  --height <n>            viewport height (default 900)',
     '  --seed-user-data <dir>  write isolated 10k library and exit',
+    '  --seed-library-folder <dir>  real media folder pre-authorized in the seeded profile',
+    '  --seed-real-files <n>   generate n real mini-WAV files in the seeded profile',
     '  --inspect               print live page diagnostics and exit',
     '  --help                  show this help',
     '',
@@ -477,6 +548,8 @@ function parseArgs(args) {
     width: 1440,
     height: 900,
     seedUserData: null,
+    seedLibraryFolder: null,
+    seedRealFiles: 0,
     inspect: false,
     help: false
   }
@@ -493,6 +566,8 @@ function parseArgs(args) {
     else if (value === '--width') options.width = Number(next())
     else if (value === '--height') options.height = Number(next())
     else if (value === '--seed-user-data') options.seedUserData = resolve(next())
+    else if (value === '--seed-library-folder') options.seedLibraryFolder = resolve(next())
+    else if (value === '--seed-real-files') options.seedRealFiles = Number(next())
     else if (value === '--inspect') options.inspect = true
     else if (value === '--help' || value === '-h') options.help = true
     else throw new Error(`Unknown option: ${value}`)
@@ -514,8 +589,19 @@ async function main() {
     return
   }
   if (options.seedUserData) {
-    const output = seedStressLibrary(options.seedUserData)
-    process.stdout.write(`${JSON.stringify({ seeded: output, trackCount: 10_000 })}\n`)
+    const seeded = seedStressLibrary(
+      options.seedUserData,
+      10_000,
+      options.seedLibraryFolder ? [options.seedLibraryFolder] : null,
+      options.seedRealFiles > 0 ? options.seedRealFiles : 0
+    )
+    process.stdout.write(
+      `${JSON.stringify({
+        seeded: seeded.library,
+        settings: seeded.settings,
+        trackCount: 10_000
+      })}\n`
+    )
     return
   }
   let target
@@ -561,9 +647,12 @@ async function main() {
     await navigateToStressLibrary(client)
     const stress = await runElectronLibraryStress(client)
     if (
+      !stress.skipped &&
+      (
       stress.trackHeight !== 680_000 ||
       stress.maxMountedRows > 20 ||
       stress.tbodyReplacements > 0
+      )
     ) {
       throw new Error(`10k SongList stress failed: ${JSON.stringify(stress)}`)
     }

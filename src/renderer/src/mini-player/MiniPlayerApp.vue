@@ -9,6 +9,7 @@ import {
   type MiniPlayerStateSnapshot
 } from '../../../shared/miniPlayer.ts'
 import MiniPlayerCustomizer from './MiniPlayerCustomizer.vue'
+import ScrollingText from './ScrollingText.vue'
 import {
   buildMiniPlayerCssVariables,
   resolveMiniPlayerLayout,
@@ -26,6 +27,9 @@ const ready = ref(false)
 const bootstrapError = ref('')
 const coverFailed = ref(false)
 const customizerOpen = ref(false)
+// Idle (cursor outside the window) shows the current lyric line; hovering the
+// UI switches back to track title / artist so controls stay usable.
+const hovered = ref(false)
 const viewportWidth = ref(Math.max(1, window.innerWidth))
 const viewportHeight = ref(Math.max(1, window.innerHeight))
 const motionPreference = ref<MotionPreference>('system')
@@ -111,6 +115,12 @@ const backgroundSourceStyle = computed<CSSProperties>(() => {
 const trackTitle = computed(() => state.value.track?.title || '暂无播放')
 const trackArtist = computed(() => state.value.track?.artist || '从主窗口选择一首音乐')
 const trackAlbum = computed(() => state.value.track?.album || 'TWILIGHT ECHO')
+// Older main-process snapshots omit the field entirely (undefined); treat that
+// as "no lyric" so the idle view never dereferences a missing line.
+const currentLyric = computed(() => state.value.currentLyric ?? null)
+const showLyric = computed(
+  () => !hovered.value && currentLyric.value !== null && Boolean(state.value.track)
+)
 const queuePositionText = computed(() =>
   state.value.queueLength > 0 && state.value.queueIndex >= 0
     ? `${state.value.queueIndex + 1} / ${state.value.queueLength}`
@@ -326,6 +336,8 @@ onBeforeUnmount(() => {
     :style="styleVariables"
     :data-layout="resolvedLayout"
     :data-theme-profile="settings.activeStyleId"
+    @mouseenter="hovered = true"
+    @mouseleave="hovered = false"
   >
     <div
       class="mini-window-fill"
@@ -374,9 +386,22 @@ onBeforeUnmount(() => {
       <div class="mini-player-content">
         <header class="mini-player-header">
           <div :key="`meta:${state.track?.id ?? 'empty'}`" class="mini-track-meta">
-            <div v-if="resolvedVisibility.album" class="mini-track-kicker">{{ trackAlbum }}</div>
-            <h1 :title="trackTitle">{{ trackTitle }}</h1>
-            <p :title="trackArtist">{{ trackArtist }}</p>
+            <div v-if="showLyric" class="mini-lyric-lines">
+              <ScrollingText
+                class="mini-lyric-line mini-lyric-original"
+                :text="currentLyric!.original"
+              />
+              <ScrollingText
+                v-if="currentLyric!.translation"
+                class="mini-lyric-line mini-lyric-translation"
+                :text="currentLyric!.translation"
+              />
+            </div>
+            <template v-else>
+              <div v-if="resolvedVisibility.album" class="mini-track-kicker">{{ trackAlbum }}</div>
+              <h1 :title="trackTitle"><ScrollingText :text="trackTitle" /></h1>
+              <p :title="trackArtist"><ScrollingText :text="trackArtist" /></p>
+            </template>
           </div>
 
           <div class="mini-window-actions mini-no-drag">

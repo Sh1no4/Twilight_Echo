@@ -34,8 +34,8 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   border-radius: 6px;
-  background: rgba(var(--te-primary-rgb), 0.08);
-  color: var(--te-settings-text-muted, #8a8f98);
+  background: color-mix(in srgb, var(--te-primary-500) 8%, transparent);
+  color: var(--te-settings-text-muted);
   font-size: 12px;
 }
 </style>

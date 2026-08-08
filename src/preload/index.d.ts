@@ -548,6 +548,7 @@ interface MiniPlayerTrackSnapshot {
 
 interface MiniPlayerStateSnapshot {
   track: MiniPlayerTrackSnapshot | null
+  currentLyric: { original: string; translation: string | null } | null
   isPlaying: boolean
   isLoading: boolean
   currentTime: number
@@ -1794,8 +1795,9 @@ interface WindowAPI {
       providerId: string,
       method: TwilightMediaProviderMethod,
       args: unknown[],
-      options?: { idempotencyKey?: string }
+      options?: { idempotencyKey?: string; requestId?: string }
     ) => Promise<unknown>
+    cancel: (requestId: string) => void
   }
   extensions: {
     list: () => Promise<TwilightPluginExtensionContribution[]>

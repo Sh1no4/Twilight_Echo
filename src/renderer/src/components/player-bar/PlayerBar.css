@@ -155,7 +155,7 @@
   background:
     linear-gradient(90deg, var(--accent-color, #3b82f6), var(--accent-color, #3b82f6)) 0 /
       var(--range-value, 70%) 100% no-repeat,
-    #2a3242;
+    rgba(255, 255, 255, 0.22);
 }
 
 .volume-drawer-slider::-webkit-slider-thumb {
@@ -893,6 +893,12 @@
 .player-bar-glass .icon-btn.active {
   color: var(--accent-color, #1a73e8);
   background: rgba(26, 115, 232, 0.15);
+}
+
+.player-bar-glass .ctrl-btn:active,
+.player-bar-glass .icon-btn:active,
+.player-bar-glass .mode-btn-right:active {
+  background: rgba(255, 255, 255, 0.16);
 }
 
 .player-bar-glass .progress-track {

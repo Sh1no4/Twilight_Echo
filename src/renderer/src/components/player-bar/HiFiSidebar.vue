@@ -2391,10 +2391,15 @@ html[data-theme='dark'] .deck .deck-card {
   height: 30px;
   border: 1px solid var(--d-line-strong);
   border-radius: 8px;
-  background: var(--d-well);
-  color: var(--d-ink);
+  background: var(--d-well) !important;
+  color: var(--d-ink) !important;
   font: inherit;
   padding: 0 7px;
+}
+
+.deck-lyric-source-controls select option {
+  background: var(--d-card) !important;
+  color: var(--d-ink) !important;
 }
 
 .deck-lyric-source-controls select:focus-visible,
@@ -2740,8 +2745,13 @@ html[data-theme='dark'] .deck .deck-card {
 }
 
 html[data-theme='dark'] .deck .deck-select option {
-  color: var(--d-ink);
-  background: var(--d-card);
+  color: var(--d-ink) !important;
+  background: var(--d-card) !important;
+}
+
+html[data-theme='dark'] .deck .deck-select {
+  background-color: var(--d-card) !important;
+  color: var(--d-ink) !important;
 }
 
 /* ===== 滑杆 ===== */
