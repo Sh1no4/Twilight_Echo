@@ -920,6 +920,65 @@ const api = {
     refreshAll: (): Promise<PodcastSubscriptionsDocument> =>
       ipcRenderer.invoke('podcast:refreshAll')
   },
+  networkSources: {
+    listProfiles: (): Promise<
+      import('../shared/networkSources.ts').NetworkSourceProfileSummary[]
+    > => ipcRenderer.invoke('networkSources:listProfiles'),
+    createProfile: (
+      input: import('../shared/networkSources.ts').NetworkSourceProfileInput
+    ): Promise<import('../shared/networkSources.ts').NetworkSourceProfileSummary> =>
+      ipcRenderer.invoke('networkSources:createProfile', input),
+    updateProfile: (
+      id: string,
+      patch: Partial<import('../shared/networkSources.ts').NetworkSourceProfileInput>
+    ): Promise<import('../shared/networkSources.ts').NetworkSourceProfileSummary> =>
+      ipcRenderer.invoke('networkSources:updateProfile', id, patch),
+    deleteProfile: (id: string): Promise<void> =>
+      ipcRenderer.invoke('networkSources:deleteProfile', id),
+    listDirectory: (
+      profileId: string,
+      remotePath: string
+    ): Promise<import('../shared/networkSources.ts').NetworkEntry[]> =>
+      ipcRenderer.invoke('networkSources:listDirectory', profileId, remotePath),
+    testConnection: (
+      profileId: string
+    ): Promise<{
+      ok: boolean
+      errorCode?: import('../shared/networkSources.ts').NetworkSourceErrorCode
+    }> => ipcRenderer.invoke('networkSources:testConnection', profileId),
+    resolvePlayback: (
+      profileId: string,
+      entry: import('../shared/networkSources.ts').NetworkEntry
+    ): Promise<import('../shared/networkSources.ts').NetworkPlaybackPlan> =>
+      ipcRenderer.invoke('networkSources:resolvePlayback', profileId, entry),
+    scanDirectory: (
+      profileId: string,
+      remotePath: string
+    ): Promise<{ added: number; total: number }> =>
+      ipcRenderer.invoke('networkSources:scanDirectory', profileId, remotePath),
+    listLibrary: (
+      profileId: string,
+      query?: string
+    ): Promise<import('../shared/networkSources.ts').NetworkEntry[]> =>
+      ipcRenderer.invoke('networkSources:listLibrary', profileId, query),
+    removeLibraryEntry: (profileId: string, entryId: string): Promise<void> =>
+      ipcRenderer.invoke('networkSources:removeLibraryEntry', profileId, entryId),
+    enrichLibrary: (profileId: string): Promise<{ enriched: number; failed: number }> =>
+      ipcRenderer.invoke('networkSources:enrichLibrary', profileId),
+    cacheInfo: (): Promise<{ sizeBytes: number }> => ipcRenderer.invoke('networkSources:cacheInfo'),
+    clearCache: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('networkSources:clearCache'),
+    searchLibrary: (
+      query?: string
+    ): Promise<
+      Array<{
+        profileId: string
+        profileName: string
+        entry: import('../shared/networkSources.ts').NetworkEntry
+      }>
+    > => ipcRenderer.invoke('networkSources:searchLibrary', query),
+    coverDataUrl: (profileId: string, entryId: string): Promise<string | null> =>
+      ipcRenderer.invoke('networkSources:coverDataUrl', profileId, entryId)
+  },
   remote: {
     getStatus: (): Promise<import('../shared/remoteControl.ts').RemoteControlStatus> =>
       ipcRenderer.invoke('remote:getStatus'),
@@ -1153,8 +1212,12 @@ const api = {
       providerId: string,
       method: TwilightMediaProviderMethod,
       args: unknown[],
-      options?: { idempotencyKey?: string }
+      options?: { idempotencyKey?: string; requestId?: string }
     ): Promise<unknown> => {
+      const ipcOptions = {
+        ...(options?.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : {}),
+        ...(options?.requestId ? { requestId: options.requestId } : {})
+      }
       const lease = providerWriteIdempotency.begin(
         providerId,
         method,
@@ -1163,7 +1226,7 @@ const api = {
       )
       try {
         const value = await ipcRenderer.invoke('providers:call', providerId, method, args, {
-          ...options,
+          ...ipcOptions,
           ...(lease.idempotencyKey ? { idempotencyKey: lease.idempotencyKey } : {})
         })
         lease.settle(true)
@@ -1172,6 +1235,9 @@ const api = {
         lease.settle(false)
         throw error
       }
+    },
+    cancel: (requestId: string): void => {
+      ipcRenderer.send('providers:cancel', requestId)
     }
   },
   providerDownloads: {
@@ -1248,7 +1314,11 @@ const api = {
     }
   },
   miniPlayer: miniPlayerHostApi,
-  trayPlayer: trayPlayerWindowApi
+  trayPlayer: trayPlayerWindowApi,
+  debug: {
+    appendNativeTrace: (message: string): Promise<void> =>
+      ipcRenderer.invoke('debug:appendNativeTrace', message)
+  }
 }
 
 // Cover display in the mini player window goes through the shared coverLoader,

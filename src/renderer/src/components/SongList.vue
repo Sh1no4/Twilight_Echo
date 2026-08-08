@@ -575,7 +575,29 @@ function onRowDblClick(track: Track, event: MouseEvent): void {
   if (target.closest('.btn-remove') || target.closest('.track-select-checkbox')) return
   if (multiSelect.shouldSuppressRowDoubleClick(event)) return
   if (settingsStore.settings.value.trackActivationMode !== 'doubleClick') return
+  if (track.source === 'network') {
+    void playNetworkTrack(track)
+    return
+  }
   playTrack(track, displayTracks.value)
+}
+
+async function playNetworkTrack(track: Track): Promise<void> {
+  const network = track.networkSource
+  if (!network || !window.api?.networkSources) return
+  try {
+    const plan = await window.api.networkSources.resolvePlayback(
+      network.profileId,
+      network.entry
+    )
+    const resolved: Track = {
+      ...track,
+      filePath: plan.kind === 'direct-url' ? plan.url ?? '' : plan.cacheFilePath ?? ''
+    }
+    playTrack(resolved, [resolved])
+  } catch (err) {
+    unifiedSearch.error.value = `网络源播放失败：${err instanceof Error ? err.message : String(err)}`
+  }
 }
 
 function playAllTracks(): void {
@@ -875,6 +897,10 @@ function onRowClick(track: Track, indexInVisible: number, event: MouseEvent): vo
   const index = absoluteIndex(indexInVisible)
   const result = multiSelect.onRowClick(track, index, event)
   if (result !== 'play') return
+  if (track.source === 'network') {
+    void playNetworkTrack(track)
+    return
+  }
   if (settingsStore.settings.value.trackActivationMode === 'doubleClick') return
   playTrack(track, displayTracks.value)
 }
@@ -1707,6 +1733,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                         :value="libraryViewState.sortKey"
                         @change="setSortKey(($event.target as HTMLSelectElement).value)"
                       >
+                        <option value="playlist">歌单顺序</option>
                         <option value="title">标题</option>
                         <option value="artist">歌手</option>
                         <option value="album">专辑</option>

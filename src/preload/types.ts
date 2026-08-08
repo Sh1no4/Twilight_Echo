@@ -147,7 +147,7 @@ export interface AudioEngineServiceReadyEvent {
 }
 export type AudioEngineServiceReadyCallback = (event: AudioEngineServiceReadyEvent) => void
 export type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
-export type PlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle'
+export type PlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle' | 'heart'
 export type PlayerShortcutAction =
   | 'previous'
   | 'next'
@@ -394,6 +394,7 @@ export type TwilightMediaProviderMethod =
   | 'fetchUserFolloweds'
   | 'fetchPlayRecords'
   | 'fetchRecentSongs'
+  | 'fetchIntelligenceList'
   | 'followArtist'
   | 'followUser'
   | 'likeTrack'
@@ -879,6 +880,7 @@ export interface SettingsSnapshot extends AppSettings {
   }
   appVersion: string
   platform: string
+  windowTransparencySupported: boolean
   restartRequired: boolean
   restartReasons: string[]
 }

@@ -588,6 +588,43 @@ button.primary {
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 12px;
 }
+
+@media (max-width: 900px) {
+  .station-grid {
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 10px;
+  }
+
+  .station-card {
+    padding: 12px;
+    min-height: 108px;
+  }
+
+  .station-main strong {
+    font-size: 13px;
+  }
+
+  .station-main small {
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 640px) {
+  .station-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .station-card {
+    padding: 12px;
+    min-height: 0;
+  }
+
+  .station-actions button {
+    padding: 7px 10px;
+    font-size: 12px;
+  }
+}
 .station-card {
   display: flex;
   flex-direction: column;

@@ -104,7 +104,7 @@ export const DEFAULT_LYRICS_TEXT_STYLES: Record<LyricsStyleTarget, LyricsTextSty
   active: {
     fontFamily: 'inherit',
     customFontFamily: '',
-    fontSize: 25,
+    fontSize: 18,
     fontWeight: 600,
     lineHeight: 1.65,
     align: 'center',
@@ -121,7 +121,7 @@ export const DEFAULT_LYRICS_TEXT_STYLES: Record<LyricsStyleTarget, LyricsTextSty
   translation: {
     fontFamily: 'inherit',
     customFontFamily: '',
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: 500,
     lineHeight: 1.45,
     align: 'center',
@@ -254,7 +254,7 @@ function migrateLegacyStyles(
     active: {
       ...DEFAULT_LYRICS_TEXT_STYLES.active,
       fontFamily,
-      fontSize: Math.min(48, fontSize + 7),
+      fontSize,
       fontWeight,
       align,
       colorMode,
@@ -264,7 +264,7 @@ function migrateLegacyStyles(
     translation: {
       ...DEFAULT_LYRICS_TEXT_STYLES.translation,
       fontFamily,
-      fontSize: Math.max(12, fontSize - 2),
+      fontSize,
       align,
       colorMode,
       color: textColor
@@ -322,6 +322,21 @@ export function normalizeLyricsAppearance(
       ? (value.styles as Record<string, unknown>)
       : {}
   const migrateLegacyDefaultGlow = value.schemaVersion !== LYRICS_APPEARANCE_SCHEMA_VERSION
+  const normalStyle = normalizeTextStyle(
+    stylesValue.normal,
+    migratedStyles.normal,
+    migrateLegacyDefaultGlow
+  )
+  const activeStyle = normalizeTextStyle(
+    stylesValue.active,
+    migratedStyles.active,
+    migrateLegacyDefaultGlow
+  )
+  const translationStyle = normalizeTextStyle(
+    stylesValue.translation,
+    migratedStyles.translation,
+    migrateLegacyDefaultGlow
+  )
 
   return {
     schemaVersion: LYRICS_APPEARANCE_SCHEMA_VERSION,
@@ -349,21 +364,12 @@ export function normalizeLyricsAppearance(
     karaokeColor,
     karaokeEnabled: value.karaokeEnabled !== false,
     styles: {
-      normal: normalizeTextStyle(
-        stylesValue.normal,
-        migratedStyles.normal,
-        migrateLegacyDefaultGlow
-      ),
-      active: normalizeTextStyle(
-        stylesValue.active,
-        migratedStyles.active,
-        migrateLegacyDefaultGlow
-      ),
-      translation: normalizeTextStyle(
-        stylesValue.translation,
-        migratedStyles.translation,
-        migrateLegacyDefaultGlow
-      )
+      // Font size is a single playback-wide preference. Keep style-specific
+      // color, weight, and effects while preventing state changes from
+      // silently changing the text size.
+      normal: { ...normalStyle, fontSize },
+      active: { ...activeStyle, fontSize },
+      translation: { ...translationStyle, fontSize }
     }
   }
 }
@@ -393,8 +399,8 @@ export function syncLegacyLyricsAppearance(
   }
   if (patch.fontSize !== undefined) {
     next.styles.normal.fontSize = patch.fontSize
-    next.styles.active.fontSize = Math.min(48, patch.fontSize + 7)
-    next.styles.translation.fontSize = Math.max(12, patch.fontSize - 2)
+    next.styles.active.fontSize = patch.fontSize
+    next.styles.translation.fontSize = patch.fontSize
   }
   if (patch.fontWeight !== undefined) {
     next.styles.normal.fontWeight = patch.fontWeight

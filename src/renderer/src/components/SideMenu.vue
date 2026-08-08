@@ -18,6 +18,7 @@ const emit = defineEmits<{
   selectPluginPage: [page: UiContribution]
   enterStreaming: []
   enterRadioPodcast: []
+  enterNetworkSources: []
 }>()
 
 interface MenuItem {
@@ -140,6 +141,15 @@ function handleImportClick(): void {
         >
           <ThemeIcon class="item-icon" icon-slot="navigation.radio" />
           <span class="item-label">电台 / 播客</span>
+        </button>
+        <button
+          type="button"
+          class="menu-item menu-item-network"
+          title="网络源"
+          @click="emit('enterNetworkSources')"
+        >
+          <i class="item-icon pi pi-server"></i>
+          <span class="item-label">网络源</span>
         </button>
         <button
           type="button"

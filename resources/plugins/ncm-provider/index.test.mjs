@@ -831,6 +831,142 @@ test('liked tracks fall back to likelist when playlist endpoints fail', async ()
   }
 })
 
+test('liked playlist page order survives the raw likelist refresh', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname === '/login/status') {
+      return {
+        code: 200,
+        data: {
+          code: 200,
+          profile: {
+            userId: 42,
+            nickname: 'listener',
+            avatarUrl: 'avatar.jpg',
+            signature: ''
+          }
+        }
+      }
+    }
+    if (url.pathname === '/user/playlist') {
+      return {
+        playlist: [
+          {
+            id: 9001,
+            name: 'Liked Music',
+            specialType: 5,
+            trackCount: 3,
+            coverImgUrl: 'cover.jpg'
+          }
+        ]
+      }
+    }
+    // The liked playlist detail is authoritative: newest liked first.
+    if (url.pathname === '/playlist/detail') {
+      return { playlist: { trackIds: [{ id: 1 }, { id: 2 }, { id: 3 }] } }
+    }
+    // /likelist returns the same songs in a different (liked-history) order.
+    if (url.pathname === '/likelist') {
+      return { ids: [3, 2, 1] }
+    }
+    if (url.pathname === '/song/detail') {
+      return { songs: [song(1), song(2), song(3)] }
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    const firstPage = await provider.fetchLikedTracksPage(0, 100, false)
+    assert.deepEqual(
+      firstPage.tracks.map((track) => track.ncmSongId),
+      [1, 2, 3],
+      'playlist page must follow the liked playlist detail order'
+    )
+
+    // A like-state check triggers the raw /likelist refresh on a different order.
+    assert.equal(await provider.isTrackLiked(2), true)
+    assert.ok(requests.some((path) => parseRequest(path).pathname === '/likelist'))
+
+    const secondPage = await provider.fetchLikedTracksPage(0, 100, false)
+    assert.deepEqual(
+      secondPage.tracks.map((track) => track.ncmSongId),
+      [1, 2, 3],
+      'raw likelist refresh must not scramble the liked playlist page order'
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('fetchIntelligenceList calls the smart playback endpoint and normalizes songs', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname === '/playmode/intelligence/list') {
+      return {
+        code: 200,
+        data: [
+          { id: 501, alg: 'alg-501', recommended: true, songInfo: song(501) },
+          { id: 502, alg: 'alg-502', recommended: true, songInfo: song(502) },
+          // 个别推荐条目没有元数据，应被跳过而不是产出无标题曲目。
+          { id: 503, alg: 'alg-503', recommended: false, songInfo: null }
+        ]
+      }
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    const tracks = await provider.fetchIntelligenceList({
+      songId: 501,
+      playlistId: 42,
+      startSongId: 501,
+      count: 10
+    })
+    assert.deepEqual(
+      tracks.map((track) => track.ncmSongId),
+      [501, 502]
+    )
+    assert.equal(tracks[0].title, 'song-501')
+    assert.equal(tracks[0].artist, 'artist')
+    assert.equal(tracks[0].album, 'album-501')
+    const match = requests
+      .map((path) => parseRequest(path))
+      .find((url) => url.pathname === '/playmode/intelligence/list')
+    assert.ok(match)
+    assert.equal(match.searchParams.get('id'), '501')
+    assert.equal(match.searchParams.get('pid'), '42')
+    assert.equal(match.searchParams.get('sid'), '501')
+    assert.equal(match.searchParams.get('count'), '10')
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('fetchIntelligenceList rejects invalid ids and requires a login cookie', async () => {
+  const provider = await activateProvider(async (path) => {
+    throw new Error(`unexpected endpoint: ${path}`)
+  })
+  try {
+    await assert.rejects(
+      provider.fetchIntelligenceList({ songId: 0, playlistId: 42 }),
+      /心动模式需要有效的歌曲 ID 与歌单 ID/
+    )
+    const anonymous = await activateProvider(async (path) => {
+      throw new Error(`unexpected endpoint: ${path}`)
+    }, new Map())
+    await assert.rejects(
+      anonymous.fetchIntelligenceList({ songId: 501, playlistId: 42 }),
+      /请先登录网易云音乐/
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
 test('liked song detail requests split into smaller chunks after transient failures', async () => {
   const ids = Array.from({ length: 30 }, (_, index) => index + 1)
   const detailBatchSizes = []
@@ -1394,7 +1530,7 @@ test('completed provider writes survive a built-in provider restart without repl
     }, settings)
     await provider.likeTrack(42, true, context)
     assert.equal(requests.length, 1)
-    assert.equal(provider.isTrackLiked(42), true)
+    assert.equal(await provider.isTrackLiked(42), true)
   } finally {
     ncmProvider.deactivate()
   }
@@ -1425,8 +1561,147 @@ test('aborted writes forward the signal and never mutate the local liked state',
     controller.abort(new Error('caller cancelled the write'))
     releaseRequest()
     await assert.rejects(pending, /caller cancelled the write/)
-    assert.equal(provider.isTrackLiked(42), false)
+    assert.equal(await provider.isTrackLiked(42), false)
   } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('isTrackLiked refreshes the liked set from likelist with a short TTL cache', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname === '/login/status') {
+      return {
+        code: 200,
+        data: {
+          code: 200,
+          profile: { userId: 42, nickname: 'listener', avatarUrl: 'a.jpg', signature: '' }
+        }
+      }
+    }
+    if (url.pathname === '/likelist') {
+      return { ids: [1, 2, 3] }
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    // 首次查询会从云端 likelist 拉取权威喜欢集合。
+    assert.equal(await provider.isTrackLiked(2), true)
+    assert.equal(await provider.isTrackLiked(99), false)
+    assert.equal(
+      requests.filter((path) => parseRequest(path).pathname === '/likelist').length,
+      1,
+      'TTL 内第二次查询不应重复拉取 likelist'
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('isTrackLiked falls back to the cached liked set when likelist refresh fails', async () => {
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    if (url.pathname === '/likelist') {
+      throw new Error('network down')
+    }
+    if (url.pathname === '/login/status') {
+      return {
+        code: 200,
+        data: {
+          code: 200,
+          profile: { userId: 42, nickname: 'listener', avatarUrl: 'a.jpg', signature: '' }
+        }
+      }
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    // 云端刷新失败时回退到本地缓存集合（空集合 -> 未喜欢）。
+    assert.equal(await provider.isTrackLiked(7), false)
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('in-flight liked refresh cannot overwrite a completed local like', async () => {
+  let releaseRefresh
+  let refreshStarted
+  const refreshGate = new Promise((resolve) => {
+    releaseRefresh = resolve
+  })
+  const refreshStartedGate = new Promise((resolve) => {
+    refreshStarted = resolve
+  })
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    if (url.pathname === '/login/status') {
+      return {
+        code: 200,
+        data: {
+          code: 200,
+          profile: { userId: 42, nickname: 'listener', avatarUrl: 'a.jpg', signature: '' }
+        }
+      }
+    }
+    if (url.pathname === '/likelist') {
+      refreshStarted()
+      await refreshGate
+      return { ids: [] }
+    }
+    if (url.pathname === '/like') return { code: 200 }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    const pendingRefresh = provider.isTrackLiked(7)
+    await refreshStartedGate
+    await provider.likeTrack(7, true)
+    releaseRefresh()
+    await pendingRefresh
+    assert.equal(await provider.isTrackLiked(7), true)
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('liked refresh retries after the backoff window instead of extending the TTL', async () => {
+  const realNow = Date.now
+  let now = 1_000_000
+  Date.now = () => now
+  let likelistRequests = 0
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    if (url.pathname === '/login/status') {
+      return {
+        code: 200,
+        data: {
+          code: 200,
+          profile: { userId: 42, nickname: 'listener', avatarUrl: 'a.jpg', signature: '' }
+        }
+      }
+    }
+    if (url.pathname === '/likelist') {
+      likelistRequests += 1
+      throw new Error('network down')
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    await provider.isTrackLiked(7)
+    const firstRequestCount = likelistRequests
+    now += 15_000 - 1
+    await provider.isTrackLiked(7)
+    assert.equal(likelistRequests, firstRequestCount)
+    now += 1
+    await provider.isTrackLiked(7)
+    assert.ok(likelistRequests > firstRequestCount)
+  } finally {
+    Date.now = realNow
     ncmProvider.deactivate()
   }
 })
@@ -1697,6 +1972,63 @@ test('lyrics search and lookup work without a NetEase login', async () => {
     assert.equal(search.items[0].id, 'ncm:77')
     assert.equal(lyrics.translatedLyrics, '[00:01.00]Translation')
     assert.ok(cookies.every((cookie) => !cookie))
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('lyrics lookup retries a transient lyric endpoint failure', async () => {
+  let lyricRequests = 0
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    if (url.pathname !== '/lyric/new') throw new Error(`unexpected endpoint: ${url.pathname}`)
+    lyricRequests += 1
+    if (lyricRequests === 1) throw new Error('fetch failed')
+    return { lrc: { lyric: '[00:01.00]Recovered lyric' } }
+  }, new Map())
+
+  try {
+    const lyrics = await provider.getLyrics({ id: 'ncm:88', filePath: 'ncm:88', source: 'ncm' })
+    assert.equal(lyricRequests, 2)
+    assert.equal(lyrics.lyrics, '[00:01.00]Recovered lyric')
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('lyrics lookup falls back to the legacy endpoint when lyric/new fails', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    requests.push(url.pathname)
+    if (url.pathname === '/lyric/new') throw new Error('lyric/new endpoint unavailable')
+    if (url.pathname === '/lyric') return { lrc: { lyric: '[00:01.00]Legacy lyric' } }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  }, new Map())
+
+  try {
+    const lyrics = await provider.getLyrics({ id: 'ncm:89', filePath: 'ncm:89', source: 'ncm' })
+    assert.equal(lyrics.lyrics, '[00:01.00]Legacy lyric')
+    assert.deepEqual(requests, ['/lyric/new', '/lyric'])
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('lyrics lookup preserves a business error when both lyric endpoints fail', async () => {
+  const provider = await activateProvider(async (path) => {
+    const endpoint = parseRequest(path).pathname
+    if (endpoint === '/lyric/new' || endpoint === '/lyric') {
+      return { code: 460, message: 'risk control' }
+    }
+    throw new Error(`unexpected endpoint: ${endpoint}`)
+  }, new Map())
+
+  try {
+    await assert.rejects(
+      provider.getLyrics({ id: 'ncm:90', filePath: 'ncm:90', source: 'ncm' }),
+      /NetEase code 460/
+    )
   } finally {
     ncmProvider.deactivate()
   }

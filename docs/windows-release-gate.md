@@ -65,6 +65,7 @@ pnpm run audit:production -- --output output/release-evidence/production-depende
 pnpm run test:plugins
 pnpm run test:audio-manager
 pnpm run test:radio-remote
+pnpm run test:network-sources
 pnpm run test:tag-duplicate-management
 pnpm run test:duplicate-detection-benchmark
 pnpm run benchmark:duplicate-detection:ci -- --output output/release-evidence/duplicate-detection-benchmark.json --manifest output/release-evidence/duplicate-detection-benchmark.manifest.json
@@ -101,11 +102,14 @@ in parallel with other performance gates. All three commands are part of `test:n
 fallback, podcast parsing/persistence, remote-control authentication, UPnP/Chromecast discovery and
 control, media-token authorization, and renderer cover handles. `test:themes` validates the theme
 token contract, archive preflight, scheduling, plugin runtime integration, and large-list switching.
+`test:network-sources` covers network source profile persistence, path validation, directory
+traversal, metadata/cache behavior, and the FTP/SFTP/SMB/WebDAV/NFS/DLNA adapter matrix.
 
 `test:playlist-lifecycle` drives the production SongList lifecycle composable through a real
 Electron/Vue/Pinia DOM. It covers all three export downloads, pre-read import limits, visible
 import/cover feedback, rename/copy/reorder/batch move/unique relocation, and authoritative CAS
-conflict recovery. `test:lyrics-management` covers import and save-dialog validation, atomic LRC replacement and backup
+conflict recovery. `test:lyrics-management` covers import and save-dialog validation, strict
+lyrics-encoding detection (UTF-8 BOM / UTF-8 / GBK / GB18030), atomic LRC replacement and backup
 recovery, versioned CAS persistence, source-selection races, manual three-track projection, and the
 real Electron/Vue lyrics-management UI. Both scripts are part of `test:no-real-device`; the Ubuntu
 required job runs their Electron UI tests under an explicitly installed `xvfb`/`xauth` virtual display.
@@ -205,14 +209,16 @@ SHA-256 in the GitHub Release body.
 
 The gate checks every shipped DLL/EXE/NODE file under the packaged audio-engine directory for a
 non-zero size and a size budget. It additionally checks each required self-built native runtime
-binary for stripped PE debug/COFF metadata. Windows development and release packaging invoke GNU/LLVM
+binary for stripped PE debug/COFF metadata. The audio DLL and Node addon are always required; the
+VST3 helper executables are optional and are stripped and checked only when a release staged them
+(the app disables the VST3 host at runtime when they are absent). Windows development and release packaging invoke GNU/LLVM
 `strip --strip-all` only on the copied package payload at
 `win-unpacked/resources/audio-engine`; they never alter `resources/audio-engine` in the source tree.
 Set `W64DEVKIT_ROOT` or `TWILIGHT_RELEASE_STRIP` so the packaging wrapper can locate `strip.exe`.
 The release gate deliberately fails when the strip tool is absent. It does not create or simulate a
 signature, and release notes must disclose that Windows may show SmartScreen warnings.
 Current budgets are 192 MiB for the audio DLL, 16 MiB for the Node addon, 32 MiB for each VST3 host
-executable, 64 MiB for any other shipped native DLL/EXE/NODE, and 384 MiB for the installer.
+executable when staged, 64 MiB for any other shipped native DLL/EXE/NODE, and 384 MiB for the installer.
 Microsoft VC runtimes are size-checked but are not stripped.
 
 `pnpm run test:release-artifacts` validates this policy and its failure paths without needing a

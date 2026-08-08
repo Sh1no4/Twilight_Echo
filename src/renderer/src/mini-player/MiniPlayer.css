@@ -269,6 +269,7 @@ html[data-te-motion='full'] .mini-artwork-wrap {
 }
 
 .mini-track-meta {
+  flex: 1 1 auto;
   align-self: center;
   min-width: 0;
   padding: 1px 0 0 1px;
@@ -286,7 +287,6 @@ html[data-te-motion='full'] .mini-track-meta {
 }
 
 .mini-track-kicker {
-  max-width: 170px;
   margin-bottom: 3px;
   overflow: hidden;
   color: var(--mini-muted);
@@ -301,28 +301,46 @@ html[data-te-motion='full'] .mini-track-meta {
 }
 
 .mini-track-meta h1 {
-  max-width: 210px;
-  overflow: hidden;
   color: var(--mini-text);
   font-size: 16px;
   font-weight: 900;
   line-height: 1.25;
   letter-spacing: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .mini-track-meta p {
-  max-width: 210px;
   margin-top: 3px;
-  overflow: hidden;
   color: var(--mini-muted);
   font-size: 11px;
   font-weight: 650;
   line-height: 1.25;
   letter-spacing: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.mini-lyric-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.mini-lyric-line {
+  display: block;
+  min-width: 0;
+}
+
+.mini-lyric-original {
+  color: var(--mini-text);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.mini-lyric-translation {
+  color: var(--mini-muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.3;
 }
 
 .mini-window-actions {
@@ -609,11 +627,6 @@ html[data-te-motion='full'] .mini-play-button.is-playing {
 .mini-player-root[data-layout='compact'] .mini-tool-button {
   width: 25px;
   height: 25px;
-}
-
-.mini-player-root[data-layout='compact'] .mini-track-meta h1,
-.mini-player-root[data-layout='compact'] .mini-track-meta p {
-  max-width: 92px;
 }
 
 .mini-player-root[data-layout='compact'] .mini-track-meta h1 {

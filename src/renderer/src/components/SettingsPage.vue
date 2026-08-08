@@ -184,6 +184,7 @@ const {
   formattedLoudnessAnalysisCacheSize,
   restartRequired,
   restartReasons,
+  windowTransparencySupported,
   lastSettingsError,
   loadSettings,
   updateSettings,
@@ -203,6 +204,11 @@ const {
   addLibraryFolder,
   removeLibraryFolder
 } = useSettingsStore()
+
+const transparencyUnsupported = computed(
+  () => settings.value.windowTransparency === true && windowTransparencySupported.value === false
+)
+const transparencySupported = computed(() => windowTransparencySupported.value === true)
 
 const audioOutputDspStore = useAudioOutputDspStore()
 const playbackQueueStore = usePlayerStore()
@@ -679,6 +685,10 @@ function setProxyPort(event: Event): void {
 }
 
 function toggleSetting(key: BooleanSettingKey): void {
+  if (key === 'windowTransparency' && !windowTransparencySupported.value) {
+    settingsNotice.value = '当前系统不支持窗口透明（Linux Wayland，或 Windows 未开启系统透明效果），已自动使用不透明窗口。'
+    return
+  }
   void updateSettings({ [key]: !settings.value[key] } as Partial<AppSettings>)
   if (key === 'remoteControlEnabled') {
     void refreshRemoteStatus()
@@ -4029,21 +4039,26 @@ onBeforeUnmount(() => {
                 <strong>窗口透明</strong>
                 <span
                   >让窗口底层透明，显示系统模糊效果（Windows 11 22H2+ 使用原生亚克力模糊；Linux
-                  需合成器支持，如 niri / Hyprland / KWin）。更改后需重启。</span
+                  X11 需合成器支持，如 KWin / picom；Linux Wayland、以及 Windows 未开启系统透明效果时暂不支持）。更改后需重启。</span
                 >
               </div>
               <span
                 class="toggle-switch"
                 :class="{
                   active: settings.windowTransparency,
-                  inactive: !settings.windowTransparency
+                  inactive: !settings.windowTransparency,
+                  disabled: !transparencySupported
                 }"
                 role="switch"
                 :aria-checked="settings.windowTransparency"
+                :aria-disabled="!transparencySupported"
                 @click="toggleSetting('windowTransparency')"
               ></span>
             </div>
-            <template v-if="settings.windowTransparency">
+            <div v-if="transparencyUnsupported" class="settings-inline-warning" role="status">
+              当前系统不支持透明窗口（Linux Wayland，或 Windows 未开启系统透明效果），已自动回退为不透明窗口，应用仍可正常使用。
+            </div>
+            <template v-if="settings.windowTransparency && transparencySupported">
               <hr />
               <div class="setting-item">
                 <div class="setting-copy">
@@ -5779,7 +5794,7 @@ html[data-theme='dark'] .settings-preview-page {
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
-  color: rgba(248, 250, 252, 0.95);
+  color: var(--te-text);
 }
 
 html[data-theme='dark'] .settings-preview-page::-webkit-scrollbar-thumb {
@@ -5791,14 +5806,14 @@ html[data-theme='dark'] .settings-preview-page::-webkit-scrollbar-thumb:hover {
 }
 
 html[data-theme='dark'] .settings-preview-page .preview-nav-item {
-  color: rgba(148, 163, 184, 0.86);
+  color: var(--te-text-muted);
 }
 
 html[data-theme='dark'] .settings-preview-page .preview-nav-item:hover,
 html[data-theme='dark'] .settings-preview-page .preview-nav-item.active {
   border-color: rgba(var(--te-primary-rgb), 0.28);
   background: var(--te-card-bg);
-  color: rgba(248, 250, 252, 0.95);
+  color: var(--te-text);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
 }
 
@@ -5830,7 +5845,6 @@ html[data-theme='dark'] .settings-preview-page .page-background-row,
 html[data-theme='dark'] .settings-preview-page .page-background-row.expanded,
 html[data-theme='dark'] .settings-preview-page .inherit-toggle,
 html[data-theme='dark'] .settings-preview-page .pill-action.ghost,
-html[data-theme='dark'] .settings-preview-page .dashed-button,
 html[data-theme='dark'] .settings-preview-page .settings-search-box,
 html[data-theme='dark'] .settings-preview-page .settings-nav-search,
 html[data-theme='dark'] .settings-preview-page .shortcut-status-row,
@@ -5897,7 +5911,7 @@ html[data-theme='dark'] .settings-preview-page .segmented-control button.active,
 html[data-theme='dark'] .settings-preview-page .theme-segment button.active,
 html[data-theme='dark'] .settings-preview-page .background-kind-toggle button.active {
   background: var(--te-card-bg);
-  color: rgba(248, 250, 252, 0.95);
+  color: var(--te-text);
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.22);
 }
 
@@ -5978,7 +5992,7 @@ html[data-theme='dark'] .settings-preview-page .background-editor-head strong,
 html[data-theme='dark'] .settings-preview-page .page-background-copy strong,
 html[data-theme='dark'] .settings-preview-page .signal-node.active .signal-node-name,
 html[data-theme='dark'] .settings-preview-page .shortcut-status-row span {
-  color: rgba(248, 250, 252, 0.95);
+  color: var(--te-text);
 }
 
 html[data-theme='dark'] .settings-preview-page .setting-copy span,
@@ -6046,11 +6060,18 @@ html[data-theme='dark'] .settings-preview-page .muted-button,
 html[data-theme='dark'] .settings-preview-page .soft-button,
 html[data-theme='dark'] .settings-preview-page .icon-button,
 html[data-theme='dark'] .settings-preview-page .brand-soft-button,
-html[data-theme='dark'] .settings-preview-page .inherit-toggle {
+html[data-theme='dark'] .settings-preview-page .inherit-toggle,
+html[data-theme='dark'] .settings-preview-page .dashed-button,
+html[data-theme='dark'] .settings-preview-page .folder-empty-hint {
   border-color: var(--te-card-border);
-  background: var(--te-subtle-bg);
+  background: var(--te-card-bg);
   color: rgba(203, 213, 225, 0.9);
   box-shadow: none;
+}
+
+html[data-theme='dark'] .settings-preview-page .folder-empty-hint {
+  border: 1px dashed var(--te-card-border);
+  border-radius: 12px;
 }
 
 html[data-theme='dark'] .settings-preview-page .inherit-toggle.active {

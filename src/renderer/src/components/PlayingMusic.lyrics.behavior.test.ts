@@ -134,19 +134,24 @@ function expect(condition, message) {
 }
 
 window.runPlayingLyricWordsRuntime = async () => {
-  const currentTime = ref(1)
+  const snapshot = ref({ epoch: 1, revision: 0, position: 1 })
   const isPlaying = ref(false)
-  const playbackRate = ref(1)
-  const reachedLineTimes = []
-  const clock = { currentTime, isPlaying, playbackRate }
+  let anchorAt = performance.now()
+  const setPosition = (position) => {
+    snapshot.value = { ...snapshot.value, position, revision: snapshot.value.revision + 1 }
+    anchorAt = performance.now()
+  }
+  const clock = {
+    snapshot,
+    isPlaying,
+    positionAt: () => snapshot.value.position + (isPlaying.value ? (performance.now() - anchorAt) * 0.001 : 0)
+  }
   createApp({
     render: () => h(PlayingLyricWords, {
       active: true,
       karaokeEnabled: true,
       offsetSeconds: 0,
-      nextLineTime: 3,
       clock,
-      onReachNextLine: (time) => reachedLineTimes.push(time),
       words: [
         { time: 1, endTime: 2, text: 'Null.' },
         { time: 2, endTime: 3, text: 'No light' }
@@ -167,7 +172,7 @@ window.runPlayingLyricWordsRuntime = async () => {
     firstWord.style.getPropertyValue('--lyric-word-highlight-opacity') === '0',
     'zero-progress karaoke highlight retained an antialiased edge'
   )
-  currentTime.value = 1.5
+  setPosition(1.5)
   await nextTick()
   expect(
     firstWord.style.getPropertyValue('--lyric-word-progress') === '50%',
@@ -189,7 +194,7 @@ window.runPlayingLyricWordsRuntime = async () => {
   )
   isPlaying.value = false
   await nextTick()
-  currentTime.value = 2
+  setPosition(2)
   await nextTick()
   expect(
     firstWord.style.getPropertyValue('--lyric-word-progress') === '100%',
@@ -200,14 +205,6 @@ window.runPlayingLyricWordsRuntime = async () => {
     'karaoke sweep skipped ahead of playback order'
   )
   expect(!document.querySelector('.lyric-word--active'), 'karaoke sweep singled out a completed word')
-  currentTime.value = 2.95
-  isPlaying.value = true
-  await nextTick()
-  await new Promise((resolve) => setTimeout(resolve, 150))
-  expect(
-    reachedLineTimes.some((time) => time >= 3),
-    'karaoke clock did not signal the next lyric line boundary'
-  )
   const disabledRoot = document.createElement('div')
   document.body.appendChild(disabledRoot)
   createApp({
@@ -215,7 +212,6 @@ window.runPlayingLyricWordsRuntime = async () => {
       active: true,
       karaokeEnabled: false,
       offsetSeconds: 0,
-      nextLineTime: 3,
       clock,
       words: [
         { time: 1, endTime: 2, text: 'Null.' },
@@ -498,6 +494,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
   player.currentTime.value = 0
   player.duration.value = 180
   player.isPlaying.value = true
+  player.seek(0)
   await tick()
   player.isLoading.value = true
   window.__audioFixture.emitProperty('time-pos', 0.25)
@@ -519,6 +516,23 @@ window.runPlayingMusicLyricsRuntime = async () => {
   const seekLine = [...document.querySelectorAll('.lyric-row')].find((item) => item.textContent.includes('Seek line'))
   expect(seekLine, 'timed seek lyric was not rendered')
   seekLine.click()
+  await tick()
+  expect(
+    document.querySelector('.lyric-row.active')?.textContent.includes('Seek line'),
+    'seek left the target lyric dimmed until the normal playback highlight delay elapsed'
+  )
+  player.seek(1)
+  await tick()
+  expect(
+    document.querySelector('.lyric-row.active')?.textContent.includes('Moving line'),
+    'a progress seek backward left the new target lyric dimmed'
+  )
+  player.seek(3)
+  await tick()
+  expect(
+    document.querySelector('.lyric-row.active')?.textContent.includes('Seek line'),
+    'a progress seek forward left the new target lyric dimmed'
+  )
   window.__audioFixture.emitProperty('time-pos', 3)
   const stalledSeekSamples = window.setInterval(
     () => window.__audioFixture.emitProperty('time-pos', 3),
@@ -546,6 +560,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
   player.queue.value = [structuredClone(rapidLyricsTrack)]
   player.currentTime.value = 20
   player.isPlaying.value = true
+  player.seek(20)
   await tick()
   const observedActiveLines = new Set()
   let maxRenderedLyricRows = 0
@@ -568,9 +583,125 @@ window.runPlayingMusicLyricsRuntime = async () => {
       [...observedActiveLines].join(' | ')
   )
   expect(
-    maxRenderedLyricRows === 1,
-    'completed lyric was reinserted above the single-line focus window during handoff; maxRows=' +
+    maxRenderedLyricRows >= 3,
+    'full lyric timeline did not remain mounted during rapid handoff; maxRows=' +
       maxRenderedLyricRows
+  )
+
+  // Programmatic centering must remain automatic after a track switch.
+  const automaticScrollTrack = {
+    ...rapidLyricsTrack,
+    id: 'fixture-provider:automatic-scroll-track',
+    title: 'Automatic scroll track'
+  }
+  const alternateScrollTrack = {
+    ...automaticScrollTrack,
+    id: 'fixture-provider:alternate-scroll-track',
+    title: 'Alternate scroll track'
+  }
+  player.currentTrack.value = structuredClone(automaticScrollTrack)
+  player.queue.value = [structuredClone(automaticScrollTrack)]
+  player.currentTime.value = 20
+  player.seek(20)
+  await tick()
+  expect(
+    document.querySelectorAll('.lyric-row').length === 3,
+    'automatic lyric scrolling did not retain the full lyric timeline'
+  )
+  player.currentTrack.value = structuredClone(alternateScrollTrack)
+  player.queue.value = [structuredClone(alternateScrollTrack)]
+  player.seek(20)
+  await tick()
+  player.currentTrack.value = structuredClone(automaticScrollTrack)
+  player.queue.value = [structuredClone(automaticScrollTrack)]
+  player.seek(20)
+  await tick()
+  expect(
+    document.querySelectorAll('.lyric-row').length === 3,
+    'track switching did not preserve the full automatic lyric timeline'
+  )
+
+  button('全部').click()
+  await waitFor(
+    () => window.__settingsFixture.settings.lyricsAppearance?.focusLineCount === 'all',
+    'full lyric focus did not persist before the scroll regression probe'
+  )
+
+  const yrcTrackA = {
+    ...playbackTrack,
+    id: 'fixture-provider:yrc-scroll-a',
+    title: 'YRC scroll A',
+    lyrics:
+      '[0,1000](0,300,0)Line (300,300,0)zero\\n[1000,1000](1000,300,0)Line (1300,300,0)one\\n[2000,1000](2000,300,0)Line (2300,300,0)two\\n[3000,1000](3000,300,0)Line (3300,300,0)three\\n[4000,1000](4000,300,0)Line (4300,300,0)four\\n[5000,1000](5000,300,0)Line (5300,300,0)five'
+  }
+  const yrcTrackB = {
+    ...yrcTrackA,
+    id: 'fixture-provider:yrc-scroll-b',
+    title: 'YRC scroll B'
+  }
+  const installScrollGeometry = () => {
+    const scroll = document.querySelector('.lyrics-scroll')
+    expect(scroll, 'lyrics scroll viewport was not mounted for the YRC regression probe')
+    let scrollTop = 0
+    Object.defineProperties(scroll, {
+      clientHeight: { configurable: true, value: 180 },
+      scrollHeight: { configurable: true, value: 1200 },
+      scrollTop: {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value) => {
+          scrollTop = Number(value)
+        }
+      }
+    })
+    scroll.scrollTo = ({ top }) => {
+      scroll.scrollTop = top
+    }
+    document.querySelectorAll('.lyric-row').forEach((row, index) => {
+      Object.defineProperties(row, {
+        offsetTop: { configurable: true, value: index * 120 },
+        offsetHeight: { configurable: true, value: 72 },
+        offsetParent: { configurable: true, value: scroll }
+      })
+    })
+    return scroll
+  }
+
+  player.currentTrack.value = structuredClone(yrcTrackA)
+  player.queue.value = [structuredClone(yrcTrackA)]
+  player.currentTime.value = 5
+  player.seek(5)
+  await tick()
+  const scrollA = installScrollGeometry()
+  window.dispatchEvent(new Event('resize'))
+  await new Promise((resolve) => setTimeout(resolve, 520))
+  expect(
+    scrollA.scrollTop > 0,
+    'active YRC line below the viewport was not centered; active=' +
+      document.querySelector('.lyric-row.active')?.textContent +
+      '; rows=' +
+      document.querySelectorAll('.lyric-row').length +
+      '; scrollTop=' +
+      scrollA.scrollTop
+  )
+
+  player.currentTrack.value = structuredClone(yrcTrackB)
+  player.queue.value = [structuredClone(yrcTrackB)]
+  player.currentTime.value = 0
+  player.seek(0)
+  await tick()
+  installScrollGeometry()
+
+  player.currentTrack.value = structuredClone(yrcTrackA)
+  player.queue.value = [structuredClone(yrcTrackA)]
+  player.currentTime.value = 5
+  player.seek(5)
+  await tick()
+  const restoredScrollA = installScrollGeometry()
+  await new Promise((resolve) => setTimeout(resolve, 520))
+  expect(
+    restoredScrollA.scrollTop > 0,
+    'switching back to a YRC track left its later active line at the top of the viewport'
   )
   console.log('PLAYING_MUSIC_LYRICS_RUNTIME_OK')
 }

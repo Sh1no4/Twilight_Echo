@@ -91,10 +91,16 @@ export interface MiniPlayerTrackSnapshot {
   coverSource: string | null
 }
 
-export type MiniPlayerPlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle'
+export type MiniPlayerPlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle' | 'heart'
 
 export interface MiniPlayerStateSnapshot {
   track: MiniPlayerTrackSnapshot | null
+  /**
+   * Current lyric line at snapshot time (original + optional translation).
+   * Null when no line is active yet / lyrics are unavailable. The mini player
+   * shows it when the cursor leaves the window; hovering returns to metadata.
+   */
+  currentLyric: { original: string; translation: string | null } | null
   isPlaying: boolean
   isLoading: boolean
   currentTime: number
@@ -268,6 +274,7 @@ export function cloneMiniPlayerSettings(settings: MiniPlayerSettings): MiniPlaye
 
 export const EMPTY_MINI_PLAYER_STATE: Readonly<MiniPlayerStateSnapshot> = Object.freeze({
   track: null,
+  currentLyric: null,
   isPlaying: false,
   isLoading: false,
   currentTime: 0,
@@ -528,6 +535,7 @@ export function normalizeMiniPlayerStateSnapshot(raw: unknown): MiniPlayerStateS
 
   return {
     track: normalizeTrack(value.track),
+    currentLyric: normalizeMiniPlayerLyric(value.currentLyric),
     isPlaying: value.isPlaying === true,
     isLoading: value.isLoading === true,
     currentTime,
@@ -541,6 +549,17 @@ export function normalizeMiniPlayerStateSnapshot(raw: unknown): MiniPlayerStateS
     queueIndex: clampFiniteNumber(value.queueIndex, -1, Math.max(-1, queueLength - 1), -1, true),
     queueLength
   }
+}
+
+function normalizeMiniPlayerLyric(
+  raw: unknown
+): { original: string; translation: string | null } | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const value = raw as Record<string, unknown>
+  const original = normalizeText(value.original, MAX_TRACK_TEXT_LENGTH)
+  if (!original) return null
+  const translation = normalizeText(value.translation, MAX_TRACK_TEXT_LENGTH)
+  return { original, translation: translation || null }
 }
 
 export function normalizeMiniPlayerCommand(raw: unknown): MiniPlayerCommand | null {
@@ -635,7 +654,11 @@ function normalizeMiniPlayerPlayMode(
   value: unknown,
   fallback: MiniPlayerPlayMode | null = 'sequential'
 ): MiniPlayerPlayMode | null {
-  return value === 'sequential' || value === 'listLoop' || value === 'repeat' || value === 'shuffle'
+  return value === 'sequential' ||
+    value === 'listLoop' ||
+    value === 'repeat' ||
+    value === 'shuffle' ||
+    value === 'heart'
     ? value
     : fallback
 }

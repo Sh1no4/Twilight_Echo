@@ -83,6 +83,251 @@ test('resolveLyricsAcrossProviders fans out to NCM for local tracks', async () =
   assert.equal(result.translatedLyrics, '[00:01.00]翻译')
 })
 
+test('provider abort handling stays in the renderer because AbortSignal cannot cross the contextBridge', () => {
+  const registrySource = readFileSync(
+    new URL('../providers/index.ts', import.meta.url),
+    'utf8'
+  )
+  const preloadSource = readFileSync(
+    new URL('../../../preload/index.ts', import.meta.url),
+    'utf8'
+  )
+
+  // The renderer owns the real AbortSignal: it generates a request id and asks
+  // the preload to cancel the in-flight main-process call on abort.
+  assert.match(registrySource, /options\.signal\.addEventListener\('abort', onAbort, \{ once: true \}\)/)
+  assert.match(registrySource, /void api\.cancel\(requestId\)/)
+  assert.match(registrySource, /requestId \? \{ requestId \} : undefined/)
+
+  // The preload must never receive the AbortSignal (contextBridge strips it
+  // into an object without addEventListener), so its providers.call only
+  // accepts plain requestId/idempotencyKey strings.
+  const providersBlock =
+    preloadSource.match(/providers: \{\s*list:[^\n]*[\s\S]*?\n  \},/)?.[0] ?? ''
+  assert.ok(providersBlock.includes('providers:'), 'preload providers block must exist')
+  assert.doesNotMatch(providersBlock, /signal/)
+  assert.match(providersBlock, /cancel: \(requestId: string\): void => /)
+})
+
+test('resolveLyricsAcrossProviders reaches a later enabled provider when earlier searches miss', async () => {
+  const registry = new MediaProviderRegistry()
+  const searched: string[] = []
+  for (const id of ['one', 'two', 'three']) {
+    registry.register({
+      id,
+      name: id,
+      source: 'plugin',
+      capabilities: ['search', 'lyrics'],
+      searchSongs: async () => {
+        searched.push(id)
+        return { items: [], total: 0 }
+      },
+      getLyrics: async () => ({ lyrics: null, translatedLyrics: null })
+    })
+  }
+  registry.register({
+    id: 'four',
+    name: 'four',
+    source: 'plugin',
+    capabilities: ['search', 'lyrics'],
+    searchSongs: async () => {
+      searched.push('four')
+      return {
+        total: 1,
+        items: [
+          {
+            id: 'four:track',
+            title: 'Later Provider Song',
+            artist: 'Artist',
+            album: 'Album',
+            filePath: 'four:track',
+            fileName: 'Later Provider Song',
+            duration: 180,
+            size: 0,
+            cover: null,
+            lyrics: null,
+            source: 'four'
+          }
+        ]
+      }
+    },
+    getLyrics: async () => ({
+      lyrics: '[00:01.00]Fourth provider lyric',
+      translatedLyrics: null
+    })
+  })
+
+  const result = await registry.resolveLyricsAcrossProviders({
+    id: 'local:later-provider-song',
+    title: 'Later Provider Song',
+    artist: 'Artist',
+    album: 'Album',
+    filePath: 'D:\\Music\\Later Provider Song.flac',
+    fileName: 'Later Provider Song.flac',
+    duration: 180,
+    size: 1,
+    cover: null,
+    lyrics: null,
+    source: 'local'
+  })
+
+  assert.deepEqual(searched, ['one', 'two', 'three', 'four'])
+  assert.equal(result.lyrics, '[00:01.00]Fourth provider lyric')
+})
+
+test('resolveLyricsAcrossProviders settles when a switching track aborts a pending provider search', async () => {
+  const registry = new MediaProviderRegistry()
+  let markSearchStarted: (() => void) | undefined
+  const searchStarted = new Promise<void>((resolve) => {
+    markSearchStarted = resolve
+  })
+  registry.register({
+    id: 'stalled',
+    name: 'stalled',
+    source: 'plugin',
+    capabilities: ['search', 'lyrics'],
+    searchSongs: async () => {
+      markSearchStarted?.()
+      return await new Promise(() => {})
+    },
+    getLyrics: async () => ({ lyrics: null, translatedLyrics: null })
+  })
+  const controller = new AbortController()
+  const pending = registry.resolveLyricsAcrossProviders(
+    {
+      id: 'local:stalled-search',
+      title: 'Stalled Search',
+      artist: 'Artist',
+      album: 'Album',
+      filePath: 'D:\\Music\\Stalled Search.flac',
+      fileName: 'Stalled Search.flac',
+      duration: 180,
+      size: 1,
+      cover: null,
+      lyrics: null,
+      source: 'local'
+    },
+    { timeoutMs: 1_000, signal: controller.signal }
+  )
+
+  await searchStarted
+  controller.abort()
+  const result = await Promise.race([
+    pending,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Lyrics lookup did not settle after abort')), 100)
+    )
+  ])
+
+  assert.deepEqual(result, { lyrics: null, translatedLyrics: null, wordLyrics: null })
+})
+
+test('resolveLyricsAcrossProviders preserves a direct provider failure when no fallback succeeds', async () => {
+  const registry = new MediaProviderRegistry()
+  registry.register({
+    id: 'ncm',
+    name: 'NetEase',
+    source: 'plugin',
+    capabilities: ['lyrics'],
+    getLyrics: async () => {
+      throw new Error('lyrics gateway unavailable')
+    }
+  })
+
+  await assert.rejects(
+    registry.resolveLyricsAcrossProviders({
+      id: 'ncm:unavailable',
+      title: 'Unavailable lyric fixture',
+      artist: 'Artist',
+      album: 'Album',
+      filePath: 'ncm:unavailable',
+      fileName: 'Unavailable lyric fixture',
+      duration: 180,
+      size: 0,
+      cover: null,
+      lyrics: null,
+      source: 'ncm'
+    }),
+    /lyrics gateway unavailable/
+  )
+})
+
+test('resolveLyricsAcrossProviders preserves a matched fallback provider failure', async () => {
+  const registry = new MediaProviderRegistry()
+  registry.register({
+    id: 'ncm',
+    name: 'NetEase',
+    source: 'plugin',
+    capabilities: ['search', 'lyrics'],
+    searchSongs: async () => ({
+      total: 1,
+      items: [
+        {
+          id: 'ncm:unavailable',
+          title: 'Unavailable lyric fixture',
+          artist: 'Artist',
+          album: 'Album',
+          filePath: 'ncm:unavailable',
+          fileName: 'Unavailable lyric fixture',
+          duration: 180,
+          size: 0,
+          cover: null,
+          lyrics: null,
+          source: 'ncm'
+        }
+      ]
+    }),
+    getLyrics: async () => {
+      throw new Error('matched lyrics gateway unavailable')
+    }
+  })
+
+  await assert.rejects(
+    registry.resolveLyricsAcrossProviders({
+      id: 'local:unavailable',
+      title: 'Unavailable lyric fixture',
+      artist: 'Artist',
+      album: 'Album',
+      filePath: 'D:\\Music\\Unavailable lyric fixture.flac',
+      fileName: 'Unavailable lyric fixture.flac',
+      duration: 180,
+      size: 1,
+      cover: null,
+      lyrics: null,
+      source: 'local'
+    }),
+    /matched lyrics gateway unavailable/
+  )
+})
+
+test('resolveLyricsAcrossProviders keeps a successful no-match lookup empty', async () => {
+  const registry = new MediaProviderRegistry()
+  registry.register({
+    id: 'ncm',
+    name: 'NetEase',
+    source: 'plugin',
+    capabilities: ['search', 'lyrics'],
+    searchSongs: async () => ({ items: [], total: 0 }),
+    getLyrics: async () => ({ lyrics: null, translatedLyrics: null })
+  })
+
+  const result = await registry.resolveLyricsAcrossProviders({
+    id: 'local:no-lyrics',
+    title: 'No lyric match',
+    artist: 'Artist',
+    album: 'Album',
+    filePath: 'D:\\Music\\No lyric match.flac',
+    fileName: 'No lyric match.flac',
+    duration: 180,
+    size: 1,
+    cover: null,
+    lyrics: null,
+    source: 'local'
+  })
+
+  assert.deepEqual(result, { lyrics: null, translatedLyrics: null, wordLyrics: null })
+})
+
 test('local lyric matching tolerates featured-artist title and artist formatting', async () => {
   const registry = new MediaProviderRegistry()
   let matchedId = ''
@@ -333,5 +578,5 @@ test('renderer provider calls refresh host health snapshots after IPC settles', 
 
   assert.match(source, /async function refreshPluginProviderHealth\(\): Promise<void>/)
   assert.match(source, /void refreshPluginProviderHealth\(\)/)
-  assert.match(source, /finally \{\s*void refreshPluginProviderHealth\(\)\s*\}/)
+  assert.match(source, /finally \{\s*void refreshPluginProviderHealth\(\)/)
 })

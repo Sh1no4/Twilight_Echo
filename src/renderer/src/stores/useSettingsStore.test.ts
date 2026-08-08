@@ -65,6 +65,22 @@ test('settings chrome no longer dual-writes theme-owned CSS variables', () => {
   assert.match(songListSource, /background-image:[\s\S]*var\(--te-local-bg-image\)/)
 })
 
+test('manual tone scheduling follows the app preference, not a stale DOM attribute', () => {
+  const source = readFileSync(new URL('./useThemeStore.ts', import.meta.url), 'utf8')
+  const start = source.indexOf('function resolveRuntimeTone(')
+  assert.ok(start >= 0, 'resolveRuntimeTone must exist in the theme store')
+  const functionBody = source.slice(start, source.indexOf('\n}', start))
+
+  assert.match(functionBody, /const scheduling = modes\.appearance\?\.toneScheduling \?\? 'manual'/)
+  assert.match(functionBody, /if \(scheduling === 'system'\) return systemTone\.value/)
+  assert.match(functionBody, /if \(scheduling === 'timed'\)/)
+  // Manual presets must resolve from the stored preference. Reading the DOM
+  // attribute lets a previous timed/system preset leak its tone into the next
+  // manual preset (switching presets in dark mode would flip back to light).
+  assert.match(functionBody, /return resolveThemeMode\(themePreference\)/)
+  assert.doesNotMatch(functionBody, /return resolveTone\(\)/)
+})
+
 test('background image import accepts ArrayBuffer views from Electron IPC', () => {
   const source = readFileSync(
     new URL('../../../main/library/coverCache.ts', import.meta.url),
@@ -123,6 +139,7 @@ test('about settings expose local-only sponsor payment options and sponsor list'
   assert.match(source, /请务必添加我的联系方式，我会将你加入软件的赞助者名单中，感谢你的支持！/)
   assert.match(source, /const ALIPAY_QR_URL = '\/sponsor\/alipay\.jpg'/)
   assert.match(source, /const WECHAT_QR_URL = '\/sponsor\/wechat\.png'/)
+  assert.match(source, /name: '江枫Jiang1021'/)
   assert.match(source, /useEscapeToClose\(sponsorDialogOpen, closeSponsorDialog\)/)
   assert.match(source, /useFocusTrap\(sponsorDialogRef, sponsorDialogOpen\)/)
   assert.match(source, /const QQ_GROUP_QR_URL = '\/qq-group-qrcode\.jpg'/)
@@ -474,7 +491,7 @@ test('settings page exposes search, backup, cache confirmation, and isolated plu
   const settingsPageSource = readSettingsPageSources()
 
   assert.match(settingsPageSource, /const settingsSearchQuery = ref\(''\)/)
-  assert.match(settingsPageSource, /const filteredSettingsSections = computed/)
+  assert.match(settingsPageSource, /const filteredSearchResults = computed/)
   assert.match(settingsPageSource, /function scrollToSearchResult/)
   assert.match(settingsPageSource, /function confirmClearCache/)
   assert.match(settingsPageSource, /确认清理缓存/)
@@ -508,4 +525,57 @@ test('settings backup and shortcut status APIs are exposed to the renderer', () 
   assert.match(storeSource, /exportSettingsBackup: \(\) => Promise<string>/)
   assert.match(storeSource, /importSettingsBackup: \(json: string\) => Promise<AppSettings>/)
   assert.match(storeSource, /getShortcutStatuses: \(\) => Promise<PlayerShortcutStatus\[]>/)
+})
+
+test('window transparency is gated on native support (Wayland fallback to opaque)', () => {
+  const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
+  const mainSettings = readFileSync(
+    new URL('../../../main/core/settings.ts', import.meta.url),
+    'utf8'
+  )
+  const mainTypes = readFileSync(new URL('../../../main/core/types.ts', import.meta.url), 'utf8')
+  const rendererTypes = readFileSync(
+    new URL('../types/settings.ts', import.meta.url),
+    'utf8'
+  )
+  const baseCss = readFileSync(
+    new URL('../assets/base.css', import.meta.url),
+    'utf8'
+  )
+
+  // Main process must expose a Wayland-aware support check and snapshot field.
+  assert.match(mainSettings, /export function supportsNativeWindowTransparency\(\)/)
+  assert.match(mainSettings, /WAYLAND_DISPLAY/)
+  assert.match(mainSettings, /XDG_SESSION_TYPE'\] === 'wayland'/)
+  assert.match(mainSettings, /windowTransparencySupported: supportsNativeWindowTransparency\(\)/)
+  for (const types of [mainTypes, rendererTypes]) {
+    assert.match(types, /windowTransparencySupported: boolean/)
+  }
+
+  // Renderer must not enable translucent styling when the platform cannot
+  // present transparent pixels (otherwise the whole app disappears).
+  assert.match(
+    storeSource,
+    /dataset\.windowTransparent = transparencyActive \? 'on' : 'off'/
+  )
+  assert.match(
+    storeSource,
+    /settings\.value\.windowTransparency === true && windowTransparencySupported\.value === true/
+  )
+  assert.match(storeSource, /dataset\.platform = platform\.value \|\| 'unknown'/)
+
+  // Linux must skip in-app backdrop-filter blur: transparent Linux windows
+  // cannot sample the desktop, and per-frame backdrop blur is the lag source.
+  assert.match(baseCss, /data-window-transparent='on']:not\(\[data-platform='linux'\]\)/)
+  assert.match(baseCss, /--te-tp-base-alpha/)
+})
+
+test('settings page warns and disables transparency controls on unsupported platforms', () => {
+  const source = readSettingsPageSources()
+
+  assert.match(source, /const transparencyUnsupported = computed/)
+  assert.match(source, /windowTransparencySupported\.value === false/)
+  assert.match(source, /当前系统不支持透明窗口（Linux Wayland，或 Windows 未开启系统透明效果）/)
+  assert.match(source, /toggleSetting\('windowTransparency'\)/)
+  assert.match(source, /aria-disabled="!transparencySupported"/)
 })

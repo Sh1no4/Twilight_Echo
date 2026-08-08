@@ -1,5 +1,6 @@
 import type { MediaProviderCapability, MediaProviderSearchResult } from '../providers/mediaProvider'
 import type { Track, TrackSource } from '../types/music'
+import type { NetworkEntry } from '../../../shared/networkSources.ts'
 import {
   buildLogicalTracks,
   clampReliability,
@@ -58,6 +59,7 @@ export type LogicalMusicItem = LogicalTrack
 export interface UnifiedSearchOptions {
   query: string
   localTracks: Track[]
+  networkEntries?: Array<{ profileName: string; entry: NetworkEntry }>
   providers: UnifiedSearchProvider[]
   limit?: number
   offset?: number
@@ -88,8 +90,16 @@ export async function unifiedSearchSongs(
       providerAvailable: true
     })
   )
+  const networkItems = (options.networkEntries ?? [])
+    .filter(({ entry }) => searchNetworkEntry(entry, query))
+    .map(({ profileName, entry }) =>
+      toSearchItem(buildNetworkTrack(profileName, entry), {
+        sourceName: '网络源',
+        providerAvailable: true
+      })
+    )
   const health: Record<string, UnifiedSearchProviderHealth> = {}
-  let total = localItems.length
+  let total = localItems.length + networkItems.length
 
   const providerItems = (
     await Promise.all(
@@ -140,7 +150,7 @@ export async function unifiedSearchSongs(
     )
   ).flat()
 
-  const items = [...localItems, ...providerItems].sort(compareSearchItems)
+  const items = [...localItems, ...networkItems, ...providerItems].sort(compareSearchItems)
   return {
     items,
     logicalItems: buildLogicalMusicItemsFromSearchItems(items),
@@ -175,6 +185,37 @@ function searchLocalTracks(tracks: Track[], query: string): Track[] {
       normalizedTrackFieldIncludes(track.artist, normalizedQuery) ||
       normalizedTrackFieldIncludes(track.album, normalizedQuery) ||
       normalizedTrackFieldIncludes(track.fileName, normalizedQuery)
+  )
+}
+
+function buildNetworkTrack(profileName: string, entry: NetworkEntry): Track {
+  const metadata = entry.metadata
+  return {
+    id: entry.id,
+    title: metadata?.title ?? entry.name.replace(/\.[^.]+$/, ''),
+    artist: metadata?.artist ?? profileName,
+    album: metadata?.album ?? profileName,
+    filePath: '',
+    fileName: entry.name,
+    duration: metadata?.duration ?? 0,
+    size: entry.sizeBytes ?? 0,
+    cover: null,
+    lyrics: null,
+    source: 'network',
+    format: metadata?.format,
+    networkSource: { profileId: entry.profileId, entry }
+  }
+}
+
+function searchNetworkEntry(entry: NetworkEntry, query: string): boolean {
+  if (!query) return false
+  const normalizedQuery = normalizeSearchText(query)
+  const metadata = entry.metadata
+  return (
+    normalizedTrackFieldIncludes(metadata?.title ?? '', normalizedQuery) ||
+    normalizedTrackFieldIncludes(metadata?.artist ?? '', normalizedQuery) ||
+    normalizedTrackFieldIncludes(metadata?.album ?? '', normalizedQuery) ||
+    normalizedTrackFieldIncludes(entry.name, normalizedQuery)
   )
 }
 

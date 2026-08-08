@@ -71,6 +71,46 @@ test('unified search ranks local tracks before provider results and lossless bef
   assert.match(result.health.bili.lastError ?? '', /login expired/)
 })
 
+test('unified search merges network library entries with source name', async () => {
+  const result = await unifiedSearchSongs({
+    query: 'moon',
+    localTracks: [],
+    networkEntries: [
+      {
+        profileName: 'NAS',
+        entry: {
+          id: 'net:1',
+          profileId: 'p1',
+          name: 'Moon River.flac',
+          kind: 'audio',
+          path: '/music/Moon River.flac',
+          metadata: { title: 'Moon River', artist: 'Audrey' }
+        }
+      },
+      {
+        profileName: 'NAS',
+        entry: {
+          id: 'net:2',
+          profileId: 'p1',
+          name: 'Other.flac',
+          kind: 'audio',
+          path: '/music/Other.flac',
+          metadata: { title: 'Other' }
+        }
+      }
+    ],
+    providers: []
+  })
+  assert.equal(result.items.length, 1)
+  const item = result.items[0]
+  assert.equal(item.sourceName, '网络源')
+  assert.equal(item.track.title, 'Moon River')
+  assert.equal(item.track.artist, 'Audrey')
+  assert.equal(item.track.source, 'network')
+  assert.equal(item.track.networkSource?.profileId, 'p1')
+  assert.equal(result.total, 1)
+})
+
 test('logical music items group matching local and provider variants without merging different performances', () => {
   const items = buildLogicalMusicItems([
     track({

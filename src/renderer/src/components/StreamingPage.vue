@@ -1834,7 +1834,7 @@ async function handleContextPlayTrack(): Promise<void> {
   const track = streamingContextMenuTrack.value
   if (!track) return
   const list = currentDetail.value ? await resolveDetailPlaybackQueue() : streamingListTracks.value
-  playTrack(track, list.length > 0 ? list : [track])
+  playStreamingTrack(track, list)
   closeStreamingContextMenu()
 }
 
@@ -2007,10 +2007,25 @@ onUnmounted(() => {
   window.removeEventListener('click', closeStreamingContextMenu)
 })
 
+function getHeartModePlaylistId(): number | null {
+  // 心动模式只允许在网易云“我喜欢的音乐”收藏歌单中启用：
+  // 外部流媒体提供商没有独立的收藏歌单上下文，本地/其他歌单同样不可用。
+  if (isExternalActive.value) return null
+  if (currentDetail.value?.type !== 'liked') return null
+  const id = likedPlaylist.value?.id
+  return id != null && Number.isFinite(Number(id)) && Number(id) > 0 ? Number(id) : null
+}
+
+function playStreamingTrack(track: Track, tracks: Track[]): void {
+  playTrack(track, tracks.length > 0 ? tracks : [track], {
+    heartModePlaylistId: getHeartModePlaylistId()
+  })
+}
+
 async function playTrackFromCurrentDetail(track: Track): Promise<void> {
   const tracks = await resolveDetailPlaybackQueue()
   const resolvedTrack = tracks.find((item) => item.id === track.id) ?? track
-  playTrack(resolvedTrack, tracks.length > 0 ? tracks : [resolvedTrack])
+  playStreamingTrack(resolvedTrack, tracks)
 }
 
 function onTrackClick(track: Track, index: number, event?: MouseEvent): void {
@@ -2057,7 +2072,7 @@ async function resolveDetailPlaybackQueue(): Promise<Track[]> {
 async function playAllDetailTracks(): Promise<void> {
   const tracks = await resolveDetailPlaybackQueue()
   if (tracks.length === 0) return
-  playTrack(tracks[0], tracks)
+  playStreamingTrack(tracks[0], tracks)
 }
 
 async function shufflePlayDetailTracks(): Promise<void> {
@@ -2068,7 +2083,7 @@ async function shufflePlayDetailTracks(): Promise<void> {
     const j = Math.floor(Math.random() * (i + 1))
     ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
   }
-  playTrack(shuffled[0], shuffled)
+  playStreamingTrack(shuffled[0], shuffled)
 }
 
 function isDetailTrackLiking(ncmSongId?: number | null): boolean {
@@ -2574,7 +2589,7 @@ async function playLikedSongs(): Promise<void> {
   }
   const tracks = await resolveDetailPlaybackQueue()
   if (tracks.length > 0) {
-    playTrack(tracks[0], tracks)
+    playStreamingTrack(tracks[0], tracks)
   }
 }
 

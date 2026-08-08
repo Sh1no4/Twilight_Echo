@@ -1,11 +1,15 @@
 import { app, BrowserWindow, dialog, shell } from 'electron'
-import { release } from 'os'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { pathToFileURL } from 'url'
 import { is } from '@electron-toolkit/utils'
 import { runtime } from '../core/runtime'
 import { getWindowBackgroundColor } from '../audio/state'
+import {
+  isWindowsAcrylicBackdropAvailable,
+  isWindowsAcrylicBuild,
+  supportsNativeWindowTransparency
+} from '../core/settings'
 import { installAudioDeviceHotplugWatcher } from '../audio/deviceHotplug'
 import { destroyDesktopLyrics } from '../integrations/desktopLyrics'
 import { ClosePersistenceAttemptGate } from './closePersistence.ts'
@@ -119,20 +123,39 @@ export function getAppIconPath(): string {
 
 // Win11 22H2 (build 22621) 及以上支持原生亚克力背板（DWM systembackdrop）
 export function supportsWindowsAcrylic(): boolean {
-  if (process.platform !== 'win32') return false
-  const build = Number(release().split('.')[2] ?? 0)
-  return Number.isFinite(build) && build >= 22621
+  return isWindowsAcrylicBuild()
 }
 
 export function createWindow(): void {
-  const transparent = runtime.appSettings.windowTransparency === true
+  const requestedTransparency = runtime.appSettings.windowTransparency === true
+  // Linux Wayland 上 Electron 透明窗口不受支持（alpha 被忽略、内容可能整窗不渲染），
+  // 此时强制回退为不透明窗口，保证应用始终可见。
+  const transparencySupported = supportsNativeWindowTransparency()
+  const transparent = requestedTransparency && transparencySupported
+  if (requestedTransparency && !transparencySupported) {
+    console.warn(
+      '[window] 当前系统不支持窗口透明（Linux Wayland，或 Windows 未开启系统透明效果），' +
+        '已回退为不透明窗口。如需要透明效果请切换 X11 会话或开启系统透明效果。'
+    )
+  }
   // Windows 上用原生亚克力模糊：backgroundMaterial 与 transparent 互斥，
   // 需保持 transparent: false 并用全透明 backgroundColor 露出背板
-  const acrylic = transparent && supportsWindowsAcrylic()
+  const acrylic = transparent && supportsWindowsAcrylic() && isWindowsAcrylicBackdropAvailable()
+  if (transparent && supportsWindowsAcrylic() && !isWindowsAcrylicBackdropAvailable()) {
+    console.warn(
+      '[window] 系统"透明效果"已关闭，DWM 无法提供亚克力背板，' +
+        '已回退为逐像素透明窗口（无模糊）。如需要亚克力效果，请开启系统透明效果。'
+    )
+  }
 
   runtime.mainWindow = new BrowserWindow({
     width: 1495,
     height: 883,
+    // Keep the responsive playback layout usable when the frameless window is resized.
+    // These bounds were dropped by the 1.1.4 merge and allow the content columns
+    // to collapse into an unusable state on the next manual resize.
+    minWidth: 1298,
+    minHeight: 692,
     show: false,
     frame: false,
     transparent: transparent && !acrylic,

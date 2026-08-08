@@ -76,6 +76,13 @@ function expect(condition, message) {
 }
 
 const clone = (value) => JSON.parse(JSON.stringify(value))
+const waitFor = async (predicate, message) => {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+  throw new Error(message)
+}
 let document = {
   schemaVersion: 1,
   globalOffsetMs: 0,
@@ -86,6 +93,7 @@ let document = {
 }
 let revision = 1
 let deferProvider = false
+let providerFailuresRemaining = 0
 const deferredProviderResolvers = []
 const deferredProviderStartWaiters = []
 const waitForDeferredProviderStart = () =>
@@ -115,6 +123,10 @@ window.api = {
     list: async () => [{ id: 'fixture-provider', name: 'Fixture provider', capabilities: ['lyrics'], health: { available: true } }],
     call: async (_providerId, method) => {
       expect(method === 'getLyrics', 'forced resolver should request provider lyrics')
+      if (providerFailuresRemaining > 0) {
+        providerFailuresRemaining -= 1
+        throw new Error('fixture lyrics provider unavailable')
+      }
       if (deferProvider) {
         for (const resolve of deferredProviderStartWaiters.splice(0)) resolve()
         return await new Promise((resolve) => {
@@ -173,6 +185,99 @@ window.runLyricsPlayerRuntime = async () => {
   resolveDeferredProviders()
   await staleProviderRefresh
   expect(player.currentTrack.value.lyrics === '[00:01.00]Automatic lyrics', 'stale Provider result overwrote the newer Auto selection')
+
+  const pendingTrack = {
+    ...track,
+    id: 'fixture-provider:pending-track',
+    title: 'Pending provider fixture',
+    lyrics: null,
+    translatedLyrics: null,
+    lyricsSource: null,
+    translatedLyricsSource: null
+  }
+  const followingTrack = {
+    ...pendingTrack,
+    id: 'fixture-provider:following-track',
+    title: 'Following provider fixture'
+  }
+  deferProvider = true
+  const pendingProviderStarted = waitForDeferredProviderStart()
+  player.currentTrack.value = clone(pendingTrack)
+  player.queue.value = [clone(pendingTrack)]
+  await pendingProviderStarted
+
+  const followingProviderStarted = waitForDeferredProviderStart()
+  player.currentTrack.value = clone(followingTrack)
+  player.queue.value = [clone(followingTrack)]
+  await followingProviderStarted
+  deferProvider = false
+  resolveDeferredProviders()
+  await waitFor(
+    () => player.lyricsLoadState.value.trackId === followingTrack.id && player.lyricsLoadState.value.status === 'ready',
+    'following track lookup did not settle'
+  )
+  expect(
+    player.currentTrack.value.id === followingTrack.id &&
+      player.currentTrack.value.lyrics === '[00:01.00]Stale provider lyrics',
+    'a pending previous-track lookup prevented the current track from fetching lyrics'
+  )
+
+  // Provider searches can legitimately take longer than the former four-second
+  // UI timeout. Keep this request pending and accept its eventual result
+  // instead of permanently committing an empty lyric record.
+  const lateLyricsTrack = {
+    ...pendingTrack,
+    id: 'fixture-provider:late-lyrics-track',
+    title: 'Late provider fixture'
+  }
+  deferProvider = true
+  const lateProviderStarted = waitForDeferredProviderStart()
+  player.currentTrack.value = clone(lateLyricsTrack)
+  player.queue.value = [clone(lateLyricsTrack)]
+  await lateProviderStarted
+  await new Promise((resolve) => setTimeout(resolve, 4_250))
+  expect(
+    player.lyricsLoadState.value.trackId === lateLyricsTrack.id &&
+      player.lyricsLoadState.value.status === 'loading',
+    'a slow provider lookup was settled before it returned'
+  )
+  expect(
+    player.currentTrack.value.lyrics == null,
+    'a slow provider lookup permanently replaced pending lyrics with an empty value'
+  )
+  deferProvider = false
+  resolveDeferredProviders()
+  await waitFor(
+    () =>
+      player.lyricsLoadState.value.trackId === lateLyricsTrack.id &&
+      player.lyricsLoadState.value.status === 'ready' &&
+      player.currentTrack.value.lyrics === '[00:01.00]Stale provider lyrics',
+    'a late provider result did not commit to the active track'
+  )
+
+  const failedLyricsTrack = {
+    ...pendingTrack,
+    id: 'fixture-provider:failed-track',
+    title: 'Failed provider fixture'
+  }
+  providerFailuresRemaining = 1
+  player.currentTrack.value = clone(failedLyricsTrack)
+  player.queue.value = [clone(failedLyricsTrack)]
+  await player.refreshCurrentLyrics()
+  expect(
+    player.lyricsLoadState.value.trackId === failedLyricsTrack.id &&
+      player.lyricsLoadState.value.status === 'failed',
+    'a provider failure was modeled as an empty completed lyric result'
+  )
+  expect(
+    player.currentTrack.value.lyrics == null,
+    'a provider failure replaced pending lyrics with an empty value'
+  )
+  await player.refreshCurrentLyrics()
+  expect(
+    player.currentTrack.value.lyrics === '[00:01.00]Provider lyrics',
+    'lyrics did not recover after a provider retry'
+  )
 
   const beforeCurrent = clone(player.currentTrack.value)
   const beforeQueue = clone(player.queue.value)
@@ -332,6 +437,61 @@ window.runLyricsPlayerRuntime = async () => {
     player.currentTime.value < 121.5,
     'a renderer stall made the playbar overrun and reject the recovered engine position'
   )
+
+  // A native gapless hand-off can emit start-file after a stale pause snapshot.
+  // The new file is already playing, so time-pos must reopen the shared clock
+  // even though the previous UI state was paused.
+  player.isPlaying.value = false
+  player.isLoading.value = false
+  window.__audioFixture.emitPlaybackInfo({
+    state: 'stopped', position: 0, duration: 180, source: nextTrack.id,
+    queueIndex: 1, nativePlaybackActive: false, volume: 1, playbackRate: 1
+  })
+  player.currentTrack.value = clone(nextTrack)
+  player.queue.value = [clone(track), clone(nextTrack)]
+  player.queueIndex.value = 1
+  player.currentTime.value = 0
+  window.__audioFixture.emitStartFile()
+  window.__audioFixture.emitProperty('time-pos', 0.2)
+  await new Promise((resolve) => setTimeout(resolve, 280))
+  window.__audioFixture.emitProperty('time-pos', 0.6)
+  await new Promise((resolve) => setTimeout(resolve, 280))
+  expect(player.isPlaying.value, 'start-file did not reopen the native playback clock')
+  expect(player.currentTime.value > 0.4, 'start-file time-pos did not advance the playbar')
+
+  // A delayed paused snapshot from the previous native session may land just
+  // after the next track has started. Keep the shared clock continuous until
+  // the new session has had a chance to publish its first advancing sample.
+  const handoffTrack = {
+    ...nextTrack,
+    id: 'fixture-provider:handoff-track',
+    title: 'Gapless handoff fixture'
+  }
+  player.queue.value = [clone(nextTrack), clone(handoffTrack)]
+  player.queueIndex.value = 0
+  window.__audioFixture.emitPlaybackInfo({
+    state: 'playing', position: 0, duration: 180, source: handoffTrack.id,
+    queueIndex: 1, nativePlaybackActive: true, volume: 1, playbackRate: 1
+  })
+  // Let the start-file play intent expire: this is the out-of-order snapshot
+  // path rather than an explicit user pause.
+  await new Promise((resolve) => setTimeout(resolve, 1_100))
+  window.__audioFixture.emitPlaybackInfo({
+    state: 'paused', position: 0, duration: 180, source: handoffTrack.id,
+    queueIndex: 1, nativePlaybackActive: true, volume: 1, playbackRate: 1
+  })
+  await new Promise((resolve) => setTimeout(resolve, 650))
+  expect(!player.isPlaying.value, 'fixture did not apply the delayed paused snapshot')
+  const pausedHandoffPosition = player.currentTime.value
+  const handoffSeekTarget = pausedHandoffPosition + 15
+  player.seek(handoffSeekTarget)
+  expect(player.currentTime.value === handoffSeekTarget, 'handoff seek did not update the lyric clock')
+  await new Promise((resolve) => setTimeout(resolve, 650))
+  expect(
+    player.currentTime.value > handoffSeekTarget + 0.2,
+    'a stale hand-off pause froze the shared playbar and word-lyric clock after seek'
+  )
+
   console.log('LYRICS_PLAYER_RUNTIME_OK')
 }
 `

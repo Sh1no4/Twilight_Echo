@@ -55,10 +55,16 @@ test('lyrics import rejects invalid extension and oversized selected file before
   assert.equal(reads, 0)
 })
 
-test('lyrics import accepts UTF-8 text files but rejects binary or replacement text', () => {
+test('lyrics import accepts decoded legacy-encoding text but rejects binary or replacement text', () => {
   assert.equal(validateImportedLyrics('song.txt', 'Untimed lyric'), 'Untimed lyric')
-  assert.throws(() => validateImportedLyrics('song.txt', 'bad\0text'), /valid non-empty UTF-8/)
-  assert.throws(() => validateImportedLyrics('song.txt', '\uFFFD'), /valid non-empty UTF-8/)
+  // The dialog wiring decodes GBK bytes before validation, so a legacy file
+  // reaches this point as ordinary Chinese text instead of U+FFFD mojibake.
+  assert.equal(
+    validateImportedLyrics('song.lrc', '[00:01.00]歌词测试'),
+    '[00:01.00]歌词测试'
+  )
+  assert.throws(() => validateImportedLyrics('song.txt', 'bad\0text'), /valid non-empty text/)
+  assert.throws(() => validateImportedLyrics('song.txt', '\uFFFD'), /valid non-empty text/)
 })
 
 test('lyrics import rejects invalid extension, invalid LRC type, and oversize text', () => {

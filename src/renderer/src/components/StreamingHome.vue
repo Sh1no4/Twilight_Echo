@@ -1740,6 +1740,116 @@ function playPersonalizedStream(section: RecSection | null): void {
   }
 }
 
+@media (max-width: 640px) {
+  .hero-title {
+    font-size: clamp(30px, 8vw, 40px);
+  }
+
+  .hero-desc {
+    font-size: 13px;
+  }
+
+  .hero-actions {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .hero-play,
+  .hero-open {
+    height: 42px;
+    padding-inline: 18px;
+    font-size: 13px;
+  }
+
+  .duo-card {
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .duo-stack {
+    width: 80px;
+    height: 60px;
+  }
+
+  .duo-stack-cover {
+    width: 50px;
+    height: 50px;
+  }
+
+  .duo-stack-cover-1 {
+    left: 18px;
+  }
+
+  .duo-stack-cover-2 {
+    left: 34px;
+  }
+
+  .duo-name {
+    font-size: 17px;
+  }
+
+  .duo-sub {
+    font-size: 11px;
+  }
+
+  .shelf-grid,
+  .sk-tiles {
+    grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+    gap: 16px 12px;
+  }
+
+  .shelf-name {
+    margin-top: 8px;
+    font-size: 12px;
+  }
+
+  .shelf-count {
+    left: 8px;
+    bottom: 8px;
+    font-size: 10px;
+    padding: 2px 7px;
+  }
+
+  .shelf-open {
+    right: 8px;
+    bottom: 8px;
+    width: 30px;
+    height: 30px;
+    font-size: 11px;
+  }
+
+  .chart-row {
+    grid-template-columns: 28px 42px minmax(0, 1fr) auto;
+    gap: 10px;
+    padding: 8px 8px;
+  }
+
+  .chart-cover {
+    width: 42px;
+    height: 42px;
+  }
+
+  .chart-title {
+    font-size: 13px;
+  }
+
+  .chart-artist {
+    font-size: 11px;
+  }
+
+  .chart-duration {
+    font-size: 11px;
+  }
+
+  .section-head-copy h3 {
+    font-size: 18px;
+  }
+
+  .section-head-copy p {
+    font-size: 11px;
+  }
+}
+
 /* ══ Reduced motion ════════════════════════════════════════════════════ */
 
 @media (prefers-reduced-motion: reduce) {
@@ -1759,3 +1869,92 @@ function playPersonalizedStream(section: RecSection | null): void {
   }
 }
 </style>
+
+  .duo-card {
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .duo-stack {
+    width: 80px;
+    height: 60px;
+  }
+
+  .duo-stack-cover {
+    width: 50px;
+    height: 50px;
+  }
+
+  .duo-stack-cover-1 {
+    left: 18px;
+  }
+
+  .duo-stack-cover-2 {
+    left: 34px;
+  }
+
+  .duo-name {
+    font-size: 17px;
+  }
+
+  .duo-sub {
+    font-size: 11px;
+  }
+
+  .shelf-grid,
+  .sk-tiles {
+    grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+    gap: 16px 12px;
+  }
+
+  .shelf-name {
+    margin-top: 8px;
+    font-size: 12px;
+  }
+
+  .shelf-count {
+    left: 8px;
+    bottom: 8px;
+    font-size: 10px;
+    padding: 2px 7px;
+  }
+
+  .shelf-open {
+    right: 8px;
+    bottom: 8px;
+    width: 30px;
+    height: 30px;
+    font-size: 11px;
+  }
+
+  .chart-row {
+    grid-template-columns: 28px 42px minmax(0, 1fr) auto;
+    gap: 10px;
+    padding: 8px 8px;
+  }
+
+  .chart-cover {
+    width: 42px;
+    height: 42px;
+  }
+
+  .chart-title {
+    font-size: 13px;
+  }
+
+  .chart-artist {
+    font-size: 11px;
+  }
+
+  .chart-duration {
+    font-size: 11px;
+  }
+
+  .section-head-copy h3 {
+    font-size: 18px;
+  }
+
+  .section-head-copy p {
+    font-size: 11px;
+  }
+}

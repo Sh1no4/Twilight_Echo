@@ -1,7 +1,3 @@
-<script lang="ts">
-const lyricScrollPositions = new Map<string, number>()
-</script>
-
 <script setup lang="ts">
 import {
   computed,
@@ -20,7 +16,6 @@ import { useLyricsManagement } from '../stores/lyricsManagement'
 import CoverImg from './CoverImg.vue'
 import { buildLyricLines, findActiveLyricIndex } from '../utils/lyrics'
 import type { LyricLine } from '../utils/lyrics'
-import { getLyricFocusLineIndices } from '../utils/lyricFocusWindow'
 import { projectLyricDisplay, projectManagedLyrics } from '../../../shared/lyricsManagement.ts'
 import AudioVisualizerPanel from './AudioVisualizerPanel.vue'
 import PlayingLyricWords from './PlayingLyricWords.vue'
@@ -31,12 +26,24 @@ import {
   type LyricsHighlightEffect,
   type LyricsStyleTarget
 } from '../../../shared/lyricsAppearance.ts'
+import { waitForAnimationFrameWithFallback } from '../utils/animationFrameFallback'
+import { createLyricViewportController } from '../utils/lyricViewportController'
 
 const playbackStore = usePlayerStore()
 const visualizationStore = useVisualizationStore()
-const { currentTrack, dominantColor, currentTime, lyricsLoadState, isPlaying, playbackRate } =
-  playbackStore
-const lyricWordClock = { currentTime, isPlaying, playbackRate }
+const {
+  currentTrack,
+  dominantColor,
+  lyricsLoadState,
+  isPlaying,
+  playbackClockSnapshot,
+  estimatePlaybackClockPosition
+} = playbackStore
+const lyricWordClock = {
+  snapshot: playbackClockSnapshot,
+  isPlaying,
+  positionAt: estimatePlaybackClockPosition
+}
 const { visualizerActive } = storeToRefs(visualizationStore)
 const { seek } = playbackStore
 const { settings } = useSettingsStore()
@@ -183,135 +190,28 @@ const coverIdentity = computed(
     `${currentTrack.value?.id ?? 'none'}:${currentTrack.value?.cover ?? ''}:${currentTrack.value?.coverSource ?? ''}`
 )
 const lyricsEl = ref<HTMLElement | null>(null)
-const lyricLineEls = new Map<number, HTMLElement>()
-let lyricScrollRaf = 0
-let lyricScrollDelayTimer = 0
-let lyricCenterTimer = 0
-let lyricManualScrollTimer = 0
-let lyricManualScrollLocked = false
 let lyricResizeObserver: ResizeObserver | null = null
-let restoringLyricScroll = false
 const LYRIC_SCROLL_DURATION_MS = 420
 const LYRIC_RESIZE_SCROLL_DURATION_MS = 260
-const LYRIC_SCROLL_DELAY_MS = 140
-const LYRIC_EXIT_DURATION_MS = 280
-const LYRIC_MANUAL_RETURN_DELAY_MS = 3000
-const LYRIC_ACTIVE_ANCHOR_RATIO = 0.58
+const LYRIC_SCROLL_FRAME_FALLBACK_MS = 120
+const LYRIC_ACTIVE_ANCHOR_RATIO = 0.5
+
+/**
+ * The player bar floats over the bottom of the now-playing page, so the
+ * visible lyric area ends above it. Anchor the active line to the center of
+ * that visible area (viewport height minus the bar) instead of the raw
+ * viewport center, otherwise the highlighted line sits too low behind the bar.
+ */
+function measurePlaybarReservedPx(): number {
+  const bar = document.querySelector<HTMLElement>('.player-bar-shell')
+  if (!bar) return 0
+  const height = bar.getBoundingClientRect().height
+  return Number.isFinite(height) && height > 0 ? height : 0
+}
 
 function currentTrackId(): string {
   return currentTrack.value?.id ?? ''
 }
-
-function saveLyricScrollPosition(trackId = currentTrackId()): void {
-  const el = lyricsEl.value
-  if (!trackId || !el) return
-  lyricScrollPositions.set(trackId, el.scrollTop)
-}
-
-function restoreLyricScrollPosition(): boolean {
-  const trackId = currentTrackId()
-  const el = lyricsEl.value
-  if (!trackId || !el || !lyricScrollPositions.has(trackId)) return false
-
-  const savedTop = lyricScrollPositions.get(trackId) ?? 0
-  const maxTop = Math.max(0, el.scrollHeight - el.clientHeight)
-  restoringLyricScroll = true
-  cancelLyricScrollAnimation()
-  clearLyricManualScrollTimer()
-  lyricManualScrollLocked = true
-  el.scrollTo({ top: Math.min(maxTop, Math.max(0, savedTop)), behavior: 'auto' })
-  window.requestAnimationFrame(() => {
-    restoringLyricScroll = false
-  })
-  return true
-}
-
-async function restoreOrCenterLyrics(): Promise<void> {
-  await nextTick()
-  // Use rAF to ensure the DOM layout is fully computed before measuring
-  // element positions. On re-mount, nextTick resolves after Vue's virtual
-  // DOM patch but the browser may not have performed layout yet.
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-  manualLyricBrowse.value = false
-  lyricManualScrollLocked = false
-  cancelLyricScrollAnimation()
-  if (activeLyricIndex.value >= 0) {
-    // Retry up to 3 frames in case lyricLineEls isn't populated yet
-    for (let attempt = 0; attempt < 3; attempt++) {
-      if (lyricLineEls.has(activeLyricIndex.value)) {
-        focusLyricLine(activeLyricIndex.value, 0)
-        return
-      }
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-    }
-    // Final attempt without duration constraint
-    focusLyricLine(activeLyricIndex.value)
-  } else if (lyricsEl.value) {
-    lyricsEl.value.scrollTo({ top: 0, behavior: 'auto' })
-  }
-}
-
-watch(
-  () =>
-    [
-      currentTrack.value?.id,
-      currentTrack.value?.lyrics,
-      currentTrack.value?.translatedLyrics
-    ] as const,
-  async ([id], previous) => {
-    const [prevId, prevLyrics, prevTranslatedLyrics] = previous ?? []
-
-    if (id !== prevId) {
-      if (prevId) {
-        saveLyricScrollPosition(prevId)
-      }
-      cancelLyricTransition()
-      cancelLyricScrollAnimation()
-      manualLyricBrowse.value = Boolean(id && lyricScrollPositions.has(id))
-      lyricLineEls.clear()
-      await nextTick()
-      if (lyricsEl.value) {
-        if (restoreLyricScrollPosition()) {
-          scheduleLyricReturnToCenter()
-        } else {
-          lyricManualScrollLocked = false
-          if (activeLyricIndex.value >= 0) {
-            focusLyricLine(activeLyricIndex.value)
-          } else {
-            lyricsEl.value.scrollTo({ top: 0, behavior: 'auto' })
-          }
-        }
-      }
-      return
-    }
-
-    if (
-      currentTrack.value &&
-      (currentTrack.value.lyrics !== prevLyrics ||
-        currentTrack.value.translatedLyrics !== prevTranslatedLyrics)
-    ) {
-      cancelLyricTransition()
-      await nextTick()
-      if (activeLyricIndex.value >= 0) {
-        focusLyricLine(activeLyricIndex.value)
-      }
-    }
-  }
-)
-
-onBeforeUnmount(() => {
-  saveLyricScrollPosition()
-  clearLyricIndexTimer()
-  cancelLyricScrollAnimation()
-  if (lyricCenterTimer !== 0) {
-    window.clearTimeout(lyricCenterTimer)
-    lyricCenterTimer = 0
-  }
-  clearLyricManualScrollTimer()
-  cancelLyricTransition()
-  lyricResizeObserver?.disconnect()
-  lyricResizeObserver = null
-})
 
 const lyricVisibility = computed(() => lyricsManagement.document.value)
 const managedLyricOverride = computed(() => lyricsManagement.entryFor(currentTrack.value?.id ?? ''))
@@ -349,126 +249,95 @@ const lyricsStillLoading = computed(
     lyricsLoadState.value.trackId === currentTrack.value?.id &&
     lyricsLoadState.value.status === 'loading'
 )
-const lyricsPendingLabel = computed(() => (lyricsStillLoading.value ? '加载歌词…' : '暂无歌词'))
-const reserveLyricsColumn = computed(() => hasLyrics.value || lyricsStillLoading.value)
+const lyricsLoadFailed = computed(
+  () =>
+    !hasLyrics.value &&
+    lyricsLoadState.value.trackId === currentTrack.value?.id &&
+    lyricsLoadState.value.status === 'failed'
+)
+const lyricsPendingLabel = computed(() =>
+  lyricsStillLoading.value ? '加载歌词…' : lyricsLoadFailed.value ? '歌词加载失败' : '暂无歌词'
+)
+const reserveLyricsColumn = computed(
+  () => hasLyrics.value || lyricsStillLoading.value || lyricsLoadFailed.value
+)
 const activeLyricIndex = ref(-1)
-const manualLyricBrowse = ref(false)
-const lyricLeavingIndex = ref(-1)
-const lyricEnteringIndex = ref(-1)
-let lyricTransitionTimer = 0
-let lyricIndexTimer = 0
-let lastObservedLyricTime = Number.NaN
-let predictedLyricTime = Number.NEGATIVE_INFINITY
+const highlightedLyricIndex = ref(-1)
+const lyricViewport = createLyricViewportController({
+  afterLayout: async () => {
+    await nextTick()
+    await waitForAnimationFrameWithFallback(LYRIC_SCROLL_FRAME_FALLBACK_MS)
+  },
+  onManualBrowseChange: () => {},
+  getActiveIndex: () => activeLyricIndex.value,
+  scrollDurationMs: LYRIC_SCROLL_DURATION_MS,
+  resizeScrollDurationMs: LYRIC_RESIZE_SCROLL_DURATION_MS,
+  anchorRatio: LYRIC_ACTIVE_ANCHOR_RATIO,
+  getBottomReservedPx: measurePlaybarReservedPx
+})
 
-function resetPredictedLyricTime(): void {
-  lastObservedLyricTime = Number.NaN
-  predictedLyricTime = Number.NEGATIVE_INFINITY
-}
+watch(
+  () =>
+    [
+      currentTrack.value?.id,
+      lyricLines.value
+    ] as const,
+  async ([trackId], previous) => {
+    const [previousTrackId, previousLines] = previous ?? []
+    if (trackId !== previousTrackId) {
+      lyricViewport.activate(trackId ?? '')
+      await lyricViewport.recenter(0)
+      return
+    }
 
-function lyricTime(position = currentTime.value): number {
+    if (currentTrack.value && lyricLines.value !== previousLines) {
+      await lyricViewport.recenter(0)
+    }
+  }
+)
+
+function lyricTime(position = playbackClockSnapshot.value.position): number {
   return position + currentLyricOffsetSeconds.value
 }
 
-function syncActiveLyricIndex(time = currentTime.value): void {
-  const observedTime = lyricTime(time)
-  if (observedTime < lastObservedLyricTime) predictedLyricTime = Number.NEGATIVE_INFINITY
-  lastObservedLyricTime = observedTime
-  const nextIndex = findActiveLyricIndex(
-    lyricLines.value,
-    Math.max(observedTime, predictedLyricTime)
-  )
+function syncActiveLyricIndex(time = playbackClockSnapshot.value.position): void {
+  const nextIndex = findActiveLyricIndex(lyricLines.value, lyricTime(time))
   if (nextIndex !== activeLyricIndex.value) activeLyricIndex.value = nextIndex
 }
 
-function clearLyricIndexTimer(): void {
-  if (lyricIndexTimer !== 0) {
-    window.clearTimeout(lyricIndexTimer)
-    lyricIndexTimer = 0
-  }
-}
-
-function scheduleLyricIndexBoundary(): void {
-  clearLyricIndexTimer()
-  if (!isPlaying.value) return
-
-  const rate = Number.isFinite(playbackRate.value) ? playbackRate.value : 1
-  if (rate <= 0) return
-
-  const referenceTime = Math.max(lyricTime(), predictedLyricTime)
-  let nextTime: number | null = null
-  for (
-    let index = Math.max(0, activeLyricIndex.value + 1);
-    index < lyricLines.value.length;
-    index += 1
-  ) {
-    const time = lyricLines.value[index].time
-    if (time != null && time > referenceTime + 0.0001) {
-      nextTime = time
-      break
-    }
-  }
-  if (nextTime == null) return
-
-  const delay = Math.max(0, ((nextTime - referenceTime) / rate) * 1000)
-  lyricIndexTimer = window.setTimeout(() => {
-    lyricIndexTimer = 0
-    if (!isPlaying.value) return
-    predictedLyricTime = Math.max(predictedLyricTime, nextTime)
-    syncActiveLyricIndex()
-    scheduleLyricIndexBoundary()
-  }, delay)
-}
-
 watch(
-  [lyricLines, currentTime, currentLyricOffsetSeconds],
-  ([lines, _time, offsetSeconds], previous) => {
-    if (previous && (lines !== previous[0] || offsetSeconds !== previous[2])) {
-      resetPredictedLyricTime()
-    }
-    syncActiveLyricIndex()
-    scheduleLyricIndexBoundary()
+  [lyricLines, playbackClockSnapshot, currentLyricOffsetSeconds],
+  ([, snapshot]) => {
+    syncActiveLyricIndex(snapshot.position)
   },
   { immediate: true }
 )
 
-watch([isPlaying, playbackRate], () => {
-  scheduleLyricIndexBoundary()
-})
+watch(
+  activeLyricIndex,
+  (index) => {
+    highlightedLyricIndex.value = index
+  },
+  { immediate: true }
+)
 
-function advanceActiveLyricIndex(time: number): void {
-  if (!Number.isFinite(time)) return
-  predictedLyricTime = Math.max(predictedLyricTime, time)
-  syncActiveLyricIndex()
-  scheduleLyricIndexBoundary()
-}
+watch(
+  () => currentTrack.value?.id,
+  () => {
+    highlightedLyricIndex.value = activeLyricIndex.value
+  }
+)
 
-const renderedLyricLines = computed(() => {
-  const lines = displayLyricLines.value
-  const indices = manualLyricBrowse.value
-    ? lines.map((_line, index) => index)
-    : getLyricFocusLineIndices(
-        lines.length,
-        activeLyricIndex.value,
-        lyricsAppearance.value.focusLineCount
-      )
-
-  // Keep the compact focus window authoritative during lyric handoff. Re-inserting
-  // a completed line after it leaves this window makes it a new flex item at the
-  // top of the list until the exit timer ends, which briefly stacks old lyrics.
-  // Lines that remain inside the window still receive the exiting class below.
-  return indices.map((index) => ({ index, line: lines[index] }))
-})
+const renderedLyricLines = computed(() =>
+  displayLyricLines.value.map((line, index) => ({ index, line }))
+)
 
 function setLyricLineRef(index: number, el: Element | ComponentPublicInstance | null): void {
-  if (el instanceof HTMLElement) {
-    lyricLineEls.set(index, el)
-    return
-  }
-  lyricLineEls.delete(index)
+  lyricViewport.registerRow(index, el instanceof HTMLElement ? el : null)
 }
 
 function lyricTone(index: number): 'idle' | 'far' | 'mid' | 'near' | 'active' {
-  const active = activeLyricIndex.value
+  const active = highlightedLyricIndex.value
   if (active < 0) return 'idle'
 
   const distance = Math.abs(index - active)
@@ -480,223 +349,33 @@ function lyricTone(index: number): 'idle' | 'far' | 'mid' | 'near' | 'active' {
 
 function jumpToLyric(time: number | null): void {
   if (time == null) return
-  clearLyricManualScrollTimer()
-  cancelLyricTransition()
-  manualLyricBrowse.value = false
-  lyricManualScrollLocked = false
-  cancelLyricScrollAnimation()
+  lyricViewport.releaseManualBrowse()
   seek(Math.max(0, time - currentLyricOffsetSeconds.value))
 }
 
-function easeOutCubic(t: number): number {
-  return 1 - Math.pow(1 - t, 3)
-}
-
-function cancelLyricScrollAnimation(): void {
-  if (lyricScrollRaf !== 0) {
-    window.cancelAnimationFrame(lyricScrollRaf)
-    lyricScrollRaf = 0
-  }
-  if (lyricScrollDelayTimer !== 0) {
-    window.clearTimeout(lyricScrollDelayTimer)
-    lyricScrollDelayTimer = 0
-  }
-}
-
-function cancelLyricTransition(): void {
-  if (lyricTransitionTimer !== 0) {
-    window.clearTimeout(lyricTransitionTimer)
-    lyricTransitionTimer = 0
-  }
-  lyricLeavingIndex.value = -1
-  lyricEnteringIndex.value = -1
-}
-
-function scheduleLyricTransition(previousIndex: number, nextIndex: number): void {
-  cancelLyricTransition()
-  lyricLeavingIndex.value = previousIndex
-  lyricEnteringIndex.value = nextIndex
-  lyricTransitionTimer = window.setTimeout(
-    () => {
-      lyricTransitionTimer = 0
-      lyricLeavingIndex.value = -1
-      lyricEnteringIndex.value = -1
-    },
-    LYRIC_SCROLL_DELAY_MS + LYRIC_EXIT_DURATION_MS + 80
-  )
-}
-
-function scheduleLyricScroll(index: number): void {
-  if (lyricScrollDelayTimer !== 0) {
-    window.clearTimeout(lyricScrollDelayTimer)
-  }
-  lyricScrollDelayTimer = window.setTimeout(async () => {
-    lyricScrollDelayTimer = 0
-    if (activeLyricIndex.value !== index || lyricManualScrollLocked) return
-    await nextTick()
-    if (activeLyricIndex.value === index && !lyricManualScrollLocked) {
-      focusLyricLine(index)
-    }
-  }, LYRIC_SCROLL_DELAY_MS)
-}
-
-function getLyricTargetTop(index: number): number | null {
-  const container = lyricsEl.value
-  const line = lyricLineEls.get(index)
-
-  if (!container || !line) return null
-
-  // Use offsetTop traversal instead of getBoundingClientRect().
-  // getBoundingClientRect() returns positions affected by CSS transforms
-  // (e.g. the scale(0.12) transition on the parent .playing-music), which
-  // gives incorrect scroll targets during the enter/leave animation.
-  // offsetTop / offsetHeight are layout properties unaffected by transforms.
-  let lineOffsetTop = 0
-  let current: HTMLElement | null = line
-  while (current && current !== container) {
-    lineOffsetTop += current.offsetTop
-    current = current.offsetParent as HTMLElement | null
-  }
-
-  const targetTop =
-    lineOffsetTop - (container.clientHeight - line.offsetHeight) * LYRIC_ACTIVE_ANCHOR_RATIO
-  const maxTop = Math.max(0, container.scrollHeight - container.clientHeight)
-
-  return Math.min(maxTop, Math.max(0, targetTop))
-}
-
-function animateLyricScrollTo(targetTop: number, duration: number): void {
-  const container = lyricsEl.value
-  if (!container) return
-
-  cancelLyricScrollAnimation()
-
-  const startTop = container.scrollTop
-  const distance = targetTop - startTop
-
-  if (Math.abs(distance) < 0.5 || duration <= 0) {
-    container.scrollTop = targetTop
-    return
-  }
-
-  const startAt = performance.now()
-  const step = (now: number): void => {
-    const progress = Math.min(1, (now - startAt) / duration)
-    container.scrollTop = startTop + distance * easeOutCubic(progress)
-
-    if (progress < 1) {
-      lyricScrollRaf = window.requestAnimationFrame(step)
-      return
-    }
-
-    container.scrollTop = targetTop
-    lyricScrollRaf = 0
-  }
-
-  lyricScrollRaf = window.requestAnimationFrame(step)
-}
-
-function focusLyricLine(index: number, duration = LYRIC_SCROLL_DURATION_MS): void {
-  const targetTop = getLyricTargetTop(index)
-  if (targetTop == null) return
-  animateLyricScrollTo(targetTop, duration)
-}
-
-async function centerActiveLyric(duration = LYRIC_RESIZE_SCROLL_DURATION_MS): Promise<void> {
-  await nextTick()
-  if (activeLyricIndex.value >= 0) {
-    focusLyricLine(activeLyricIndex.value, duration)
-  }
-}
-
-function clearLyricManualScrollTimer(): void {
-  if (lyricManualScrollTimer !== 0) {
-    window.clearTimeout(lyricManualScrollTimer)
-    lyricManualScrollTimer = 0
-  }
-}
-
-function scheduleLyricReturnToCenter(): void {
-  clearLyricManualScrollTimer()
-  lyricManualScrollTimer = window.setTimeout(async () => {
-    lyricManualScrollTimer = 0
-    manualLyricBrowse.value = false
-    lyricManualScrollLocked = false
-    await nextTick()
-    if (activeLyricIndex.value >= 0) {
-      focusLyricLine(activeLyricIndex.value)
-    }
-  }, LYRIC_MANUAL_RETURN_DELAY_MS)
-}
-
 function onLyricsManualScroll(): void {
-  manualLyricBrowse.value = true
-  lyricManualScrollLocked = true
-  cancelLyricTransition()
-  cancelLyricScrollAnimation()
-  saveLyricScrollPosition()
-  scheduleLyricReturnToCenter()
-}
-
-function onLyricsScroll(): void {
-  if (restoringLyricScroll) return
-  if (lyricManualScrollLocked) {
-    saveLyricScrollPosition()
-  }
-}
-
-function scheduleActiveLyricCenter(duration = LYRIC_RESIZE_SCROLL_DURATION_MS, delay = 80): void {
-  if (lyricCenterTimer !== 0) {
-    window.clearTimeout(lyricCenterTimer)
-  }
-
-  lyricCenterTimer = window.setTimeout(() => {
-    lyricCenterTimer = 0
-    void centerActiveLyric(duration)
-  }, delay)
+  lyricViewport.beginManualBrowse()
 }
 
 function onLyricLayoutResize(): void {
-  if (lyricManualScrollLocked) return
-  scheduleActiveLyricCenter()
+  lyricViewport.onResize()
 }
 
-watch(activeLyricIndex, async (index, previousIndex) => {
+watch(activeLyricIndex, (index) => {
   if (index < 0) return
-  if (lyricManualScrollLocked) {
-    cancelLyricTransition()
-    cancelLyricScrollAnimation()
-    return
-  }
-  if (previousIndex != null && previousIndex >= 0 && index > previousIndex) {
-    cancelLyricScrollAnimation()
-    scheduleLyricTransition(previousIndex, index)
-    scheduleLyricScroll(index)
-    return
-  }
-  cancelLyricTransition()
-  cancelLyricScrollAnimation()
-  await nextTick()
-  focusLyricLine(index)
+  if (lyricViewport.isManualBrowsing()) return
+  void lyricViewport.follow(index)
 })
-
-watch(
-  () => lyricsAppearance.value.focusLineCount,
-  async () => {
-    if (lyricManualScrollLocked) return
-    cancelLyricTransition()
-    await nextTick()
-    if (activeLyricIndex.value >= 0) focusLyricLine(activeLyricIndex.value, 0)
-  }
-)
 
 watch(lyricsEl, (el, previousEl) => {
   if (previousEl) {
     lyricResizeObserver?.unobserve(previousEl)
+    lyricViewport.detach(previousEl)
   }
   if (el) {
+    lyricViewport.attach(el)
     lyricResizeObserver?.observe(el)
-    void restoreOrCenterLyrics()
+    void lyricViewport.recenter(0)
   }
 })
 
@@ -706,14 +385,19 @@ onMounted(() => {
     onLyricLayoutResize()
   })
   if (lyricsEl.value) {
+    lyricViewport.attach(lyricsEl.value)
     lyricResizeObserver.observe(lyricsEl.value)
   }
-  void restoreOrCenterLyrics()
+  lyricViewport.activate(currentTrackId())
+  void lyricViewport.recenter(0)
   window.addEventListener('resize', onLyricLayoutResize)
   window.addEventListener('pointerdown', closeAppearanceMenu)
 })
 
 onBeforeUnmount(() => {
+  lyricViewport.dispose()
+  lyricResizeObserver?.disconnect()
+  lyricResizeObserver = null
   window.removeEventListener('resize', onLyricLayoutResize)
   window.removeEventListener('pointerdown', closeAppearanceMenu)
 })
@@ -808,10 +492,8 @@ onBeforeUnmount(() => {
             ref="lyricsEl"
             class="lyrics-scroll"
             :class="lyricAlignClass"
-            @scroll.passive="onLyricsScroll"
             @wheel.passive="onLyricsManualScroll"
-            @pointerdown="onLyricsManualScroll"
-            @touchstart.passive="onLyricsManualScroll"
+            @touchmove.passive="onLyricsManualScroll"
           >
             <div v-if="!hasLyrics" class="lyrics-pending" aria-live="polite">
               {{ lyricsPendingLabel }}
@@ -828,13 +510,11 @@ onBeforeUnmount(() => {
                   {
                     'is-plain': !item.line.timed,
                     'lyric-row--custom-background':
-                      lyricTextStyle[item.index === activeLyricIndex ? 'active' : 'normal']
-                        .backgroundStyle !== 'none',
-                    'lyric-row--exiting': item.index === lyricLeavingIndex,
-                    'lyric-row--entering': item.index === lyricEnteringIndex
+                      lyricTextStyle[item.index === highlightedLyricIndex ? 'active' : 'normal']
+                        .backgroundStyle !== 'none'
                   }
                 ]"
-                :style="lyricStyleVars(item.index === activeLyricIndex ? 'active' : 'normal')"
+                :style="lyricStyleVars(item.index === highlightedLyricIndex ? 'active' : 'normal')"
                 :disabled="!item.line.timed"
                 @pointerdown.stop
                 @click="jumpToLyric(item.line.time)"
@@ -843,12 +523,10 @@ onBeforeUnmount(() => {
                   <PlayingLyricWords
                     v-if="item.line.words?.length"
                     :words="item.line.words ?? []"
-                    :active="item.index === activeLyricIndex"
+                    :active="item.index === highlightedLyricIndex"
                     :offset-seconds="currentLyricOffsetSeconds"
-                    :next-line-time="displayLyricLines[item.index + 1]?.time ?? null"
                     :clock="lyricWordClock"
                     :karaoke-enabled="lyricsAppearance.karaokeEnabled"
-                    @reach-next-line="advanceActiveLyricIndex"
                   />
                   <span v-else-if="item.line.text" class="lyric-text">{{ item.line.text }}</span>
                   <span
@@ -1422,7 +1100,6 @@ onBeforeUnmount(() => {
 .lyric-row.active {
   opacity: var(--lyric-style-opacity, 1);
   color: var(--lyric-style-color, var(--te-playback-lyric-active-text, #fff));
-  transform: scale(1.035);
   background: var(--lyric-style-background, transparent);
   border-color: var(--te-playback-lyric-active-border, transparent);
   box-shadow: var(--te-playback-lyric-active-shadow, none);
@@ -1446,7 +1123,7 @@ onBeforeUnmount(() => {
 .lyric-row.active .lyric-text {
   font-size: clamp(
     12px,
-    var(--lyric-style-font-size, calc(var(--te-lyric-font-size, 18px) + 7px)),
+    var(--lyric-style-font-size, var(--te-lyric-font-size, 18px)),
     48px
   );
   font-weight: var(--lyric-style-font-weight, var(--te-lyric-font-weight, 600));
@@ -1528,7 +1205,7 @@ onBeforeUnmount(() => {
   font-family: var(--lyric-style-font-family, var(--te-lyric-font-family, inherit));
   font-size: clamp(
     12px,
-    var(--lyric-style-font-size, calc(var(--te-lyric-font-size, 18px) - 2px)),
+    var(--lyric-style-font-size, var(--te-lyric-font-size, 18px)),
     48px
   );
   font-weight: var(--lyric-style-font-weight, 500);
@@ -1542,7 +1219,11 @@ onBeforeUnmount(() => {
   -webkit-backdrop-filter: var(--lyric-style-backdrop-filter, none);
   text-shadow: var(--lyric-style-highlight, none);
   word-break: break-word;
-  transition: all var(--te-motion-hover) ease;
+  transition:
+    opacity var(--te-motion-hover) ease,
+    color var(--te-motion-hover) ease,
+    background var(--te-motion-hover) ease,
+    text-shadow var(--te-motion-hover) ease;
 }
 
 .lyric-row.active .lyric-translation {

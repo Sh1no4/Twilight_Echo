@@ -1,4 +1,14 @@
-import { shallowRef, ref, computed, watch, type Ref, type ComputedRef } from 'vue'
+import {
+  shallowRef,
+  ref,
+  computed,
+  watch as vueWatch,
+  effectScope,
+  type Ref,
+  type ComputedRef,
+  type WatchStopHandle
+} from 'vue'
+import { shouldApplyNativeTimePosition } from './playerProgressPolicy.ts'
 import type { PlaybackSession, Track } from '../types/music'
 import type {
   AudioDeviceOption,
@@ -40,6 +50,7 @@ import { resolveLyricsWithSources } from '../utils/lyricSourceResolution.ts'
 import type { LyricResolverSource } from '../utils/lyricSourceResolution.ts'
 import { resolverLyricsInput } from '../utils/managedLyricsSource.ts'
 import { useLyricsManagement } from './lyricsManagement.ts'
+import { useNcmStore } from './useNcmStore.ts'
 import {
   getPodcastDefaultPlaybackRate,
   parsePodcastTrackId,
@@ -47,6 +58,12 @@ import {
   usePodcastStore
 } from './usePodcastStore.ts'
 import { toggleVolumeMute } from '../utils/volumeMute.ts'
+import { createDebouncedVolumePersistence } from '../utils/volumePersistence.ts'
+import {
+  createPlaybackSessionClock,
+  type PlaybackClockSnapshot
+} from '../utils/playbackSessionClock.ts'
+import { configurePlayerStoreHmr } from './playerStoreHmr.ts'
 import {
   clampCuePlaybackPosition,
   cueDuration,
@@ -71,6 +88,7 @@ import { createSleepTimerController, getRestorableSleepTimerState } from './slee
 import { createSleepTimerFadeController } from './sleepTimerFade.ts'
 import { usePlaybackBookmarks } from './playbackBookmarks'
 import { useAppNoticeStore } from './useAppNoticeStore'
+import { claimRendererRuntime } from './playerRuntimeOwnership.ts'
 import {
   DEFAULT_AUDIO_DEVICE_OPTION,
   getFallbackAudioOutput,
@@ -84,6 +102,19 @@ type NativeOutputInfo = NativePlaybackInfo['outputInfo']
 type NativeVisualizationData = Awaited<
   ReturnType<typeof window.api.audioEngine.getVisualizationData>
 >
+
+// Module state is intentionally shared by all player consumers. Vite replaces
+// this module in development, so every watcher must belong to a runtime scope
+// that the replacement can stop before registering its own listeners.
+const playerRuntimeScope = effectScope(true)
+const watch = ((...args: unknown[]): WatchStopHandle => {
+  let stop: WatchStopHandle | undefined
+  playerRuntimeScope.run(() => {
+    stop = (vueWatch as (...parameters: unknown[]) => WatchStopHandle)(...args)
+  })
+  return stop!
+}) as typeof vueWatch
+const PLAYER_RUNTIME_OWNERSHIP_KEY = Symbol.for('twilight-echo.player-store-runtime')
 type ProviderSourceReliability = Record<string, number>
 export type PersonalizedStreamKey = 'fm' | 'radar'
 export interface PersonalizedStreamSession {
@@ -91,8 +122,20 @@ export interface PersonalizedStreamSession {
   key: PersonalizedStreamKey
 }
 const automaticLyricsBaselines = new Map<string, Track>()
-/** Per-track generation so a later load for A does not cancel an in-flight load for B. */
+interface ActiveLyricsLoad {
+  signature: string
+  generation: number
+  activation: number
+  controller: AbortController
+  promise: Promise<void>
+}
+
+/** One authoritative resolver per playback activation and source selection. */
+const activeLyricsLoads = new Map<string, ActiveLyricsLoad>()
 const lyricsLoadGenerationByTrackId = new Map<string, number>()
+const lyricsRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const lyricsRetryAttemptsByTrackId = new Map<string, number>()
+const LYRICS_RETRY_DELAYS_MS = [750, 2_000, 5_000] as const
 
 interface AudioOutputState {
   output: AudioOutputId
@@ -112,7 +155,7 @@ export interface AudioEngineRecoveryNotice {
 
 export interface LyricsLoadState {
   trackId: string
-  status: 'idle' | 'loading' | 'ready'
+  status: 'idle' | 'loading' | 'ready' | 'empty' | 'failed'
 }
 
 const currentTrack = ref<Track | null>(null)
@@ -123,6 +166,30 @@ const themeCoverIdentity = ref('')
 const isPlaying = ref(false)
 const isLoading = ref(false)
 const lyricsLoadState = ref<LyricsLoadState>({ trackId: '', status: 'idle' })
+let lyricsTrackActivation = 0
+
+// A lyric request belongs to a particular playback activation, not merely to
+// a song id. Returning to the same song after switching away must never reuse
+// a suspended request that was started for the previous activation.
+watch(
+  () => currentTrack.value?.id ?? '',
+  (trackId, previousTrackId) => {
+    if (trackId === previousTrackId) return
+    lyricsTrackActivation += 1
+    abortInactiveLyricsLoads(trackId)
+    clearLyricsRetryTimersExcept(trackId)
+    if (!trackId) {
+      lyricsLoadState.value = { trackId: '', status: 'idle' }
+      return
+    }
+    lyricsRetryAttemptsByTrackId.delete(trackId)
+    lyricsLoadState.value = {
+      trackId,
+      status: hasLyricContent(currentTrack.value?.lyrics) ? 'ready' : 'loading'
+    }
+  },
+  { flush: 'sync' }
+)
 const isStreamBuffering = ref(false)
 /** Live ICY StreamTitle from native radio playback (empty when unavailable). */
 const streamNowPlaying = ref('')
@@ -141,7 +208,6 @@ const abLoopB = ref<number | null>(null)
 /** Offer to resume a long track from a saved resume bookmark. */
 const resumeOffer = ref<{ trackId: string; positionSeconds: number; label: string } | null>(null)
 const lastAudibleVolume = ref(DEFAULT_SOFTWARE_VOLUME)
-let volumePersistTimer: ReturnType<typeof setTimeout> | null = null
 let suppressVolumePersist = false
 /** Active cast target display name (null when not casting). */
 const castTargetName = ref<string | null>(null)
@@ -157,6 +223,21 @@ const queue = shallowRef<Track[]>([])
 const queueIndex = ref(-1)
 const playMode = ref<PlayMode>('sequential')
 const originalQueue = shallowRef<Track[]>([])
+const heartModeContext = ref<{ likedPlaylistId: number | null }>({ likedPlaylistId: null })
+let heartModeBaseQueue: Track[] = []
+let heartModeFetchRequest: Promise<number> | null = null
+let heartModeFetchGeneration = 0
+const HEART_MODE_REFILL_THRESHOLD = 3
+const HEART_MODE_REFILL_COUNT = 20
+// 心动模式只能在本应用内“我喜欢的音乐”流媒体歌单上下文中启用：必须是在点击
+// 收藏歌单后建立的队列（heartModeContext），且当前曲目必须是网易云流媒体。
+const heartModeAvailable = computed(
+  () =>
+    heartModeContext.value.likedPlaylistId != null &&
+    queue.value.length > 0 &&
+    currentTrack.value != null &&
+    getTrackSource(currentTrack.value) === 'ncm'
+)
 const personalizedStreamSession = ref<PersonalizedStreamSession | null>(null)
 const personalizedStreamRemaining = ref(0)
 const personalizedStreamEntryIds = new Set<string>()
@@ -273,6 +354,13 @@ let playbackAudio: HTMLAudioElement | null = null
 let playbackObjectUrl: string | null = null
 let nativePlaybackActive = false
 let nativeQueueDelegated = false
+/**
+ * 原生引擎在授权/缓存层会把 source 解析成缓存文件或 CDN 直链，playback-info
+ * 回传的 source 与渲染层队列条目的 streamUrl/filePath 可能不一致。渲染层每次
+ * 实际发起播放时（loadAndPlay）都记录 source->track.id 映射，匹配 playback-info
+ * 时先按 source 查映射，保证原生自动切歌后 queueIndex/currentTrack 能同步。
+ */
+const nativeSourceToTrackId = new Map<string, string>()
 const nativeQueueRevisionFence = new NativeQueueRevisionFence()
 let activeLoadToken = 0
 let rendererFallbackInProgress = false
@@ -432,6 +520,7 @@ function applyNativePlayingState(playing: boolean, pausePosition: number | null 
   if (playing) {
     clearPendingNativePause()
     isPlaying.value = true
+    publishPlaybackClockSnapshot(playbackSessionClock.setTransport('playing', playbackRate.value))
     return
   }
 
@@ -447,6 +536,7 @@ function applyNativePlayingState(playing: boolean, pausePosition: number | null 
 
   clearPendingNativePause()
   isPlaying.value = playing
+  publishPlaybackClockSnapshot(playbackSessionClock.setTransport('paused', playbackRate.value))
 }
 
 function scheduleRendererPlaybackWatchdog(track: Track, loadToken: number): void {
@@ -481,13 +571,14 @@ function getPlaybackAudio(): HTMLAudioElement {
     } else if (Number.isFinite(audio.duration) && audio.duration > 0) {
       duration.value = audio.duration
     }
+    publishPlaybackClockSnapshot(playbackSessionClock.setDuration(duration.value))
   })
 
   audio.addEventListener('timeupdate', () => {
     if (Number.isFinite(audio.currentTime)) {
       const track = currentTrack.value
       const position = rendererAudioPositionForTrack(audio.currentTime, track)
-      applyPlaybackPositionSample(position)
+      applyPlaybackPositionSample(position, 'html-audio')
       if (track?.cueRange && audio.currentTime >= track.cueRange.endSeconds) {
         audio.pause()
         audio.currentTime = track.cueRange.endSeconds
@@ -601,8 +692,7 @@ function resetPlaybackRuntimeStateForRestore(): void {
   playbackInfo.value = null
   clearNativePlaybackInfoIntent()
   clearPlaybackToggleIntent()
-  pendingPlaybackPositionTarget = null
-  anchorRendererPlaybackClock(0)
+  publishPlaybackClockSnapshot(playbackSessionClock.reset())
   resetNativeStreamBufferingState()
   stopVisualizationPolling(true)
   stopRendererAudio(true)
@@ -1119,6 +1209,14 @@ function patchTrackInQueues(updatedTrack: Track): void {
 }
 
 function findTrackIndexFromPlaybackInfo(info: NativePlaybackInfo): number {
+  const mappedTrackId =
+    typeof info.source === 'string' && info.source.length > 0
+      ? nativeSourceToTrackId.get(info.source)
+      : undefined
+  if (mappedTrackId) {
+    const mappedIndex = queue.value.findIndex((track) => track.id === mappedTrackId)
+    if (mappedIndex >= 0) return mappedIndex
+  }
   if (
     Number.isInteger(info.queueIndex) &&
     info.queueIndex >= 0 &&
@@ -1130,7 +1228,14 @@ function findTrackIndexFromPlaybackInfo(info: NativePlaybackInfo): number {
     const trackAt = queue.value[info.queueIndex]
     const source = typeof info.source === 'string' ? info.source.trim() : ''
     if (trackAt && source.length > 0) {
-      if (getTrackAudioSource(trackAt) === source || trackAt.id === source) {
+      if (
+        getTrackAudioSource(trackAt) === source ||
+        trackAt.id === source ||
+        cachedSourceMatchesTrack(trackAt, source) ||
+        // A delegated native queue owns queueIndex even when authorization or
+        // cache resolution rewrites the reported source.
+        nativeQueueDelegated
+      ) {
         return info.queueIndex
       }
       // queueIndex 与 source 不匹配，队列可能已被重排，回退到 source 查找
@@ -1141,8 +1246,27 @@ function findTrackIndexFromPlaybackInfo(info: NativePlaybackInfo): number {
 
   if (!info.source) return -1
   return queue.value.findIndex(
-    (track) => track.id === info.source || getTrackAudioSource(track) === info.source
+    (track) =>
+      track.id === info.source ||
+      getTrackAudioSource(track) === info.source ||
+      cachedSourceMatchesTrack(track, info.source)
   )
+}
+
+/**
+ * 原生引擎在授权/缓存层会把 twilight-media 源解析成磁盘缓存文件
+ * （如 music-cache\ncm-cache\1996755298.flac）。渲染层队列条目持有的是
+ * 逻辑 id（ncm:1996755298）或流 URL，直接比对会失配，导致原生自动切歌后
+ * queueIndex/currentTrack 无法同步（歌单高亮不动、进度条卡住）。这里从缓存
+ * 文件名提取纯数字 id，与逻辑 id 的数字段比对。
+ */
+function cachedSourceMatchesTrack(track: Track, source: string): boolean {
+  const normalized = source.replace(/\\/g, '/')
+  const fileName = normalized.slice(normalized.lastIndexOf('/') + 1)
+  const numericId = fileName.replace(/\.[^.]+$/, '')
+  if (!/^\d+$/.test(numericId)) return false
+  const idSuffix = `:${numericId}`
+  return track.id === numericId || track.id.endsWith(idSuffix)
 }
 
 function clearNativeStreamBufferingTimer(): void {
@@ -1211,7 +1335,7 @@ function resetPlaybackUiForTrackSwitch(track: Track | null, position = 0): void 
   clearAbLoop()
   pendingLoadStartTime = 0
   duration.value = track ? cueDuration(track) : 0
-  beginPlaybackPositionTransition(position)
+  beginPlaybackPositionTransition(position, { keepRendererClockAlive: true })
 }
 
 function applyNativePlaybackInfo(
@@ -1235,6 +1359,7 @@ function applyNativePlaybackInfo(
     nativePlaybackActive = true
   } else if (
     info.nativePlaybackActive === false &&
+    playbackToggleIntent?.playing !== true &&
     (info.state === 'stopped' || (!isPlaying.value && !isLoading.value))
   ) {
     nativePlaybackActive = false
@@ -1304,14 +1429,14 @@ function applyNativePlaybackInfo(
     pendingLoadStartTime = 0
     duration.value =
       nextDuration > 0 ? nextDuration : currentTrack.value ? cueDuration(currentTrack.value) : 0
-    beginPlaybackPositionTransition(nextPosition)
+    beginPlaybackPositionTransition(nextPosition, { keepRendererClockAlive: true })
     // Keep the intent/guard confirmed so delayed previous-track ticks still drop.
     markNativePlaybackInfoIntentConfirmed()
   } else {
     if (nextDuration > 0) {
       duration.value = nextDuration
     }
-    applyPlaybackPositionSample(nextPosition)
+    applyPlaybackPositionSample(nextPosition, 'native-info')
   }
 
   applyNativePlayingState(
@@ -1361,6 +1486,7 @@ async function syncNativeQueueState(snapshot: NativeQueueStateSnapshot): Promise
     snapshot.playMode === 'repeat' || snapshot.playMode === 'shuffle'
       ? snapshot.playMode
       : 'sequential'
+  const heartModeActive = snapshot.playMode === 'heart'
   const synchronized = await synchronizeLatestNativeQueue(
     nativeQueueRevisionFence,
     snapshot.revision,
@@ -1368,10 +1494,12 @@ async function syncNativeQueueState(snapshot: NativeQueueStateSnapshot): Promise
       prepare: () =>
         preparePlayerNativeQueue(
           {
-            queue: snapshot.queue,
+            // 心动模式由渲染层管理智能列表与边界续播，原生引擎只加载当前曲目，
+            // 避免原生引擎在列表耗尽时静默停止而无法触发渲染层补拉。
+            queue: heartModeActive ? [current] : snapshot.queue,
             currentTrack: current,
             currentTarget: getTrackAudioSource(current),
-            currentIndex: snapshot.currentIndex
+            currentIndex: heartModeActive ? 0 : snapshot.currentIndex
           },
           {
             isAudioFileAuthorized: window.api.fs.isAudioFileAuthorized
@@ -1390,7 +1518,7 @@ async function syncNativeQueueState(snapshot: NativeQueueStateSnapshot): Promise
     // 保持现有播放不变，让 loadAndPlay 走正常的“不可用→回退”路径。
     return
   }
-  nativeQueueDelegated = preparedQueue.delegated
+  nativeQueueDelegated = heartModeActive ? false : preparedQueue.delegated
 }
 
 function trackNativeQueueSyncRequest(request: Promise<void>): Promise<void> {
@@ -1541,22 +1669,31 @@ function clampSoftwareVolume(value: number): number {
   return Math.min(1, Math.max(0, Math.round(value * 1000) / 1000))
 }
 
+async function persistSoftwareVolume(val: number): Promise<void> {
+  const next = clampSoftwareVolume(val)
+  const saved = clampSoftwareVolume(
+    typeof appSettings.value?.softwareVolume === 'number'
+      ? appSettings.value.softwareVolume
+      : DEFAULT_SOFTWARE_VOLUME
+  )
+  if (Math.abs(saved - next) < 0.0005) return
+  await updateSettings({ softwareVolume: next })
+}
+
+const softwareVolumePersistence = createDebouncedVolumePersistence(persistSoftwareVolume)
+
 function scheduleSoftwareVolumePersist(val: number): void {
+  if (!suppressVolumePersist) softwareVolumePersistence.schedule(val)
+}
+
+async function flushSoftwareVolumePersist(): Promise<void> {
   if (suppressVolumePersist) return
-  if (volumePersistTimer != null) clearTimeout(volumePersistTimer)
-  volumePersistTimer = setTimeout(() => {
-    volumePersistTimer = null
-    const next = clampSoftwareVolume(val)
-    const saved = clampSoftwareVolume(
-      typeof appSettings.value?.softwareVolume === 'number'
-        ? appSettings.value.softwareVolume
-        : DEFAULT_SOFTWARE_VOLUME
-    )
-    if (Math.abs(saved - next) < 0.0005) return
-    void updateSettings({ softwareVolume: next }).catch((err) => {
-      console.error('[音频引擎] 保存软件音量失败:', err)
-    })
-  }, 280)
+  try {
+    await softwareVolumePersistence.flush(volume.value)
+  } catch (err) {
+    console.error('[音频引擎] 保存软件音量失败:', err)
+    throw err
+  }
 }
 
 watch(volume, (val) => {
@@ -1591,6 +1728,9 @@ async function setPlaybackRate(rate: number): Promise<void> {
   const rounded = Math.round(clamped * 1000) / 1000
   if (Object.is(rounded, playbackRate.value)) return
   playbackRate.value = rounded
+  publishPlaybackClockSnapshot(
+    playbackSessionClock.setTransport(playbackSessionClock.snapshot().state, rounded)
+  )
   if (playbackAudio) applyPlaybackRateToHtmlAudio(playbackAudio, rounded)
   window.api.audioEngine.setPlaybackRate(rounded).catch(() => {})
   // Remember podcast speed preference when the user changes rate while on a podcast.
@@ -1718,29 +1858,15 @@ let visualizationRequestInFlight = false
 let visualizationPollingGeneration = 0
 let crossfadeTrackId = ''
 const TIME_UPDATE_INTERVAL_MS = 250
-const PLAYBACK_POSITION_CONFIRMATION_TOLERANCE_SECONDS = 1.5
-const PLAYBACK_POSITION_TRANSITION_GUARD_MS = 3000
-const RENDERER_CLOCK_STALE_AFTER_MS = 500
-const RENDERER_CLOCK_MAX_UNOBSERVED_GAP_MS = 1500
 const NATIVE_PAUSE_CONFIRMATION_MS = 500
 const VISUALIZATION_UPDATE_INTERVAL_MS = 200
 let latestPlaybackTime = 0
 let lastTimePublishAt = 0
 let pendingTimePublishTimer: number | null = null
-let pendingPlaybackPositionTarget: {
-  trackId: string
-  position: number
-  startedAt: number
-} | null = null
-let playbackPositionTransitionGuardUntil = 0
-let rendererClockAnchorPosition = 0
-let rendererClockAnchorAt = 0
-let lastAcceptedPlaybackSampleAt = 0
-let lastEnginePlaybackPosition = Number.NaN
-let lastEnginePlaybackTrackId = ''
 let pendingNativePause: { position: number } | null = null
 let nativePauseConfirmationTimer: number | null = null
 let rendererClockTimer: number | null = null
+let playbackClockResyncInFlight = false
 let advancingFromEndedTrackId = ''
 let autoAdvanceInFlight = false
 let loadedTrackId = ''
@@ -1755,6 +1881,14 @@ let dominantColorRequestId = 0
 
 function getNowMs(): number {
   return performance.now()
+}
+
+const playbackSessionClock = createPlaybackSessionClock({ now: getNowMs })
+const playbackClockSnapshot = ref<PlaybackClockSnapshot>(playbackSessionClock.snapshot())
+
+function publishPlaybackClockSnapshot(snapshot = playbackSessionClock.snapshot()): PlaybackClockSnapshot {
+  playbackClockSnapshot.value = snapshot
+  return snapshot
 }
 
 function clearPendingNativePause(): void {
@@ -1808,131 +1942,95 @@ function publishLatestCurrentTime(): void {
   publishCurrentTime(latestPlaybackTime)
 }
 
-function setCurrentTimeImmediate(time: number): void {
+function setCurrentTimeImmediate(time: number, clockAlreadyUpdated = false): void {
   clearPendingTimePublish()
+  if (!clockAlreadyUpdated) publishPlaybackClockSnapshot(playbackSessionClock.setPosition(time, 'intent'))
   publishCurrentTime(time)
 }
 
 function anchorRendererPlaybackClock(time: number): void {
-  const now = getNowMs()
-  rendererClockAnchorPosition = Math.max(0, Number.isFinite(time) ? time : 0)
-  rendererClockAnchorAt = now
-  lastAcceptedPlaybackSampleAt = now
+  publishPlaybackClockSnapshot(playbackSessionClock.setPosition(time, 'intent'))
 }
 
-function beginPlaybackPositionTransition(time: number): void {
-  const position = Math.max(0, Number.isFinite(time) ? time : 0)
-  const startedAt = getNowMs()
+function beginPlaybackPositionTransition(
+  time: number,
+  options: { keepRendererClockAlive?: boolean } = {}
+): void {
   clearPendingNativePause()
-  lastEnginePlaybackPosition = Number.NaN
-  lastEnginePlaybackTrackId = currentTrack.value?.id ?? ''
-  pendingPlaybackPositionTarget = {
-    trackId: lastEnginePlaybackTrackId,
-    position,
-    startedAt
-  }
-  playbackPositionTransitionGuardUntil = startedAt + PLAYBACK_POSITION_TRANSITION_GUARD_MS
-  anchorRendererPlaybackClock(position)
-  setCurrentTimeImmediate(position)
+  const position = publishPlaybackClockSnapshot(playbackSessionClock.begin({
+    trackId: currentTrack.value?.id ?? '',
+    position: time,
+    duration: duration.value,
+    rate: playbackRate.value,
+    state: isPlaying.value || options.keepRendererClockAlive ? 'playing' : 'loading'
+  })).position
+  setCurrentTimeImmediate(position, true)
 }
 
-function applyPlaybackPositionSample(time: number): boolean {
+function applyPlaybackPositionSample(
+  time: number,
+  source: 'native-time-pos' | 'native-info' | 'html-audio' = 'native-info'
+): boolean {
   const position = Math.max(0, Number.isFinite(time) ? time : 0)
-  const pending = pendingPlaybackPositionTarget
-  const transitionWasPending = pending !== null
-  if (pending) {
-    const trackId = currentTrack.value?.id ?? ''
-    const now = getNowMs()
-    if (pending.trackId !== trackId) {
-      pendingPlaybackPositionTarget = null
-      return false
-    } else if (now > playbackPositionTransitionGuardUntil) {
-      pendingPlaybackPositionTarget = null
-    } else {
-      const rate = Number.isFinite(playbackRate.value) ? playbackRate.value : 1
-      // Treat isLoading as advancing: load hand-off can clear isPlaying briefly
-      // while the engine is already emitting new-track positions near 0.
-      const elapsed =
-        isPlaying.value || isLoading.value
-          ? Math.max(0, (now - pending.startedAt) / 1000) * rate
-          : 0
-      const expectedPosition = pending.position + elapsed
-      if (
-        Math.abs(position - expectedPosition) > PLAYBACK_POSITION_CONFIRMATION_TOLERANCE_SECONDS
-      ) {
-        return false
-      }
-      pendingPlaybackPositionTarget = null
-    }
-  }
-
-  const delta = position - currentTime.value
+  const delta = position - playbackSessionClock.snapshot().position
   const expectedRewind =
     delta < 0 &&
     (abLoopNativeActive ||
       (abLoopA.value != null && abLoopB.value != null) ||
       playMode.value === 'repeat' ||
       (position <= 0.05 && duration.value > 0 && currentTime.value >= duration.value - 1))
-  if (
-    !transitionWasPending &&
-    getNowMs() <= playbackPositionTransitionGuardUntil &&
-    Math.abs(delta) > PLAYBACK_POSITION_CONFIRMATION_TOLERANCE_SECONDS
-  ) {
-    if (!expectedRewind) return false
-  }
+  const decision = playbackSessionClock.ingest({
+    trackId: currentTrack.value?.id ?? '',
+    epoch: playbackSessionClock.epoch(),
+    position,
+    expectedRewind,
+    duration: duration.value,
+    rate: playbackRate.value,
+    source,
+    state: isPlaying.value ? 'playing' : isLoading.value ? 'loading' : 'paused'
+  })
+  if (!decision.accepted) return false
+  publishPlaybackClockSnapshot(decision.snapshot)
+  if (decision.advanced) recoverFromStaleNativePause(position)
 
-  const trackId = currentTrack.value?.id ?? ''
-  if (lastEnginePlaybackTrackId !== trackId) {
-    lastEnginePlaybackTrackId = trackId
-    lastEnginePlaybackPosition = Number.NaN
-    clearPendingNativePause()
-  }
-  const previousEnginePosition = lastEnginePlaybackPosition
-  const engineAdvanced =
-    !Number.isFinite(previousEnginePosition) || position > previousEnginePosition + 0.01
-  const engineRewound =
-    Number.isFinite(previousEnginePosition) && position + 0.01 < previousEnginePosition
-  const engineStalled =
-    Number.isFinite(previousEnginePosition) && Math.abs(position - previousEnginePosition) <= 0.01
-
-  if (!expectedRewind && engineRewound) return false
-  if (!expectedRewind && engineStalled) return false
-
-  lastEnginePlaybackPosition = position
-  if (engineAdvanced) recoverFromStaleNativePause(position)
-  if (!expectedRewind && engineAdvanced && position + 0.35 < currentTime.value) return false
-
-  anchorRendererPlaybackClock(position)
-
-  if (expectedRewind || position + 0.5 < latestPlaybackTime) {
-    setCurrentTimeImmediate(position)
+  if (expectedRewind || decision.snapshot.position + 0.5 < currentTime.value) {
+    setCurrentTimeImmediate(decision.snapshot.position, true)
   } else {
-    setCurrentTimeThrottled(position)
+    setCurrentTimeThrottled(decision.snapshot.position, true)
   }
   return true
 }
 
 function tickRendererPlaybackClock(): void {
-  // Keep the playbar / lyric clock alive during intentional load hand-off even if
-  // a transient pause event clears isPlaying before the new track confirms.
-  if ((!isPlaying.value && !isLoading.value) || isCurrentTrackLiveStream()) return
-  const now = getNowMs()
-  if (now - lastAcceptedPlaybackSampleAt < RENDERER_CLOCK_STALE_AFTER_MS) return
-  const elapsedMs = Math.max(0, now - rendererClockAnchorAt)
-  if (elapsedMs > RENDERER_CLOCK_MAX_UNOBSERVED_GAP_MS) {
-    rendererClockAnchorPosition = currentTime.value
-    rendererClockAnchorAt = now
+  if (isCurrentTrackLiveStream()) return
+  const estimated = playbackSessionClock.estimate()
+  if (estimated?.needsResync) {
+    void requestPlaybackClockResync()
     return
   }
-  const rate = Number.isFinite(playbackRate.value) ? playbackRate.value : 1
-  const estimated = rendererClockAnchorPosition + (elapsedMs / 1000) * rate
-  const total = duration.value > 0 ? duration.value : (currentTrack.value?.duration ?? 0)
-  const position = total > 0 ? Math.min(estimated, total) : estimated
-  if (position <= currentTime.value) return
-  latestPlaybackTime = position
-  currentTime.value = position
-  lastTimePublishAt = now
-  enforceAbLoop(position)
+  if (estimated !== null) {
+    publishPlaybackClockSnapshot(estimated)
+    publishCurrentTime(estimated.position)
+  }
+}
+
+function estimatePlaybackClockPosition(at = getNowMs()): number {
+  return playbackSessionClock.positionAt(at)
+}
+
+async function requestPlaybackClockResync(): Promise<void> {
+  if (playbackClockResyncInFlight || !currentTrack.value) return
+  const api = window.api?.audioEngine
+  if (!api?.getPlaybackInfo) return
+  playbackClockResyncInFlight = true
+  try {
+    const info = await api.getPlaybackInfo()
+    applyNativePlaybackInfo(info, { applyTrackWhenInactive: true })
+  } catch {
+    // The next renderer tick retries while the clock remains stalled.
+  } finally {
+    playbackClockResyncInFlight = false
+  }
 }
 
 function startRendererPlaybackClock(): void {
@@ -1940,7 +2038,8 @@ function startRendererPlaybackClock(): void {
   rendererClockTimer = window.setInterval(tickRendererPlaybackClock, TIME_UPDATE_INTERVAL_MS)
 }
 
-function setCurrentTimeThrottled(time: number): void {
+function setCurrentTimeThrottled(time: number, clockAlreadyUpdated = false): void {
+  if (!clockAlreadyUpdated) publishPlaybackClockSnapshot(playbackSessionClock.setPosition(time, 'intent'))
   latestPlaybackTime = time
   enforceAbLoop(time)
   const now = getNowMs()
@@ -1948,8 +2047,7 @@ function setCurrentTimeThrottled(time: number): void {
 
   if (remainingMs <= 0 || currentTime.value === 0) {
     clearPendingTimePublish()
-    currentTime.value = time
-    lastTimePublishAt = now
+    publishCurrentTime(time)
     return
   }
 
@@ -2067,6 +2165,10 @@ async function handlePlaybackEnded(): Promise<void> {
 
 async function advanceAfterPlaybackEnded(): Promise<void> {
   clearCrossfadeTimer()
+  if (playMode.value === 'heart') {
+    await advanceHeartPlayback()
+    return
+  }
   applyPendingRendererPlayModeAtBoundary()
   const nextIndex = queueIndex.value + 1
   if (nextIndex >= 0 && nextIndex < queue.value.length) {
@@ -2200,6 +2302,48 @@ async function requestBpmAnalysisForTrack(track: Track): Promise<void> {
   }
 }
 
+function clearLyricsRetryTimer(trackId: string): void {
+  const timer = lyricsRetryTimers.get(trackId)
+  if (timer != null) clearTimeout(timer)
+  lyricsRetryTimers.delete(trackId)
+}
+
+function clearLyricsRetryTimersExcept(activeTrackId: string): void {
+  for (const trackId of lyricsRetryTimers.keys()) {
+    if (trackId !== activeTrackId) clearLyricsRetryTimer(trackId)
+  }
+}
+
+function abortInactiveLyricsLoads(activeTrackId: string): void {
+  for (const [trackId, request] of activeLyricsLoads) {
+    if (trackId !== activeTrackId) request.controller.abort()
+  }
+}
+
+function scheduleCurrentLyricsRetry(trackId: string, activation: number): void {
+  if (currentTrack.value?.id !== trackId || lyricsTrackActivation !== activation) return
+  const attempt = lyricsRetryAttemptsByTrackId.get(trackId) ?? 0
+  const delay = LYRICS_RETRY_DELAYS_MS[attempt]
+  if (delay == null) return
+
+  lyricsRetryAttemptsByTrackId.set(trackId, attempt + 1)
+  clearLyricsRetryTimer(trackId)
+  lyricsRetryTimers.set(
+    trackId,
+    setTimeout(() => {
+      lyricsRetryTimers.delete(trackId)
+      if (
+        currentTrack.value?.id !== trackId ||
+        lyricsTrackActivation !== activation ||
+        hasLyricContent(currentTrack.value.lyrics)
+      ) {
+        return
+      }
+      void ensureCurrentTrackLyricsLoaded(currentTrack.value, true, true)
+    }, delay)
+  )
+}
+
 function commitResolvedLyrics(
   triggerTrack: Track,
   resolverTrack: Track,
@@ -2224,12 +2368,14 @@ function commitResolvedLyrics(
   }
   const updatedTrack = {
     ...resolverTrack,
+    ...existing,
     lyrics: nextLyrics,
     translatedLyrics: resolved.translatedLyrics,
     lyricsSource: resolved.lyricsSource,
     translatedLyricsSource: resolved.translatedLyricsSource,
-    romanizedLyrics: resolverTrack.romanizedLyrics ?? null,
-    romanizedLyricsSource: resolverTrack.romanizedLyricsSource ?? null
+    romanizedLyrics: existing.romanizedLyrics ?? resolverTrack.romanizedLyrics ?? null,
+    romanizedLyricsSource:
+      existing.romanizedLyricsSource ?? resolverTrack.romanizedLyricsSource ?? null
   }
   currentTrack.value = updatedTrack
   patchTrackInQueues(updatedTrack)
@@ -2237,34 +2383,18 @@ function commitResolvedLyrics(
 
 async function ensureCurrentTrackLyricsLoaded(
   triggerTrack: Track | null = currentTrack.value,
-  allowProviderLookup = true
+  allowProviderLookup = true,
+  forceReload = false
 ): Promise<void> {
   if (!triggerTrack || currentTrack.value?.id !== triggerTrack.id) return
-  // Per-track generation: concurrent loads for *different* tracks must not cancel
-  // each other; only a newer load for the *same* id supersedes.
-  const previousGeneration = lyricsLoadGenerationByTrackId.get(triggerTrack.id) ?? 0
-  const loadGeneration = previousGeneration + 1
-  lyricsLoadGenerationByTrackId.set(triggerTrack.id, loadGeneration)
-  const isCurrentGeneration = (): boolean =>
-    lyricsLoadGenerationByTrackId.get(triggerTrack.id) === loadGeneration &&
-    currentTrack.value?.id === triggerTrack.id
-  lyricsLoadState.value = { trackId: triggerTrack.id, status: 'loading' }
-  const completeIfCurrent = (): void => {
-    if (isCurrentGeneration()) {
-      lyricsLoadState.value = { trackId: triggerTrack.id, status: 'ready' }
-    }
-  }
-
+  const activation = lyricsTrackActivation
   const lyricsManagement = useLyricsManagement()
   try {
-    // ensureLoaded itself races the IPC (3s); never block the 12s resolve path
-    // indefinitely or the now-playing pane sticks on "加载歌词…".
     await lyricsManagement.ensureLoaded()
   } catch {
-    // Automatic resolution remains available when the optional management
-    // document cannot be read. The persistent store preserves the bad file.
+    // The optional management document must never prevent automatic resolution.
   }
-  if (!isCurrentGeneration()) return
+  if (currentTrack.value?.id !== triggerTrack.id || lyricsTrackActivation !== activation) return
 
   const override = lyricsManagement.entryFor(triggerTrack.id)
   const requestedSource = override?.source ?? 'auto'
@@ -2285,6 +2415,47 @@ async function ensureCurrentTrackLyricsLoaded(
   const resolverTranslationSource: LyricResolverSource =
     translationLayerSource === 'manual' ? 'automatic' : translationLayerSource
   const sourceSelectionSignature = `${requestedSource}:${originalLayerSource}:${translationLayerSource}`
+
+  const requestSignature = `${sourceSelectionSignature}:${allowProviderLookup ? 'provider' : 'local'}`
+  const existingRequest = activeLyricsLoads.get(triggerTrack.id)
+  if (
+    !forceReload &&
+    existingRequest?.signature === requestSignature &&
+    existingRequest.activation === activation
+  ) {
+    await existingRequest.promise
+    return
+  }
+  existingRequest?.controller.abort()
+
+  const previousGeneration = lyricsLoadGenerationByTrackId.get(triggerTrack.id) ?? 0
+  const loadGeneration = previousGeneration + 1
+  lyricsLoadGenerationByTrackId.set(triggerTrack.id, loadGeneration)
+  clearLyricsRetryTimer(triggerTrack.id)
+  lyricsLoadState.value = { trackId: triggerTrack.id, status: 'loading' }
+
+  const request: ActiveLyricsLoad = {
+    signature: requestSignature,
+    generation: loadGeneration,
+    activation,
+    controller: new AbortController(),
+    promise: Promise.resolve()
+  }
+  const isCurrentRequest = (): boolean =>
+    activeLyricsLoads.get(triggerTrack.id) === request &&
+    lyricsLoadGenerationByTrackId.get(triggerTrack.id) === request.generation &&
+    lyricsTrackActivation === request.activation &&
+    currentTrack.value?.id === triggerTrack.id &&
+    !request.controller.signal.aborted
+  const completeIfCurrent = (status: 'ready' | 'empty' = 'ready'): void => {
+    if (isCurrentRequest()) {
+      clearLyricsRetryTimer(triggerTrack.id)
+      lyricsRetryAttemptsByTrackId.delete(triggerTrack.id)
+      lyricsLoadState.value = { trackId: triggerTrack.id, status }
+    }
+  }
+
+  const run = async (): Promise<void> => {
   // Manual content is applied by the presentation layer. Keeping it out of
   // the queue record means choosing Auto later can always recover
   // the resolver result instead of treating a previous edit as embedded data.
@@ -2303,7 +2474,7 @@ async function ensureCurrentTrackLyricsLoaded(
         translatedLyricsSource: null
       })
     }
-    completeIfCurrent()
+    completeIfCurrent('empty')
     return
   }
 
@@ -2325,22 +2496,22 @@ async function ensureCurrentTrackLyricsLoaded(
 
   // Already have parseable lyrics (hydrated / previous resolve) — keep them and
   // only top up missing translation via provider when allowed.
-  const hasOriginal =
-    typeof resolverTrack.lyrics === 'string' && resolverTrack.lyrics.trim().length > 0
+  const hasOriginal = hasLyricContent(resolverTrack.lyrics)
 
   const source = getTrackSource(resolverTrack)
   const canLoadLocalLyrics =
     source === 'local' &&
     (resolverOriginalSource === 'local' ||
-      (resolverOriginalSource === 'automatic' && resolverTrack.lyrics == null)) &&
+      (resolverOriginalSource === 'automatic' && !hasOriginal)) &&
     !!resolverTrack.dir &&
     !!resolverTrack.fileName
   const canLoadProviderLyrics =
     allowProviderLookup &&
     (resolverOriginalSource === 'provider' ||
       resolverTranslationSource === 'provider' ||
-      (resolverOriginalSource === 'automatic' && resolverTrack.lyrics == null) ||
-      (resolverTranslationSource === 'automatic' && resolverTrack.translatedLyrics == null))
+      (resolverOriginalSource === 'automatic' && !hasOriginal) ||
+      (resolverTranslationSource === 'automatic' &&
+        !hasLyricContent(resolverTrack.translatedLyrics)))
   const canLoadOnlineLyrics =
     resolverOriginalSource === 'automatic' &&
     appSettings.value?.onlineLyricsFallback === true &&
@@ -2349,7 +2520,6 @@ async function ensureCurrentTrackLyricsLoaded(
     !hasOriginal
 
   if (!canLoadLocalLyrics && !canLoadProviderLyrics && !canLoadOnlineLyrics) {
-    if (!isCurrentGeneration()) return
     // Finish loading state: null means "still resolving"; '' means "confirmed empty".
     commitResolvedLyrics(triggerTrack, resolverTrack, {
       lyrics: hasOriginal ? resolverTrack.lyrics! : '',
@@ -2357,72 +2527,68 @@ async function ensureCurrentTrackLyricsLoaded(
       lyricsSource: resolverTrack.lyricsSource ?? (hasOriginal ? 'embedded' : null),
       translatedLyricsSource: resolverTrack.translatedLyricsSource ?? null
     })
-    completeIfCurrent()
+    completeIfCurrent(hasOriginal || hasLyricContent(resolverTrack.translatedLyrics) ? 'ready' : 'empty')
     return
   }
 
-  const resolvePromise = resolveLyricsWithSources({
-    track: resolverTrack,
-    originalSource: resolverOriginalSource,
-    translationSource: resolverTranslationSource,
-    loadLocalLyrics: canLoadLocalLyrics
-      ? () =>
-          window.api.data
-            .getLyrics(resolverTrack.dir!, resolverTrack.fileName, resolverTrack.filePath)
-            .catch(() => null)
-      : undefined,
-    loadProviderLyrics: canLoadProviderLyrics
-      ? async () => {
-          await syncPluginProviders()
-          return useMediaProviders().resolveLyrics(resolverTrack)
-        }
-      : undefined,
-    loadOnlineLyrics: canLoadOnlineLyrics
-      ? async () => {
-          const result = await window.api.data.searchOnlineLyrics({
-            title: resolverTrack.title,
-            artist: resolverTrack.artist,
-            album: resolverTrack.album || undefined,
-            durationSeconds:
-              typeof resolverTrack.duration === 'number' && Number.isFinite(resolverTrack.duration)
-                ? resolverTrack.duration
-                : undefined
-          })
-          return result.best?.syncedLyrics ?? result.best?.plainLyrics ?? null
-        }
-      : undefined,
-    // LRCLIB does not carry translations. When the online fallback supplied
-    // the original lyrics, try the provider path once more just for the
-    // NetEase tlyric translation; a miss simply keeps the layer hidden.
-    loadOnlineTranslation: canLoadOnlineLyrics
-      ? async () => {
-          await syncPluginProviders()
-          const lyrics = await useMediaProviders().resolveLyrics(resolverTrack)
-          return lyrics?.translatedLyrics ?? null
-        }
-      : undefined
-  })
-  // Bound async lyric fetches so the now-playing pane cannot stick on "加载歌词…".
-  let resolveTimeout: number | null = null
-  const resolved = await Promise.race([
-    resolvePromise,
-    new Promise<Awaited<ReturnType<typeof resolveLyricsWithSources>>>((resolve) => {
-      resolveTimeout = window.setTimeout(
-        () =>
-          resolve({
-            lyrics: hasOriginal ? resolverTrack.lyrics! : null,
-            translatedLyrics: resolverTrack.translatedLyrics ?? null,
-            lyricsSource: resolverTrack.lyricsSource ?? (hasOriginal ? 'embedded' : null),
-            translatedLyricsSource: resolverTrack.translatedLyricsSource ?? null
-          }),
-        4_000
-      )
+  let resolved: Awaited<ReturnType<typeof resolveLyricsWithSources>>
+  try {
+    resolved = await resolveLyricsWithSources({
+      track: resolverTrack,
+      originalSource: resolverOriginalSource,
+      translationSource: resolverTranslationSource,
+      loadLocalLyrics: canLoadLocalLyrics
+        ? () =>
+            window.api.data
+              .getLyrics(resolverTrack.dir!, resolverTrack.fileName, resolverTrack.filePath)
+              .catch(() => null)
+        : undefined,
+      loadProviderLyrics: canLoadProviderLyrics
+        ? async () => {
+            await syncPluginProviders()
+            return useMediaProviders().resolveLyrics(resolverTrack, {
+              signal: request.controller.signal
+            })
+          }
+        : undefined,
+      loadOnlineLyrics: canLoadOnlineLyrics
+        ? async () => {
+            const result = await window.api.data.searchOnlineLyrics({
+              title: resolverTrack.title,
+              artist: resolverTrack.artist,
+              album: resolverTrack.album || undefined,
+              durationSeconds:
+                typeof resolverTrack.duration === 'number' &&
+                Number.isFinite(resolverTrack.duration)
+                  ? resolverTrack.duration
+                  : undefined
+            })
+            return result.best?.syncedLyrics ?? result.best?.plainLyrics ?? null
+          }
+        : undefined,
+      // LRCLIB does not carry translations. When the online fallback supplied
+      // the original lyrics, try the provider path once more just for the
+      // NetEase tlyric translation; a miss simply keeps the layer hidden.
+      loadOnlineTranslation: canLoadOnlineLyrics
+        ? async () => {
+            await syncPluginProviders()
+            const lyrics = await useMediaProviders().resolveLyrics(resolverTrack)
+            return lyrics?.translatedLyrics ?? null
+          }
+        : undefined
     })
-  ]).finally(() => {
-    if (resolveTimeout !== null) window.clearTimeout(resolveTimeout)
-  })
+  } catch {
+    // A failed optional source must settle the request without erasing lyrics
+    // that may already be attached to the active track.
+    resolved = {
+      lyrics: resolverTrack.lyrics ?? null,
+      translatedLyrics: resolverTrack.translatedLyrics ?? null,
+      lyricsSource: resolverTrack.lyricsSource ?? (hasOriginal ? 'embedded' : null),
+      translatedLyricsSource: resolverTrack.translatedLyricsSource ?? null,
+      failure: 'provider'
+    }
+  }
 
-  if (!isCurrentGeneration()) return
   // Source selection can change while an async local/provider resolver is
   // pending. Do not let a stale forced lookup overwrite the newer Auto (or
   // manual) choice when it finally completes.
@@ -2447,8 +2613,47 @@ async function ensureCurrentTrackLyricsLoaded(
     completeIfCurrent()
     return
   }
+  if (resolved.failure && !hasLyricContent(resolved.lyrics) && !hasLyricContent(resolved.translatedLyrics)) {
+    if (isCurrentRequest()) {
+      lyricsLoadState.value = { trackId: triggerTrack.id, status: 'failed' }
+      scheduleCurrentLyricsRetry(triggerTrack.id, request.activation)
+    }
+    return
+  }
   commitResolvedLyrics(triggerTrack, resolverTrack, resolved)
-  completeIfCurrent()
+  completeIfCurrent(
+    hasLyricContent(resolved.lyrics) || hasLyricContent(resolved.translatedLyrics) ? 'ready' : 'empty'
+  )
+  }
+
+  request.promise = Promise.resolve().then(run)
+  activeLyricsLoads.set(triggerTrack.id, request)
+  try {
+    await request.promise
+  } finally {
+    if (activeLyricsLoads.get(triggerTrack.id) === request) {
+      activeLyricsLoads.delete(triggerTrack.id)
+    }
+  }
+}
+
+const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[a-zA-Z]:[\\/]/
+const URI_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z0-9+.-]*:/
+
+function isLikelyLocalFilePath(target: string): boolean {
+  if (!target) return false
+  if (WINDOWS_ABSOLUTE_PATH_PATTERN.test(target)) return true
+  if (URI_SCHEME_PATTERN.test(target)) return false
+  return target.includes('\\') || target.includes('/')
+}
+
+/** True when a previously resolved local playback file still exists. */
+async function isUsableLocalPlaybackFile(filePath: string): Promise<boolean> {
+  try {
+    return (await window.api?.fs?.isAudioFileAuthorized?.(filePath)) === true
+  } catch {
+    return false
+  }
 }
 
 async function resolvePlayTarget(track: Track): Promise<string> {
@@ -2473,6 +2678,34 @@ async function resolvePlayTarget(track: Track): Promise<string> {
     const direct = track.streamUrl || track.filePath
     if (direct && /^https?:\/\//i.test(direct)) return direct
     throw new Error('Unable to resolve podcast stream URL')
+  }
+
+  if (source === 'network') {
+    // Browse-page tracks may already carry a resolved cache path/URL. Search
+    // and library tracks carry the profile/entry pair and resolve lazily here.
+    if (track.filePath) {
+      if (
+        !isLikelyLocalFilePath(track.filePath) ||
+        (await isUsableLocalPlaybackFile(track.filePath))
+      ) {
+        return track.filePath
+      }
+      // The managed music cache was cleared: the local copy is gone. Drop the
+      // dead path and re-resolve, which re-downloads into the cache.
+      track.filePath = ''
+    }
+    const network = track.networkSource
+    if (!network || !window.api?.networkSources) {
+      throw new Error('Unable to resolve network stream URL')
+    }
+    const plan = await window.api.networkSources.resolvePlayback(
+      network.profileId,
+      network.entry
+    )
+    const target = plan.kind === 'direct-url' ? plan.url : plan.cacheFilePath
+    if (!target) throw new Error('Unable to resolve network stream URL')
+    track.filePath = target
+    return target
   }
 
   const ncmPlaybackQuality = appSettings.value.ncmPlaybackQuality
@@ -2500,8 +2733,12 @@ async function resolvePlayTarget(track: Track): Promise<string> {
     !/^https?:\/\//i.test(track.streamUrl) &&
     !/^twilight-media:/i.test(track.streamUrl)
   ) {
-    // Local cache path previously returned by the provider.
-    return track.streamUrl
+    // Local cache path previously returned by the provider. The managed cache
+    // may have been cleared since, so only reuse a path that still exists;
+    // otherwise re-resolve through the provider, which re-fetches online and
+    // re-caches on demand. loadAndPlay commits the resolved target back onto
+    // the track, so no clearing is needed here.
+    if (await isUsableLocalPlaybackFile(track.streamUrl)) return track.streamUrl
   }
 
   await syncPluginProviders()
@@ -2621,14 +2858,24 @@ async function handleProviderRematchFallback(
   return true
 }
 
-function retryCurrentTrackLyricsIfNeeded(): void {
+function retryCurrentTrackLyricsIfNeeded(forceReload = false): void {
   const track = currentTrack.value
   if (!track) return
   const loading =
     lyricsLoadState.value.trackId === track.id && lyricsLoadState.value.status === 'loading'
-  if (track.lyrics == null || loading) {
-    void ensureCurrentTrackLyricsLoaded(track, true)
+  const failed =
+    lyricsLoadState.value.trackId === track.id && lyricsLoadState.value.status === 'failed'
+  if (!hasLyricContent(track.lyrics) || loading) {
+    void ensureCurrentTrackLyricsLoaded(track, true, forceReload)
+    return
   }
+  if (failed) {
+    void ensureCurrentTrackLyricsLoaded(track, true, forceReload)
+  }
+}
+
+function hasLyricContent(value: string | null | undefined): boolean {
+  return typeof value === 'string' && value.trim().length > 0
 }
 
 async function refreshPlaybackInfoAfterStartFile(): Promise<void> {
@@ -2676,7 +2923,7 @@ async function refreshPlaybackAfterRendererResume(): Promise<void> {
     } catch {
       // Playback events can resume independently after a short service delay.
     } finally {
-      retryCurrentTrackLyricsIfNeeded()
+      retryCurrentTrackLyricsIfNeeded(true)
       rendererResumePlaybackInfoRefresh = null
     }
   })()
@@ -2697,21 +2944,13 @@ function setupAudioEngineListeners(): void {
     api.onPropertyChange(({ name, data }) => {
       switch (name) {
         case 'time-pos':
-          // Prefer continuous progress paint over strict native flags. Drop only
-          // when there is no active session identity at all — brief demotions of
-          // nativePlaybackActive during track hand-off must not freeze the bar
-          // until the user pauses or expands the now-playing page.
-          if (
-            !currentTrack.value &&
-            !nativePlaybackActive &&
-            !nativeQueueDelegated &&
-            !isPlaying.value &&
-            !isLoading.value
-          ) {
+          // 兜底（HTMLAudio）模式下原生 time-pos 与 <audio> timeupdate 双源竞争，
+          // 会造成进度冻结；只在原生播放时应用原生时间。
+          if (!shouldApplyNativeTimePosition({ nativePlaybackActive, nativeQueueDelegated })) {
             break
           }
           if (typeof data === 'number' && isFinite(data)) {
-            applyPlaybackPositionSample(data)
+            applyPlaybackPositionSample(data, 'native-time-pos')
           }
           break
         case 'duration':
@@ -2760,12 +2999,17 @@ function setupAudioEngineListeners(): void {
       // re-apply a stale loadAndPlay start offset and freeze the progress bar.
       const startAt = pendingLoadStartTime
       pendingLoadStartTime = 0
-      beginPlaybackPositionTransition(startAt)
+      beginPlaybackPositionTransition(startAt, { keepRendererClockAlive: true })
       isLoading.value = false
-      // Keep accepting time-pos during the hand-off even if a stale snapshot
-      // temporarily reported nativePlaybackActive=false.
-      if (nativeQueueDelegated || isPlaying.value) {
+      // start-file is emitted by the native backend when the new file has
+      // entered its playback pipeline. Re-open both clocks immediately: a
+      // stale pause snapshot may have cleared isPlaying before this event, and
+      // leaving nativePlaybackActive false would make the time-pos policy drop
+      // every sample from the new track.
+      if (currentTrack.value && playbackToggleIntent?.playing !== false) {
+        setPlaybackToggleIntent(true)
         nativePlaybackActive = true
+        isPlaying.value = true
       }
       void refreshPlaybackInfoAfterStartFile()
     })
@@ -2962,8 +3206,46 @@ function dismissAudioEngineRecoveryNotice(): void {
   audioEngineRecoveryNotice.value = null
 }
 
+function disposePlayerStoreRuntime(): void {
+  // Release IPC subscriptions first: stale modules must never keep advancing
+  // their own playback clock after a hot replacement has taken ownership.
+  for (const cleanup of cleanupFns.splice(0).reverse()) {
+    try {
+      cleanup()
+    } catch {
+      // Every cleanup is best-effort; remaining handles are still released.
+    }
+  }
+  listenersSetup = false
+  playerRuntimeScope.stop()
+  playerIntegrationSideEffectsSetup = false
+  clearRendererPlaybackWatchdog()
+  clearNativeStreamBufferingTimer()
+  clearPendingNativePause()
+  clearPendingTimePublish()
+  clearCrossfadeTimer()
+  stopVisualizationPolling(false)
+  if (rendererClockTimer !== null) {
+    window.clearInterval(rendererClockTimer)
+    rendererClockTimer = null
+  }
+}
+
+// Claim before registering listeners. A Vite replacement invokes the previous
+// generation's release callback, so one renderer window has one active audio
+// event consumer and one lyric-loading state machine.
+const playerRuntimeLease = claimRendererRuntime(
+  PLAYER_RUNTIME_OWNERSHIP_KEY,
+  disposePlayerStoreRuntime
+)
 setupAudioEngineListeners()
 startRendererPlaybackClock()
+
+configurePlayerStoreHmr(
+  import.meta.hot,
+  () => window.location.reload(),
+  () => playerRuntimeLease.release()
+)
 
 watch([isPlaying, playbackRate], ([playing, rate], [previousPlaying, previousRate]) => {
   if (playing && (playing !== previousPlaying || rate !== previousRate)) {
@@ -3132,7 +3414,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
   if (playbackAudio) playbackAudio.muted = false
   pendingLoadStartTime = normalizedStartTime
   duration.value = cueDuration(track)
-  beginPlaybackPositionTransition(normalizedStartTime)
+  beginPlaybackPositionTransition(normalizedStartTime, { keepRendererClockAlive: true })
   clearAbLoop()
   clearCrossfadeTimer()
 
@@ -3170,9 +3452,10 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
       track.streamQuality = appSettings.value.ncmPlaybackQuality
     }
     patchTrackInQueues(track)
-    // The active currentTrack is a copy created during activation. Mirror the
-    // resolved target after the generation check so later queue synchronization
-    // can identify the native source without allowing a stale load to overwrite it.
+    nativeSourceToTrackId.set(playTarget, track.id)
+    // resolvePlayTarget 只改写了传入的 track 对象，而 active currentTrack 是
+    // 激活时的拷贝；若不回写，后续队列重同步（如切换播放模式）会因取不到
+    // source 而误判“当前曲目不支持原生播放”→ stopNativeAudio → 误触发切歌。
     if (currentTrack.value && currentTrack.value.id === track.id) {
       currentTrack.value = {
         ...currentTrack.value,
@@ -3191,10 +3474,11 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
       try {
         const preparedQueue = await preparePlayerNativeQueue(
           {
-            queue: queue.value,
+            // 心动模式：渲染层自行驱动切歌与补拉，原生引擎只加载当前曲目。
+            queue: playMode.value === 'heart' ? [track] : queue.value,
             currentTrack: track,
             currentTarget: playTarget,
-            currentIndex: queueIndex.value
+            currentIndex: playMode.value === 'heart' ? 0 : queueIndex.value
           },
           {
             isAudioFileAuthorized: window.api.fs.isAudioFileAuthorized
@@ -3202,6 +3486,9 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         )
         if (!preparedQueue) {
           throw new Error('Native playback target is unavailable')
+        }
+        for (const item of preparedQueue.items) {
+          nativeSourceToTrackId.set(item.source, item.id)
         }
         if (!isActiveLoad(loadToken, track)) {
           releaseLoadIfOwned()
@@ -3214,6 +3501,8 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
           return
         }
         nativeQueueDelegated = preparedQueue.delegated
+        // 心动模式由渲染层驱动切歌与补拉，原生队列不代管边界。
+        if (playMode.value === 'heart') nativeQueueDelegated = false
 
         const nativePlayMode =
           playMode.value === 'repeat' || playMode.value === 'shuffle'
@@ -3323,7 +3612,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         : normalizedStartTime
     restoredPlaybackPending = false
     restoredPlaybackPosition = 0
-    beginPlaybackPositionTransition(resumeAt)
+    beginPlaybackPositionTransition(resumeAt, { keepRendererClockAlive: true })
     if (resumeAt > 0.05 && Math.abs(resumeAt - normalizedStartTime) > 0.05) {
       if (nativePlaybackActive) {
         void window.api.audioEngine.seek(resumeAt).catch(() => {})
@@ -3370,6 +3659,10 @@ function playQueueTrack(track: Track): void {
 function next(): void {
   if (queue.value.length === 0) return
   clearCrossfadeTimer()
+  if (playMode.value === 'heart') {
+    void advanceHeartPlayback()
+    return
+  }
 
   if (!castTargetUsn.value && nativePlaybackActive && isNativeQueueDelegated()) {
     void advanceNativePlayback('next')
@@ -3930,6 +4223,12 @@ function setupPlayerIntegrationSideEffects(): void {
     { immediate: true }
   )
 
+  watch(heartModeAvailable, (available) => {
+    if (!available && playMode.value === 'heart') {
+      exitHeartModeToSequential()
+    }
+  })
+
   watch(
     () => appSettings.value.softwareVolume,
     (savedVolume) => {
@@ -4064,6 +4363,7 @@ function isPersonalizedStreamSessionCurrent(session: PersonalizedStreamSession):
 function applyPendingRendererPlayModeAtBoundary(): void {
   if (!rendererPlayModeBoundaryPending) return
   rendererPlayModeBoundaryPending = false
+  if (playMode.value === 'heart') return
   const current = currentTrack.value
   if (!current || originalQueue.value.length === 0) return
 
@@ -4192,17 +4492,184 @@ function saveQueueAsPlaylist(
 }
 
 function cyclePlayMode(): void {
-  const modes: PlayMode[] = ['sequential', 'listLoop', 'repeat', 'shuffle']
-  const idx = modes.indexOf(playMode.value)
-  setPlayModeInternal(modes[(idx + 1) % modes.length])
+  const modes: PlayMode[] = ['sequential', 'listLoop', 'repeat', 'shuffle', 'heart']
+  const cycleModes = heartModeAvailable.value ? modes : modes.filter((mode) => mode !== 'heart')
+  const idx = cycleModes.indexOf(playMode.value)
+  if (idx === -1) {
+    setPlayModeInternal(cycleModes[0] ?? 'sequential')
+    return
+  }
+  setPlayModeInternal(cycleModes[(idx + 1) % cycleModes.length])
+}
+
+function setHeartModeContext(playlistId: number | null): void {
+  const normalized =
+    playlistId != null && Number.isFinite(Number(playlistId)) && Number(playlistId) > 0
+      ? Number(playlistId)
+      : null
+  heartModeContext.value = { likedPlaylistId: normalized }
+}
+
+function fetchHeartRecommendations(seedTrack: Track | null): Promise<Track[]> {
+  const playlistId = heartModeContext.value.likedPlaylistId
+  if (playlistId == null || !seedTrack?.ncmSongId) return Promise.resolve([])
+  return useNcmStore().fetchIntelligenceList({
+    songId: seedTrack.ncmSongId,
+    playlistId,
+    startSongId: seedTrack.ncmSongId,
+    count: HEART_MODE_REFILL_COUNT
+  })
+}
+
+function commitHeartQueue(nextQueue: Track[]): void {
+  const snapshots = toPlaybackQueueSnapshots(nextQueue)
+  queue.value = snapshots
+  originalQueue.value = [...snapshots]
+  queueIndex.value = 0
+  persistPlaybackSessionAfterQueueMutation()
+  void queueNativeQueueStateSync().catch((error) => {
+    setAudioEngineError(error instanceof Error ? error.message : String(error))
+  })
+}
+
+function enterHeartMode(options: { persist?: boolean } = {}): void {
+  void options
+  const seed = currentTrack.value
+  const likedPlaylistId = heartModeContext.value.likedPlaylistId
+  if (likedPlaylistId == null || !seed?.ncmSongId) return
+  heartModeBaseQueue = [...queue.value]
+  heartModeFetchGeneration += 1
+  const generation = heartModeFetchGeneration
+  playMode.value = 'heart'
+  rendererPlayModeBoundaryPending = false
+  commitHeartQueue([seed])
+  void refillHeartQueue(seed).then((added) => {
+    if (generation !== heartModeFetchGeneration || playMode.value !== 'heart') return
+    if (added === 0) {
+      console.error('[心动模式] 启动未返回推荐')
+      exitHeartModeToSequential()
+    }
+  })
+}
+
+function exitHeartModeToSequential(): void {
+  if (playMode.value !== 'heart') return
+  heartModeFetchGeneration += 1
+  heartModeFetchRequest = null
+  playMode.value = 'sequential'
+  rendererPlayModeBoundaryPending = false
+  if (heartModeBaseQueue.length > 0) {
+    const restored = toPlaybackQueueSnapshots(heartModeBaseQueue)
+    queue.value = restored
+    originalQueue.value = [...restored]
+    const currentId = currentTrack.value?.id
+    queueIndex.value = currentId
+      ? restored.findIndex((item) => item.id === currentId)
+      : 0
+    if (queueIndex.value < 0) queueIndex.value = 0
+    void queueNativeQueueStateSync().catch((error) => {
+      setAudioEngineError(error instanceof Error ? error.message : String(error))
+    })
+  }
+  heartModeBaseQueue = []
+}
+
+function exitHeartModeForManualQueueReplacement(): void {
+  if (playMode.value !== 'heart') return
+  heartModeFetchGeneration += 1
+  heartModeFetchRequest = null
+  playMode.value = 'sequential'
+  rendererPlayModeBoundaryPending = false
+  heartModeBaseQueue = []
+}
+
+async function refillHeartQueue(seedTrack: Track | null): Promise<number> {
+  if (playMode.value !== 'heart') return 0
+  if (heartModeFetchRequest) return heartModeFetchRequest
+  const playlistId = heartModeContext.value.likedPlaylistId
+  if (playlistId == null || !seedTrack?.ncmSongId) return 0
+  const generation = heartModeFetchGeneration
+  const request = (async () => {
+    try {
+      const recommended = await fetchHeartRecommendations(seedTrack)
+      if (generation !== heartModeFetchGeneration || playMode.value !== 'heart') return 0
+      const knownIds = new Set(queue.value.map((item) => item.id))
+      const additions = recommended.filter((item) => item.id && !knownIds.has(item.id))
+      if (additions.length === 0) return 0
+      const snapshots = toPlaybackQueueSnapshots(additions)
+      queue.value = [...queue.value, ...snapshots]
+      originalQueue.value = [...originalQueue.value, ...snapshots]
+      if (queueIndex.value < 0) {
+        queueIndex.value = 0
+        const track = queue.value[0]
+        if (track) playQueueTrack(track)
+      }
+      persistPlaybackSessionAfterQueueMutation()
+      void queueNativeQueueStateSync().catch((error) => {
+        setAudioEngineError(error instanceof Error ? error.message : String(error))
+      })
+      return additions.length
+    } catch (error) {
+      if (generation === heartModeFetchGeneration) {
+        console.error('[心动模式] 获取智能播放列表失败:', error)
+      }
+      return 0
+    } finally {
+      if (generation === heartModeFetchGeneration) heartModeFetchRequest = null
+    }
+  })()
+  heartModeFetchRequest = request
+  return request
+}
+
+function advanceHeartPlayback(): Promise<void> {
+  const nextIndex = queueIndex.value + 1
+  if (nextIndex >= 0 && nextIndex < queue.value.length) {
+    queueIndex.value = nextIndex
+    const track = queue.value[nextIndex]
+    if (track) {
+      playQueueTrack(track)
+      if (queueIndex.value >= queue.value.length - HEART_MODE_REFILL_THRESHOLD) {
+        void refillHeartQueue(track)
+      }
+    }
+    return Promise.resolve()
+  }
+  return refillHeartQueue(currentTrack.value).then(async () => {
+    if (playMode.value !== 'heart') {
+      await advanceAfterPlaybackEnded()
+      return
+    }
+    const afterRefillIndex = queueIndex.value + 1
+    if (afterRefillIndex >= 0 && afterRefillIndex < queue.value.length) {
+      queueIndex.value = afterRefillIndex
+      const track = queue.value[afterRefillIndex]
+      if (track) {
+        playQueueTrack(track)
+        return
+      }
+    }
+    isPlaying.value = false
+    isLoading.value = false
+    autoAdvanceInFlight = false
+  })
 }
 
 function setPlayModeInternal(mode: PlayMode, options: { persist?: boolean } = {}): void {
   if (mode === playMode.value) return
+  if (mode === 'heart') {
+    if (!heartModeAvailable.value) return
+    enterHeartMode(options)
+    return
+  }
+  if (playMode.value === 'heart') {
+    exitHeartModeToSequential()
+  }
   playMode.value = mode
   // Preserve the active track, position and queue identity. Renderer fallback
   // applies the new ordering only when next/EOF reaches a track boundary.
   rendererPlayModeBoundaryPending = true
+  // 心动模式分支在上面提前返回，因此这里只会持久化常规播放模式。
   if (options.persist !== false) {
     void updateSettings({ playMode: mode }).catch((err) => {
       console.error('[音频引擎] 保存播放模式失败:', err)
@@ -4323,7 +4790,8 @@ function createPlaybackSession(mode: PlaybackResumeMode): PlaybackSession | null
     version: 1,
     savedAt: new Date().toISOString(),
     mode,
-    playMode: playMode.value,
+    // 心动模式依赖登录态与收藏歌单上下文，恢复会话时统一回退到顺序播放。
+    playMode: playMode.value === 'heart' ? 'sequential' : playMode.value,
     track: cloneTrackForPlaybackSession(track),
     position,
     queue: queue.value.map(cloneTrackForPlaybackSession),
@@ -4468,6 +4936,8 @@ export function usePlayerStore(): {
   isStreamBuffering: Ref<boolean>
   streamNowPlaying: Ref<string>
   currentTime: Ref<number>
+  playbackClockSnapshot: Ref<PlaybackClockSnapshot>
+  estimatePlaybackClockPosition: (at?: number) => number
   duration: Ref<number>
   volume: Ref<number>
   muted: Ref<boolean>
@@ -4480,6 +4950,8 @@ export function usePlayerStore(): {
   queue: Ref<Track[]>
   queueIndex: Ref<number>
   playMode: Ref<PlayMode>
+  heartModeAvailable: ComputedRef<boolean>
+  setHeartModeContext: (playlistId: number | null) => void
   personalizedStreamSession: Ref<PersonalizedStreamSession | null>
   personalizedStreamRemaining: Ref<number>
   audioEngineReady: Ref<boolean>
@@ -4519,8 +4991,17 @@ export function usePlayerStore(): {
     name: string,
     createPlaylistWithTracks: (name: string, tracks: Track[]) => string
   ) => string
-  playTrack: (track: Track, trackList?: Track[]) => void
-  playTrackFromPosition: (track: Track, positionSeconds: number, trackList?: Track[]) => void
+  playTrack: (
+    track: Track,
+    trackList?: Track[],
+    options?: { heartModePlaylistId?: number | null }
+  ) => void
+  playTrackFromPosition: (
+    track: Track,
+    positionSeconds: number,
+    trackList?: Track[],
+    options?: { heartModePlaylistId?: number | null }
+  ) => void
   togglePlay: () => Promise<void>
   next: () => void
   prev: () => void
@@ -4533,6 +5014,7 @@ export function usePlayerStore(): {
   dismissResumeOffer: () => void
   addManualBookmarkAtCurrentTime: () => void
   setVolume: (vol: number) => void
+  flushSoftwareVolumePersist: () => Promise<void>
   setPlaybackRate: (rate: number) => Promise<void>
   toggleMute: () => void
   configureSleepTimer: (mode: SleepTimerMode, minutes?: number) => void
@@ -4569,7 +5051,17 @@ export function usePlayerStore(): {
 } {
   setupPlayerIntegrationSideEffects()
 
-  function playTrack(track: Track, trackList?: Track[]): void {
+  function playTrack(
+    track: Track,
+    trackList?: Track[],
+    options?: { heartModePlaylistId?: number | null }
+  ): void {
+    if (trackList) {
+      setHeartModeContext(options?.heartModePlaylistId ?? null)
+      // 手动重建队列（例如点击歌单/专辑中的另一首）时退出心动模式，
+      // 以新队列为准继续顺序播放。
+      exitHeartModeForManualQueueReplacement()
+    }
     if (trackList || !isPersonalizedStreamTrack(track)) endPersonalizedStream()
     if (trackList) {
       const snapshots = toPlaybackQueueSnapshots(trackList)
@@ -4589,7 +5081,16 @@ export function usePlayerStore(): {
     void loadAndPlay(track)
   }
 
-  function playTrackFromPosition(track: Track, positionSeconds: number, trackList?: Track[]): void {
+  function playTrackFromPosition(
+    track: Track,
+    positionSeconds: number,
+    trackList?: Track[],
+    options?: { heartModePlaylistId?: number | null }
+  ): void {
+    if (trackList) {
+      setHeartModeContext(options?.heartModePlaylistId ?? null)
+      exitHeartModeForManualQueueReplacement()
+    }
     if (trackList || !isPersonalizedStreamTrack(track)) endPersonalizedStream()
     if (trackList) {
       const snapshots = toPlaybackQueueSnapshots(trackList)
@@ -4878,7 +5379,7 @@ export function usePlayerStore(): {
   }
 
   async function refreshCurrentLyrics(): Promise<void> {
-    await ensureCurrentTrackLyricsLoaded(currentTrack.value)
+    await ensureCurrentTrackLyricsLoaded(currentTrack.value, true, true)
   }
 
   return {
@@ -4894,6 +5395,8 @@ export function usePlayerStore(): {
     isStreamBuffering,
     streamNowPlaying,
     currentTime,
+    playbackClockSnapshot,
+    estimatePlaybackClockPosition,
     duration,
     volume,
     muted,
@@ -4906,6 +5409,8 @@ export function usePlayerStore(): {
     queue,
     queueIndex,
     playMode,
+    heartModeAvailable,
+    setHeartModeContext,
     personalizedStreamSession,
     personalizedStreamRemaining,
     audioEngineReady,
@@ -4954,6 +5459,7 @@ export function usePlayerStore(): {
     dismissResumeOffer,
     addManualBookmarkAtCurrentTime,
     setVolume,
+    flushSoftwareVolumePersist,
     setPlaybackRate,
     toggleMute,
     configureSleepTimer,

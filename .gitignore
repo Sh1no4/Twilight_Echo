@@ -155,9 +155,12 @@ outputs/
 *.pfx
 *.snk
 
-# Local sponsor payment QR codes (private, never publish)
+# Sponsor payment QR codes packaged with the settings sponsor dialog
 resources/sponsor/alipay.jpg
 resources/sponsor/wechat.png
+!resources/sponsor/
+!resources/sponsor/alipay.jpg
+!resources/sponsor/wechat.png
 
 # Optional full MiSans faces (multi-MB; keep local)
 resources/font/misans/full/*.woff2

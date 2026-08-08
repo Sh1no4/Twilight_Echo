@@ -1,32 +1,32 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch, type Ref, type WatchStopHandle } from 'vue'
+import { nextTick, onBeforeUnmount, ref, watch, type Ref } from 'vue'
+import { requestAnimationFrameWithFallback } from '../utils/animationFrameFallback'
 import { getLyricWordProgress, type LyricWord } from '../utils/lyrics'
+
+interface LyricClockSnapshot {
+  epoch: number
+  revision: number
+  position: number
+}
 
 const props = defineProps<{
   words: LyricWord[]
   active: boolean
   karaokeEnabled: boolean
   offsetSeconds: number
-  nextLineTime: number | null
   clock: {
-    currentTime: Ref<number>
+    snapshot: Ref<LyricClockSnapshot>
     isPlaying: Ref<boolean>
-    playbackRate: Ref<number>
+    positionAt: (at?: number) => number
   }
 }>()
-const emit = defineEmits<{ reachNextLine: [time: number] }>()
 
 const wordElements = ref<Array<HTMLElement | null>>([])
-let animationFrame = 0
-let clockAnchorPosition = 0
-let clockAnchorTime = 0
+let cancelScheduledFrame: (() => void) | null = null
 let progressingWordIndex = -1
-let stopClockWatch: WatchStopHandle | null = null
-let stopPlaybackStateWatch: WatchStopHandle | null = null
 let syncGeneration = 0
-let reachedNextLine = false
 
-function lyricTime(position = props.clock.currentTime.value): number {
+function lyricTime(position = props.clock.snapshot.value.position): number {
   return position + props.offsetSeconds
 }
 
@@ -86,65 +86,22 @@ function updateProgressingWord(time: number): void {
   if (nextIndex >= 0) setWordProgress(nextIndex, wordProgress(nextIndex, time))
 }
 
-function updateLineBoundary(time: number): void {
-  if (reachedNextLine || !props.active || props.nextLineTime == null || time < props.nextLineTime)
-    return
-  reachedNextLine = true
-  emit('reachNextLine', time)
-}
-
 function stopAnimation(): void {
-  if (!animationFrame) return
-  window.cancelAnimationFrame(animationFrame)
-  animationFrame = 0
+  cancelScheduledFrame?.()
+  cancelScheduledFrame = null
 }
 
-function animate(now: number): void {
-  animationFrame = 0
-  if (!props.active || !props.clock.isPlaying.value) return
-  const rate = Number.isFinite(props.clock.playbackRate.value) ? props.clock.playbackRate.value : 1
-  const predictedPosition = clockAnchorPosition + Math.max(0, now - clockAnchorTime) * rate * 0.001
-  const time = lyricTime(predictedPosition)
-  updateProgressingWord(time)
-  updateLineBoundary(time)
-  animationFrame = window.requestAnimationFrame(animate)
-}
-
-function startAnimation(): void {
-  if (animationFrame || !props.active || !props.clock.isPlaying.value) return
-  animationFrame = window.requestAnimationFrame(animate)
-}
-
-function anchorClock(): void {
-  clockAnchorPosition = props.clock.currentTime.value
-  clockAnchorTime = performance.now()
-}
-
-function unbindPlaybackClock(): void {
-  stopClockWatch?.()
-  stopPlaybackStateWatch?.()
-  stopClockWatch = null
-  stopPlaybackStateWatch = null
-}
-
-function bindPlaybackClock(): void {
-  unbindPlaybackClock()
-  if (!props.active) return
-
-  stopClockWatch = watch(props.clock.currentTime, (position, previousPosition) => {
-    const time = position + props.offsetSeconds
-    const isSeek = position < previousPosition || Math.abs(position - previousPosition) > 1
-    anchorClock()
-    if (isSeek) syncAllWords(time)
-    else updateProgressingWord(time)
-    startAnimation()
-  })
-
-  stopPlaybackStateWatch = watch([props.clock.isPlaying, props.clock.playbackRate], () => {
-    anchorClock()
-    if (props.clock.isPlaying.value) startAnimation()
-    else stopAnimation()
-  })
+function scheduleAnimation(): void {
+  if (cancelScheduledFrame || !props.active || !props.clock.isPlaying.value) return
+  cancelScheduledFrame = requestAnimationFrameWithFallback(
+    (now) => {
+      cancelScheduledFrame = null
+      if (!props.active || !props.clock.isPlaying.value) return
+      updateProgressingWord(lyricTime(props.clock.positionAt(now)))
+      scheduleAnimation()
+    },
+    80
+  )
 }
 
 watch(
@@ -153,29 +110,37 @@ watch(
     () => props.karaokeEnabled,
     () => props.words,
     () => props.offsetSeconds,
-    () => props.nextLineTime
+    () => props.clock.snapshot.value.epoch
   ],
   async () => {
     const generation = ++syncGeneration
-    reachedNextLine = false
     stopAnimation()
-    unbindPlaybackClock()
-    anchorClock()
     await nextTick()
     if (generation !== syncGeneration) return
-    const time = lyricTime()
-    syncAllWords(time)
-    updateLineBoundary(time)
-    bindPlaybackClock()
-    startAnimation()
+    syncAllWords(lyricTime())
+    scheduleAnimation()
   },
   { immediate: true, flush: 'post' }
 )
 
+watch(
+  () => (props.active ? props.clock.snapshot.value.revision : null),
+  () => {
+    if (!props.active) return
+    const time = lyricTime()
+    if (props.clock.isPlaying.value) updateProgressingWord(time)
+    else syncAllWords(time)
+  }
+)
+
+watch(props.clock.isPlaying, (playing) => {
+  if (playing) scheduleAnimation()
+  else stopAnimation()
+})
+
 onBeforeUnmount(() => {
   syncGeneration += 1
   stopAnimation()
-  unbindPlaybackClock()
 })
 </script>
 

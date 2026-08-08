@@ -1219,6 +1219,7 @@ function Get-GatePlan {
     [pscustomobject]@{ id = 'test-queue-benchmark-after-live'; command = 'corepack pnpm@11.7.0 run test:queue-virtualization'; timeout = 600 },
     [pscustomobject]@{ id = 'test-lyrics-management'; command = 'corepack pnpm@11.7.0 run test:lyrics-management'; timeout = 900 },
     [pscustomobject]@{ id = 'test-radio-remote'; command = 'corepack pnpm@11.7.0 run test:radio-remote'; timeout = 900 },
+    [pscustomobject]@{ id = 'test-network-sources'; command = 'corepack pnpm@11.7.0 run test:network-sources'; timeout = 900 },
     [pscustomobject]@{ id = 'test-cue'; command = 'corepack pnpm@11.7.0 run test:cue'; timeout = 900 },
     [pscustomobject]@{ id = 'typecheck-node'; command = 'corepack pnpm@11.7.0 run typecheck:node'; timeout = 900 },
     [pscustomobject]@{ id = 'typecheck-web'; command = 'corepack pnpm@11.7.0 run typecheck:web'; timeout = 900 },

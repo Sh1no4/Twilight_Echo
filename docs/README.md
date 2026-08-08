@@ -8,6 +8,7 @@
 - [音频引擎架构](./twilight-audio-engine-architecture.md)
 - [音频引擎 API](./audio-engine-api.md)
 - [安全加固边界](./security-hardening.md)
+- [UI、歌词与播放时钟重构审计](./ui-playback-refactor-audit.md)
 
 ## 音频、设备与发布
 

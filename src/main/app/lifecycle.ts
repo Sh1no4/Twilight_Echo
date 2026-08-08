@@ -40,10 +40,11 @@ import { setupThemeIpc } from '../ipc/themes'
 import { resolveThemeAssetFile } from '../themes/themeArchive.ts'
 import { setupRadioMediaIpc, destroyRadioMediaIpc } from '../radio/radioMediaIpc.ts'
 import { setupRemoteIpc, destroyRemoteIpc } from '../remote/remoteIpc.ts'
+import { setupNetworkSourceIpc } from '../network/networkIpc.ts'
 import { installElectronSecurity } from '../security/electronSecurity.ts'
 import { createRemoteMediaRequestHandler } from '../security/remoteMediaGrants.ts'
 import { createWindow } from './window'
-import { consumeAppSettingsLoadIssue } from '../core/settings'
+import { consumeAppSettingsLoadIssue, supportsNativeWindowTransparency } from '../core/settings'
 import type { SettingsFileLoadIssue } from '../persistence/settingsFile.ts'
 
 export function startApp(): void {
@@ -76,8 +77,8 @@ export function startApp(): void {
   //   zwp_input_method 协议（text-input 通道的前提）。未配置时，
   //   Wayland 原生客户端的 text-input 完全不可用，导致 fcitx5 无法输入。
   //   此时回退到 X11（XWayland）后端，让 fcitx5 通过 GTK_IM_MODULE /
-  //   XIM 的 dbus 前端工作（与 VS Code 等 Electron 应用一致）。
-  // - KWin 已配置输入法时，遵循 fcitx-im 官方建议使用 text-input-v1：
+  //   XIM 的前端工作（与 VS Code 等 Electron 应用一致）。
+  // - KWin 已配置输入法时，遵循 fcitx-im 官方建议使用 text-input-v1；
   //   KWin 对 zwp_text_input_v3 的实现与 Chromium 存在协议理解差异。
   // - GNOME/Sway 等仅支持 text-input-v3 的 compositor 保持 v3。
   if (process.platform === 'linux' && process.env.XDG_SESSION_TYPE === 'wayland') {
@@ -98,8 +99,13 @@ export function startApp(): void {
     }
   }
 
-  // Linux 上透明窗口需要显式启用透明视觉，否则整窗不渲染（纯透明）
-  if (process.platform === 'linux' && runtime.appSettings.windowTransparency === true) {
+  // Linux 上透明窗口需要显式启用透明视觉，否则整窗不渲染（纯透明）。
+  // Wayland 会话不受支持，且该开关可能进一步破坏内容呈现，因此仅在支持时启用。
+  if (
+    process.platform === 'linux' &&
+    runtime.appSettings.windowTransparency === true &&
+    supportsNativeWindowTransparency()
+  ) {
     app.commandLine.appendSwitch('enable-transparent-visuals')
   }
 
@@ -328,12 +334,17 @@ export function startApp(): void {
       setupNcmIpc()
       setupRadioMediaIpc()
       setupRemoteIpc()
+      setupNetworkSourceIpc()
       setupOpraIpc()
       setupPluginIpc()
       setupNcmApi()
 
       // Linux 上透明窗口必须等合成器视觉就绪后再建窗，否则内容不渲染
-      if (process.platform === 'linux' && runtime.appSettings.windowTransparency === true) {
+      if (
+        process.platform === 'linux' &&
+        runtime.appSettings.windowTransparency === true &&
+        supportsNativeWindowTransparency()
+      ) {
         setTimeout(() => {
           createWindow()
           applyRuntimeSettings()

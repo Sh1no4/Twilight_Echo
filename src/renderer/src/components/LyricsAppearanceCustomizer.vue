@@ -5,6 +5,7 @@ import {
   cloneLyricsAppearance,
   normalizeLyricsAppearance,
   resolveLyricsFontFamily,
+  syncLegacyLyricsAppearance,
   type LyricsAppearanceSettings,
   type LyricsStyleTarget,
   type LyricsTextStyle
@@ -55,6 +56,11 @@ const statusLabel = computed(() => {
 })
 
 function patchStyle<K extends keyof LyricsTextStyle>(key: K, value: LyricsTextStyle[K]): void {
+  if (key === 'fontSize') {
+    draft.value = syncLegacyLyricsAppearance(draft.value, { fontSize: value as number })
+    scheduleSave()
+    return
+  }
   draft.value = {
     ...draft.value,
     styles: {

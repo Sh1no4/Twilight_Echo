@@ -28,6 +28,13 @@ const PERSONAL_RADAR_PLAYLIST_ID = 3136952023
 let likedTracksCache = null
 let playlistCatalogueCache = null
 let likedSongIdListCache = null
+let cachedUserId = null
+let likedIdsFreshAt = 0
+let likedIdsRefreshInFlight = null
+let likedIdsRefreshRetryAt = 0
+let likedIdsRevision = 0
+const LIKED_IDS_REFRESH_TTL_MS = 60_000
+const LIKED_IDS_REFRESH_FAIL_BACKOFF_MS = 15_000
 let personalFmSeenSongIds = new Set()
 let likedSongIds = new Set()
 let ownedPlaylistIds = new Set()
@@ -107,6 +114,7 @@ export async function activate(context) {
     fetchUserFolloweds,
     fetchPlayRecords,
     fetchRecentSongs,
+    fetchIntelligenceList,
     followArtist,
     followUser,
     likeTrack,
@@ -197,6 +205,11 @@ function resetCaches() {
   likedTracksCache = null
   playlistCatalogueCache = null
   likedSongIdListCache = null
+  cachedUserId = null
+  likedIdsFreshAt = 0
+  likedIdsRefreshInFlight = null
+  likedIdsRefreshRetryAt = 0
+  likedIdsRevision += 1
   personalFmSeenSongIds = new Set()
   likedSongIds = new Set()
   ownedPlaylistIds = new Set()
@@ -418,15 +431,15 @@ async function requestOptionalAuth(path, requestContext) {
   return request(path, await getCookie(), requestContext)
 }
 
-async function requestOptionalAuthRead(path, { attempts = 2, label = path } = {}) {
+async function requestOptionalAuthRead(path, { attempts = 2, label = path, signal } = {}) {
   let lastError = null
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return await requestOptionalAuth(path)
+      return await requestOptionalAuth(path, { signal })
     } catch (error) {
       lastError = error
       if (attempt >= attempts || !isReadApiTransientError(error)) break
-      await wait(250 * attempt)
+      await waitWithAbort(250 * attempt, signal)
     }
   }
   getContext().logger.warn(`网易云读取接口失败：${label}：${getErrorMessage(lastError)}`)
@@ -645,6 +658,22 @@ function getSongItems(data) {
   return []
 }
 
+function getIntelligenceSongItems(data) {
+  // 心动模式/智能播放接口返回 { data: { data: [song...], songInfo } }，
+  // 兼容其余常见的歌曲列表结构，避免上游接口结构调整时丢失列表。
+  const candidates = [
+    data?.data?.data,
+    data?.data?.songs,
+    data?.data?.songList,
+    data?.data,
+    data?.songs
+  ]
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) return candidate
+  }
+  return getSongItems(data)
+}
+
 function getPagedMoreFlag(data) {
   const candidates = [data?.more, data?.hasMore, data?.data?.more, data?.data?.hasMore]
   const value = candidates.find((candidate) => typeof candidate === 'boolean')
@@ -780,6 +809,7 @@ async function checkLogin() {
         avatarUrl: profileData.avatarUrl,
         signature: profileData.signature
       })
+      cachedUserId = profileData.userId
       return { loggedIn: true, profile }
     }
     await saveCookie('')
@@ -1097,11 +1127,10 @@ async function fetchLikedTracks(force = false) {
   if (ids.length === 0) {
     likedTracksCache = []
     likedSongIdListCache = []
-    likedSongIds = new Set()
+    replaceLikedSongIds([])
     return []
   }
-  likedSongIdListCache = ids
-  likedSongIds = new Set(ids)
+  replaceLikedSongIds(ids)
 
   const songs = await fetchSongDetailsByIds(ids, 'liked songs')
 
@@ -1117,8 +1146,68 @@ async function fetchLikedTracks(force = false) {
   return likedTracksCache
 }
 
+async function fetchIntelligenceList(options = {}) {
+  const songId = Number(options?.songId)
+  const playlistId = Number(options?.playlistId)
+  if (!Number.isFinite(songId) || songId <= 0 || !Number.isFinite(playlistId) || playlistId <= 0) {
+    throw new Error('心动模式需要有效的歌曲 ID 与歌单 ID')
+  }
+  const startSongId = Number(options?.startSongId)
+  const requestedCount = Number(options?.count)
+  const path = appendQueryParams('/playmode/intelligence/list', {
+    id: songId,
+    pid: playlistId,
+    sid: Number.isFinite(startSongId) && startSongId > 0 ? startSongId : songId,
+    count: Number.isFinite(requestedCount) && requestedCount > 0 ? Math.min(50, requestedCount) : 20
+  })
+  const data = await requestAuthedRead(path, {
+    attempts: 2,
+    label: `心动模式智能播放列表 ${songId}`
+  })
+  const items = getIntelligenceSongItems(data)
+  const tracks = items
+    .map((item) => {
+      // 心动模式列表项是推荐包装：{ id, alg, recommended, songInfo }，
+      // 歌曲元数据（name/ar/al/封面）位于 item.songInfo 内。
+      // 少数条目 songInfo 为 null 且没有顶层歌曲字段，直接跳过。
+      const song =
+        item && typeof item === 'object' && item.songInfo && typeof item.songInfo === 'object'
+          ? item.songInfo
+          : item &&
+              typeof item === 'object' &&
+              item.songInfo === null &&
+              typeof item.name !== 'string'
+            ? null
+            : item
+      if (!song) return null
+      try {
+        return normalizeTrack(song)
+      } catch {
+        return null
+      }
+    })
+    .filter(
+      (track) =>
+        track &&
+        Number.isFinite(track.ncmSongId) &&
+        track.ncmSongId > 0 &&
+        (track.title ?? '') !== '未知歌曲'
+    )
+  return tracks
+}
+
 async function fetchLikedTrackIds(force = false) {
-  if (!force && likedSongIdListCache) return likedSongIdListCache
+  if (!force && likedSongIdListCache && likedSongIdListCache.length > 0) {
+    // The raw /likelist refresh keeps `likedSongIds` live for like-state checks
+    // but must never replace the ORDER cache: its order differs from the liked
+    // playlist order and would scramble the playlist page. Detect a recently
+    // liked/unliked song and refresh the ordered list instead of returning a
+    // stale one.
+    const cachedIds = new Set(likedSongIdListCache)
+    const missingFromCache = [...likedSongIds].some((id) => !cachedIds.has(id))
+    const removedFromSet = likedSongIdListCache.some((id) => !likedSongIds.has(id))
+    if (!missingFromCache && !removedFromSet) return likedSongIdListCache
+  }
 
   try {
     const library = await fetchUserLibrary(force)
@@ -1129,7 +1218,7 @@ async function fetchLikedTrackIds(force = false) {
       )
       const ids = getPlaylistTrackIds(detailData)
       likedSongIdListCache = ids
-      likedSongIds = new Set(ids)
+      replaceLikedSongIds(ids)
       return ids
     }
   } catch (error) {
@@ -1146,8 +1235,7 @@ async function fetchLikedTrackIds(force = false) {
     })
     const ids = getLikelistIds(data)
     if (ids.length > 0) {
-      likedSongIdListCache = ids
-      likedSongIds = new Set(ids)
+      replaceLikedSongIds(ids)
       return ids
     }
   } catch (error) {
@@ -1155,7 +1243,7 @@ async function fetchLikedTrackIds(force = false) {
   }
 
   likedSongIdListCache = []
-  likedSongIds = new Set()
+  replaceLikedSongIds([])
   return []
 }
 
@@ -1187,7 +1275,11 @@ function normalizeCloudSong(item) {
   const rawSong = item?.simpleSong ?? item?.song ?? item
   const playbackSongId = rawSong?.id ?? cloudSongId
   const numericPlaybackSongId = Number(playbackSongId)
-  if (cloudSongId == null || !Number.isFinite(numericPlaybackSongId) || numericPlaybackSongId <= 0) {
+  if (
+    cloudSongId == null ||
+    !Number.isFinite(numericPlaybackSongId) ||
+    numericPlaybackSongId <= 0
+  ) {
     return null
   }
 
@@ -1312,19 +1404,14 @@ async function completeCloudUpload(input, requestContext) {
     ...(input.album ? { album: input.album } : {}),
     ...(input.bitrate ? { bitrate: input.bitrate } : {})
   }
-  return runIdempotentProviderWrite(
-    'completeCloudUpload',
-    [params],
-    requestContext,
-    async () => {
-      const data = await requestAuthed(
-        appendQueryParams('/cloud/upload/complete', params),
-        requestContext
-      )
-      assertCloudApiSuccess(data, '导入网易云云盘失败')
-      return { songId: input.songId }
-    }
-  )
+  return runIdempotentProviderWrite('completeCloudUpload', [params], requestContext, async () => {
+    const data = await requestAuthed(
+      appendQueryParams('/cloud/upload/complete', params),
+      requestContext
+    )
+    assertCloudApiSuccess(data, '导入网易云云盘失败')
+    return { songId: input.songId }
+  })
 }
 
 function extractCloudDownloadUrl(data) {
@@ -1679,31 +1766,75 @@ function extractLyricText(data, key) {
   return data[key]?.lyric || data.data?.[key]?.lyric || null
 }
 
-async function getLyrics(track) {
+function waitWithAbort(ms, signal) {
+  if (!signal) return wait(ms)
+  throwIfRequestAborted({ signal })
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+      reject(
+        signal.reason instanceof Error ? signal.reason : new Error('Provider request was cancelled')
+      )
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+function assertLyricsEndpointSuccess(data, endpoint) {
+  const code = Number(data?.code ?? data?.body?.code)
+  if (Number.isFinite(code) && code !== 200) {
+    throw new Error(
+      `${endpoint} returned NetEase code ${code}: ${normalizeApiMessage(data, 'lyrics request failed')}`
+    )
+  }
+}
+
+async function getLegacyLyrics(songId, requestContext) {
+  const legacy = await requestOptionalAuthRead(`/lyric?id=${songId}`, {
+    attempts: 2,
+    label: `legacy lyrics ${songId}`,
+    signal: requestContext?.signal
+  })
+  assertLyricsEndpointSuccess(legacy, '/lyric')
+  return {
+    lyrics: extractLyricText(legacy, 'lrc'),
+    translatedLyrics: extractLyricText(legacy, 'tlyric'),
+    wordLyrics: null
+  }
+}
+
+async function getLyrics(track, requestContext) {
   const songId = getSongIdFromTrack(track)
   if (songId == null) return { lyrics: null, translatedLyrics: null, wordLyrics: null }
+  let data
   try {
-    const data = await requestOptionalAuth(`/lyric/new?id=${songId}`)
-    const yrc = extractLyricText(data, 'yrc')
-    const lrc = extractLyricText(data, 'lrc')
-    const translatedLyrics = extractLyricText(data, 'tlyric')
-    // Prefer YRC as the timed display payload when available (word-level timings).
-    if (yrc || lrc || translatedLyrics) {
-      return {
-        lyrics: yrc || lrc,
-        translatedLyrics,
-        wordLyrics: yrc || null
-      }
-    }
-    const data2 = await requestOptionalAuth(`/lyric?id=${songId}`)
-    return {
-      lyrics: extractLyricText(data2, 'lrc'),
-      translatedLyrics: extractLyricText(data2, 'tlyric'),
-      wordLyrics: null
-    }
+    data = await requestOptionalAuthRead(`/lyric/new?id=${songId}`, {
+      attempts: 3,
+      label: `lyrics ${songId}`,
+      signal: requestContext?.signal
+    })
+    assertLyricsEndpointSuccess(data, '/lyric/new')
   } catch {
-    return { lyrics: null, translatedLyrics: null, wordLyrics: null }
+    throwIfRequestAborted(requestContext)
+    return getLegacyLyrics(songId, requestContext)
   }
+  const yrc = extractLyricText(data, 'yrc')
+  const lrc = extractLyricText(data, 'lrc')
+  const translatedLyrics = extractLyricText(data, 'tlyric')
+  // Prefer YRC as the timed display payload when available (word-level timings).
+  if (yrc || lrc || translatedLyrics) {
+    return {
+      lyrics: yrc || lrc,
+      translatedLyrics,
+      wordLyrics: yrc || null
+    }
+  }
+  return getLegacyLyrics(songId, requestContext)
 }
 
 async function searchSongs(keywords, limit = 30, offset = 0) {
@@ -1922,12 +2053,15 @@ async function followUser(userId, follow, requestContext) {
 async function likeTrack(songId, like, requestContext) {
   const updateLikedState = () => {
     if (like) {
-      likedSongIds = new Set([...likedSongIds, Number(songId)])
+      replaceLikedSongIds([...likedSongIds, Number(songId)])
     } else {
       const next = new Set(likedSongIds)
       next.delete(Number(songId))
-      likedSongIds = next
+      replaceLikedSongIds(next)
     }
+    // 本地刚完成的点赞/取消是权威状态，避免紧接着的刷新把它冲掉。
+    likedIdsFreshAt = Date.now()
+    likedIdsRefreshRetryAt = 0
   }
   return runIdempotentProviderWrite(
     'likeTrack',
@@ -1942,9 +2076,47 @@ async function likeTrack(songId, like, requestContext) {
   )
 }
 
-function isTrackLiked(ncmSongId) {
+async function refreshLikedIdsIfStale() {
+  const now = Date.now()
+  if (now < likedIdsRefreshRetryAt) return
+  if (now - likedIdsFreshAt < LIKED_IDS_REFRESH_TTL_MS) return
+  if (likedIdsRefreshInFlight) return likedIdsRefreshInFlight
+  const refreshRevision = likedIdsRevision
+
+  likedIdsRefreshInFlight = (async () => {
+    try {
+      const userId = cachedUserId ?? (await ensureProfile()).userId
+      const data = await requestAuthedRead(`/likelist?uid=${userId}`, {
+        attempts: 2,
+        label: 'liked ids refresh'
+      })
+      const ids = getLikelistIds(data)
+      if (refreshRevision !== likedIdsRevision) return
+      // 空列表同样是权威结果（用户当前没有任何喜欢的歌曲）。
+      replaceLikedSongIds(ids)
+      likedIdsFreshAt = Date.now()
+      likedIdsRefreshRetryAt = 0
+      cachedUserId = userId
+    } catch (error) {
+      getContext().logger.warn(`网易云喜欢状态刷新失败，回退到本地缓存：${getErrorMessage(error)}`)
+      if (refreshRevision === likedIdsRevision) {
+        likedIdsRefreshRetryAt = now + LIKED_IDS_REFRESH_FAIL_BACKOFF_MS
+      }
+    } finally {
+      likedIdsRefreshInFlight = null
+    }
+  })()
+
+  return likedIdsRefreshInFlight
+}
+
+async function isTrackLiked(ncmSongId) {
   const songId = Number(ncmSongId)
-  return Number.isFinite(songId) && likedSongIds.has(songId)
+  if (!Number.isFinite(songId) || songId <= 0) return false
+  // 按歌曲实时校验：先以短 TTL 刷新云端喜欢集合，再判断是否喜欢，
+  // 避免其他设备改过喜欢状态后本应用仍显示旧状态。
+  await refreshLikedIdsIfStale()
+  return likedSongIds.has(songId)
 }
 
 function requirePlaylistId(playlistId) {
@@ -2072,9 +2244,14 @@ async function removeTracksFromPlaylist(playlistId, trackIds, requestContext) {
 }
 
 function syncLikedIds(tracks) {
-  likedSongIds = new Set(
+  replaceLikedSongIds(
     tracks.map((track) => Number(track.ncmSongId)).filter((id) => Number.isFinite(id) && id > 0)
   )
+}
+
+function replaceLikedSongIds(ids) {
+  likedSongIds = new Set(ids)
+  likedIdsRevision += 1
 }
 
 // ── 听歌排行 (user/record) ──────────────────────────────────────────

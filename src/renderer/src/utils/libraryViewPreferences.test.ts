@@ -73,6 +73,7 @@ test('sorts every required field with stable tie breaking and last-played metada
     ['title', ['a', 'b', 'z']],
     ['artist', ['a', 'b', 'z']],
     ['album', ['a', 'b', 'z']],
+    ['playlist', ['z', 'a', 'b']],
     ['duration', ['a', 'b', 'z']],
     ['format', ['b', 'a', 'z']],
     ['sampleRate', ['z', 'a', 'b']],
@@ -83,6 +84,27 @@ test('sorts every required field with stable tie breaking and last-played metada
     state.sortDirection = 'asc'
     assert.deepEqual(applyLibraryView(tracks, state, new Map([['a', 1], ['z', 2], ['b', 3]])).map((item) => item.id), expected)
   }
+})
+
+test('playlist category defaults to the playlist order and never reorders it', () => {
+  const defaults = createDefaultLibraryViewState('playlists')
+  assert.equal(defaults.sortKey, 'playlist')
+  assert.equal(defaults.sortDirection, 'asc')
+
+  const state = createDefaultLibraryViewState('playlists')
+  const ordered = applyLibraryView(
+    [
+      track('first-added', { title: 'Zulu' }),
+      track('second-added', { title: 'Alpha' }),
+      track('third-added', { title: 'Beta' })
+    ],
+    state
+  )
+  assert.deepEqual(
+    ordered.map((item) => item.id),
+    ['first-added', 'second-added', 'third-added'],
+    'a playlist must keep its stored order instead of sorting by title'
+  )
 })
 
 test('album category defaults to track number and sorts disc then track', () => {

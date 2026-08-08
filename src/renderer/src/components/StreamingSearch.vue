@@ -581,6 +581,48 @@ function emitPage(first: number): void {
   margin-top: 0;
 }
 
+@media (max-width: 900px) {
+  .playlist-grid {
+    grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+    gap: 12px 10px;
+  }
+
+  .playlist-grid-card {
+    padding: 9px;
+  }
+
+  .playlist-grid-name {
+    margin-top: 9px;
+    font-size: 12.5px;
+  }
+
+  .playlist-grid-count {
+    margin-top: 3px;
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 640px) {
+  .playlist-grid {
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 10px 8px;
+  }
+
+  .playlist-grid-card {
+    padding: 7px;
+  }
+
+  .playlist-grid-name {
+    margin-top: 7px;
+    font-size: 11.5px;
+  }
+
+  .playlist-grid-count {
+    margin-top: 2px;
+    font-size: 10.5px;
+  }
+}
+
 .playlist-grid-card {
   cursor: pointer;
   padding: 12px;

@@ -133,7 +133,8 @@ test('liked playback resolves the complete provider list instead of queueing onl
   assert.match(source, /const tracks = await fetchLikedTracks\(\)/)
   assert.match(source, /async function playAllDetailTracks\(\): Promise<void>/)
   assert.match(source, /const tracks = await resolveDetailPlaybackQueue\(\)/)
-  assert.match(source, /playTrack\(tracks\[0\], tracks\)/)
+  // 通过 playStreamingTrack 仍使用完整解析后的列表（同时携带心动模式上下文）。
+  assert.match(source, /playStreamingTrack\(tracks\[0\], tracks\)/)
 })
 
 test('recommendations retry missing sections without letting populated FM block radar', () => {
@@ -189,10 +190,10 @@ test('streaming page supports multi-select batch favorite and delete on track li
   assert.match(source, /添加到歌单/)
   assert.match(source, /onSearchTrackClickWithSelect/)
   const detailClickHandler = source.match(
-    /function onTrackClick\([\s\S]*?\n}\n\nfunction playDetailTrack/
+    /function onTrackClick\([\s\S]*?\r?\n}\r?\n\r?\nfunction playDetailTrack/
   )
   const searchClickHandler = source.match(
-    /function onSearchTrackClickWithSelect\([\s\S]*?\n}\n\nasync function favoriteStreamingTracks/
+    /function onSearchTrackClickWithSelect\([\s\S]*?\r?\n}\r?\n\r?\nasync function favoriteStreamingTracks/
   )
   assert.ok(detailClickHandler)
   assert.ok(searchClickHandler)

@@ -40,6 +40,8 @@ const PLUGIN_ID_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)+$/
 const PROVIDER_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,127}$/
 const DSP_PARAMETER_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/
 const PROVIDER_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+const PROVIDER_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+const activeProviderCallControllers = new Map<string, AbortController>()
 
 export function setupPluginIpc(): void {
   if (runtime.pluginManager) return
@@ -123,8 +125,9 @@ export function setupPluginIpc(): void {
 
   runtime.pluginManager.on('changed', () => {
     runtime.mainWindow?.webContents.send('plugins:changed')
-    void reconcileThemeAfterPluginChange()
-      .catch((error) => console.warn('[themes] failed to refresh inherited window values', error))
+    void reconcileThemeAfterPluginChange().catch((error) =>
+      console.warn('[themes] failed to refresh inherited window values', error)
+    )
   })
 
   ipcMain.handle('plugins:list', async (event) => {
@@ -247,13 +250,25 @@ export function setupPluginIpc(): void {
       options?: unknown
     ) => {
       assertTrustedIpcSender(_event, 'provider IPC')
-      await runtime.pluginManagerReady
-      return await runtime.pluginManager!.callProvider(
-        normalizeProviderId(providerId),
-        normalizeProviderMethod(method),
-        normalizePluginIpcArgs(args, 'provider call args', MAX_PROVIDER_ARGS),
-        normalizeProviderCallOptions(options)
-      )
+      const normalizedOptions = normalizeProviderCallOptions(options)
+      const controller = new AbortController()
+      const requestKey = normalizedOptions.requestId
+        ? `${_event.sender.id}:${normalizedOptions.requestId}`
+        : null
+      if (requestKey) activeProviderCallControllers.set(requestKey, controller)
+      try {
+        await runtime.pluginManagerReady
+        return await runtime.pluginManager!.callProvider(
+          normalizeProviderId(providerId),
+          normalizeProviderMethod(method),
+          normalizePluginIpcArgs(args, 'provider call args', MAX_PROVIDER_ARGS),
+          { ...normalizedOptions, signal: controller.signal }
+        )
+      } finally {
+        if (requestKey && activeProviderCallControllers.get(requestKey) === controller) {
+          activeProviderCallControllers.delete(requestKey)
+        }
+      }
     }
   )
   ipcMain.handle('providerDownloads:list', (event) => {
@@ -276,6 +291,13 @@ export function setupPluginIpc(): void {
     return runtime.providerDownloadManager!.retry(
       normalizeIpcString(taskId, 'provider download task id', 128)
     )
+  })
+  ipcMain.on('providers:cancel', (event, rawRequestId: unknown) => {
+    assertTrustedIpcSender(event, 'provider IPC')
+    const requestId = normalizeProviderRequestId(rawRequestId)
+    activeProviderCallControllers
+      .get(`${event.sender.id}:${requestId}`)
+      ?.abort(new Error('Provider call was cancelled'))
   })
   ipcMain.handle('extensions:list', async (event) => {
     assertTrustedIpcSender(event, 'extension IPC')
@@ -339,13 +361,22 @@ function normalizePluginIpcArgs(value: unknown, field: string, maxItems: number)
   return args
 }
 
-function normalizeProviderCallOptions(value: unknown): { idempotencyKey?: string } {
+function normalizeProviderCallOptions(value: unknown): {
+  idempotencyKey?: string
+  requestId?: string
+} {
   if (value == null) return {}
   if (typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('provider call options must be an object')
   }
-  const rawKey = (value as Record<string, unknown>).idempotencyKey
-  if (rawKey === undefined) return {}
+  const record = value as Record<string, unknown>
+  if (Object.keys(record).some((key) => key !== 'idempotencyKey' && key !== 'requestId')) {
+    throw new Error('provider call options contain unsupported fields')
+  }
+  const rawRequestId = record.requestId
+  const requestId = rawRequestId == null ? undefined : normalizeProviderRequestId(rawRequestId)
+  const rawKey = record.idempotencyKey
+  if (rawKey === undefined) return requestId ? { requestId } : {}
   const idempotencyKey = normalizeIpcString(
     rawKey,
     'provider idempotency key',
@@ -354,7 +385,15 @@ function normalizeProviderCallOptions(value: unknown): { idempotencyKey?: string
   if (!PROVIDER_IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
     throw new Error('provider idempotency key is invalid')
   }
-  return { idempotencyKey }
+  return { idempotencyKey, ...(requestId ? { requestId } : {}) }
+}
+
+function normalizeProviderRequestId(value: unknown): string {
+  const requestId = normalizeIpcString(value, 'provider request id', 128)
+  if (!PROVIDER_REQUEST_ID_PATTERN.test(requestId)) {
+    throw new Error('provider request id is invalid')
+  }
+  return requestId
 }
 
 function normalizeProviderDownloadInput(value: unknown): ProviderDownloadCreateInput {

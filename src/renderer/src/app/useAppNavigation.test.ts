@@ -23,6 +23,26 @@ test('streaming mode preserves and restores local menu state', () => {
   assert.equal(navigation.menuOpen.value, true)
 })
 
+test('network sources page is mutually exclusive with streaming and radio pages', () => {
+  const navigation = useAppNavigation()
+
+  navigation.enterStreamingMode()
+  navigation.enterNetworkSourcesMode()
+
+  assert.equal(navigation.showNetworkSourcesPage.value, true)
+  assert.equal(navigation.showStreamingPage.value, false)
+  assert.equal(navigation.localViewVisible.value, false)
+
+  navigation.enterRadioPodcastMode()
+  assert.equal(navigation.showNetworkSourcesPage.value, false)
+  assert.equal(navigation.showRadioPodcastPage.value, true)
+
+  navigation.closeRadioPodcastPage()
+  navigation.enterNetworkSourcesMode()
+  navigation.closeNetworkSourcesPage()
+  assert.equal(navigation.showNetworkSourcesPage.value, false)
+})
+
 test('settings, plugin, equalizer, and extension pages are mutually exclusive', () => {
   const navigation = useAppNavigation()
   const page = {

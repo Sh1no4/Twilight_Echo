@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   macos:
-    name: macOS ${{ matrix.arch }} (zip)
+    name: macOS ${{ matrix.arch }} (dmg / zip)
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 75
     strategy:
@@ -71,7 +71,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
           pnpm run build
-          pnpm exec electron-builder --mac zip --${{ matrix.arch }} --config electron-builder.yml --publish never
+          pnpm exec electron-builder --mac --${{ matrix.arch }} --config electron-builder.yml --publish never
 
       - name: Verify staged native engine in the packaged app
         run: |
@@ -82,5 +82,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: twilight-echo-macos-${{ matrix.arch }}
-          path: dist/*.zip
+          path: |
+            dist/*.dmg
+            dist/*.zip
           if-no-files-found: error

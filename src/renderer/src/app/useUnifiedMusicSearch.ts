@@ -2,6 +2,7 @@ import { ref, type Ref } from 'vue'
 import { useMediaProviders } from '../providers/index.ts'
 import { useMusicStore } from '../stores/useMusicStore.ts'
 import type { Track } from '../types/music'
+import type { NetworkEntry } from '../../../shared/networkSources.ts'
 import type {
   LogicalMusicItem,
   UnifiedSearchProviderHealth,
@@ -11,9 +12,13 @@ import type {
 
 export interface UnifiedMusicSearchDependencies {
   getLocalTracks: () => Track[]
+  searchNetworkLibrary?: (
+    query: string
+  ) => Promise<Array<{ profileName: string; entry: NetworkEntry }>>
   searchAllSongs: (options: {
     query: string
     localTracks: Track[]
+    networkEntries?: Array<{ profileName: string; entry: NetworkEntry }>
     limit?: number
     offset?: number
   }) => Promise<UnifiedSearchResult>
@@ -35,6 +40,10 @@ export function useUnifiedMusicSearch(): UnifiedMusicSearchState {
   const providers = useMediaProviders()
   return createUnifiedMusicSearch({
     getLocalTracks: () => musicStore.tracks.value,
+    searchNetworkLibrary: async (query) => {
+      if (!window.api?.networkSources) return []
+      return window.api.networkSources.searchLibrary(query)
+    },
     searchAllSongs: (options) => providers.searchAllSongs(options)
   })
 }
@@ -80,9 +89,13 @@ export function createUnifiedMusicSearch(
     loading.value = true
     error.value = ''
     try {
+      const networkEntries = dependencies.searchNetworkLibrary
+        ? await dependencies.searchNetworkLibrary(normalizedQuery).catch(() => [])
+        : []
       const result = await dependencies.searchAllSongs({
         query: snapshot.query,
         localTracks: dependencies.getLocalTracks(),
+        networkEntries,
         limit: snapshot.limit,
         offset: snapshot.offset
       })

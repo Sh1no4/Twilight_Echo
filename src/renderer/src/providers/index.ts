@@ -75,11 +75,36 @@ export async function syncPluginProviders(): Promise<void> {
           })
           continue
         }
-        const callProvider = async <T>(method: string, args: unknown[] = []): Promise<T> => {
+        const callProvider = async <T>(
+          method: string,
+          args: unknown[] = [],
+          options?: { signal?: AbortSignal }
+        ): Promise<T> => {
+          if (options?.signal?.aborted) throw new Error('Provider call was cancelled')
+          // AbortSignal instances cannot cross the contextBridge, so the
+          // preload never sees the real signal. Generate a request id here and
+          // cancel the in-flight main-process call from the renderer instead.
+          let requestId: string | undefined
+          let onAbort: (() => void) | undefined
+          if (options?.signal) {
+            requestId = `r${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+            onAbort = (): void => {
+              if (requestId) void api.cancel(requestId)
+            }
+            options.signal.addEventListener('abort', onAbort, { once: true })
+          }
           try {
-            return (await api.call(provider.id, method as never, toProviderIpcArgs(args))) as T
+            return (await api.call(
+              provider.id,
+              method as never,
+              toProviderIpcArgs(args),
+              requestId ? { requestId } : undefined
+            )) as T
           } finally {
             void refreshPluginProviderHealth()
+            if (options?.signal && onAbort) {
+              options.signal.removeEventListener('abort', onAbort)
+            }
           }
         }
         mediaProviders.register({
@@ -93,20 +118,20 @@ export async function syncPluginProviders(): Promise<void> {
             ? (track, options) => callProvider<string | null>('getPlaybackUrl', [track, options])
             : undefined,
           getLyrics: provider.capabilities.includes('lyrics')
-            ? (track) =>
+            ? (track, options) =>
                 callProvider<{
                   lyrics: string | null
                   translatedLyrics: string | null
                   wordLyrics?: string | null
-                }>('getLyrics', [track])
+                }>('getLyrics', [track], options)
             : undefined,
           searchSongs: provider.capabilities.includes('search')
-            ? (keywords, limit, offset) =>
-                callProvider<MediaProviderSearchResult<Track>>('searchSongs', [
-                  keywords,
-                  limit,
-                  offset
-                ])
+            ? (keywords, limit, offset, options) =>
+                callProvider<MediaProviderSearchResult<Track>>(
+                  'searchSongs',
+                  [keywords, limit, offset],
+                  options
+                )
             : undefined,
           searchPlaylists: provider.capabilities.includes('playlist')
             ? (keywords, limit, offset) =>
@@ -127,7 +152,10 @@ export async function syncPluginProviders(): Promise<void> {
                 callProvider<Track[]>('fetchPlaylistTracks', [playlistId, force])
             : undefined,
           checkLogin: provider.capabilities.includes('login')
-            ? () => callProvider<{ loggedIn: boolean; profile: MediaProviderProfile | null }>('checkLogin')
+            ? () =>
+                callProvider<{ loggedIn: boolean; profile: MediaProviderProfile | null }>(
+                  'checkLogin'
+                )
             : undefined,
           getProfile: provider.capabilities.includes('login')
             ? () => callProvider<MediaProviderProfile | null>('getProfile')
@@ -204,19 +232,11 @@ export async function syncPluginProviders(): Promise<void> {
             : undefined,
           fetchUserFollows: provider.capabilities.includes('library')
             ? (uid, limit, offset) =>
-                callProvider<MediaProviderUserSummary[]>('fetchUserFollows', [
-                  uid,
-                  limit,
-                  offset
-                ])
+                callProvider<MediaProviderUserSummary[]>('fetchUserFollows', [uid, limit, offset])
             : undefined,
           fetchUserFolloweds: provider.capabilities.includes('library')
             ? (uid, limit, offset) =>
-                callProvider<MediaProviderUserSummary[]>('fetchUserFolloweds', [
-                  uid,
-                  limit,
-                  offset
-                ])
+                callProvider<MediaProviderUserSummary[]>('fetchUserFolloweds', [uid, limit, offset])
             : undefined,
           fetchPlayRecords: provider.capabilities.includes('library')
             ? (type) => callProvider<Track[]>('fetchPlayRecords', [type])

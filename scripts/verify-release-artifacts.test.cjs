@@ -5,7 +5,9 @@ const path = require('node:path')
 const test = require('node:test')
 
 const {
+  REQUIRED_NATIVE_BINARIES,
   assertBudget,
+  listNativeBinaries,
   listShippedBinaries,
   parseArgs,
   readPeHeader
@@ -76,6 +78,26 @@ test('all shipped native DLL/EXE/NODE files receive a size budget while strip ch
       listShippedBinaries(dir).map((filePath) => path.basename(filePath)).sort(),
       ['msvcp140.dll', 'twilight-audio-engine.dll']
     )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('native binary verification requires the core runtime and verifies optional VST3 helpers when staged', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-native-binaries-'))
+  try {
+    for (const name of REQUIRED_NATIVE_BINARIES) {
+      fs.writeFileSync(path.join(dir, name), makeMinimalPe())
+    }
+    assert.deepEqual(
+      listNativeBinaries(dir).map((filePath) => path.basename(filePath)).sort(),
+      [...REQUIRED_NATIVE_BINARIES].sort()
+    )
+    fs.writeFileSync(path.join(dir, 'twilight-vst3-host.exe'), makeMinimalPe())
+    fs.writeFileSync(path.join(dir, 'twilight-vst3-scanner.exe'), makeMinimalPe())
+    assert.equal(listNativeBinaries(dir).length, REQUIRED_NATIVE_BINARIES.length + 2)
+    fs.rmSync(path.join(dir, 'twilight-audio-engine.dll'))
+    assert.throws(() => listNativeBinaries(dir), /Missing required native binary/)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
