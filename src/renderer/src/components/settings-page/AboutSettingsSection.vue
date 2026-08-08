@@ -6,9 +6,12 @@ import { GITHUB_URL, HOMEPAGE_URL, RELEASES_URL } from './types.ts'
 import type { AppUpdateProgress } from '../../../../shared/appUpdate.ts'
 
 const AFDIAN_URL = 'https://ifdian.net/a/pxasen'
-const ALIPAY_QR_URL = '/sponsor/alipay.jpg'
-const WECHAT_QR_URL = '/sponsor/wechat.png'
-const QQ_GROUP_QR_URL = '/qq-group-qrcode.jpg'
+// Public assets are copied to the renderer root at build time. Relative paths
+// resolve against the loaded document in both dev (http) and packaged builds
+// (file://), where a leading "/" would point at the filesystem root.
+const ALIPAY_QR_URL = './sponsor/alipay.jpg'
+const WECHAT_QR_URL = './sponsor/wechat.png'
+const QQ_GROUP_QR_URL = './qq-group-qrcode.jpg'
 
 interface Sponsor {
   id: string

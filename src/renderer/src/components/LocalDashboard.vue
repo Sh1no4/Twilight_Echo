@@ -26,7 +26,9 @@ const emit = defineEmits<{
   (event: 'open-library-settings'): void
 }>()
 
-const DEFAULT_COVER = '/icon.png'
+// Relative so the packaged file:// build resolves it next to index.html
+// instead of the filesystem root.
+const DEFAULT_COVER = './icon.png'
 const DASHBOARD_QUEUE_WINDOW = 200
 const SHELF_SIZE = 6
 const TOP_TRACK_COUNT = 6
