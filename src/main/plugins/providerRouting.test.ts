@@ -14,7 +14,9 @@ type TestRunningProvider = {
   providers: Array<{
     id: string
     name: string
-    capabilities: Array<'search' | 'playbackUrl' | 'lyrics' | 'cover' | 'playlist' | 'library' | 'login'>
+    capabilities: Array<
+      'search' | 'playbackUrl' | 'lyrics' | 'cover' | 'playlist' | 'library' | 'login' | 'download'
+    >
   }>
 }
 
@@ -52,6 +54,30 @@ test('routes provider calls to a plugin that declares the required method capabi
     findProviderRoute([skeleton, fullProvider], 'bili', 'searchSongs')?.pluginId,
     skeleton.pluginId
   )
+})
+
+test('routes download lifecycle calls only to providers declaring download capability', () => {
+  const downloadProvider: TestRunningProvider = {
+    pluginId: 'com.test.download-provider',
+    providers: [
+      {
+        id: 'am',
+        name: 'Apple Music',
+        capabilities: ['search', 'playbackUrl', 'download']
+      }
+    ]
+  }
+
+  for (const method of [
+    'createDownload',
+    'getDownloadStatus',
+    'getDownloadFile',
+    'cancelDownload'
+  ] as const) {
+    assert.equal(providerSupportsMethod(downloadProvider.providers[0], method), true)
+    assert.equal(providerSupportsMethod(skeleton.providers[0], method), false)
+    assert.equal(findProviderRoute([skeleton, downloadProvider], 'am', method)?.pluginId, downloadProvider.pluginId)
+  }
 })
 
 test('prefers the latest registration when multiple plugins expose the same provider id', () => {

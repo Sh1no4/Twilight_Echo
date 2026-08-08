@@ -8,7 +8,8 @@ const PROVIDER_WRITE_METHODS = new Set([
   'createPlaylist',
   'deletePlaylist',
   'addTracksToPlaylist',
-  'removeTracksFromPlaylist'
+  'removeTracksFromPlaylist',
+  'createDownload'
 ])
 
 interface ProviderWriteIdempotencyEntry {

@@ -244,6 +244,7 @@ type TwilightMediaProviderCapability =
   | 'playlist'
   | 'library'
   | 'login'
+  | 'download'
 type TwilightMediaProviderMethod =
   | 'getPlaybackUrl'
   | 'getLyrics'
@@ -251,6 +252,10 @@ type TwilightMediaProviderMethod =
   | 'searchPlaylists'
   | 'searchArtists'
   | 'fetchPlaylistTracks'
+  | 'createDownload'
+  | 'getDownloadStatus'
+  | 'getDownloadFile'
+  | 'cancelDownload'
   | 'checkLogin'
   | 'getProfile'
   | 'logout'
@@ -296,6 +301,45 @@ type TwilightMediaProviderMethod =
   | 'deletePlaylist'
   | 'addTracksToPlaylist'
   | 'removeTracksFromPlaylist'
+type ProviderDownloadQuality = 'aac' | 'lossless' | 'hi-res'
+type ProviderDownloadTaskStatus =
+  | 'queued'
+  | 'preparing'
+  | 'downloading'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+interface ProviderDownloadTrackInput {
+  id: string | number
+  title: string
+  artist: string
+  album?: string
+  cover?: string
+  provider?: string
+  [key: string]: unknown
+}
+interface ProviderDownloadCreateInput {
+  providerId: string
+  track: ProviderDownloadTrackInput
+  quality: ProviderDownloadQuality
+  targetRoot?: string
+}
+interface ProviderDownloadTaskSnapshot {
+  id: string
+  providerId: string
+  providerJobId: string
+  track: ProviderDownloadTrackInput
+  requestedQuality: ProviderDownloadQuality
+  actualQuality: ProviderDownloadQuality | null
+  status: ProviderDownloadTaskStatus
+  progress: number
+  queuePosition: number | null
+  targetPath: string | null
+  fileSize: number | null
+  error: string | null
+  createdAt: string
+  updatedAt: string
+}
 type EqMode = 'graphic' | 'parametric'
 type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
 type ChannelRoutingMode =
@@ -996,7 +1040,7 @@ interface TwilightProviderUiMetadata {
   icon: string
   color?: string
   description?: string
-  authType: 'qr' | 'oauth' | 'cookie'
+  authType: 'qr' | 'oauth' | 'cookie' | 'settings'
   loginInstructions?: string
   qrStatusCodes?: {
     waiting: number
@@ -1737,6 +1781,13 @@ interface WindowAPI {
       args: unknown[],
       options?: { idempotencyKey?: string }
     ) => Promise<unknown>
+  }
+  providerDownloads: {
+    list: () => Promise<ProviderDownloadTaskSnapshot[]>
+    create: (input: ProviderDownloadCreateInput) => Promise<ProviderDownloadTaskSnapshot>
+    cancel: (taskId: string) => Promise<void>
+    retry: (taskId: string) => Promise<ProviderDownloadTaskSnapshot>
+    onChanged: (cb: (tasks: ProviderDownloadTaskSnapshot[]) => void) => () => void
   }
   extensions: {
     list: () => Promise<TwilightPluginExtensionContribution[]>

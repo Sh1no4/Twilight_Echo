@@ -222,6 +222,11 @@ function handleLoginSuccess(): void {
   closeLoginPage()
 }
 
+function handleLoginConfigure(): void {
+  closeLoginPage()
+  openSettingsPage()
+}
+
 const musicStore = useMusicStore()
 const {
   loadLibrary,
@@ -746,6 +751,7 @@ const titleSurface = computed<TitleSurface>(() => {
             :initial-provider-id="loginInitialProviderId"
             @back="closeLoginPage"
             @login-success="handleLoginSuccess"
+            @configure="handleLoginConfigure"
           />
         </Transition>
         <Transition name="settings-page">

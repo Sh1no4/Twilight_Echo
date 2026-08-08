@@ -92,6 +92,10 @@ void writeDiagnosticsJson(std::ostringstream& json, const OutputInfo::Diagnostic
        << "\"asioRegisteredDriverCount32\":" << diagnostics.asioRegisteredDriverCount32 << ","
        << "\"asioRegisteredDriverCount64\":" << diagnostics.asioRegisteredDriverCount64 << ","
        << "\"asioLoadableDriverCount64\":" << diagnostics.asioLoadableDriverCount64 << ","
+       << "\"dsdRouteOverrideActive\":" << (diagnostics.dsdRouteOverrideActive ? "true" : "false") << ","
+       << "\"dsdRouteBackend\":\"" << json_utils::escape(diagnostics.dsdRouteBackend) << "\","
+       << "\"dsdRouteDevice\":\"" << json_utils::escape(diagnostics.dsdRouteDevice) << "\","
+       << "\"dsdRouteFallbackReason\":\"" << json_utils::escape(diagnostics.dsdRouteFallbackReason) << "\","
        << "\"lastError\":\"" << json_utils::escape(diagnostics.lastError) << "\""
        << "}";
 }
@@ -1128,7 +1132,10 @@ TAE_Result TwilightAudioEngine::setDspConfig(const std::string& dspJson) {
         const bool wantsDop =
             nextConfig.dsdOutputMode == DsdOutputMode::Auto || nextConfig.dsdOutputMode == DsdOutputMode::Dop ||
             nextConfig.dsdOutputMode == DsdOutputMode::Native;
-        const bool modeChanged = previousConfig.dsdOutputMode != nextConfig.dsdOutputMode;
+        // A compatibility-route edit moves the stream to a different device, so it
+        // must re-negotiate even when the requested DSD mode itself is unchanged.
+        const bool routeChanged = !dsdRouteOverrideEquals(previousConfig.dsdRoute, nextConfig.dsdRoute);
+        const bool modeChanged = previousConfig.dsdOutputMode != nextConfig.dsdOutputMode || routeChanged;
         const bool dopActive = pipeline_->isDopPathActive();
         const bool nativeActive = pipeline_->isNativeDsdPathActive();
         if ((dopActive || nativeActive) && wantsPcm) {
@@ -1139,6 +1146,10 @@ TAE_Result TwilightAudioEngine::setDspConfig(const std::string& dspJson) {
           reroutePosition = info_.positionSeconds;
           rerouteState = info_.state;
           rerouteReason = "Re-enter DoP output mode";
+        } else if (routeChanged && !wantsPcm) {
+          reroutePosition = info_.positionSeconds;
+          rerouteState = info_.state;
+          rerouteReason = "DSD compatibility route changed";
         } else if (modeChanged && wantsNative && !nativeActive) {
           reroutePosition = info_.positionSeconds;
           rerouteState = info_.state;
@@ -1244,7 +1255,10 @@ TAE_Result TwilightAudioEngine::applyDspState(
         const bool wantsDop =
             nextConfig.dsdOutputMode == DsdOutputMode::Auto || nextConfig.dsdOutputMode == DsdOutputMode::Dop ||
             nextConfig.dsdOutputMode == DsdOutputMode::Native;
-        const bool modeChanged = previousConfig.dsdOutputMode != nextConfig.dsdOutputMode;
+        // A compatibility-route edit moves the stream to a different device, so it
+        // must re-negotiate even when the requested DSD mode itself is unchanged.
+        const bool routeChanged = !dsdRouteOverrideEquals(previousConfig.dsdRoute, nextConfig.dsdRoute);
+        const bool modeChanged = previousConfig.dsdOutputMode != nextConfig.dsdOutputMode || routeChanged;
         const bool dopActive = pipeline_->isDopPathActive();
         const bool nativeActive = pipeline_->isNativeDsdPathActive();
         if ((dopActive || nativeActive) && wantsPcm) {
@@ -1253,6 +1267,10 @@ TAE_Result TwilightAudioEngine::applyDspState(
           rerouteState = info_.state;
         } else if (nativeActive && nextConfig.dsdOutputMode == DsdOutputMode::Dop) {
           rerouteReason = "Re-enter DoP output mode";
+          reroutePosition = info_.positionSeconds;
+          rerouteState = info_.state;
+        } else if (routeChanged && !wantsPcm) {
+          rerouteReason = "DSD compatibility route changed";
           reroutePosition = info_.positionSeconds;
           rerouteState = info_.state;
         } else if (modeChanged && wantsNative && !nativeActive) {

@@ -69,6 +69,7 @@ import { useAppNoticeStore } from '../stores/useAppNoticeStore'
 import { getTrackSource } from '../utils/logicalTrackModel'
 import { friendlyStreamingError } from './streaming-page/friendlyStreamingError.ts'
 import { useEscapeToClose, useFocusTrap } from '../app/useDismissLayer.ts'
+import type { ProviderDownloadQuality, ProviderDownloadTaskSnapshot } from '../../../preload/types'
 
 interface RecSection {
   key: string
@@ -1904,6 +1905,100 @@ const contextMenuCanLike = computed(
     streamingContextActionCount.value === 1
 )
 
+// ─── Provider download ───────────────────────────────────────────────
+const downloadTasks = ref<ProviderDownloadTaskSnapshot[]>([])
+const showDownloadPanel = ref(false)
+const downloadQualityMenuOpen = ref(false)
+let stopDownloadListener: (() => void) | null = null
+
+const activeDownloadTasks = computed(() =>
+  downloadTasks.value.filter((task) => task.status !== 'completed' && task.status !== 'cancelled')
+)
+const contextMenuCanDownload = computed(
+  () =>
+    streamingContextActionTracks.value.length > 0 &&
+    providerStore.getProvider(activeProvider.value)?.capabilities.includes('download') === true
+)
+
+onMounted(() => {
+  stopDownloadListener = window.api.providerDownloads.onChanged((tasks) => {
+    downloadTasks.value = tasks
+  })
+  void window.api.providerDownloads.list().then((tasks) => {
+    downloadTasks.value = tasks
+  })
+})
+
+onUnmounted(() => {
+  stopDownloadListener?.()
+})
+
+async function handleContextDownload(quality: ProviderDownloadQuality): Promise<void> {
+  const tracks = streamingContextActionTracks.value
+  const providerId = activeProvider.value
+  closeStreamingContextMenu()
+  downloadQualityMenuOpen.value = false
+  for (const track of tracks) {
+    try {
+      await window.api.providerDownloads.create({
+        providerId,
+        track: {
+          id: track.id,
+          title: track.title,
+          artist: track.artist,
+          album: track.album,
+          cover: track.cover ?? undefined,
+          provider: track.source ?? providerId
+        },
+        quality
+      })
+    } catch (error) {
+      pushNotice({
+        kind: 'error',
+        message: friendlyStreamingError(error, `下载「${track.title}」失败`)
+      })
+    }
+  }
+  showDownloadPanel.value = true
+}
+
+async function handleCancelDownload(taskId: string): Promise<void> {
+  try {
+    await window.api.providerDownloads.cancel(taskId)
+  } catch (error) {
+    pushNotice({ kind: 'error', message: friendlyStreamingError(error, '取消下载失败') })
+  }
+}
+
+async function handleRetryDownload(taskId: string): Promise<void> {
+  try {
+    await window.api.providerDownloads.retry(taskId)
+  } catch (error) {
+    pushNotice({ kind: 'error', message: friendlyStreamingError(error, '重试下载失败') })
+  }
+}
+
+function formatProgress(value: number): string {
+  return `${Math.round(value * 100)}%`
+}
+
+function downloadStatusLabel(task: ProviderDownloadTaskSnapshot): string {
+  switch (task.status) {
+    case 'queued':
+      return task.queuePosition != null ? `排队中 #${task.queuePosition}` : '排队中'
+    case 'preparing':
+      return '准备中'
+    case 'downloading':
+      return `下载中 ${formatProgress(task.progress)}`
+    case 'completed':
+      return '已完成'
+    case 'failed':
+      return '失败'
+    case 'cancelled':
+      return '已取消'
+  }
+}
+
 onMounted(() => {
   window.addEventListener('click', closeStreamingContextMenu)
 })
@@ -3367,6 +3462,54 @@ onMounted(async () => {
           <i class="pi pi-minus-circle"></i>
           <span>从歌单移除{{ streamingContextActionLabel }}</span>
         </div>
+        <div
+          v-if="contextMenuCanDownload"
+          class="menu-item"
+          role="menuitem"
+          tabindex="0"
+          data-te-interactive
+          @mouseenter="downloadQualityMenuOpen = true"
+          @mouseleave="downloadQualityMenuOpen = false"
+        >
+          <i class="pi pi-download"></i>
+          <span>下载到本地{{ streamingContextActionLabel }}</span>
+          <i class="pi pi-chevron-right submenu-icon"></i>
+          <div v-if="downloadQualityMenuOpen" class="submenu">
+            <div
+              class="menu-item"
+              role="menuitem"
+              tabindex="0"
+              data-te-interactive
+              @click="handleContextDownload('hi-res')"
+              @keydown.enter.prevent="handleContextDownload('hi-res')"
+            >
+              <i class="pi pi-bolt"></i>
+              <span>Hi-Res</span>
+            </div>
+            <div
+              class="menu-item"
+              role="menuitem"
+              tabindex="0"
+              data-te-interactive
+              @click="handleContextDownload('lossless')"
+              @keydown.enter.prevent="handleContextDownload('lossless')"
+            >
+              <i class="pi pi-wave-pulse"></i>
+              <span>Lossless</span>
+            </div>
+            <div
+              class="menu-item"
+              role="menuitem"
+              tabindex="0"
+              data-te-interactive
+              @click="handleContextDownload('aac')"
+              @keydown.enter.prevent="handleContextDownload('aac')"
+            >
+              <i class="pi pi-volume-down"></i>
+              <span>AAC</span>
+            </div>
+          </div>
+        </div>
       </div>
     </Teleport>
 
@@ -3483,7 +3626,215 @@ onMounted(async () => {
         </div>
       </Transition>
     </Teleport>
+
+    <Teleport to="body">
+      <Transition name="dialog-fade">
+        <div
+          v-if="showDownloadPanel"
+          class="provider-download-panel-overlay"
+          @click.self="showDownloadPanel = false"
+        >
+          <div class="provider-download-panel" role="dialog" aria-modal="true" aria-label="下载管理">
+            <div class="provider-download-panel-header">
+              <h3>下载管理</h3>
+              <button type="button" class="soft-button" @click="showDownloadPanel = false">
+                <i class="pi pi-times"></i>
+              </button>
+            </div>
+            <div v-if="downloadTasks.length === 0" class="provider-download-empty">
+              暂无下载任务。在流媒体曲目上右键选择「下载到本地」即可开始。
+            </div>
+            <div v-else class="provider-download-list">
+              <div
+                v-for="task in downloadTasks"
+                :key="task.id"
+                class="provider-download-item"
+                :class="{ completed: task.status === 'completed', failed: task.status === 'failed' }"
+              >
+                <div class="provider-download-item-info">
+                  <strong>{{ task.track.title }}</strong>
+                  <span>{{ task.track.artist }}</span>
+                  <small :class="{ error: task.status === 'failed' }">
+                    {{ downloadStatusLabel(task) }}
+                    <template v-if="task.actualQuality"> · {{ task.actualQuality }}</template>
+                    <template v-if="task.fileSize"> · {{ (task.fileSize / 1048576).toFixed(1) }} MB</template>
+                  </small>
+                  <small v-if="task.error" class="error">{{ task.error }}</small>
+                  <small v-if="task.targetPath && task.status === 'completed'" class="path">
+                    {{ task.targetPath }}
+                  </small>
+                </div>
+                <div class="provider-download-item-actions">
+                  <button
+                    v-if="task.status === 'failed' || task.status === 'cancelled'"
+                    type="button"
+                    class="soft-button"
+                    @click="handleRetryDownload(task.id)"
+                  >
+                    重试
+                  </button>
+                  <button
+                    v-if="task.status !== 'completed' && task.status !== 'cancelled'"
+                    type="button"
+                    class="muted-button"
+                    @click="handleCancelDownload(task.id)"
+                  >
+                    取消
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <button
+      v-if="activeDownloadTasks.length > 0 && !showDownloadPanel"
+      type="button"
+      class="provider-download-fab"
+      @click="showDownloadPanel = true"
+    >
+      <i class="pi pi-download"></i>
+      <span class="fab-badge">{{ activeDownloadTasks.length }}</span>
+    </button>
   </div>
 </template>
 
 <style scoped src="./streaming-page/StreamingPage.css"></style>
+
+<style scoped>
+.provider-download-panel-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.provider-download-panel {
+  width: min(560px, 90vw);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--te-panel-bg, #1e1e2e);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.provider-download-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--te-border, rgba(255, 255, 255, 0.08));
+}
+
+.provider-download-panel-header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.provider-download-empty {
+  padding: 32px 20px;
+  text-align: center;
+  color: var(--te-muted, rgba(255, 255, 255, 0.5));
+  font-size: 13px;
+}
+
+.provider-download-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.provider-download-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--te-border, rgba(255, 255, 255, 0.04));
+}
+
+.provider-download-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.provider-download-item-info strong {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-download-item-info span {
+  font-size: 12px;
+  color: var(--te-muted, rgba(255, 255, 255, 0.5));
+}
+
+.provider-download-item-info small {
+  font-size: 11px;
+  color: var(--te-muted, rgba(255, 255, 255, 0.4));
+}
+
+.provider-download-item-info small.error {
+  color: var(--te-danger, #ef4444);
+}
+
+.provider-download-item-info small.path {
+  word-break: break-all;
+  font-family: monospace;
+}
+
+.provider-download-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.provider-download-fab {
+  position: fixed;
+  bottom: 80px;
+  right: 24px;
+  z-index: 900;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: var(--te-accent, #7c3aed);
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  transition: transform 0.15s;
+}
+
+.provider-download-fab:hover {
+  transform: scale(1.05);
+}
+
+.fab-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--te-danger, #ef4444);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+}
+</style>

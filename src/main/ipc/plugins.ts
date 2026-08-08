@@ -5,6 +5,7 @@ import { runtime } from '../core/runtime'
 import { TwilightPluginManager } from '../plugins/manager'
 import { PluginIndexService, resolvePluginIndexUrl } from '../plugins/indexService'
 import { buildPluginProxyEnv } from '../plugins/proxyBootstrap'
+import { ProviderDownloadManager } from '../plugins/providerDownloadManager.ts'
 import { isTwilightMediaProviderMethod } from '../plugins/providerRouting'
 import type { TwilightMediaProviderMethod, TwilightPluginUninstallOptions } from '../plugins/types'
 import {
@@ -21,6 +22,10 @@ import {
 } from '../security/ipcValidation.ts'
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
 import { reconcileThemeAfterPluginChange } from './themes.ts'
+import {
+  PROVIDER_DOWNLOAD_CHANGED_CHANNEL,
+  type ProviderDownloadCreateInput
+} from '../../shared/providerDownloads.ts'
 
 const MAX_PLUGIN_ID_LENGTH = 128
 const MAX_PROVIDER_ID_LENGTH = 128
@@ -86,6 +91,14 @@ export function setupPluginIpc(): void {
       }
     },
     getProxyEnv: () => buildPluginProxyEnv(runtime.appSettings)
+  })
+  runtime.providerDownloadManager = new ProviderDownloadManager({
+    pluginManager: runtime.pluginManager,
+    getLibraryFolders: () => runtime.appSettings.libraryFolders,
+    libraryIndexCoordinator: () => runtime.localLibraryIndexCoordinator,
+    onChanged: (tasks) => {
+      runtime.mainWindow?.webContents.send(PROVIDER_DOWNLOAD_CHANGED_CHANNEL, tasks)
+    }
   })
   runtime.pluginIndexService = new PluginIndexService({
     appVersion: app.getVersion(),
@@ -243,6 +256,27 @@ export function setupPluginIpc(): void {
       )
     }
   )
+  ipcMain.handle('providerDownloads:list', (event) => {
+    assertTrustedIpcSender(event, 'provider download IPC')
+    return runtime.providerDownloadManager!.list()
+  })
+  ipcMain.handle('providerDownloads:create', async (event, input: ProviderDownloadCreateInput) => {
+    assertTrustedIpcSender(event, 'provider download IPC')
+    await runtime.pluginManagerReady
+    return runtime.providerDownloadManager!.create(normalizeProviderDownloadInput(input))
+  })
+  ipcMain.handle('providerDownloads:cancel', async (event, taskId: string) => {
+    assertTrustedIpcSender(event, 'provider download IPC')
+    await runtime.providerDownloadManager!.cancel(
+      normalizeIpcString(taskId, 'provider download task id', 128)
+    )
+  })
+  ipcMain.handle('providerDownloads:retry', async (event, taskId: string) => {
+    assertTrustedIpcSender(event, 'provider download IPC')
+    return runtime.providerDownloadManager!.retry(
+      normalizeIpcString(taskId, 'provider download task id', 128)
+    )
+  })
   ipcMain.handle('extensions:list', async (event) => {
     assertTrustedIpcSender(event, 'extension IPC')
     await runtime.pluginManagerReady
@@ -283,9 +317,19 @@ function normalizeProviderId(value: unknown): string {
   return id
 }
 
+const HOST_ONLY_PROVIDER_METHODS = new Set<TwilightMediaProviderMethod>([
+  'createDownload',
+  'getDownloadStatus',
+  'getDownloadFile',
+  'cancelDownload'
+])
+
 function normalizeProviderMethod(value: unknown): TwilightMediaProviderMethod {
   const method = normalizeIpcString(value, 'provider method', 80)
   if (!isTwilightMediaProviderMethod(method)) throw new Error('provider method is invalid')
+  if (HOST_ONLY_PROVIDER_METHODS.has(method)) {
+    throw new Error('provider download methods are host-only')
+  }
   return method
 }
 
@@ -311,6 +355,14 @@ function normalizeProviderCallOptions(value: unknown): { idempotencyKey?: string
     throw new Error('provider idempotency key is invalid')
   }
   return { idempotencyKey }
+}
+
+function normalizeProviderDownloadInput(value: unknown): ProviderDownloadCreateInput {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('provider download input must be an object')
+  }
+  stringifyJsonForIpcStorage(value, 'provider download input', MAX_PLUGIN_IPC_ARGS_BYTES)
+  return value as ProviderDownloadCreateInput
 }
 
 function normalizeUninstallOptions(value: unknown): TwilightPluginUninstallOptions | undefined {

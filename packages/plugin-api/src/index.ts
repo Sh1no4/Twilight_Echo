@@ -204,6 +204,7 @@ export type TwilightMediaProviderCapability =
   | 'playlist'
   | 'library'
   | 'login'
+  | 'download'
 
 export interface Track {
   id: string
@@ -300,6 +301,42 @@ export interface ProviderProfile {
   [key: string]: unknown
 }
 
+export type ProviderDownloadQuality = 'aac' | 'lossless' | 'hi-res'
+export type ProviderDownloadStatus =
+  | 'queued'
+  | 'preparing'
+  | 'ready'
+  | 'failed'
+  | 'cancelled'
+  | 'expired'
+
+export interface ProviderDownloadRequest {
+  track: Track
+  quality: ProviderDownloadQuality
+}
+
+export interface ProviderDownloadTask {
+  jobId: string
+  status: ProviderDownloadStatus
+  progress: number
+  queuePosition?: number | null
+  requestedQuality: ProviderDownloadQuality
+  actualQuality?: ProviderDownloadQuality | null
+  fileName?: string | null
+  fileSize?: number | null
+  contentType?: string | null
+  expiresAt?: string | null
+  error?: string | null
+}
+
+export interface ProviderDownloadFile {
+  url: string
+  fileName?: string | null
+  fileSize?: number | null
+  contentType?: string | null
+  actualQuality?: ProviderDownloadQuality | null
+}
+
 export interface QrLoginRequest {
   key: string
   qrContent?: string
@@ -359,6 +396,19 @@ export interface TwilightMediaProviderRegistration {
     force?: boolean,
     context?: TwilightProviderRequestContext
   ): Promise<Track[]>
+  createDownload?(
+    request: ProviderDownloadRequest,
+    context?: TwilightProviderRequestContext
+  ): Promise<ProviderDownloadTask>
+  getDownloadStatus?(
+    jobId: string,
+    context?: TwilightProviderRequestContext
+  ): Promise<ProviderDownloadTask>
+  getDownloadFile?(
+    jobId: string,
+    context?: TwilightProviderRequestContext
+  ): Promise<ProviderDownloadFile>
+  cancelDownload?(jobId: string, context?: TwilightProviderRequestContext): Promise<void>
   checkLogin?(
     context?: TwilightProviderRequestContext
   ): Promise<{ loggedIn: boolean; profile: ProviderProfile | null }>

@@ -119,6 +119,32 @@ let stopUpdateProgressListener: (() => void) | null = null
 const runningPluginSettingsCommand = ref('')
 const pluginSettingsResult = ref<Record<string, string>>({})
 const pluginSettingsError = ref<Record<string, string>>({})
+
+type PluginSettingsFieldType = 'text' | 'password' | 'url' | 'select'
+
+interface PluginSettingsOption {
+  label: string
+  value: string
+}
+
+interface PluginSettingsField {
+  key: string
+  label: string
+  type: PluginSettingsFieldType
+  required: boolean
+  placeholder: string
+  value: string
+  options: PluginSettingsOption[]
+}
+
+interface PluginSettingsForm {
+  submitCommand: string
+  fields: PluginSettingsField[]
+  notice: string
+}
+
+const pluginSettingsForms = ref<Record<string, PluginSettingsForm | null>>({})
+const pluginSettingsValues = ref<Record<string, Record<string, string>>>({})
 const settingsSearchQuery = ref('')
 const settingsNotice = ref('')
 const settingsError = ref('')
@@ -1340,6 +1366,70 @@ function pluginPanelStateKey(panel: UiContribution): string {
   return `${panel.pluginId}:${panel.id}`
 }
 
+function normalizePluginSettingsForm(value: unknown): PluginSettingsForm | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  if (record.kind !== 'settings-form') return null
+  const submitCommand = typeof record.submitCommand === 'string' ? record.submitCommand.trim() : ''
+  if (!submitCommand || submitCommand.length > 160 || !Array.isArray(record.fields)) return null
+  const fields = record.fields.slice(0, 20).flatMap((raw): PluginSettingsField[] => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return []
+    const field = raw as Record<string, unknown>
+    const key = typeof field.key === 'string' ? field.key.trim() : ''
+    const label = typeof field.label === 'string' ? field.label.trim() : ''
+    const type = field.type
+    if (
+      !/^[A-Za-z0-9_.:-]{1,80}$/.test(key) ||
+      !label ||
+      label.length > 100 ||
+      !['text', 'password', 'url', 'select'].includes(String(type))
+    ) {
+      return []
+    }
+    const options = Array.isArray(field.options)
+      ? field.options.slice(0, 30).flatMap((rawOption): PluginSettingsOption[] => {
+          if (!rawOption || typeof rawOption !== 'object' || Array.isArray(rawOption)) return []
+          const option = rawOption as Record<string, unknown>
+          const optionLabel = typeof option.label === 'string' ? option.label.trim() : ''
+          const optionValue = typeof option.value === 'string' ? option.value : ''
+          if (!optionLabel || optionLabel.length > 100 || optionValue.length > 200) return []
+          return [{ label: optionLabel, value: optionValue }]
+        })
+      : []
+    if (type === 'select' && options.length === 0) return []
+    return [
+      {
+        key,
+        label,
+        type: type as PluginSettingsFieldType,
+        required: field.required === true,
+        placeholder:
+          typeof field.placeholder === 'string' ? field.placeholder.slice(0, 200) : '',
+        value:
+          type === 'password' ? '' : typeof field.value === 'string' ? field.value.slice(0, 4096) : '',
+        options
+      }
+    ]
+  })
+  if (fields.length === 0) return null
+  return {
+    submitCommand,
+    fields,
+    notice: typeof record.notice === 'string' ? record.notice.slice(0, 500) : ''
+  }
+}
+
+function setPluginSettingsField(panel: UiContribution, key: string, value: string): void {
+  const stateKey = pluginPanelStateKey(panel)
+  pluginSettingsValues.value = {
+    ...pluginSettingsValues.value,
+    [stateKey]: {
+      ...(pluginSettingsValues.value[stateKey] ?? {}),
+      [key]: value.slice(0, 4096)
+    }
+  }
+}
+
 async function runPluginSettingsPanel(panel: UiContribution): Promise<void> {
   const stateKey = pluginPanelStateKey(panel)
   if (!panel.command || runningPluginSettingsCommand.value) return
@@ -1353,10 +1443,77 @@ async function runPluginSettingsPanel(panel: UiContribution): Promise<void> {
         panelId: panel.id
       }
     ])
+    const form = normalizePluginSettingsForm(result)
+    if (form) {
+      pluginSettingsForms.value = { ...pluginSettingsForms.value, [stateKey]: form }
+      pluginSettingsValues.value = {
+        ...pluginSettingsValues.value,
+        [stateKey]: Object.fromEntries(form.fields.map((field) => [field.key, field.value]))
+      }
+      pluginSettingsResult.value = { ...pluginSettingsResult.value, [stateKey]: '' }
+      return
+    }
+    pluginSettingsForms.value = { ...pluginSettingsForms.value, [stateKey]: null }
     pluginSettingsResult.value = {
       ...pluginSettingsResult.value,
       [stateKey]:
         result == null ? '已执行' : typeof result === 'string' ? result : JSON.stringify(result)
+    }
+  } catch (err) {
+    pluginSettingsError.value = {
+      ...pluginSettingsError.value,
+      [stateKey]: err instanceof Error ? err.message : String(err)
+    }
+  } finally {
+    runningPluginSettingsCommand.value = ''
+  }
+}
+
+async function submitPluginSettingsForm(panel: UiContribution): Promise<void> {
+  const stateKey = pluginPanelStateKey(panel)
+  const form = pluginSettingsForms.value[stateKey]
+  if (!form || runningPluginSettingsCommand.value) return
+  const values = pluginSettingsValues.value[stateKey] ?? {}
+  const missingField = form.fields.find((field) => field.required && !values[field.key]?.trim())
+  if (missingField) {
+    pluginSettingsError.value = {
+      ...pluginSettingsError.value,
+      [stateKey]: `请填写${missingField.label}`
+    }
+    return
+  }
+  runningPluginSettingsCommand.value = stateKey
+  pluginSettingsError.value = { ...pluginSettingsError.value, [stateKey]: '' }
+  pluginSettingsResult.value = { ...pluginSettingsResult.value, [stateKey]: '' }
+  try {
+    const plainValues = JSON.parse(JSON.stringify(values)) as Record<string, string>
+    const result = await window.api.extensions.executeCommand(form.submitCommand, [plainValues])
+    const record = result && typeof result === 'object' ? (result as Record<string, unknown>) : null
+    const refreshedForm = normalizePluginSettingsForm(record?.form)
+    if (refreshedForm) {
+      pluginSettingsForms.value = { ...pluginSettingsForms.value, [stateKey]: refreshedForm }
+      pluginSettingsValues.value = {
+        ...pluginSettingsValues.value,
+        [stateKey]: Object.fromEntries(refreshedForm.fields.map((field) => [field.key, field.value]))
+      }
+    } else {
+      pluginSettingsValues.value = {
+        ...pluginSettingsValues.value,
+        [stateKey]: Object.fromEntries(
+          form.fields.map((field) => [field.key, field.type === 'password' ? '' : values[field.key] ?? ''])
+        )
+      }
+    }
+    pluginSettingsResult.value = {
+      ...pluginSettingsResult.value,
+      [stateKey]:
+        typeof record?.message === 'string'
+          ? record.message.slice(0, 500)
+          : result == null
+            ? '设置已保存'
+            : typeof result === 'string'
+              ? result
+              : '设置已保存'
     }
   } catch (err) {
     pluginSettingsError.value = {
@@ -2564,7 +2721,75 @@ onBeforeUnmount(() => {
                     {{
                       runningPluginSettingsCommand === pluginPanelStateKey(panel)
                         ? '执行中…'
-                        : '打开设置'
+                        : pluginSettingsForms[pluginPanelStateKey(panel)]
+                          ? '重新载入'
+                          : '打开设置'
+                    }}
+                  </button>
+                </div>
+                <div
+                  v-if="pluginSettingsForms[pluginPanelStateKey(panel)]"
+                  class="plugin-settings-form"
+                >
+                  <p
+                    v-if="pluginSettingsForms[pluginPanelStateKey(panel)]?.notice"
+                    class="plugin-settings-notice"
+                  >
+                    {{ pluginSettingsForms[pluginPanelStateKey(panel)]?.notice }}
+                  </p>
+                  <label
+                    v-for="field in pluginSettingsForms[pluginPanelStateKey(panel)]?.fields"
+                    :key="field.key"
+                    class="plugin-settings-field"
+                  >
+                    <span>{{ field.label }}<b v-if="field.required"> *</b></span>
+                    <select
+                      v-if="field.type === 'select'"
+                      class="preview-select"
+                      :value="pluginSettingsValues[pluginPanelStateKey(panel)]?.[field.key] ?? ''"
+                      @change="
+                        setPluginSettingsField(
+                          panel,
+                          field.key,
+                          ($event.target as HTMLSelectElement).value
+                        )
+                      "
+                    >
+                      <option
+                        v-for="option in field.options"
+                        :key="option.value"
+                        :value="option.value"
+                      >
+                        {{ option.label }}
+                      </option>
+                    </select>
+                    <input
+                      v-else
+                      class="preview-select"
+                      :type="field.type"
+                      :required="field.required"
+                      :placeholder="field.placeholder"
+                      :autocomplete="field.type === 'password' ? 'new-password' : 'off'"
+                      :value="pluginSettingsValues[pluginPanelStateKey(panel)]?.[field.key] ?? ''"
+                      @input="
+                        setPluginSettingsField(
+                          panel,
+                          field.key,
+                          ($event.target as HTMLInputElement).value
+                        )
+                      "
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    class="soft-button plugin-settings-submit"
+                    :disabled="Boolean(runningPluginSettingsCommand)"
+                    @click="submitPluginSettingsForm(panel)"
+                  >
+                    {{
+                      runningPluginSettingsCommand === pluginPanelStateKey(panel)
+                        ? '保存中…'
+                        : '保存设置'
                     }}
                   </button>
                 </div>
@@ -5493,7 +5718,57 @@ onBeforeUnmount(() => {
   </main>
 </template>
 
-<style></style>
+<style>
+.plugin-settings-form {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 14px;
+  padding: 16px;
+  border: 1px solid var(--te-settings-border);
+  border-radius: 12px;
+  background: var(--te-settings-card-bg);
+}
+
+.plugin-settings-notice {
+  margin: 0;
+  color: var(--te-settings-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.plugin-settings-field {
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) minmax(220px, 1fr);
+  align-items: center;
+  gap: 16px;
+}
+
+.plugin-settings-field > span {
+  color: var(--te-settings-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.plugin-settings-field b {
+  color: var(--te-danger, #ef4444);
+}
+
+.plugin-settings-field .preview-select {
+  width: 100%;
+  max-width: none;
+}
+
+.plugin-settings-submit {
+  justify-self: end;
+}
+
+@media (max-width: 760px) {
+  .plugin-settings-field {
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+}
+</style>
 
 <style src="./settings-page/SettingsPage.css"></style>
 
