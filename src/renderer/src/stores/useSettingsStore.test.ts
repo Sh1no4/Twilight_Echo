@@ -139,6 +139,7 @@ test('about settings expose local-only sponsor payment options and sponsor list'
   assert.match(source, /请务必添加我的联系方式，我会将你加入软件的赞助者名单中，感谢你的支持！/)
   assert.match(source, /const ALIPAY_QR_URL = '\/sponsor\/alipay\.jpg'/)
   assert.match(source, /const WECHAT_QR_URL = '\/sponsor\/wechat\.png'/)
+  assert.match(source, /name: '江枫Jiang1021'/)
   assert.match(source, /useEscapeToClose\(sponsorDialogOpen, closeSponsorDialog\)/)
   assert.match(source, /useFocusTrap\(sponsorDialogRef, sponsorDialogOpen\)/)
   assert.match(source, /const QQ_GROUP_QR_URL = '\/qq-group-qrcode\.jpg'/)

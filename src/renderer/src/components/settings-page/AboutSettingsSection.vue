@@ -28,6 +28,11 @@ const SPONSORS: readonly Sponsor[] = [
     id: 'afdian-user-b3f86',
     name: '爱发电用户_b3f86',
     avatarUrl: 'https://s41.ax1x.com/2026/08/03/pmI8Lzq.png'
+  },
+  {
+    id: 'jiang-feng-jiang1021',
+    name: '江枫Jiang1021',
+    avatarUrl: ''
   }
 ]
 
