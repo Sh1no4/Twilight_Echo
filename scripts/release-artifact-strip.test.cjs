@@ -6,6 +6,7 @@ const test = require('node:test')
 
 const {
   NATIVE_RUNTIME_FILES,
+  REQUIRED_NATIVE_RUNTIME_FILES,
   clearPeDebugDirectory,
   executableCandidates,
   stripNativeArtifacts
@@ -54,7 +55,7 @@ test('release strip only processes the packaged runtime copy and fails closed', 
   const calls = []
   const cleared = []
   const packagedDir = path.resolve('C:/release/win-unpacked/resources/audio-engine')
-  const stripped = stripNativeArtifacts(packagedDir, {
+  const result = stripNativeArtifacts(packagedDir, {
     stripCommand: 'C:/tools/strip.exe',
     exists: (filePath) => filePath.startsWith(packagedDir),
     run: (command, args) => {
@@ -63,7 +64,8 @@ test('release strip only processes the packaged runtime copy and fails closed', 
     },
     clearDebugDirectory: (filePath) => cleared.push(filePath)
   })
-  assert.equal(stripped.length, NATIVE_RUNTIME_FILES.length)
+  assert.equal(result.stripped.length, NATIVE_RUNTIME_FILES.length)
+  assert.deepEqual(result.missing, [])
   assert.equal(calls.length, NATIVE_RUNTIME_FILES.length)
   assert.equal(cleared.length, NATIVE_RUNTIME_FILES.length)
   assert.ok(calls.every((call) => call.args[0] === '--strip-all'))
@@ -77,6 +79,25 @@ test('release strip only processes the packaged runtime copy and fails closed', 
       }),
     /Missing packaged native runtime binary/
   )
+})
+
+test('release strip skips optional VST3 helpers when a release did not stage them', () => {
+  const calls = []
+  const packagedDir = path.resolve('C:/release/no-vst3/resources/audio-engine')
+  const exists = (filePath) =>
+    REQUIRED_NATIVE_RUNTIME_FILES.some((name) => filePath === path.join(packagedDir, name))
+  const result = stripNativeArtifacts(packagedDir, {
+    stripCommand: 'C:/tools/strip.exe',
+    exists,
+    run: (command, args) => {
+      calls.push({ command, args })
+      return { status: 0 }
+    },
+    clearDebugDirectory: () => {}
+  })
+  assert.equal(result.stripped.length, REQUIRED_NATIVE_RUNTIME_FILES.length)
+  assert.equal(result.missing.length, NATIVE_RUNTIME_FILES.length - REQUIRED_NATIVE_RUNTIME_FILES.length)
+  assert.equal(calls.length, REQUIRED_NATIVE_RUNTIME_FILES.length)
 })
 
 test('release strip clears PE debug directory records and referenced data', () => {

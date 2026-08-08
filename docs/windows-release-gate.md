@@ -208,14 +208,16 @@ SHA-256 in the GitHub Release body.
 
 The gate checks every shipped DLL/EXE/NODE file under the packaged audio-engine directory for a
 non-zero size and a size budget. It additionally checks each required self-built native runtime
-binary for stripped PE debug/COFF metadata. Windows development and release packaging invoke GNU/LLVM
+binary for stripped PE debug/COFF metadata. The audio DLL and Node addon are always required; the
+VST3 helper executables are optional and are stripped and checked only when a release staged them
+(the app disables the VST3 host at runtime when they are absent). Windows development and release packaging invoke GNU/LLVM
 `strip --strip-all` only on the copied package payload at
 `win-unpacked/resources/audio-engine`; they never alter `resources/audio-engine` in the source tree.
 Set `W64DEVKIT_ROOT` or `TWILIGHT_RELEASE_STRIP` so the packaging wrapper can locate `strip.exe`.
 The release gate deliberately fails when the strip tool is absent. It does not create or simulate a
 signature, and release notes must disclose that Windows may show SmartScreen warnings.
 Current budgets are 192 MiB for the audio DLL, 16 MiB for the Node addon, 32 MiB for each VST3 host
-executable, 64 MiB for any other shipped native DLL/EXE/NODE, and 384 MiB for the installer.
+executable when staged, 64 MiB for any other shipped native DLL/EXE/NODE, and 384 MiB for the installer.
 Microsoft VC runtimes are size-checked but are not stripped.
 
 `pnpm run test:release-artifacts` validates this policy and its failure paths without needing a
