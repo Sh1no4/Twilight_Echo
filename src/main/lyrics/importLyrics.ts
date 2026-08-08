@@ -1,6 +1,7 @@
 import { extname } from 'node:path'
+import { MAX_LYRICS_BYTES } from '../../shared/lyricsEncoding.ts'
 
-export const MAX_IMPORTED_LYRICS_BYTES = 1024 * 1024
+export const MAX_IMPORTED_LYRICS_BYTES = MAX_LYRICS_BYTES
 
 export interface LyricsImportDialogResult {
   canceled: boolean
@@ -23,7 +24,7 @@ export function validateImportedLyrics(filePath: string, contents: string): stri
 
   const normalized = contents.replace(/^\uFEFF/, '')
   if (!normalized.trim() || /\0/.test(normalized) || normalized.includes('\uFFFD')) {
-    throw new Error('Imported lyrics must be valid non-empty UTF-8 text')
+    throw new Error('Imported lyrics must be valid non-empty text (UTF-8, GBK, or GB18030)')
   }
   if (extension === '.lrc' && !/(?:\[\d{1,3}:\d{2}(?:[.:]\d{2,3})?\]|\[[a-z]+:)/i.test(normalized)) {
     throw new Error('An .lrc import must contain an LRC timestamp or metadata tag')

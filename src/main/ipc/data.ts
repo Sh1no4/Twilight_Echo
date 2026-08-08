@@ -17,6 +17,7 @@ import {
   type PlaybackBookmarksDocument
 } from '../../shared/playbackBookmarks.ts'
 import { createDuplicateDetectionIpcHandlers } from '../library/duplicateDetectionIpc.ts'
+import { decodeLyrics } from '../../shared/lyricsEncoding.ts'
 import { runtime } from '../core/runtime'
 import type { AppSettings, PlaybackSession } from '../core/types'
 import { createSettingsSnapshot, getDefaultCachePath, normalizeAppSettings } from '../core/settings'
@@ -787,7 +788,7 @@ export function setupDataIpc(): void {
       }
       try {
         const lrcPath = join(resolvedDir, `${basename(safeFileName, extname(safeFileName))}.lrc`)
-        const lrc = await readFile(lrcPath, 'utf-8')
+        const lrc = decodeLyrics(await readFile(lrcPath)).text
         if (lrc) return lrc
       } catch {
         // no external .lrc next to the audio file — fall through to embedded lyrics
@@ -826,7 +827,7 @@ export function setupDataIpc(): void {
         : await dialog.showOpenDialog(options)
     return await importLyricsFromDialog(
       result,
-      async (filePath) => await readFile(filePath, 'utf-8'),
+      async (filePath) => decodeLyrics(await readFile(filePath)).text,
       async (filePath) => (await stat(filePath)).size
     )
   })

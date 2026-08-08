@@ -25,6 +25,7 @@ const lyricsTests = [
   'src/main/lyrics/importLyrics.test.ts',
   'src/main/lyrics/saveLyrics.test.ts',
   'src/main/persistence/lyricsManagementPersistence.test.ts',
+  'src/shared/lyricsEncoding.test.ts',
   'src/shared/lyricsManagement.test.ts',
   'src/renderer/src/utils/lyrics.test.ts',
   'src/renderer/src/utils/lyricSourceResolution.test.ts',

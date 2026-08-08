@@ -4,6 +4,7 @@ import { join, extname, basename, resolve } from 'path'
 import { randomUUID } from 'crypto'
 import { parseFile } from 'music-metadata'
 import { runtime } from '../core/runtime'
+import { decodeLyrics } from '../../shared/lyricsEncoding.ts'
 import { cacheCoverFromBuffer, findCoverInDir } from './coverCache'
 import { isActiveLibraryPathExcluded } from './libraryRepository.ts'
 import { deriveCueTracks } from './cueLibrary.ts'
@@ -48,7 +49,7 @@ export function findLyricsInDir(dir: string, musicFileName: string): string | nu
   const lrcPath = join(dir, baseName + '.lrc')
   if (!existsSync(lrcPath)) return null
   try {
-    return readFileSync(lrcPath, 'utf-8')
+    return decodeLyrics(readFileSync(lrcPath)).text
   } catch {
     return null
   }
