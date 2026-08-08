@@ -28,6 +28,39 @@ enum class DsdOutputMode {
   Native
 };
 
+/**
+ * Optional compatibility route for DSD streams. Some DAC ASIO drivers never
+ * accept DSD sample types (and some users only have WASAPI), which forces the
+ * DSD path down to DoP or PCM no matter what the source is. An externally
+ * registered ASIO proxy driver can accept raw DSD and re-encode it for the
+ * hardware, so the fix is to let the host carry DSD over a different
+ * backend/device than the regular PCM output.
+ *
+ * The engine deliberately knows nothing about which proxy this is: it only
+ * receives a backend id and a device id. Proxy branding stays in the UI layer
+ * so any vendor's proxy works and renames cannot break routing.
+ */
+struct DsdRouteOverride {
+  bool enabled = false;
+  // Empty means "reuse the main playback backend / device".
+  std::string backendId;
+  std::string deviceId;
+  // Route PCM->DSD sigma-delta upconversion over the same override.
+  bool applyToPcmToDsd = true;
+  // true = a failed passthrough reports an error instead of silently degrading.
+  bool strictPassthrough = false;
+};
+
+inline bool dsdRouteOverrideTargetsDistinctRoute(const DsdRouteOverride& route) {
+  return route.enabled && (!route.backendId.empty() || !route.deviceId.empty());
+}
+
+inline bool dsdRouteOverrideEquals(const DsdRouteOverride& left, const DsdRouteOverride& right) {
+  return left.enabled == right.enabled && left.backendId == right.backendId &&
+         left.deviceId == right.deviceId && left.applyToPcmToDsd == right.applyToPcmToDsd &&
+         left.strictPassthrough == right.strictPassthrough;
+}
+
 enum class SacdProgramMode {
   Auto,
   Stereo,
@@ -134,6 +167,7 @@ struct DspConfig {
   size_t fftResolution = 8192;
   bool gapless = true;
   DsdOutputMode dsdOutputMode = DsdOutputMode::Auto;
+  DsdRouteOverride dsdRoute;
   SacdProgramMode sacdProgramMode = SacdProgramMode::Auto;
 
   ReplayGainMode replayGainMode = ReplayGainMode::Off;

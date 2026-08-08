@@ -127,6 +127,7 @@ import {
 } from '../shared/versionedPersistence.ts'
 import { isLyricsManagementDocument } from '../shared/lyricsManagement.ts'
 import { NCM_CLOUD_TRANSFER_PROGRESS_CHANNEL } from '../shared/ncmCloud.ts'
+import { PROVIDER_DOWNLOAD_CHANGED_CHANNEL } from '../shared/providerDownloads.ts'
 
 const audioEngineEventCallbacks = new Set<AudioEngineEventCallback>()
 const audioEngineEndFileCallbacks = new Set<AudioEngineEndFileCallback>()
@@ -159,6 +160,9 @@ const trayPlayerStateCallbacks = new Set<(state: MiniPlayerStateSnapshot) => voi
 const appNavigationCallbacks = new Set<(target: TrayNavigationTarget) => void>()
 const savePlaybackSessionCallbacks = new Set<() => Promise<void> | void>()
 const pluginChangedCallbacks = new Set<() => void>()
+const providerDownloadChangedCallbacks = new Set<
+  (tasks: import('./types').ProviderDownloadTaskSnapshot[]) => void
+>()
 const themeChangedCallbacks = new Set<(snapshot: ThemeLibrarySnapshot) => void>()
 const systemThemeChangedCallbacks = new Set<(tone: ThemeTone) => void>()
 const sleepTimerEvents = createSleepTimerEventBridge()
@@ -260,6 +264,15 @@ ipcRenderer.on('plugins:changed', () => {
     cb()
   }
 })
+
+ipcRenderer.on(
+  PROVIDER_DOWNLOAD_CHANGED_CHANNEL,
+  (_event, tasks: import('./types').ProviderDownloadTaskSnapshot[]) => {
+    for (const cb of providerDownloadChangedCallbacks) {
+      cb(tasks)
+    }
+  }
+)
 
 ipcRenderer.on('themes:changed', (_event, snapshot: ThemeLibrarySnapshot) => {
   for (const cb of themeChangedCallbacks) cb(snapshot)
@@ -1225,6 +1238,24 @@ const api = {
     },
     cancel: (requestId: string): void => {
       ipcRenderer.send('providers:cancel', requestId)
+    }
+  },
+  providerDownloads: {
+    list: (): Promise<import('./types').ProviderDownloadTaskSnapshot[]> =>
+      ipcRenderer.invoke('providerDownloads:list'),
+    create: (
+      input: import('./types').ProviderDownloadCreateInput
+    ): Promise<import('./types').ProviderDownloadTaskSnapshot> =>
+      ipcRenderer.invoke('providerDownloads:create', input),
+    cancel: (taskId: string): Promise<void> =>
+      ipcRenderer.invoke('providerDownloads:cancel', taskId),
+    retry: (taskId: string): Promise<import('./types').ProviderDownloadTaskSnapshot> =>
+      ipcRenderer.invoke('providerDownloads:retry', taskId),
+    onChanged: (
+      cb: (tasks: import('./types').ProviderDownloadTaskSnapshot[]) => void
+    ): (() => void) => {
+      providerDownloadChangedCallbacks.add(cb)
+      return () => providerDownloadChangedCallbacks.delete(cb)
     }
   },
   extensions: {

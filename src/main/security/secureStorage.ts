@@ -18,7 +18,7 @@ interface ElectronSafeStorage {
 }
 
 const SENSITIVE_KEY_PATTERN =
-  /(^|[-_.:])(cookie|csrf|token|access[-_.:]?token|refresh[-_.:]?token|secret|password|passwd|credential|session|auth)([-_.:]|$)/i
+  /(^|[-_.:])(cookie|csrf|token|access[-_.:]?token|refresh[-_.:]?token|api[-_.:]?key|apikey|bearer|signing[-_.:]?key|client[-_.:]?secret|secret|password|passwd|credential|session|auth)([-_.:]|$)/i
 
 export function isSensitiveStorageKey(key: string): boolean {
   return SENSITIVE_KEY_PATTERN.test(key.trim())
@@ -102,8 +102,16 @@ export function redactSensitiveText(value: unknown): string {
   return text
     .replace(/(MUSIC_U=)[^;\s]+/gi, '$1[REDACTED]')
     .replace(/(__csrf=)[^;\s]+/gi, '$1[REDACTED]')
-    .replace(/([?&](?:password|captcha|token|cookie|csrf|secret)=)[^&\s]+/gi, '$1[REDACTED]')
-    .replace(/((?:password|token|cookie|secret|credential)\s*[:=]\s*)[^\s,;]+/gi, '$1[REDACTED]')
+    .replace(/(Authorization\s*:\s*Bearer\s+)[^\s,;]+/gi, '$1[REDACTED]')
+    .replace(/((?:X-Api-Key|X-Signature)\s*:\s*)[^\s,;]+/gi, '$1[REDACTED]')
+    .replace(
+      /([?&](?:password|captcha|token|cookie|csrf|secret|api[-_]?key|apikey|signature)=)[^&\s]+/gi,
+      '$1[REDACTED]'
+    )
+    .replace(
+      /((?:password|token|cookie|secret|credential|api[-_.:]?key|apikey|bearer|signing[-_.:]?key|client[-_.:]?secret)\s*[:=]\s*)[^\s,;]+/gi,
+      '$1[REDACTED]'
+    )
 }
 
 function deriveFallbackKey(scope: string): Buffer {

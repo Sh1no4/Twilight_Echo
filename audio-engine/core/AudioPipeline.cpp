@@ -1483,20 +1483,34 @@ TAE_Result AudioPipeline::playInternal(
     }
   }
 
+  // DSD compatibility route. When enabled, DSD (and optionally PCM->DSD
+  // upconversion) leaves over a different backend/device than the regular PCM
+  // output, so a DAC whose own ASIO driver refuses DSD sample types can still
+  // reach a registered DSD-capable proxy driver. Empty fields inherit the main
+  // route; the engine never inspects which proxy this is.
+  const DsdRouteOverride& dsdRoute = requestedDspConfig.dsdRoute;
+  const bool dsdRouteActive = dsdRouteOverrideTargetsDistinctRoute(dsdRoute);
+  const std::string dsdBackendId =
+      dsdRouteActive && !dsdRoute.backendId.empty() ? dsdRoute.backendId : backendId;
+  const std::string dsdDeviceId =
+      dsdRouteActive && !dsdRoute.deviceId.empty() ? dsdRoute.deviceId : deviceId;
+  const bool dsdRouteRetriesMainRoute =
+      dsdRouteActive && !dsdRoute.strictPassthrough && (dsdBackendId != backendId || dsdDeviceId != deviceId);
+
   const bool canTryDop = allowDop &&
                          shouldAttemptDopForCurrentConfig(
                              requestedDspConfig,
                              outputConfig,
                              dsdProbe,
                              requestedPlaybackVolume,
-                             backendId);
+                             dsdBackendId);
   const bool canTryNativeDsd =
       allowNativeDsd && shouldAttemptNativeDsdForCurrentConfig(
                             requestedDspConfig,
                             outputConfig,
                             dsdProbe,
                             requestedPlaybackVolume,
-                            backendId);
+                            dsdBackendId);
 
   std::shared_ptr<DecodeStream> active;
   std::unique_ptr<IOutputBackend> output;
@@ -1507,12 +1521,13 @@ TAE_Result AudioPipeline::playInternal(
   std::string dopAttemptError;
   std::optional<NativeDsdRuntimeFacts> attemptedNativeDsdFacts = forcedNativeDsdFallbackFacts;
 
-  const auto tryNativeDsdRoute = [&](const std::string& routeDeviceId) {
+  const auto tryNativeDsdRoute = [&](const std::string& routeBackendId, const std::string& routeDeviceId) {
     auto nativeActive = makeDecodeStream();
     if (nativeActive->openNativeDsdSource(item, &nativeAttemptError)) {
-      output = backendFactoryOverride() ? backendFactoryOverride()(backendId) : createOutputBackend(backendId);
+      output = backendFactoryOverride() ? backendFactoryOverride()(routeBackendId)
+                                        : createOutputBackend(routeBackendId);
       if (!output) {
-        nativeAttemptError = "请求的音频输出后端不可用：" + backendId;
+        nativeAttemptError = "请求的音频输出后端不可用：" + routeBackendId;
       } else if (!output->setOutputConfig(outputConfig, &nativeAttemptError)) {
         output.reset();
       } else {
@@ -1543,23 +1558,41 @@ TAE_Result AudioPipeline::playInternal(
     }
   };
 
+  // True once the compatibility route actually carried the stream, so status can
+  // report the real wire path instead of the configured intent.
+  bool dsdRouteOverrideUsed = false;
+  std::string dsdRouteOverrideError;
+
   if (canTryNativeDsd) {
-    tryNativeDsdRoute(deviceId);
+    tryNativeDsdRoute(dsdBackendId, dsdDeviceId);
+    if (active && dsdRouteActive) dsdRouteOverrideUsed = true;
+    // The override device can be busy or unplugged. Unless the user asked for
+    // strict passthrough, fall back to the main route before degrading to DoP.
+    if (!active && dsdRouteRetriesMainRoute) {
+      dsdRouteOverrideError = nativeAttemptError;
+      nativeAttemptError.clear();
+      if (shouldAttemptNativeDsdForCurrentConfig(
+              requestedDspConfig, outputConfig, dsdProbe, requestedPlaybackVolume, backendId)) {
+        tryNativeDsdRoute(backendId, deviceId);
+      }
+      if (!active && nativeAttemptError.empty()) nativeAttemptError = dsdRouteOverrideError;
+    }
   }
 
-  if (canTryDop && !active) {
+  const auto tryDopRoute = [&](const std::string& routeBackendId, const std::string& routeDeviceId) {
     auto dopActive = makeDecodeStream();
     if (dopActive->openDsdSource(item, &dopAttemptError)) {
-      output = backendFactoryOverride() ? backendFactoryOverride()(backendId) : createOutputBackend(backendId);
+      output = backendFactoryOverride() ? backendFactoryOverride()(routeBackendId)
+                                        : createOutputBackend(routeBackendId);
       if (!output) {
-        dopAttemptError = "请求的音频输出后端不可用：" + backendId;
+        dopAttemptError = "请求的音频输出后端不可用：" + routeBackendId;
       } else if (!output->setOutputConfig(outputConfig, &dopAttemptError)) {
         output.reset();
       } else {
         AudioFormat requested =
             dopCarrierFormatForDsd(dsdProbe->dsdRate, dsdProbe->dsdSampleRate, dsdProbe->channelCount).value();
         requested.sampleFormat = AudioSampleFormat::Int24Interleaved;
-        if (output->open(deviceId, requested, &dopAttemptError)) {
+        if (output->open(routeDeviceId, requested, &dopAttemptError)) {
           outputFormat = output->outputFormat();
           if (formatCanCarryDop(outputFormat, dsdProbe->dsdRate, dsdProbe->dsdSampleRate, dsdProbe->channelCount) &&
               dopActive->configure(outputFormat, startTimeSeconds, &dopAttemptError)) {
@@ -1574,6 +1607,33 @@ TAE_Result AudioPipeline::playInternal(
         }
       }
     }
+  };
+
+  if (canTryDop && !active) {
+    tryDopRoute(dsdBackendId, dsdDeviceId);
+    if (active && dsdRouteActive) dsdRouteOverrideUsed = true;
+    if (!active && dsdRouteRetriesMainRoute) {
+      const std::string overrideDopError = dopAttemptError;
+      dopAttemptError.clear();
+      if (shouldAttemptDopForCurrentConfig(
+              requestedDspConfig, outputConfig, dsdProbe, requestedPlaybackVolume, backendId)) {
+        tryDopRoute(backendId, deviceId);
+      }
+      if (!active && dopAttemptError.empty()) dopAttemptError = overrideDopError;
+    }
+  }
+
+  // Strict passthrough: the user explicitly asked never to degrade silently.
+  // Report the real reason instead of opening a PCM stream behind their back.
+  if (!active && dsdProbe.has_value() && dsdRoute.enabled && dsdRoute.strictPassthrough &&
+      !dsdOutputModePrefersPcm(requestedDspConfig.dsdOutputMode)) {
+    if (error) {
+      const std::string detail = !nativeAttemptError.empty()
+                                     ? nativeAttemptError
+                                     : (!dopAttemptError.empty() ? dopAttemptError : "设备未确认 DSD 直通能力");
+      *error = "DSD 严格直通模式：无法建立 DSD 直通输出（" + detail + "）";
+    }
+    return TAE_RESULT_BACKEND_UNAVAILABLE;
   }
 
   bool pcmToDsdPath = false;
@@ -1583,14 +1643,6 @@ TAE_Result AudioPipeline::playInternal(
       return TAE_RESULT_BACKEND_UNAVAILABLE;
     }
 
-    output = backendFactoryOverride() ? backendFactoryOverride()(backendId) : createOutputBackend(backendId);
-    if (!output) {
-      if (error) *error = "请求的音频输出后端不可用：" + backendId;
-      return TAE_RESULT_BACKEND_UNAVAILABLE;
-    }
-    if (!output->setOutputConfig(outputConfig, error)) {
-      return TAE_RESULT_INVALID_ARGUMENT;
-    }
     AudioFormat requestedPcmFormat =
         active->stream.isDsd ? pcmFallbackRequestFormat(active->stream, dsdProbe) : active->stream.sourceFormat;
 
@@ -1621,6 +1673,27 @@ TAE_Result AudioPipeline::playInternal(
         !active->stream.isDsd ? pcmToDsdModeRateMultiplier(outputConfig.pcmToDsdMode) : 0;
     const bool wantPcmToDsd = pcmToDsdMultiplier > 0 && requestedPcmFormat.sampleRate > 0 &&
                              requestedPcmFormat.channelCount > 0;
+
+    // PCM->DSD upconversion is a DSD wire path, so it honors the compatibility
+    // route when the user opted in. Plain PCM always stays on the main route.
+    const bool pcmToDsdUsesOverride = wantPcmToDsd && dsdRouteActive && dsdRoute.applyToPcmToDsd;
+    const std::string pcmStageBackendId = pcmToDsdUsesOverride ? dsdBackendId : backendId;
+    const std::string pcmStageDeviceId = pcmToDsdUsesOverride ? dsdDeviceId : deviceId;
+
+    const auto createPcmStageBackend = [&](const std::string& routeBackendId) -> bool {
+      output = backendFactoryOverride() ? backendFactoryOverride()(routeBackendId)
+                                        : createOutputBackend(routeBackendId);
+      if (!output) {
+        if (error) *error = "请求的音频输出后端不可用：" + routeBackendId;
+        return false;
+      }
+      return output->setOutputConfig(outputConfig, error);
+    };
+
+    if (!createPcmStageBackend(pcmStageBackendId)) {
+      return output ? TAE_RESULT_INVALID_ARGUMENT : TAE_RESULT_BACKEND_UNAVAILABLE;
+    }
+
     if (wantPcmToDsd) {
       const int baseRate = (requestedPcmFormat.sampleRate % 48000 == 0) ? 48000 : 44100;
       const int dsdSampleRate = baseRate * pcmToDsdMultiplier;
@@ -1632,8 +1705,8 @@ TAE_Result AudioPipeline::playInternal(
 
       std::string pcmToDsdError;
       bool opened = false;
-      if (backendCanAttemptNativeDsd(backendId) &&
-          output->open(deviceId, requestedNativeDsd, &pcmToDsdError)) {
+      if (backendCanAttemptNativeDsd(pcmStageBackendId) &&
+          output->open(pcmStageDeviceId, requestedNativeDsd, &pcmToDsdError)) {
         outputFormat = output->outputFormat();
         const NativeDsdRuntimeFacts nativeFacts = output->nativeDsdRuntimeFacts();
         if (nativeDsdOutputMatchesRequested(outputFormat, requestedNativeDsd, nativeFacts) &&
@@ -1648,10 +1721,10 @@ TAE_Result AudioPipeline::playInternal(
       if (!opened) {
         const auto dopCarrier =
             dopCarrierFormatForDsd(pcmToDsdMultiplier, dsdSampleRate, requestedPcmFormat.channelCount);
-        if (dopCarrier.has_value() && backendCanAttemptDop(backendId)) {
+        if (dopCarrier.has_value() && backendCanAttemptDop(pcmStageBackendId)) {
           AudioFormat requestedDop = *dopCarrier;
           requestedDop.sampleFormat = AudioSampleFormat::Int24Interleaved;
-          if (output->open(deviceId, requestedDop, &pcmToDsdError)) {
+          if (output->open(pcmStageDeviceId, requestedDop, &pcmToDsdError)) {
             outputFormat = output->outputFormat();
             if (formatCanCarryDop(
                     outputFormat, pcmToDsdMultiplier, dsdSampleRate, requestedPcmFormat.channelCount)) {
@@ -1669,6 +1742,16 @@ TAE_Result AudioPipeline::playInternal(
         pcmToDsdPath = false;
         nativeDsdPath = false;
         dopPath = false;
+        // Plain PCM must never be pushed through the compatibility route; the
+        // proxy device exists only to carry DSD. Rebuild on the main backend.
+        if (pcmToDsdUsesOverride && pcmStageBackendId != backendId) {
+          output.reset();
+          if (!createPcmStageBackend(backendId)) {
+            return output ? TAE_RESULT_INVALID_ARGUMENT : TAE_RESULT_BACKEND_UNAVAILABLE;
+          }
+        }
+      } else if (pcmToDsdUsesOverride) {
+        dsdRouteOverrideUsed = true;
       }
     }
 
@@ -1825,6 +1908,14 @@ TAE_Result AudioPipeline::playInternal(
                                           ? activeStream_->dsdReader->streamInfo()
                                           : DsdStreamInfo{};
       outputInfo_.diagnostics.dsdTransport = dopPath ? "dop" : (nativeDsdPath ? "native" : "pcm");
+      outputInfo_.diagnostics.dsdRouteOverrideActive = dsdRouteOverrideUsed;
+      if (dsdRouteOverrideUsed) {
+        outputInfo_.diagnostics.dsdRouteBackend = dsdBackendId;
+        outputInfo_.diagnostics.dsdRouteDevice = dsdDeviceId;
+      }
+      if (dsdRouteActive && !dsdRouteOverrideUsed && !dsdRouteOverrideError.empty()) {
+        outputInfo_.diagnostics.dsdRouteFallbackReason = dsdRouteOverrideError;
+      }
       outputInfo_.diagnostics.dsdSourceBitOrder =
           sourceDsd.bitOrder == DsdBitOrder::MsbFirst ? "msb-first" : "lsb-first";
       outputInfo_.diagnostics.dsdSourcePacking =
@@ -1846,6 +1937,14 @@ TAE_Result AudioPipeline::playInternal(
       }
       outputInfo_.diagnostics.typedRawPath = dopPath || nativeDsdPath;
       outputInfo_.diagnostics.processingBypassed = dopPath || nativeDsdPath;
+    } else if (pcmToDsdPath) {
+      // PCM->DSD upconversion: the source is PCM, so the DSD branch above is
+      // skipped, but the wire path is still DSD and may use the override route.
+      outputInfo_.diagnostics.dsdRouteOverrideActive = dsdRouteOverrideUsed;
+      if (dsdRouteOverrideUsed) {
+        outputInfo_.diagnostics.dsdRouteBackend = dsdBackendId;
+        outputInfo_.diagnostics.dsdRouteDevice = dsdDeviceId;
+      }
     }
     nativeDsdFallbackFacts_ =
         activeStream_->stream.isDsd && activeStream_->stream.dsdMode != DsdMode::Native &&
@@ -2084,6 +2183,9 @@ std::string AudioPipeline::determineDsdPcmFallbackReason(
   }
   if (dspConfig.dsdOutputMode == DsdOutputMode::Pcm) return "DSD output mode forced PCM";
   if (!attemptedDopReason.empty()) return attemptedDopReason;
+  if (dsdRouteOverrideTargetsDistinctRoute(dspConfig.dsdRoute)) {
+    return "DSD 兼容层路由未能建立直通输出，已回退 PCM";
+  }
   if (dspConfig.dsdOutputMode == DsdOutputMode::Native) return "ASIO Native DSD could not prove raw DSD output";
   if (stream.dsdRate >= 256) {
     return "DSD" + std::to_string(stream.dsdRate) + " currently falls back to PCM";

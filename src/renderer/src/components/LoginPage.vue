@@ -15,6 +15,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   back: []
   loginSuccess: []
+  configure: []
 }>()
 
 const providerStore = useProviderStore()
@@ -54,6 +55,7 @@ interface ProviderCard {
   loggedIn: boolean
   profile: MediaProviderProfile | null
   error: string
+  needsSetup: boolean
 }
 
 const pageState = ref<PageState>('loading')
@@ -83,7 +85,11 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 let cooldownTimer: ReturnType<typeof setInterval> | null = null
 let uidCopiedTimer: ReturnType<typeof setTimeout> | null = null
 
-/** 所有声明了 login 能力的 provider（无论是否声明 ui 元数据，都显示在登录页） */
+/**
+ * 声明了 login 能力的 provider 都显示在登录页。
+ * authType 为 'settings' 的 provider（如 Apple Music）通过设置面板配置凭据，
+ * 点击卡片时跳转到设置页，而不是进入二维码/账号登录流程。
+ */
 const loginProviders = computed<ProviderInfo[]>(() =>
   providerStore.providers.value.filter((p) => p.capabilities.includes('login'))
 )
@@ -108,16 +114,24 @@ const providerCards = computed<ProviderCard[]>(() =>
     return {
       id: provider.id,
       name: provider.name,
-      desc: provider.ui?.description ?? '在线音源',
+      desc: providerCardDescription(provider),
       icon: provider.ui?.icon ?? 'pi pi-cloud',
       color: provider.ui?.color,
       available: state.available,
       loggedIn: state.loggedIn,
       profile: state.profile,
-      error: state.error
+      error: state.error,
+      needsSetup: provider.ui?.authType === 'settings'
     }
   })
 )
+
+function providerCardDescription(provider: ProviderInfo): string {
+  if (provider.ui?.authType === 'settings') {
+    return provider.ui?.loginInstructions || '请在插件设置中配置服务地址和 API Key'
+  }
+  return provider.ui?.description ?? '在线音源'
+}
 
 const activeProvider = computed<ProviderInfo | null>(() =>
   activeProviderId.value
@@ -245,6 +259,10 @@ async function syncSuccessfulLogin(providerId: string, celebrate = false): Promi
 function openAccount(providerId: string): void {
   activeProviderId.value = providerId
   confirmLogout.value = false
+  if (providerStore.getProvider(providerId)?.ui?.authType === 'settings') {
+    emit('configure')
+    return
+  }
   const state = accountStates.value[providerId]
   if (!state?.available) {
     pageState.value = 'error'
@@ -713,6 +731,7 @@ onUnmounted(() => {
                     {{ provider.name }}
                     <em v-if="provider.loggedIn" class="provider-pill on">已连接</em>
                     <em v-else-if="!provider.available" class="provider-pill off">不可用</em>
+                    <em v-else-if="provider.needsSetup" class="provider-pill setup">需配置</em>
                   </span>
                   <span class="provider-desc">
                     <template v-if="provider.loggedIn">
@@ -1537,6 +1556,11 @@ onUnmounted(() => {
 .provider-pill.off {
   background: var(--lp-inset);
   color: var(--lp-muted);
+}
+
+.provider-pill.setup {
+  background: var(--lp-tint-strong);
+  color: var(--te-primary-500);
 }
 
 .provider-desc {

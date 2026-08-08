@@ -763,6 +763,10 @@ FakeNativeDsdBehavior g_fakeNativeDsdBehavior = FakeNativeDsdBehavior::Proven;
 std::atomic<int> g_fakeTopologyOpenFailures{0};
 std::atomic<int> g_fakeTopologyStartFailures{0};
 std::atomic<bool> g_fakeTopologyDeviceInvalidated{false};
+// Simulates a compatibility-route device that is configured but not present
+// (proxy driver uninstalled, or the device is busy). Any open() for this id fails.
+constexpr const char* kFakeMissingDeviceId = "missing-dsd-proxy";
+std::atomic<bool> g_fakeMissingDeviceEnabled{false};
 std::atomic<int> g_decodeFirstReadDelayMs{0};
 std::atomic<int> g_decodeEveryReadDelayMs{0};
 std::mutex g_decoderSeekMutex;
@@ -1033,6 +1037,12 @@ class FakeOutputBackend final : public IOutputBackend {
     if (state_->backendId == "wasapi-exclusive" && g_fakeTopologyOpenFailures.load() > 0) {
       g_fakeTopologyOpenFailures.fetch_sub(1);
       if (error) *error = "fake WASAPI topology open failure";
+      return false;
+    }
+    if (deviceId == kMissingDsdProxyDeviceId) {
+      state_->info.deviceName = deviceId;
+      state_->info.actualDeviceName = deviceId;
+      if (error) *error = "Fake DSD proxy device is not installed";
       return false;
     }
     AudioFormat opened = requestedFormat;

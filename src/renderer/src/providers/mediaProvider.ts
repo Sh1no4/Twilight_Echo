@@ -11,6 +11,7 @@ export type MediaProviderCapability =
   | 'playlist'
   | 'library'
   | 'login'
+  | 'download'
 
 export interface MediaProviderLyrics {
   lyrics: string | null

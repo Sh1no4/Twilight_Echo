@@ -168,7 +168,8 @@ const IDEMPOTENT_PROVIDER_WRITE_METHODS = new Set<TwilightMediaProviderMethod>([
   'deletePlaylist',
   'addTracksToPlaylist',
   'removeTracksFromPlaylist',
-  'completeCloudUpload'
+  'completeCloudUpload',
+  'createDownload'
 ])
 const INTERNAL_NCM_PLUGIN_ID = 'com.twilightecho.provider.ncm'
 const RESERVED_PROVIDER_IDS = new Set(['local', 'ncm'])
@@ -1207,9 +1208,16 @@ export class TwilightPluginManager extends EventEmitter {
       ? record.capabilities.filter(
           (item): item is TwilightMediaProviderRegistration['capabilities'][number] =>
             typeof item === 'string' &&
-            ['search', 'playbackUrl', 'lyrics', 'cover', 'playlist', 'library', 'login'].includes(
-              item
-            )
+            [
+              'search',
+              'playbackUrl',
+              'lyrics',
+              'cover',
+              'playlist',
+              'library',
+              'login',
+              'download'
+            ].includes(item)
         )
       : []
     if (!providerId || !/^[a-z][a-z0-9-]*$/.test(providerId)) {
@@ -1318,7 +1326,10 @@ export class TwilightPluginManager extends EventEmitter {
     const record = raw as Record<string, unknown>
     const icon = typeof record.icon === 'string' ? record.icon.trim() : ''
     const authType =
-      record.authType === 'qr' || record.authType === 'oauth' || record.authType === 'cookie'
+      record.authType === 'qr' ||
+      record.authType === 'oauth' ||
+      record.authType === 'cookie' ||
+      record.authType === 'settings'
         ? record.authType
         : 'qr'
     // 解析 qrStatusCodes

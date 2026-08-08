@@ -39,7 +39,7 @@ export interface ProviderUiMetadata {
   icon: string
   color?: string
   description?: string
-  authType: 'qr' | 'oauth' | 'cookie'
+  authType: 'qr' | 'oauth' | 'cookie' | 'settings'
   loginInstructions?: string
   qrStatusCodes?: {
     waiting: number

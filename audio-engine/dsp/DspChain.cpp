@@ -21,6 +21,13 @@ std::string toLower(std::string value) {
   return value;
 }
 
+std::string trim(std::string value) {
+  const auto notSpace = [](unsigned char ch) { return std::isspace(ch) == 0; };
+  value.erase(value.begin(), std::find_if(value.begin(), value.end(), notSpace));
+  value.erase(std::find_if(value.rbegin(), value.rend(), notSpace).base(), value.end());
+  return value;
+}
+
 std::optional<std::string> extractStringField(const std::string& json, const std::string& key) {
   return json_utils::fieldString(json, key);
 }
@@ -58,6 +65,18 @@ DsdOutputMode parseDsdOutputMode(const std::string& mode) {
   if (normalized == "dop") return DsdOutputMode::Dop;
   if (normalized == "native") return DsdOutputMode::Native;
   return DsdOutputMode::Auto;
+}
+
+DsdRouteOverride parseDsdRouteOverride(const std::string& json) {
+  DsdRouteOverride route;
+  const std::string object = json_utils::fieldObject(json, "dsdRoute");
+  if (object.empty()) return route;
+  route.enabled = extractBoolField(object, "enabled").value_or(false);
+  route.backendId = trim(extractStringField(object, "backend").value_or(""));
+  route.deviceId = trim(extractStringField(object, "device").value_or(""));
+  route.applyToPcmToDsd = extractBoolField(object, "applyToPcmToDsd").value_or(true);
+  route.strictPassthrough = extractBoolField(object, "strictPassthrough").value_or(false);
+  return route;
 }
 
 SacdProgramMode parseSacdProgramMode(const std::string& mode) {
@@ -933,6 +952,7 @@ DspConfig DspChain::parseConfigJson(const std::string& json) {
   config.gapless = extractBoolField(json, "gapless").value_or(true);
   config.dsdOutputMode = parseDsdOutputMode(extractStringField(json, "dsdOutputMode").value_or(
       extractBoolField(json, "dsdToPcm").value_or(false) ? "pcm" : "auto"));
+  config.dsdRoute = parseDsdRouteOverride(json);
   config.sacdProgramMode =
       parseSacdProgramMode(extractStringField(json, "sacdProgramMode").value_or("auto"));
   config.replayGainMode = parseReplayGainMode(extractStringField(json, "volumeNormalization").value_or("off"));

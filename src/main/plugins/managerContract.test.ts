@@ -24,6 +24,7 @@ const pluginApiSource = readFileSync(
   'utf8'
 )
 const preloadSource = readFileSync(new URL('../../preload/index.ts', import.meta.url), 'utf8')
+const pluginIpcSource = readFileSync(new URL('../ipc/plugins.ts', import.meta.url), 'utf8')
 const pluginExtensionPageSource = readFileSync(
   new URL('../../renderer/src/components/PluginExtensionPage.vue', import.meta.url),
   'utf8'
@@ -222,10 +223,23 @@ test('provider and UI RPC cancellation is wired through protocol, host AbortSign
   assert.match(managerSource, /kind: 'provider-call'[\s\S]*signal: options\.signal/)
 })
 
+test('provider downloads are capability-gated and final file access remains host-only', () => {
+  assert.match(pluginApiSource, /\| 'download'/)
+  assert.match(pluginApiSource, /createDownload\?\(/)
+  assert.match(pluginApiSource, /getDownloadStatus\?\(/)
+  assert.match(pluginApiSource, /getDownloadFile\?\(/)
+  assert.match(pluginApiSource, /cancelDownload\?\(/)
+  assert.match(managerSource, /'createDownload'/)
+  assert.match(pluginHostSource, /'getDownloadFile'/)
+  assert.match(pluginIpcSource, /const HOST_ONLY_PROVIDER_METHODS/)
+  assert.match(pluginIpcSource, /provider download methods are host-only/)
+})
+
 test('provider write idempotency is connected from renderer bridge through host request context', () => {
   assert.match(preloadSource, /providerWriteIdempotency\.begin\(/)
   assert.match(managerSource, /const IDEMPOTENT_PROVIDER_WRITE_METHODS/)
   assert.match(managerSource, /IDEMPOTENT_PROVIDER_WRITE_METHODS[\s\S]*'completeCloudUpload'/)
+  assert.match(managerSource, /IDEMPOTENT_PROVIDER_WRITE_METHODS[\s\S]*'createDownload'/)
   assert.match(managerSource, /kind: 'provider-call'[\s\S]*idempotencyKey/)
   assert.match(pluginHostSource, /idempotencyKey: message\.idempotencyKey/)
   assert.match(pluginApiSource, /idempotencyKey\?: string/)

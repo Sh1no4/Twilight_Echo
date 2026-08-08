@@ -8,6 +8,7 @@ import type { LocalLibraryIndexCoordinator } from '../library/libraryIndexCoordi
 import type { LocalLibraryScanServiceClient } from '../library/libraryScanServiceClient.ts'
 import type { OpraCatalog } from '../opraCatalog'
 import type { TwilightPluginManager } from '../plugins/manager'
+import type { ProviderDownloadManager } from '../plugins/providerDownloadManager.ts'
 import type { PluginIndexService } from '../plugins/indexService'
 import type { BpmAnalysisManager } from '../bpm/bpmAnalysisManager'
 import type { LoudnessAnalysisManager } from '../audio/loudnessAnalysisManager'
@@ -30,6 +31,7 @@ export const runtime = {
   launchSettings: {} as AppSettings,
   pluginManager: null as TwilightPluginManager | null,
   pluginManagerReady: null as Promise<void> | null,
+  providerDownloadManager: null as ProviderDownloadManager | null,
   pluginIndexService: null as PluginIndexService | null,
   opraCatalog: null as OpraCatalog | null,
   audioEngineManager: null as AudioEngineManager | null,

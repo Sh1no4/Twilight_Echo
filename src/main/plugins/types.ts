@@ -215,6 +215,7 @@ export type TwilightMediaProviderCapability =
   | 'playlist'
   | 'library'
   | 'login'
+  | 'download'
 
 export interface TwilightMediaProviderRegistration {
   id: string
@@ -259,7 +260,7 @@ export interface TwilightProviderUiMetadata {
   /** 简短描述，显示在登录卡片上 */
   description?: string
   /** 登录流程类型 */
-  authType: 'qr' | 'oauth' | 'cookie'
+  authType: 'qr' | 'oauth' | 'cookie' | 'settings'
   /** 等待扫码/授权时的提示文案 */
   loginInstructions?: string
   /** 标准化的 QR/OAuth 状态码映射（authType 为 'qr' 或 'oauth' 时必填） */
@@ -331,6 +332,10 @@ export type TwilightMediaProviderMethod =
   | 'searchPlaylists'
   | 'searchArtists'
   | 'fetchPlaylistTracks'
+  | 'createDownload'
+  | 'getDownloadStatus'
+  | 'getDownloadFile'
+  | 'cancelDownload'
   | 'checkLogin'
   | 'getProfile'
   | 'logout'
