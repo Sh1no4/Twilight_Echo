@@ -101,6 +101,15 @@ test('playback info keeps loaded lyrics when reusing the current queue track', (
   assert.match(source, /patchTrackInQueues\(updatedTrack\)/)
 })
 
+test('empty automatic lyric content remains eligible for a later provider retry', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+
+  assert.match(source, /function hasLyricContent\(value: string \| null \| undefined\): boolean/)
+  assert.match(source, /const hasOriginal = hasLyricContent\(resolverTrack\.lyrics\)/)
+  assert.match(source, /resolverTranslationSource === 'automatic' &&\s*!hasLyricContent\(resolverTrack\.translatedLyrics\)/)
+  assert.match(source, /if \(!hasLyricContent\(track\.lyrics\) \|\| loading\)/)
+})
+
 test('track activation hydrates cover and lyrics stripped by queue snapshots', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
 
@@ -317,8 +326,11 @@ test('player lyric loading records local and provider lyric sources', () => {
   // Superseded/abandoned loads must clear isLoading when they still own the token.
   assert.match(loadAndPlay, /releaseLoadIfOwned/)
   assert.match(loadAndPlay, /if \(loadToken === activeLoadToken\) isLoading\.value = false/)
-  // Keep the playbar clock alive during intentional load hand-off.
-  assert.match(tickRendererPlaybackClock, /!isPlaying\.value && !isLoading\.value/)
+  // The store delegates fallback timing to one authority rather than keeping
+  // a second independent position clock next to the lyric resolver.
+  assert.match(source, /createPlaybackSessionClock/)
+  assert.match(tickRendererPlaybackClock, /playbackSessionClock\.estimate\(\)/)
+  assert.match(tickRendererPlaybackClock, /requestPlaybackClockResync\(\)/)
 })
 
 test('plugin playback resume waits for plugin providers while local sessions restore immediately', () => {
@@ -515,6 +527,30 @@ test('NetEase streams re-resolve after a quality preference change', () => {
   assert.match(resolvePlayTarget, /当前网易云账号没有可播放的音质/)
 })
 
+test('cached playback paths are validated before reuse after a cache clear', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const resolvePlayTarget = extractInternalFunctionBody(source, 'resolvePlayTarget')
+
+  // NCM local cache paths must not be replayed blindly: the managed music cache
+  // may have been cleared, so a missing file must fall back to the provider.
+  // loadAndPlay commits the resolved target, so resolvePlayTarget itself never
+  // writes streamUrl (see the doesNotMatch assertion below).
+  assert.match(
+    resolvePlayTarget,
+    /if \(await isUsableLocalPlaybackFile\(track\.streamUrl\)\) return track\.streamUrl/
+  )
+  assert.doesNotMatch(resolvePlayTarget, /track\.streamUrl\s*=/)
+  // Network source cache paths follow the same rule before a lazy re-download.
+  assert.match(
+    resolvePlayTarget,
+    /if \(track\.filePath\) \{[\s\S]*!isLikelyLocalFilePath\(track\.filePath\)[\s\S]*isUsableLocalPlaybackFile\(track\.filePath\)[\s\S]*track\.filePath = ''/
+  )
+  assert.match(
+    source,
+    /async function isUsableLocalPlaybackFile[\s\S]*window\.api\?\.fs\?\.isAudioFileAuthorized\?\.\(filePath\)/
+  )
+})
+
 test('mini player switching recovers from stale unauthorized local tracks', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const preloadSource = readFileSync(new URL('../../../preload/index.ts', import.meta.url), 'utf8')
@@ -669,6 +705,10 @@ test('togglePlayState and seek/volume fan out to cast when castTargetName is act
 
 test('native queue switching guards the target track before applying playback-info events', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const playbackSessionClockSource = readFileSync(
+    new URL('../utils/playbackSessionClock.ts', import.meta.url),
+    'utf8'
+  )
   const advanceNativePlayback = extractInternalFunctionBody(source, 'advanceNativePlayback')
   const applyNativePlaybackInfo = extractInternalFunctionBody(source, 'applyNativePlaybackInfo')
   const setupAudioEngineListeners = extractInternalFunctionBody(source, 'setupAudioEngineListeners')
@@ -738,11 +778,13 @@ test('native queue switching guards the target track before applying playback-in
   assert.doesNotMatch(source, /softClock/)
   assert.match(
     source,
-    /async function loadAndPlay[\s\S]*beginPlaybackPositionTransition\(normalizedStartTime\)[\s\S]*function next\(/
+    /async function loadAndPlay[\s\S]*beginPlaybackPositionTransition\(normalizedStartTime, \{ keepRendererClockAlive: true \}\)[\s\S]*function next\(/
   )
   assert.match(source, /function applyPlaybackPositionSample/)
-  assert.match(source, /Math\.abs\(position - expectedPosition\)/)
-  assert.match(source, /return false[\s\S]*pendingPlaybackPositionTarget = null/)
+  assert.match(source, /playbackSessionClock\.ingest\(\{/)
+  assert.match(source, /playbackSessionClock\.estimate\(\)/)
+  assert.match(playbackSessionClockSource, /maxPredictionGapMs/)
+  assert.match(playbackSessionClockSource, /needsResync: true/)
   assert.match(source, /restoredPlaybackPending &&\s*Number\.isFinite\(restoredPlaybackPosition\)/)
   assert.match(source, /if \(isLoading\.value \|\| loadedTrackId !== track\.id\)/)
   assert.match(advanceAfterPlaybackEnded, /activateCurrentTrack\(track/)
@@ -771,9 +813,9 @@ test('native queue switching guards the target track before applying playback-in
   )
   assert.match(refreshPlaybackInfoAfterStartFile, /currentTrack\.value\?\.id !== trackIdAtStart/)
   assert.match(refreshPlaybackAfterRendererResume, /getPlaybackInfo\(\)/)
-  assert.match(refreshPlaybackAfterRendererResume, /retryCurrentTrackLyricsIfNeeded\(\)/)
+  assert.match(refreshPlaybackAfterRendererResume, /retryCurrentTrackLyricsIfNeeded\(true\)/)
   assert.match(retryCurrentTrackLyricsIfNeeded, /lyricsLoadState\.value\.status === 'loading'/)
-  assert.match(retryCurrentTrackLyricsIfNeeded, /ensureCurrentTrackLyricsLoaded\(track, true\)/)
+  assert.match(retryCurrentTrackLyricsIfNeeded, /ensureCurrentTrackLyricsLoaded\(track, true, forceReload\)/)
   // time-pos is routed through the shared fallback-aware policy: native engine
   // and delegated queues drive progress, while HTMLAudio fallback ignores the
   // native ghost clock so a second time source cannot freeze the bar.
@@ -836,6 +878,7 @@ test('player store does not pretend DSP bypass is strict bit-perfect mode', () =
 test('player store keeps default volume at 0.7, persists softwareVolume, and exposes setUnityVolume', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const settingsSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
+  const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
   const mainSettings = readFileSync(
     new URL('../../../main/core/settings.ts', import.meta.url),
     'utf8'
@@ -845,6 +888,9 @@ test('player store keeps default volume at 0.7, persists softwareVolume, and exp
   assert.match(source, /const volume = ref\(DEFAULT_SOFTWARE_VOLUME\)/)
   assert.match(source, /DEFAULT_SOFTWARE_VOLUME/)
   assert.match(source, /scheduleSoftwareVolumePersist/)
+  assert.match(source, /createDebouncedVolumePersistence\(persistSoftwareVolume\)/)
+  assert.match(source, /async function flushSoftwareVolumePersist\(\): Promise<void>/)
+  assert.match(appSource, /await flushSoftwareVolumePersist\(\)/)
   assert.match(source, /updateSettings\(\{ softwareVolume: next \}\)/)
   assert.match(source, /watch\(\s*\(\) => appSettings\.value\.softwareVolume,/)
   assert.match(settingsSource, /softwareVolume: 0\.7/)

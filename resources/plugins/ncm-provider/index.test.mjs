@@ -831,6 +831,75 @@ test('liked tracks fall back to likelist when playlist endpoints fail', async ()
   }
 })
 
+test('liked playlist page order survives the raw likelist refresh', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname === '/login/status') {
+      return {
+        code: 200,
+        data: {
+          code: 200,
+          profile: {
+            userId: 42,
+            nickname: 'listener',
+            avatarUrl: 'avatar.jpg',
+            signature: ''
+          }
+        }
+      }
+    }
+    if (url.pathname === '/user/playlist') {
+      return {
+        playlist: [
+          {
+            id: 9001,
+            name: 'Liked Music',
+            specialType: 5,
+            trackCount: 3,
+            coverImgUrl: 'cover.jpg'
+          }
+        ]
+      }
+    }
+    // The liked playlist detail is authoritative: newest liked first.
+    if (url.pathname === '/playlist/detail') {
+      return { playlist: { trackIds: [{ id: 1 }, { id: 2 }, { id: 3 }] } }
+    }
+    // /likelist returns the same songs in a different (liked-history) order.
+    if (url.pathname === '/likelist') {
+      return { ids: [3, 2, 1] }
+    }
+    if (url.pathname === '/song/detail') {
+      return { songs: [song(1), song(2), song(3)] }
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    const firstPage = await provider.fetchLikedTracksPage(0, 100, false)
+    assert.deepEqual(
+      firstPage.tracks.map((track) => track.ncmSongId),
+      [1, 2, 3],
+      'playlist page must follow the liked playlist detail order'
+    )
+
+    // A like-state check triggers the raw /likelist refresh on a different order.
+    assert.equal(await provider.isTrackLiked(2), true)
+    assert.ok(requests.some((path) => parseRequest(path).pathname === '/likelist'))
+
+    const secondPage = await provider.fetchLikedTracksPage(0, 100, false)
+    assert.deepEqual(
+      secondPage.tracks.map((track) => track.ncmSongId),
+      [1, 2, 3],
+      'raw likelist refresh must not scramble the liked playlist page order'
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
 test('fetchIntelligenceList calls the smart playback endpoint and normalizes songs', async () => {
   const requests = []
   const provider = await activateProvider(async (path) => {
@@ -1903,6 +1972,63 @@ test('lyrics search and lookup work without a NetEase login', async () => {
     assert.equal(search.items[0].id, 'ncm:77')
     assert.equal(lyrics.translatedLyrics, '[00:01.00]Translation')
     assert.ok(cookies.every((cookie) => !cookie))
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('lyrics lookup retries a transient lyric endpoint failure', async () => {
+  let lyricRequests = 0
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    if (url.pathname !== '/lyric/new') throw new Error(`unexpected endpoint: ${url.pathname}`)
+    lyricRequests += 1
+    if (lyricRequests === 1) throw new Error('fetch failed')
+    return { lrc: { lyric: '[00:01.00]Recovered lyric' } }
+  }, new Map())
+
+  try {
+    const lyrics = await provider.getLyrics({ id: 'ncm:88', filePath: 'ncm:88', source: 'ncm' })
+    assert.equal(lyricRequests, 2)
+    assert.equal(lyrics.lyrics, '[00:01.00]Recovered lyric')
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('lyrics lookup falls back to the legacy endpoint when lyric/new fails', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    requests.push(url.pathname)
+    if (url.pathname === '/lyric/new') throw new Error('lyric/new endpoint unavailable')
+    if (url.pathname === '/lyric') return { lrc: { lyric: '[00:01.00]Legacy lyric' } }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  }, new Map())
+
+  try {
+    const lyrics = await provider.getLyrics({ id: 'ncm:89', filePath: 'ncm:89', source: 'ncm' })
+    assert.equal(lyrics.lyrics, '[00:01.00]Legacy lyric')
+    assert.deepEqual(requests, ['/lyric/new', '/lyric'])
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('lyrics lookup preserves a business error when both lyric endpoints fail', async () => {
+  const provider = await activateProvider(async (path) => {
+    const endpoint = parseRequest(path).pathname
+    if (endpoint === '/lyric/new' || endpoint === '/lyric') {
+      return { code: 460, message: 'risk control' }
+    }
+    throw new Error(`unexpected endpoint: ${endpoint}`)
+  }, new Map())
+
+  try {
+    await assert.rejects(
+      provider.getLyrics({ id: 'ncm:90', filePath: 'ncm:90', source: 'ncm' }),
+      /NetEase code 460/
+    )
   } finally {
     ncmProvider.deactivate()
   }

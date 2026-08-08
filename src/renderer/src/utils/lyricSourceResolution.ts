@@ -8,6 +8,12 @@ export interface ResolvedLyricsWithSources {
   translatedLyrics: string | null
   lyricsSource: LyricSource | null
   translatedLyricsSource: LyricSource | null
+  /**
+   * A source was requested but could not be reached. This is deliberately
+   * distinct from a successful request that found no lyrics, so callers can
+   * keep the track eligible for retry instead of permanently caching emptiness.
+   */
+  failure?: 'local' | 'provider' | 'online'
 }
 
 export interface ResolveLyricsWithSourcesOptions {
@@ -45,14 +51,16 @@ export async function resolveLyricsWithSources(
     translationSource === 'provider' ||
     (originalSource === 'automatic' && !lyrics) ||
     (translationSource === 'automatic' && !translatedLyrics)
-  const localLyrics =
+  const localResult =
     shouldLoadLocal && options.loadLocalLyrics
-      ? normalizeLyricValue(await loadOptionalLyrics(options.loadLocalLyrics))
-      : null
-  const providerLyrics =
+      ? await loadOptionalLyrics(options.loadLocalLyrics)
+      : { value: null, failed: false }
+  const providerResult =
     shouldLoadProvider && options.loadProviderLyrics
       ? await loadOptionalProviderLyrics(options.loadProviderLyrics)
-      : null
+      : { value: null, failed: false }
+  const localLyrics = normalizeLyricValue(localResult.value)
+  const providerLyrics = providerResult.value
   const providerOriginal = normalizeLyricValue(providerLyrics?.lyrics)
   const providerWordLyrics = normalizeLyricValue(providerLyrics?.wordLyrics)
   const providerTranslation = normalizeLyricValue(providerLyrics?.translatedLyrics)
@@ -99,28 +107,42 @@ export async function resolveLyricsWithSources(
   }
 
   if (!lyrics && options.loadOnlineLyrics) {
-    const onlineLyrics = normalizeLyricValue(await loadOptionalLyrics(options.loadOnlineLyrics))
+    const onlineResult = await loadOptionalLyrics(options.loadOnlineLyrics)
+    const onlineLyrics = normalizeLyricValue(onlineResult.value)
     if (onlineLyrics) {
       lyrics = onlineLyrics
       lyricsSource = 'online'
       if (!translatedLyrics && options.loadOnlineTranslation) {
-        const onlineTranslation = normalizeLyricValue(
-          await loadOptionalLyrics(options.loadOnlineTranslation)
-        )
+        const onlineTranslationResult = await loadOptionalLyrics(options.loadOnlineTranslation)
+        const onlineTranslation = normalizeLyricValue(onlineTranslationResult.value)
         if (onlineTranslation) {
           translatedLyrics = onlineTranslation
           translatedLyricsSource = 'online'
         }
       }
     }
+
+    if (!lyrics && onlineResult.failed) {
+      return {
+        lyrics,
+        translatedLyrics,
+        lyricsSource,
+        translatedLyricsSource,
+        failure: 'online'
+      }
+    }
   }
 
-  return {
+  const resolved = {
     lyrics,
     translatedLyrics,
     lyricsSource,
     translatedLyricsSource
   }
+  if (lyrics || translatedLyrics) return resolved
+  if (providerResult.failed) return { ...resolved, failure: 'provider' as const }
+  if (localResult.failed) return { ...resolved, failure: 'local' as const }
+  return resolved
 }
 
 function normalizeLyricValue(value: string | null | undefined): string | null {
@@ -128,20 +150,27 @@ function normalizeLyricValue(value: string | null | undefined): string | null {
   return value.length > 0 ? value : null
 }
 
-async function loadOptionalLyrics(loader: () => Promise<string | null>): Promise<string | null> {
+interface OptionalLyricsLoad<T> {
+  value: T | null
+  failed: boolean
+}
+
+async function loadOptionalLyrics(
+  loader: () => Promise<string | null>
+): Promise<OptionalLyricsLoad<string>> {
   try {
-    return await loader()
+    return { value: await loader(), failed: false }
   } catch {
-    return null
+    return { value: null, failed: true }
   }
 }
 
 async function loadOptionalProviderLyrics(
   loader: () => Promise<MediaProviderLyrics>
-): Promise<MediaProviderLyrics> {
+): Promise<OptionalLyricsLoad<MediaProviderLyrics>> {
   try {
-    return await loader()
+    return { value: await loader(), failed: false }
   } catch {
-    return { lyrics: null, translatedLyrics: null, wordLyrics: null }
+    return { value: null, failed: true }
   }
 }

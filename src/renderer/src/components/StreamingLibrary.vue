@@ -66,26 +66,6 @@ const activeProviderIcon = computed(() => {
   return active?.icon ?? 'pi pi-music'
 })
 
-const activeProviderHealth = computed(() => {
-  const active = providerOptions.value.find((p) => p.id === props.activeProvider)
-  return buildProviderHealthPresentation({
-    health: active?.health,
-    loggedIn: active?.loggedIn ?? props.isLoggedIn
-  })
-})
-
-const activeProviderHealthState = computed(() =>
-  activeProviderHealth.value.state
-)
-
-const activeProviderHealthLabel = computed(() =>
-  activeProviderHealth.value.label
-)
-
-const activeProviderHealthDetail = computed(() =>
-  activeProviderHealth.value.detail
-)
-
 function onProviderMenuBlur(): void {
   // Defer so a menu-item click can register before the menu closes.
   setTimeout(() => {
@@ -204,23 +184,6 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
           </div>
           <h1>{{ profile?.nickname || '未登录用户' }}</h1>
           <p>{{ profileSignature || '这里空空如也~' }}</p>
-          <div
-            class="provider-health-strip"
-            :class="activeProviderHealthState"
-            :title="activeProviderHealthDetail"
-          >
-            <i
-              :class="
-                activeProviderHealthState === 'ok'
-                  ? 'pi pi-check-circle'
-                  : activeProviderHealthState === 'warning'
-                    ? 'pi pi-exclamation-triangle'
-                    : 'pi pi-times-circle'
-              "
-            ></i>
-            <span>{{ activeProviderHealthLabel }}</span>
-            <small>{{ activeProviderHealthDetail }}</small>
-          </div>
           <div v-if="isLoggedIn && showSocialStats !== false" class="profile-stats">
             <button type="button" class="stat-badge" @click="emit('openUserList', 'follows')">
               {{ profile?.follows || 0 }} <span>关注</span>
@@ -621,60 +584,6 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.provider-health-strip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: min(100%, 560px);
-  min-height: 30px;
-  margin: 0 0 14px;
-  padding: 6px 10px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 8px;
-  background: rgba(15, 23, 42, 0.035);
-  color: var(--te-neutral-700, #334155);
-}
-.provider-health-strip i {
-  flex-shrink: 0;
-  font-size: 13px;
-}
-.provider-health-strip span {
-  flex-shrink: 0;
-  font-size: 12px;
-  font-weight: 800;
-}
-.provider-health-strip small {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--te-neutral-500, #64748b);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.provider-health-strip.ok {
-  border-color: rgba(16, 185, 129, 0.18);
-  background: rgba(16, 185, 129, 0.08);
-}
-.provider-health-strip.ok i {
-  color: #059669;
-}
-.provider-health-strip.warning {
-  border-color: rgba(245, 158, 11, 0.24);
-  background: rgba(245, 158, 11, 0.1);
-}
-.provider-health-strip.warning i {
-  color: #d97706;
-}
-.provider-health-strip.error {
-  border-color: rgba(225, 29, 72, 0.18);
-  background: rgba(225, 29, 72, 0.08);
-}
-.provider-health-strip.error i {
-  color: #e11d48;
 }
 
 .profile-stats {
@@ -1209,26 +1118,6 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   color: var(--te-primary-400);
 }
 
-:global(html[data-theme='dark'] .library-view .provider-health-strip) {
-  border-color: var(--te-card-border);
-  background: rgba(255, 255, 255, 0.045);
-}
-
-:global(html[data-theme='dark'] .library-view .provider-health-strip.ok) {
-  border-color: rgba(16, 185, 129, 0.22);
-  background: rgba(16, 185, 129, 0.1);
-}
-
-:global(html[data-theme='dark'] .library-view .provider-health-strip.warning) {
-  border-color: rgba(var(--te-primary-rgb), 0.26);
-  background: rgba(var(--te-primary-rgb), 0.1);
-}
-
-:global(html[data-theme='dark'] .library-view .provider-health-strip.error) {
-  border-color: rgba(225, 29, 72, 0.28);
-  background: rgba(225, 29, 72, 0.11);
-}
-
 :global(html[data-theme='dark'] .library-view .provider-menu) {
   background: #181818;
   border-color: var(--te-card-border);
@@ -1238,6 +1127,25 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 :global(html[data-theme='dark'] .library-view .provider-menu-item:hover),
 :global(html[data-theme='dark'] .library-view .stat-badge:hover) {
   background: rgba(255, 255, 255, 0.065);
+}
+
+/* Profile card text stays readable on the dark card: the light palette was
+   hard-coded warm-brown, which turned the user id and labels invisible. The
+   dark neutral tokens are light (500/900), so no literal colors are needed. */
+:global(html[data-theme='dark'] .library-view .profile-info h1) {
+  color: var(--te-neutral-900);
+}
+
+:global(html[data-theme='dark'] .library-view .profile-info h3) {
+  color: var(--te-neutral-500);
+}
+
+:global(html[data-theme='dark'] .library-view .profile-info p) {
+  color: var(--te-neutral-500);
+}
+
+:global(html[data-theme='dark'] .library-view .stat-badge span) {
+  color: var(--te-neutral-500);
 }
 
 :global(html[data-theme='dark'] .library-view .favorites-card::before) {

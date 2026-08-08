@@ -140,13 +140,8 @@ export function createWindow(): void {
   }
   // Windows 上用原生亚克力模糊：backgroundMaterial 与 transparent 互斥，
   // 需保持 transparent: false 并用全透明 backgroundColor 露出背板
-  const acrylic =
-    transparent && supportsWindowsAcrylic() && isWindowsAcrylicBackdropAvailable()
-  if (
-    transparent &&
-    supportsWindowsAcrylic() &&
-    !isWindowsAcrylicBackdropAvailable()
-  ) {
+  const acrylic = transparent && supportsWindowsAcrylic() && isWindowsAcrylicBackdropAvailable()
+  if (transparent && supportsWindowsAcrylic() && !isWindowsAcrylicBackdropAvailable()) {
     console.warn(
       '[window] 系统"透明效果"已关闭，DWM 无法提供亚克力背板，' +
         '已回退为逐像素透明窗口（无模糊）。如需要亚克力效果，请开启系统透明效果。'
@@ -156,6 +151,9 @@ export function createWindow(): void {
   runtime.mainWindow = new BrowserWindow({
     width: 1495,
     height: 883,
+    // Keep the responsive playback layout usable when the frameless window is resized.
+    // These bounds were dropped by the 1.1.4 merge and allow the content columns
+    // to collapse into an unusable state on the next manual resize.
     minWidth: 1298,
     minHeight: 692,
     show: false,

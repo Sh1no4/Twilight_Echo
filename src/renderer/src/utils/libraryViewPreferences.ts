@@ -5,6 +5,7 @@ export type LibrarySortKey =
   | 'title'
   | 'artist'
   | 'album'
+  | 'playlist'
   | 'trackNumber'
   | 'duration'
   | 'format'
@@ -40,6 +41,7 @@ const SORT_KEYS = new Set<LibrarySortKey>([
   'title',
   'artist',
   'album',
+  'playlist',
   'trackNumber',
   'duration',
   'format',
@@ -50,7 +52,13 @@ const SORT_KEYS = new Set<LibrarySortKey>([
 
 export function createDefaultLibraryViewState(category = 'allSongs'): LibraryViewState {
   const sortKey: LibrarySortKey =
-    category === 'recent' ? 'lastPlayed' : category === 'albums' ? 'trackNumber' : 'title'
+    category === 'recent'
+      ? 'lastPlayed'
+      : category === 'albums'
+        ? 'trackNumber'
+        : category === 'playlists'
+          ? 'playlist'
+          : 'title'
   return {
     sortKey,
     sortDirection: category === 'recent' ? 'desc' : 'asc',
@@ -166,6 +174,10 @@ function compareTracks(
       return textValue(left.artist).localeCompare(textValue(right.artist), 'zh')
     case 'album':
       return textValue(left.album).localeCompare(textValue(right.album), 'zh')
+    case 'playlist':
+      // Playlists keep their own stored order (insertion order); the stable
+      // sort below falls back to the input index, so nothing reorders them.
+      return 0
     case 'trackNumber':
       return compareAlbumOrder(left, right)
     case 'title':

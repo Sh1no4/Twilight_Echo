@@ -379,7 +379,11 @@ function resolveRuntimeTone(profile: ThemeProfileV2 | null, modes: ThemeModes): 
     )
   }
   clearTimedToneRefresh()
-  return resolveTone()
+  // Manual presets must follow the app's stored preference (dark / pureWhite /
+  // system). Reading the DOM attribute here lets a previous timed or system
+  // preset leak its resolved tone into the next manual preset, so switching
+  // presets while in dark mode could flip the whole app back to light.
+  return resolveThemeMode(themePreference)
 }
 
 function scheduleTimedToneRefresh(profile: ThemeProfileV2 | null): void {

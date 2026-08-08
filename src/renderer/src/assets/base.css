@@ -568,6 +568,24 @@ html[data-theme='dark'] input[type='checkbox']:disabled {
   opacity: 0.5;
 }
 
+/* Native select popups do not inherit page colors reliably on Windows. */
+html[data-theme='dark'] select {
+  color-scheme: dark;
+  border-color: var(--te-settings-control-border) !important;
+  background-color: var(--te-settings-control-bg) !important;
+  color: var(--te-settings-text) !important;
+}
+
+html[data-theme='dark'] select option {
+  background-color: var(--te-settings-control-bg) !important;
+  color: var(--te-settings-text) !important;
+}
+
+html[data-theme='dark'] select optgroup {
+  background-color: var(--te-settings-control-bg) !important;
+  color: var(--te-settings-text) !important;
+}
+
 body {
   min-height: 100vh;
   padding-top: 0;
@@ -1387,6 +1405,20 @@ html[data-theme='dark'] .more-drawer:not(.drawer-glass) {
 }
 
 /* HiFi sidebar — dark theme (non-glass). Mirrors the glass console palette. */
+/* Dark theme volume slider: the default accent-at-18% mix reads as near-black
+   on the dark drawer, so the unfilled track needs a brighter neutral to stay
+   visible. The glass drawer gets the same neutral inside its own rule. */
+html[data-theme='dark'] .volume-drawer:not(.drawer-glass) .volume-drawer-slider::-webkit-slider-runnable-track {
+  background:
+    linear-gradient(90deg, var(--accent-color, #3b82f6), var(--accent-color, #3b82f6)) 0 /
+      var(--range-value, 70%) 100% no-repeat,
+    rgba(255, 255, 255, 0.22);
+}
+
+html[data-theme='dark'] .volume-drawer .volume-drawer-slider::-moz-range-track {
+  background: rgba(255, 255, 255, 0.22);
+}
+
 html[data-theme='dark'] .hifi-overlay:not(.glass) {
   background:
     radial-gradient(ellipse 80% 45% at 100% -5%, rgba(56, 189, 248, 0.12), transparent 52%),
@@ -1512,6 +1544,19 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .ctrl-btn img,
 html[data-theme='dark'] .player-bar:not(.player-bar-glass) .mode-btn-right img {
   filter: invert(1);
   opacity: 0.68;
+}
+
+/* Pressed and toggled-on playbar controls must stay visible on the dark bar:
+   the old 7.5% white wash made active/pressed buttons melt into the surface. */
+html[data-theme='dark'] .ctrl-btn:active,
+html[data-theme='dark'] .icon-btn:active,
+html[data-theme='dark'] .mode-btn-right:active {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+html[data-theme='dark'] .icon-btn.active {
+  background: rgba(255, 255, 255, 0.18);
+  color: rgba(248, 250, 252, 0.96);
 }
 
 html[data-theme='dark'] .settings-page,

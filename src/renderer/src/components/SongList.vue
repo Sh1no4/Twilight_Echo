@@ -1733,6 +1733,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                         :value="libraryViewState.sortKey"
                         @change="setSortKey(($event.target as HTMLSelectElement).value)"
                       >
+                        <option value="playlist">歌单顺序</option>
                         <option value="title">标题</option>
                         <option value="artist">歌手</option>
                         <option value="album">专辑</option>

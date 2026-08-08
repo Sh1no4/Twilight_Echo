@@ -701,7 +701,7 @@ onMounted(() => {
 
 .network-hint {
   margin: 0;
-  color: var(--te-settings-text-muted, #8a8f98);
+  color: var(--te-settings-text-muted);
   font-size: 13px;
 }
 
@@ -712,8 +712,8 @@ onMounted(() => {
 }
 
 .network-view-toggle .active {
-  border-color: rgba(var(--te-primary-rgb), 0.34);
-  background: rgba(var(--te-primary-rgb), 0.1);
+  border-color: color-mix(in srgb, var(--te-primary-500) 34%, transparent);
+  background: color-mix(in srgb, var(--te-primary-500) 10%, transparent);
   color: var(--brand-600);
 }
 
@@ -721,7 +721,7 @@ onMounted(() => {
   min-height: 36px;
   width: min(320px, 100%);
   padding: 0 12px;
-  border: 1px solid var(--te-settings-control-border, rgba(15, 23, 42, 0.12));
+  border: 1px solid var(--te-settings-control-border);
   border-radius: 9px;
   background: transparent;
   color: inherit;
@@ -741,15 +741,15 @@ onMounted(() => {
 }
 
 .network-inline-error {
-  border: 1px solid rgba(239, 68, 68, 0.28);
-  background: rgba(239, 68, 68, 0.1);
-  color: #dc2626;
+  border: 1px solid color-mix(in srgb, var(--te-danger-soft-fg) 28%, transparent);
+  background: var(--te-danger-soft-bg);
+  color: var(--te-danger-soft-fg);
 }
 
 .network-inline-notice {
-  border: 1px solid rgba(16, 185, 129, 0.28);
-  background: rgba(16, 185, 129, 0.1);
-  color: #059669;
+  border: 1px solid color-mix(in srgb, var(--te-success-soft-fg) 28%, transparent);
+  background: var(--te-success-soft-bg);
+  color: var(--te-success-soft-fg);
 }
 
 .network-toolbar,
@@ -778,14 +778,14 @@ onMounted(() => {
   gap: 6px;
   font-size: 12px;
   font-weight: 600;
-  color: var(--te-settings-text-muted, #8a8f98);
+  color: var(--te-settings-text-muted);
 }
 
 .network-form-grid input,
 .network-form-grid select {
   min-height: 36px;
   padding: 0 10px;
-  border: 1px solid var(--te-settings-control-border, rgba(15, 23, 42, 0.12));
+  border: 1px solid var(--te-settings-control-border);
   border-radius: 9px;
   background: transparent;
   color: inherit;
@@ -823,7 +823,7 @@ onMounted(() => {
 
 .network-profile-info span,
 .network-profile-info small {
-  color: var(--te-settings-text-muted, #8a8f98);
+  color: var(--te-settings-text-muted);
   font-size: 12px;
 }
 
@@ -866,9 +866,9 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  border: 1px solid rgba(var(--te-primary-rgb), 0.28);
+  border: 1px solid color-mix(in srgb, var(--te-primary-500) 28%, transparent);
   border-radius: 999px;
-  background: rgba(var(--te-primary-rgb), 0.08);
+  background: color-mix(in srgb, var(--te-primary-500) 8%, transparent);
   color: var(--brand-600);
   cursor: pointer;
   font-size: 12px;
@@ -885,7 +885,7 @@ onMounted(() => {
 }
 
 .network-cache-info {
-  color: var(--te-settings-text-muted, #8a8f98);
+  color: var(--te-settings-text-muted);
   font-size: 12px;
 }
 
@@ -894,7 +894,7 @@ onMounted(() => {
   border: 1px solid transparent;
   border-radius: 999px;
   background: transparent;
-  color: var(--te-settings-text-muted, #8a8f98);
+  color: var(--te-settings-text-muted);
   cursor: pointer;
   font-size: 12px;
   font-weight: 600;
@@ -902,13 +902,13 @@ onMounted(() => {
 
 .network-crumb:hover,
 .network-crumb.active {
-  border-color: rgba(var(--te-primary-rgb), 0.34);
-  background: rgba(var(--te-primary-rgb), 0.1);
+  border-color: color-mix(in srgb, var(--te-primary-500) 34%, transparent);
+  background: color-mix(in srgb, var(--te-primary-500) 10%, transparent);
   color: var(--brand-600);
 }
 
 .network-browsing {
-  color: var(--te-settings-text-muted, #8a8f98);
+  color: var(--te-settings-text-muted);
   font-size: 12px;
 }
 
@@ -935,11 +935,11 @@ onMounted(() => {
 }
 
 .network-entry:hover {
-  background: rgba(var(--te-primary-rgb), 0.06);
+  background: color-mix(in srgb, var(--te-primary-500) 6%, transparent);
 }
 
 .network-entry-kind {
-  color: var(--te-settings-text-muted, #8a8f98);
+  color: var(--te-settings-text-muted);
   text-align: center;
 }
 
@@ -961,7 +961,7 @@ onMounted(() => {
 }
 
 .network-entry-meta {
-  color: var(--te-settings-text-muted, #8a8f98);
+  color: var(--te-settings-text-muted);
   font-size: 12px;
 }
 
@@ -973,7 +973,7 @@ onMounted(() => {
 .network-empty,
 .network-loading {
   padding: 20px 0;
-  color: var(--te-settings-text-muted, #8a8f98);
+  color: var(--te-settings-text-muted);
   font-size: 13px;
   text-align: center;
 }

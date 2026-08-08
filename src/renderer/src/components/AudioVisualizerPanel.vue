@@ -392,7 +392,6 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  border-radius: 18px;
   background: #e4e6eb;
   /* Force the iframe into its own compositor layer so it doesn't interact
      with the backdrop's blur filter (which can stall the GPU process). */

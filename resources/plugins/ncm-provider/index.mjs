@@ -431,15 +431,15 @@ async function requestOptionalAuth(path, requestContext) {
   return request(path, await getCookie(), requestContext)
 }
 
-async function requestOptionalAuthRead(path, { attempts = 2, label = path } = {}) {
+async function requestOptionalAuthRead(path, { attempts = 2, label = path, signal } = {}) {
   let lastError = null
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return await requestOptionalAuth(path)
+      return await requestOptionalAuth(path, { signal })
     } catch (error) {
       lastError = error
       if (attempt >= attempts || !isReadApiTransientError(error)) break
-      await wait(250 * attempt)
+      await waitWithAbort(250 * attempt, signal)
     }
   }
   getContext().logger.warn(`网易云读取接口失败：${label}：${getErrorMessage(lastError)}`)
@@ -1130,7 +1130,6 @@ async function fetchLikedTracks(force = false) {
     replaceLikedSongIds([])
     return []
   }
-  likedSongIdListCache = ids
   replaceLikedSongIds(ids)
 
   const songs = await fetchSongDetailsByIds(ids, 'liked songs')
@@ -1174,7 +1173,10 @@ async function fetchIntelligenceList(options = {}) {
       const song =
         item && typeof item === 'object' && item.songInfo && typeof item.songInfo === 'object'
           ? item.songInfo
-          : item && typeof item === 'object' && item.songInfo === null && typeof item.name !== 'string'
+          : item &&
+              typeof item === 'object' &&
+              item.songInfo === null &&
+              typeof item.name !== 'string'
             ? null
             : item
       if (!song) return null
@@ -1195,7 +1197,17 @@ async function fetchIntelligenceList(options = {}) {
 }
 
 async function fetchLikedTrackIds(force = false) {
-  if (!force && likedSongIdListCache) return likedSongIdListCache
+  if (!force && likedSongIdListCache && likedSongIdListCache.length > 0) {
+    // The raw /likelist refresh keeps `likedSongIds` live for like-state checks
+    // but must never replace the ORDER cache: its order differs from the liked
+    // playlist order and would scramble the playlist page. Detect a recently
+    // liked/unliked song and refresh the ordered list instead of returning a
+    // stale one.
+    const cachedIds = new Set(likedSongIdListCache)
+    const missingFromCache = [...likedSongIds].some((id) => !cachedIds.has(id))
+    const removedFromSet = likedSongIdListCache.some((id) => !likedSongIds.has(id))
+    if (!missingFromCache && !removedFromSet) return likedSongIdListCache
+  }
 
   try {
     const library = await fetchUserLibrary(force)
@@ -1223,7 +1235,6 @@ async function fetchLikedTrackIds(force = false) {
     })
     const ids = getLikelistIds(data)
     if (ids.length > 0) {
-      likedSongIdListCache = ids
       replaceLikedSongIds(ids)
       return ids
     }
@@ -1264,7 +1275,11 @@ function normalizeCloudSong(item) {
   const rawSong = item?.simpleSong ?? item?.song ?? item
   const playbackSongId = rawSong?.id ?? cloudSongId
   const numericPlaybackSongId = Number(playbackSongId)
-  if (cloudSongId == null || !Number.isFinite(numericPlaybackSongId) || numericPlaybackSongId <= 0) {
+  if (
+    cloudSongId == null ||
+    !Number.isFinite(numericPlaybackSongId) ||
+    numericPlaybackSongId <= 0
+  ) {
     return null
   }
 
@@ -1389,19 +1404,14 @@ async function completeCloudUpload(input, requestContext) {
     ...(input.album ? { album: input.album } : {}),
     ...(input.bitrate ? { bitrate: input.bitrate } : {})
   }
-  return runIdempotentProviderWrite(
-    'completeCloudUpload',
-    [params],
-    requestContext,
-    async () => {
-      const data = await requestAuthed(
-        appendQueryParams('/cloud/upload/complete', params),
-        requestContext
-      )
-      assertCloudApiSuccess(data, '导入网易云云盘失败')
-      return { songId: input.songId }
-    }
-  )
+  return runIdempotentProviderWrite('completeCloudUpload', [params], requestContext, async () => {
+    const data = await requestAuthed(
+      appendQueryParams('/cloud/upload/complete', params),
+      requestContext
+    )
+    assertCloudApiSuccess(data, '导入网易云云盘失败')
+    return { songId: input.songId }
+  })
 }
 
 function extractCloudDownloadUrl(data) {
@@ -1756,31 +1766,75 @@ function extractLyricText(data, key) {
   return data[key]?.lyric || data.data?.[key]?.lyric || null
 }
 
-async function getLyrics(track) {
+function waitWithAbort(ms, signal) {
+  if (!signal) return wait(ms)
+  throwIfRequestAborted({ signal })
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+      reject(
+        signal.reason instanceof Error ? signal.reason : new Error('Provider request was cancelled')
+      )
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+function assertLyricsEndpointSuccess(data, endpoint) {
+  const code = Number(data?.code ?? data?.body?.code)
+  if (Number.isFinite(code) && code !== 200) {
+    throw new Error(
+      `${endpoint} returned NetEase code ${code}: ${normalizeApiMessage(data, 'lyrics request failed')}`
+    )
+  }
+}
+
+async function getLegacyLyrics(songId, requestContext) {
+  const legacy = await requestOptionalAuthRead(`/lyric?id=${songId}`, {
+    attempts: 2,
+    label: `legacy lyrics ${songId}`,
+    signal: requestContext?.signal
+  })
+  assertLyricsEndpointSuccess(legacy, '/lyric')
+  return {
+    lyrics: extractLyricText(legacy, 'lrc'),
+    translatedLyrics: extractLyricText(legacy, 'tlyric'),
+    wordLyrics: null
+  }
+}
+
+async function getLyrics(track, requestContext) {
   const songId = getSongIdFromTrack(track)
   if (songId == null) return { lyrics: null, translatedLyrics: null, wordLyrics: null }
+  let data
   try {
-    const data = await requestOptionalAuth(`/lyric/new?id=${songId}`)
-    const yrc = extractLyricText(data, 'yrc')
-    const lrc = extractLyricText(data, 'lrc')
-    const translatedLyrics = extractLyricText(data, 'tlyric')
-    // Prefer YRC as the timed display payload when available (word-level timings).
-    if (yrc || lrc || translatedLyrics) {
-      return {
-        lyrics: yrc || lrc,
-        translatedLyrics,
-        wordLyrics: yrc || null
-      }
-    }
-    const data2 = await requestOptionalAuth(`/lyric?id=${songId}`)
-    return {
-      lyrics: extractLyricText(data2, 'lrc'),
-      translatedLyrics: extractLyricText(data2, 'tlyric'),
-      wordLyrics: null
-    }
+    data = await requestOptionalAuthRead(`/lyric/new?id=${songId}`, {
+      attempts: 3,
+      label: `lyrics ${songId}`,
+      signal: requestContext?.signal
+    })
+    assertLyricsEndpointSuccess(data, '/lyric/new')
   } catch {
-    return { lyrics: null, translatedLyrics: null, wordLyrics: null }
+    throwIfRequestAborted(requestContext)
+    return getLegacyLyrics(songId, requestContext)
   }
+  const yrc = extractLyricText(data, 'yrc')
+  const lrc = extractLyricText(data, 'lrc')
+  const translatedLyrics = extractLyricText(data, 'tlyric')
+  // Prefer YRC as the timed display payload when available (word-level timings).
+  if (yrc || lrc || translatedLyrics) {
+    return {
+      lyrics: yrc || lrc,
+      translatedLyrics,
+      wordLyrics: yrc || null
+    }
+  }
+  return getLegacyLyrics(songId, requestContext)
 }
 
 async function searchSongs(keywords, limit = 30, offset = 0) {
@@ -2039,7 +2093,6 @@ async function refreshLikedIdsIfStale() {
       const ids = getLikelistIds(data)
       if (refreshRevision !== likedIdsRevision) return
       // 空列表同样是权威结果（用户当前没有任何喜欢的歌曲）。
-      likedSongIdListCache = ids
       replaceLikedSongIds(ids)
       likedIdsFreshAt = Date.now()
       likedIdsRefreshRetryAt = 0

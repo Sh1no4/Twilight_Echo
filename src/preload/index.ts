@@ -908,8 +908,9 @@ const api = {
       ipcRenderer.invoke('podcast:refreshAll')
   },
   networkSources: {
-    listProfiles: (): Promise<import('../shared/networkSources.ts').NetworkSourceProfileSummary[]> =>
-      ipcRenderer.invoke('networkSources:listProfiles'),
+    listProfiles: (): Promise<
+      import('../shared/networkSources.ts').NetworkSourceProfileSummary[]
+    > => ipcRenderer.invoke('networkSources:listProfiles'),
     createProfile: (
       input: import('../shared/networkSources.ts').NetworkSourceProfileInput
     ): Promise<import('../shared/networkSources.ts').NetworkSourceProfileSummary> =>
@@ -951,10 +952,8 @@ const api = {
       ipcRenderer.invoke('networkSources:removeLibraryEntry', profileId, entryId),
     enrichLibrary: (profileId: string): Promise<{ enriched: number; failed: number }> =>
       ipcRenderer.invoke('networkSources:enrichLibrary', profileId),
-    cacheInfo: (): Promise<{ sizeBytes: number }> =>
-      ipcRenderer.invoke('networkSources:cacheInfo'),
-    clearCache: (): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke('networkSources:clearCache'),
+    cacheInfo: (): Promise<{ sizeBytes: number }> => ipcRenderer.invoke('networkSources:cacheInfo'),
+    clearCache: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('networkSources:clearCache'),
     searchLibrary: (
       query?: string
     ): Promise<
@@ -1200,8 +1199,12 @@ const api = {
       providerId: string,
       method: TwilightMediaProviderMethod,
       args: unknown[],
-      options?: { idempotencyKey?: string }
+      options?: { idempotencyKey?: string; requestId?: string }
     ): Promise<unknown> => {
+      const ipcOptions = {
+        ...(options?.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : {}),
+        ...(options?.requestId ? { requestId: options.requestId } : {})
+      }
       const lease = providerWriteIdempotency.begin(
         providerId,
         method,
@@ -1210,7 +1213,7 @@ const api = {
       )
       try {
         const value = await ipcRenderer.invoke('providers:call', providerId, method, args, {
-          ...options,
+          ...ipcOptions,
           ...(lease.idempotencyKey ? { idempotencyKey: lease.idempotencyKey } : {})
         })
         lease.settle(true)
@@ -1219,6 +1222,9 @@ const api = {
         lease.settle(false)
         throw error
       }
+    },
+    cancel: (requestId: string): void => {
+      ipcRenderer.send('providers:cancel', requestId)
     }
   },
   extensions: {

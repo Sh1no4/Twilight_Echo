@@ -2,6 +2,7 @@ import { onBeforeUnmount, watch, type Ref } from 'vue'
 import type { MiniPlayerCommand, MiniPlayerStateSnapshot } from '../../../shared/miniPlayer'
 import type { Track } from '../types/music'
 import type { PlayMode } from '../types/settings'
+import { buildLyricLines, findActiveLyricIndex } from '../utils/lyrics.ts'
 
 interface MiniPlayerStateSource {
   track: Track | null
@@ -58,6 +59,7 @@ export function buildMiniPlayerStateSnapshot(
           coverSource: track.coverSource ?? null
         }
       : null,
+    currentLyric: resolveCurrentLyricForMiniPlayer(track, source.currentTime),
     isPlaying: source.isPlaying,
     isLoading: source.isLoading,
     currentTime: source.currentTime,
@@ -71,6 +73,25 @@ export function buildMiniPlayerStateSnapshot(
     queueIndex: source.queueIndex,
     queueLength: source.queueLength
   }
+}
+
+/**
+ * Resolves the lyric line active at `time` for the mini player idle display.
+ * Only timed lyrics count; before the first line (or without lyrics) the
+ * snapshot carries null so the mini player falls back to track metadata.
+ */
+export function resolveCurrentLyricForMiniPlayer(
+  track: Track | null,
+  time: number
+): { original: string; translation: string | null } | null {
+  if (!track) return null
+  const lines = buildLyricLines(track.lyrics, track.translatedLyrics)
+  if (lines.length === 0) return null
+  const index = findActiveLyricIndex(lines, time)
+  if (index < 0) return null
+  const line = lines[index]
+  if (!line.text) return null
+  return { original: line.text, translation: line.translation ?? null }
 }
 
 export function useMiniPlayerSync(options: MiniPlayerSyncOptions): void {

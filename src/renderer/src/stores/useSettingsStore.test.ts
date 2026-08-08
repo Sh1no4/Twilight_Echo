@@ -65,6 +65,22 @@ test('settings chrome no longer dual-writes theme-owned CSS variables', () => {
   assert.match(songListSource, /background-image:[\s\S]*var\(--te-local-bg-image\)/)
 })
 
+test('manual tone scheduling follows the app preference, not a stale DOM attribute', () => {
+  const source = readFileSync(new URL('./useThemeStore.ts', import.meta.url), 'utf8')
+  const start = source.indexOf('function resolveRuntimeTone(')
+  assert.ok(start >= 0, 'resolveRuntimeTone must exist in the theme store')
+  const functionBody = source.slice(start, source.indexOf('\n}', start))
+
+  assert.match(functionBody, /const scheduling = modes\.appearance\?\.toneScheduling \?\? 'manual'/)
+  assert.match(functionBody, /if \(scheduling === 'system'\) return systemTone\.value/)
+  assert.match(functionBody, /if \(scheduling === 'timed'\)/)
+  // Manual presets must resolve from the stored preference. Reading the DOM
+  // attribute lets a previous timed/system preset leak its tone into the next
+  // manual preset (switching presets in dark mode would flip back to light).
+  assert.match(functionBody, /return resolveThemeMode\(themePreference\)/)
+  assert.doesNotMatch(functionBody, /return resolveTone\(\)/)
+})
+
 test('background image import accepts ArrayBuffer views from Electron IPC', () => {
   const source = readFileSync(
     new URL('../../../main/library/coverCache.ts', import.meta.url),
@@ -558,7 +574,7 @@ test('settings page warns and disables transparency controls on unsupported plat
 
   assert.match(source, /const transparencyUnsupported = computed/)
   assert.match(source, /windowTransparencySupported\.value === false/)
-  assert.match(source, /当前系统不支持窗口透明（Linux Wayland，或 Windows 未开启系统透明效果）/)
+  assert.match(source, /当前系统不支持透明窗口（Linux Wayland，或 Windows 未开启系统透明效果）/)
   assert.match(source, /toggleSetting\('windowTransparency'\)/)
   assert.match(source, /aria-disabled="!transparencySupported"/)
 })
