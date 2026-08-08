@@ -73,12 +73,9 @@ jobs:
           test -f audio-engine/build/default/twilight_audio_node.node
 
       - name: Build renderer and package Linux targets
-        env:
-          # GitHub Runner 直接走 GitHub 源下载 Electron，避免 npmmirror 在海外机上的不稳定。
-          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
         run: |
           pnpm run build
-          pnpm exec electron-builder --linux --config electron-builder.yml
+          pnpm exec electron-builder --linux --config electron-builder.yml --publish never
 
       - name: Verify staged native engine in the unpacked app
         run: |

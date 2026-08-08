@@ -4,7 +4,7 @@
  */
 
 export type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
-export type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native' | 'foo_dsd_asio'
+export type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native'
 export type LoudnormStatus = 'idle' | 'measuring' | 'cached' | 'fallback' | 'unavailable'
 
 export interface LabeledOption<T extends string> {
@@ -47,11 +47,10 @@ export const VOLUME_NORMALIZATION_OPTIONS: readonly LabeledOption<VolumeNormaliz
 ] as const
 
 export const DSD_OUTPUT_MODE_OPTIONS: readonly LabeledOption<DsdOutputMode>[] = [
-  { value: 'auto', label: 'Auto', description: '按设备能力自动选择 Native / foo_dsd_asio / DoP / PCM' },
+  { value: 'auto', label: 'Auto', description: '按设备能力自动选择 Native / DoP / PCM' },
   { value: 'pcm', label: 'PCM', description: '强制 DSD 解码为 PCM' },
   { value: 'dop', label: 'DoP', description: 'DoP 载波传输' },
-  { value: 'native', label: 'Native', description: 'Native DSD（平台/设备支持时）' },
-  { value: 'foo_dsd_asio', label: 'foo_dsd_asio', description: 'ASIO 代理直通（需先安装并注册 foo_dsd_asio）' }
+  { value: 'native', label: 'Native', description: 'Native DSD（平台/设备支持时）' }
 ] as const
 
 /** Canonical perfect-reason codes that Stage-1 UI must recognize. */
@@ -119,9 +118,7 @@ export function isDsdOutputMode(value: unknown): value is DsdOutputMode {
   return (
     value === 'auto' ||
     value === 'pcm' ||
-    value === 'dop' ||
-    value === 'native' ||
-    value === 'foo_dsd_asio'
+    value === 'dop' || value === 'native'
   )
 }
 

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   DEFAULT_LYRICS_APPEARANCE,
+  LYRICS_APPEARANCE_SCHEMA_VERSION,
   cloneLyricsAppearance,
   normalizeLyricsAppearance,
   syncLegacyLyricsAppearance
@@ -24,9 +25,48 @@ test('lyrics appearance migrates legacy lyric style settings into independent la
   assert.equal(normalized.styles.translation.align, 'left')
 })
 
-test('lyrics appearance defaults to full lyrics mode and accepts compact modes', () => {
-  assert.equal(normalizeLyricsAppearance(undefined).focusLineCount, 'all')
+test('lyrics appearance defaults to full lyrics mode without active lyric glow', () => {
+  const defaults = normalizeLyricsAppearance(undefined)
+  assert.equal(defaults.focusLineCount, 'all')
+  assert.equal(defaults.styles.active.highlightEffect, 'none')
   assert.equal(normalizeLyricsAppearance({ focusLineCount: 3 }).focusLineCount, 3)
+})
+
+test('lyrics appearance migrates the previous default glow without overriding custom effects', () => {
+  const migrated = normalizeLyricsAppearance({
+    styles: {
+      active: {
+        highlightEffect: 'glow',
+        highlightColor: '#fff8df',
+        highlightIntensity: 32
+      }
+    }
+  })
+  const custom = normalizeLyricsAppearance({
+    styles: {
+      active: {
+        highlightEffect: 'glow',
+        highlightColor: '#abcdef',
+        highlightIntensity: 60
+      }
+    }
+  })
+  const persistedToggle = normalizeLyricsAppearance({
+    ...DEFAULT_LYRICS_APPEARANCE,
+    schemaVersion: LYRICS_APPEARANCE_SCHEMA_VERSION,
+    styles: {
+      ...DEFAULT_LYRICS_APPEARANCE.styles,
+      active: {
+        ...DEFAULT_LYRICS_APPEARANCE.styles.active,
+        highlightEffect: 'glow'
+      }
+    }
+  })
+
+  assert.equal(migrated.schemaVersion, LYRICS_APPEARANCE_SCHEMA_VERSION)
+  assert.equal(migrated.styles.active.highlightEffect, 'none')
+  assert.equal(custom.styles.active.highlightEffect, 'glow')
+  assert.equal(persistedToggle.styles.active.highlightEffect, 'glow')
 })
 
 test('lyrics appearance rejects invalid values and normalizes per-layer customization', () => {

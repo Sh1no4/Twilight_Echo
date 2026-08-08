@@ -31,6 +31,8 @@ let likedSongIdListCache = null
 let cachedUserId = null
 let likedIdsFreshAt = 0
 let likedIdsRefreshInFlight = null
+let likedIdsRefreshRetryAt = 0
+let likedIdsRevision = 0
 const LIKED_IDS_REFRESH_TTL_MS = 60_000
 const LIKED_IDS_REFRESH_FAIL_BACKOFF_MS = 15_000
 let personalFmSeenSongIds = new Set()
@@ -206,6 +208,8 @@ function resetCaches() {
   cachedUserId = null
   likedIdsFreshAt = 0
   likedIdsRefreshInFlight = null
+  likedIdsRefreshRetryAt = 0
+  likedIdsRevision += 1
   personalFmSeenSongIds = new Set()
   likedSongIds = new Set()
   ownedPlaylistIds = new Set()
@@ -1123,10 +1127,10 @@ async function fetchLikedTracks(force = false) {
   if (ids.length === 0) {
     likedTracksCache = []
     likedSongIdListCache = []
-    likedSongIds = new Set()
+    replaceLikedSongIds([])
     return []
   }
-  likedSongIds = new Set(ids)
+  replaceLikedSongIds(ids)
 
   const songs = await fetchSongDetailsByIds(ids, 'liked songs')
 
@@ -1214,7 +1218,7 @@ async function fetchLikedTrackIds(force = false) {
       )
       const ids = getPlaylistTrackIds(detailData)
       likedSongIdListCache = ids
-      likedSongIds = new Set(ids)
+      replaceLikedSongIds(ids)
       return ids
     }
   } catch (error) {
@@ -1231,7 +1235,7 @@ async function fetchLikedTrackIds(force = false) {
     })
     const ids = getLikelistIds(data)
     if (ids.length > 0) {
-      likedSongIds = new Set(ids)
+      replaceLikedSongIds(ids)
       return ids
     }
   } catch (error) {
@@ -1239,7 +1243,7 @@ async function fetchLikedTrackIds(force = false) {
   }
 
   likedSongIdListCache = []
-  likedSongIds = new Set()
+  replaceLikedSongIds([])
   return []
 }
 
@@ -2049,14 +2053,15 @@ async function followUser(userId, follow, requestContext) {
 async function likeTrack(songId, like, requestContext) {
   const updateLikedState = () => {
     if (like) {
-      likedSongIds = new Set([...likedSongIds, Number(songId)])
+      replaceLikedSongIds([...likedSongIds, Number(songId)])
     } else {
       const next = new Set(likedSongIds)
       next.delete(Number(songId))
-      likedSongIds = next
+      replaceLikedSongIds(next)
     }
     // 本地刚完成的点赞/取消是权威状态，避免紧接着的刷新把它冲掉。
     likedIdsFreshAt = Date.now()
+    likedIdsRefreshRetryAt = 0
   }
   return runIdempotentProviderWrite(
     'likeTrack',
@@ -2073,8 +2078,10 @@ async function likeTrack(songId, like, requestContext) {
 
 async function refreshLikedIdsIfStale() {
   const now = Date.now()
+  if (now < likedIdsRefreshRetryAt) return
   if (now - likedIdsFreshAt < LIKED_IDS_REFRESH_TTL_MS) return
   if (likedIdsRefreshInFlight) return likedIdsRefreshInFlight
+  const refreshRevision = likedIdsRevision
 
   likedIdsRefreshInFlight = (async () => {
     try {
@@ -2084,13 +2091,17 @@ async function refreshLikedIdsIfStale() {
         label: 'liked ids refresh'
       })
       const ids = getLikelistIds(data)
+      if (refreshRevision !== likedIdsRevision) return
       // 空列表同样是权威结果（用户当前没有任何喜欢的歌曲）。
-      likedSongIds = new Set(ids)
+      replaceLikedSongIds(ids)
       likedIdsFreshAt = Date.now()
+      likedIdsRefreshRetryAt = 0
       cachedUserId = userId
     } catch (error) {
       getContext().logger.warn(`网易云喜欢状态刷新失败，回退到本地缓存：${getErrorMessage(error)}`)
-      likedIdsFreshAt = now + LIKED_IDS_REFRESH_FAIL_BACKOFF_MS
+      if (refreshRevision === likedIdsRevision) {
+        likedIdsRefreshRetryAt = now + LIKED_IDS_REFRESH_FAIL_BACKOFF_MS
+      }
     } finally {
       likedIdsRefreshInFlight = null
     }
@@ -2233,9 +2244,14 @@ async function removeTracksFromPlaylist(playlistId, trackIds, requestContext) {
 }
 
 function syncLikedIds(tracks) {
-  likedSongIds = new Set(
+  replaceLikedSongIds(
     tracks.map((track) => Number(track.ncmSongId)).filter((id) => Number.isFinite(id) && id > 0)
   )
+}
+
+function replaceLikedSongIds(ids) {
+  likedSongIds = new Set(ids)
+  likedIdsRevision += 1
 }
 
 // ── 听歌排行 (user/record) ──────────────────────────────────────────

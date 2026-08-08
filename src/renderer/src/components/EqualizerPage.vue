@@ -1571,12 +1571,11 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
                   vector-effect="non-scaling-stroke"
                 />
                 <path
-                  v-for="bandPath in
-                    responseView === 'dsp'
-                      ? bandResponsePaths
-                      : showIndividualFilters
-                        ? headphoneBandResponsePaths
-                        : []"
+                  v-for="bandPath in responseView === 'dsp'
+                    ? bandResponsePaths
+                    : showIndividualFilters
+                      ? headphoneBandResponsePaths
+                      : []"
                   :key="`${responseView}-band-curve-${bandPath.index}`"
                   class="equalizer-band-line"
                   :d="bandPath.path"
@@ -1591,7 +1590,9 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
                   vector-effect="non-scaling-stroke"
                 />
                 <path
-                  v-if="responseView === 'headphone' && showCorrectedResponse && correctedAcousticPath"
+                  v-if="
+                    responseView === 'headphone' && showCorrectedResponse && correctedAcousticPath
+                  "
                   class="equalizer-corrected-acoustic-line"
                   :d="correctedAcousticPath"
                   fill="none"
@@ -1797,7 +1798,9 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
             :target-response-path="targetResponsePath"
             :combined-filter-path="combinedFilterPath"
             :corrected-acoustic-path="correctedAcousticPath"
-            :band-response-paths="responseView === 'headphone' ? headphoneBandResponsePaths : bandResponsePaths"
+            :band-response-paths="
+              responseView === 'headphone' ? headphoneBandResponsePaths : bandResponsePaths
+            "
             :show-measured-source="showMeasuredSource"
             :show-target-response="showTargetResponse"
             :show-individual-filters="showIndividualFilters"

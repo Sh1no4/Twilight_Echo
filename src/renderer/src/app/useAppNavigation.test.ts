@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const { useAppNavigation } = (await import(
@@ -117,6 +118,12 @@ test('login page can open with an initial streaming provider', () => {
   assert.equal(navigation.showStreamingPage.value, true)
   assert.equal(navigation.loginInitialProviderId.value, null)
   assert.equal(navigation.loginPageMode.value, 'login')
+})
+
+test('login page hides the title bar start actions', () => {
+  const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
+
+  assert.match(appSource, /:hide-start="showThemeStudioPage \|\| showLoginPage"/)
 })
 
 test('login page can open directly in profile mode for a provider', () => {

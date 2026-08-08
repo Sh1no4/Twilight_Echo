@@ -108,7 +108,10 @@ test('headphone curves have independent accessible visibility controls in both E
     assert.match(source, new RegExp(`:aria-pressed="${state}"`))
   }
   assert.match(source, /@toggle-headphone-curve="toggleHeadphoneCurve"/)
-  assert.match(source, /:band-response-paths="responseView === 'headphone' \? headphoneBandResponsePaths : bandResponsePaths"/)
+  assert.match(
+    source,
+    /:band-response-paths="\s*responseView === 'headphone' \? headphoneBandResponsePaths : bandResponsePaths\s*"/
+  )
 })
 
 test('scene EQ keeps OPRA parameters but obeys DSP and equalizer bypass switches', () => {

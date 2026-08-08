@@ -1,9 +1,10 @@
 #include "QueueManager.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cctype>
-#include <charconv>
 #include <cmath>
+#include <cstdlib>
 #include <numeric>
 #include <sstream>
 
@@ -151,6 +152,15 @@ std::optional<std::string> extractStringField(const std::string& object, const s
   return std::nullopt;
 }
 
+std::optional<double> parseJsonNumber(const char* begin, const char* end) {
+  const std::string value(begin, end);
+  char* parsedEnd = nullptr;
+  errno = 0;
+  const double parsed = std::strtod(value.c_str(), &parsedEnd);
+  if (errno == ERANGE || parsedEnd != value.c_str() + value.size()) return std::nullopt;
+  return parsed;
+}
+
 std::optional<double> extractNumberField(const std::string& object, const std::string& key) {
   const std::string marker = "\"" + key + "\"";
   size_t pos = object.find(marker);
@@ -171,10 +181,7 @@ std::optional<double> extractNumberField(const std::string& object, const std::s
   }
   if (end == pos) return std::nullopt;
 
-  double value = 0.0;
-  const auto result = std::from_chars(object.data() + pos, object.data() + end, value);
-  if (result.ec != std::errc()) return std::nullopt;
-  return value;
+  return parseJsonNumber(object.data() + pos, object.data() + end);
 }
 
 std::optional<size_t> findTopLevelFieldValue(const std::string& object, const std::string& key) {
@@ -234,13 +241,12 @@ std::optional<double> extractTopLevelNumberField(const std::string& object, cons
     ++end;
   }
   if (end == *valueStart) return std::nullopt;
-  double value = 0.0;
-  const auto result = std::from_chars(object.data() + *valueStart, object.data() + end, value);
-  if (result.ec != std::errc() || result.ptr != object.data() + end) return std::nullopt;
+  const auto value = parseJsonNumber(object.data() + *valueStart, object.data() + end);
+  if (!value) return std::nullopt;
   size_t delimiter = end;
   while (delimiter < object.size() && std::isspace(static_cast<unsigned char>(object[delimiter]))) ++delimiter;
   if (delimiter >= object.size() || (object[delimiter] != ',' && object[delimiter] != '}')) return std::nullopt;
-  return value;
+  return *value;
 }
 
 std::optional<std::string> extractTopLevelObjectField(const std::string& object, const std::string& key) {

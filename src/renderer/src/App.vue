@@ -674,7 +674,7 @@ const titleSurface = computed<TitleSurface>(() => {
       <TitleBar
         :glass="showPlayingPage"
         :streaming="showStreamingPage && !showPlayingPage"
-        :hide-start="showThemeStudioPage"
+        :hide-start="showThemeStudioPage || showLoginPage"
         :title-surface="titleSurface"
         :menu-open="titleMenuOpen"
         @toggle-menu="toggleMenu"

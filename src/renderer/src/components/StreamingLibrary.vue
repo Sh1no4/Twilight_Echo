@@ -903,6 +903,25 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   gap: 24px;
 }
 
+@media (max-width: 900px) {
+  .playlist-grid {
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 18px;
+  }
+
+  .glass-card {
+    padding: 24px;
+  }
+
+  .profile-info h1 {
+    font-size: 24px;
+  }
+
+  .favorites-info h2 {
+    font-size: 22px;
+  }
+}
+
 .playlist-item {
   display: flex;
   align-items: center;
@@ -1234,6 +1253,28 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 }
 
 @media (max-width: 720px) {
+  .playlist-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .glass-card {
+    padding: 20px;
+  }
+
+  .playlist-item-title {
+    font-size: 14px;
+  }
+
+  .playlist-item-count {
+    font-size: 12px;
+  }
+
+  .playlist-item-cover {
+    width: 52px;
+    height: 52px;
+  }
+
   .profile-card,
   .favorites-card,
   .feature-card {

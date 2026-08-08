@@ -808,8 +808,7 @@ export function normalizeAudioProcessingSettings(
     settings?.dsdOutputMode === 'auto' ||
     settings?.dsdOutputMode === 'pcm' ||
     settings?.dsdOutputMode === 'dop' ||
-    settings?.dsdOutputMode === 'native' ||
-    settings?.dsdOutputMode === 'foo_dsd_asio'
+    settings?.dsdOutputMode === 'native'
       ? settings.dsdOutputMode
       : settings?.dsdToPcm === true
         ? 'pcm'

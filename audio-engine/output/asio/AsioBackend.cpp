@@ -29,7 +29,6 @@ int bitDepthForFormat(AudioSampleFormat format) {
     case AudioSampleFormat::DsdInt8Lsb1:
     case AudioSampleFormat::DsdInt8Msb1:
     case AudioSampleFormat::DsdInt8Ner8:
-    case AudioSampleFormat::DsdInt32LsbPacked:
       return 1;
     case AudioSampleFormat::Int16Interleaved:
       return 16;
@@ -83,35 +82,6 @@ bool sameNativeDsdStream(const AudioFormat& requested, const AudioFormat& actual
   return isDsdSampleFormat(requested.sampleFormat) && isDsdSampleFormat(actual.sampleFormat) &&
          requested.sampleRate == actual.sampleRate && requested.channelCount == actual.channelCount &&
          effectivePcmBitDepth(requested) == 1 && effectivePcmBitDepth(actual) == 1;
-}
-
-bool isFiiOAsioDevice(const AsioDeviceInfo& device) {
-  std::string identity = device.name + " " + device.driverName;
-  std::transform(identity.begin(), identity.end(), identity.begin(), [](unsigned char value) {
-    return static_cast<char>(std::tolower(value));
-  });
-  return identity.find("fiio") != std::string::npos;
-}
-
-bool isFooDsdAsioSelector(const std::string& value) {
-  std::string normalized = value;
-  std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char character) {
-    return static_cast<char>(std::tolower(character));
-  });
-  return normalized == "foo_dsd_asio" || normalized == "asio:foo_dsd_asio" ||
-         normalized == "foo-dsd-asio" || normalized == "asio:foo-dsd-asio";
-}
-
-bool isFooDsdAsioDevice(const AsioDeviceInfo& device) {
-  std::string identity = device.name + " " + device.driverName + " " + device.id;
-  std::transform(identity.begin(), identity.end(), identity.begin(), [](unsigned char value) {
-    return static_cast<char>(std::tolower(value));
-  });
-  return identity.find("foo_dsd_asio") != std::string::npos || identity.find("foo-dsd-asio") != std::string::npos;
-}
-
-bool isFiiOPackedDsd(const AudioFormat& format) {
-  return format.sampleFormat == AudioSampleFormat::DsdInt32LsbPacked;
 }
 
 void appendDecimal(std::string& output, uint64_t value) {
@@ -333,7 +303,7 @@ NativeDsdRuntimeFacts buildAsioNativeDsdRuntimeFacts(
   NativeDsdRuntimeFacts facts;
   facts.requestedDsdRate = requestedFormat.sampleRate >= 2822400 ? requestedFormat.sampleRate : 0;
   facts.channelCount = requestedFormat.channelCount;
-  facts.explicitlyCapable = device.nativeDsdCapable || isFiiOPackedDsd(requestedFormat);
+  facts.explicitlyCapable = device.nativeDsdCapable;
   facts.advertisedSampleRates = device.nativeDsdSampleRates;
 
   if (facts.requestedDsdRate <= 0) {
@@ -348,14 +318,14 @@ NativeDsdRuntimeFacts buildAsioNativeDsdRuntimeFacts(
     return facts;
   }
 
-  if (device.nativeDsdCapable && !isFiiOPackedDsd(requestedFormat) && !device.nativeDsdSampleRates.empty() &&
+  if (device.nativeDsdCapable && !device.nativeDsdSampleRates.empty() &&
       !containsSampleRate(device.nativeDsdSampleRates, facts.requestedDsdRate)) {
     facts.state = NativeDsdRuntimeFactState::Mismatch;
     facts.reason = "ASIO driver did not advertise the requested Native DSD rate";
     return facts;
   }
 
-  if (device.nativeDsdCapable && !isFiiOPackedDsd(requestedFormat) && !device.nativeDsdSampleFormats.empty() &&
+  if (device.nativeDsdCapable && !device.nativeDsdSampleFormats.empty() &&
       !containsSampleFormat(device.nativeDsdSampleFormats, requestedFormat.sampleFormat)) {
     facts.state = NativeDsdRuntimeFactState::Mismatch;
     facts.reason = "ASIO driver did not advertise the requested Native DSD sample type";
@@ -407,11 +377,7 @@ NativeDsdRuntimeFacts buildAsioNativeDsdRuntimeFacts(
   }
 
   facts.state = NativeDsdRuntimeFactState::Proven;
-  facts.reason = isFooDsdAsioDevice(device)
-                     ? "foo_dsd_asio proxy Native DSD stream started with a matching runtime rate"
-                     : isFiiOPackedDsd(actualFormat)
-                     ? "FiiO ASIO packed Native DSD stream started at DSD rate / 32"
-                     : requestedFormat.sampleFormat == actualFormat.sampleFormat
+  facts.reason = requestedFormat.sampleFormat == actualFormat.sampleFormat
                      ? "ASIO Native DSD stream started with a matching runtime rate"
                      : "ASIO Native DSD stream started with a matching rate and a driver-selected wire sample type";
   return facts;
@@ -538,10 +504,8 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   }
 
   const auto deviceIt = std::find_if(devices.begin(), devices.end(), [&](const AsioDeviceInfo& device) {
-    const bool proxySelector = isFooDsdAsioSelector(deviceId);
     return deviceId.empty() || deviceId == "auto" || device.id == deviceId || device.name == deviceId ||
-           device.driverName == deviceId || ("asio:" + device.driverName) == deviceId ||
-           (proxySelector && isFooDsdAsioDevice(device));
+           device.driverName == deviceId || ("asio:" + device.driverName) == deviceId;
   });
   if (deviceIt == devices.end()) {
     if (error) *error = "无法找到请求的 ASIO 设备：" + deviceId;
@@ -575,20 +539,11 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
     outputInfo_.diagnostics = diagnostics_;
     return false;
   }
-  if (isNativeDsdRequest(requestedFormat) && isFiiOAsioDevice(*deviceIt)) {
-    // FiiO's Windows driver does not implement ASIOFuture(kFutureSetIoFormat)
-    // for Native DSD. It accepts the raw DSD stream as four bytes per ASIO
-    // sample at DSD-rate/32 while reporting ordinary ASIOSTInt32LSB PCM.
-    selected = requestedFormat;
-    selected.sampleFormat = AudioSampleFormat::DsdInt32LsbPacked;
-    selected.bitDepth = 1;
-  }
-
   deviceInfo_ = *deviceIt;
   selected.channelCount = routedOutputChannels(deviceInfo_, requestedFormat.channelCount);
   openConfig_.deviceId = deviceIt->id;
   openConfig_.format = selected;
-  openConfig_.bufferSizeFrames = chooseBufferSize(deviceInfo_);
+  openConfig_.bufferSizeFrames = chooseBufferSize(deviceInfo_, selected);
 
   AsioOpenResult result;
   if (!host_->open(openConfig_, &result, error)) {
@@ -682,7 +637,7 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   applyNativeDsdFactsToOutputInfo(&outputInfo_, nativeDsdRuntimeFacts_);
   outputInfo_.diagnostics = diagnostics_;
   if (isNativeDsdRequest(openConfig_.format)) {
-    diagnostics_.dsdTransport = isFooDsdAsioDevice(deviceInfo_) ? "foo_dsd_asio" : "asio-native";
+    diagnostics_.dsdTransport = "asio-native";
     diagnostics_.requestedWireFormat = sampleFormatToString(openConfig_.format.sampleFormat);
     diagnostics_.actualWireFormat = sampleFormatToString(outputFormat_.sampleFormat);
     diagnostics_.containerBits = static_cast<int>(audioSampleFormatBytes(outputFormat_.sampleFormat) * 8);
@@ -875,14 +830,6 @@ std::string AsioBackend::deviceName() const {
   return deviceName_;
 }
 
-bool AsioBackend::supportsDsdProxyRoute() const {
-  if (!host_) return false;
-  const auto devices = host_->enumerateDevices();
-  return std::any_of(devices.begin(), devices.end(), [](const AsioDeviceInfo& device) {
-    return isFooDsdAsioDevice(device);
-  });
-}
-
 bool AsioBackend::chooseFormat(const AsioDeviceInfo& device, const AudioFormat& requestedFormat, AudioFormat* selected) const {
   if (!selected || requestedFormat.sampleRate <= 0 || requestedFormat.channelCount <= 0) return false;
 
@@ -969,14 +916,26 @@ bool AsioBackend::chooseFormat(const AsioDeviceInfo& device, const AudioFormat& 
   return true;
 }
 
-long AsioBackend::chooseBufferSize(const AsioDeviceInfo& device) const {
-  const long preferred = device.preferredBufferSize > 0 ? device.preferredBufferSize : 512;
-  const long minSize = device.minBufferSize > 0 ? device.minBufferSize : preferred;
-  const long maxSize = device.maxBufferSize > 0 ? device.maxBufferSize : preferred;
+long AsioBackend::chooseBufferSize(const AsioDeviceInfo& device, const AudioFormat& requestedFormat) const {
+  const bool nativeDsd = isNativeDsdRequest(requestedFormat);
+  const long defaultPreferred = nativeDsd ? 2048 : 512;
+  const long preferred = device.preferredBufferSize > 0 ? device.preferredBufferSize : defaultPreferred;
+  const bool hasBufferRange = device.minBufferSize > 0 && device.maxBufferSize >= device.minBufferSize;
+  const long minSize = hasBufferRange ? device.minBufferSize : preferred;
+  const long maxSize = hasBufferRange ? device.maxBufferSize : preferred;
   const long granularity = device.bufferGranularity;
-  if (outputConfig_.preferredBufferSize == 0) return preferred;
+  if (outputConfig_.preferredBufferSize == 0) {
+    if (!hasBufferRange) return nativeDsd ? std::max(preferred, 2048L) : preferred;
+    const long automaticTarget = nativeDsd ? std::max(preferred, 2048L) : preferred;
+    return std::clamp(automaticTarget, minSize, maxSize);
+  }
 
   const long requested = static_cast<long>(outputConfig_.preferredBufferSize);
+  // ASIO device enumeration does not expose the session's buffer range on
+  // Windows. Preserve an explicit setting so the session can validate it
+  // against the driver's authoritative getBufferSize() result.
+  if (!hasBufferRange) return requested;
+
   auto legalize = [&](long value) {
     value = std::clamp(value, minSize, maxSize);
     if (granularity > 0) {

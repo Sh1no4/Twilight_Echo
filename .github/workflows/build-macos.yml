@@ -1,0 +1,86 @@
+name: Build macOS packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-package-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS ${{ matrix.arch }} (dmg / zip)
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: macos-13
+          - arch: arm64
+            runner: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install FFmpeg
+        run: brew install ffmpeg
+
+      - name: Build macOS audio engine (Node-API bridge)
+        run: |
+          cmake -S audio-engine -B audio-engine/build/default \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DTAE_BUILD_NAPI=ON \
+            -DTAE_BUILD_TESTS=OFF
+          cmake --build audio-engine/build/default --config Release
+          test -f audio-engine/build/default/libtwilight-audio-engine.dylib
+          test -f audio-engine/build/default/twilight_audio_node.node
+
+      - name: Stage native audio engine
+        run: node scripts/stage-audio-engine.cjs --build-dir audio-engine/build/default
+
+      - name: Build and package macOS target
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          pnpm run build
+          pnpm exec electron-builder --mac --${{ matrix.arch }} --config electron-builder.yml --publish never
+
+      - name: Verify staged native engine in the packaged app
+        run: |
+          find dist -path '*/TwilightEcho.app/Contents/Resources/audio-engine/libtwilight-audio-engine.dylib' -type f -print -quit | grep -q .
+          find dist -path '*/TwilightEcho.app/Contents/Resources/audio-engine/twilight_audio_node.node' -type f -print -quit | grep -q .
+
+      - name: Upload macOS packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: twilight-echo-macos-${{ matrix.arch }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error

@@ -49,6 +49,18 @@ test('Windows packaging strips copied native binaries while unsigned releases st
   )
 })
 
+test('Linux packaging fails closed when native engine artifacts are missing', () => {
+  const afterPack = read('scripts/after-pack-linux.cjs')
+  assert.match(
+    afterPack,
+    /const runtimeFiles = \['libtwilight-audio-engine\.so', 'twilight_audio_node\.node'\]/
+  )
+  assert.match(
+    afterPack,
+    /if \(!existsSync\(source\)\) \{\s*throw new Error\(`\[after-pack-linux\] Missing required native artifact:/
+  )
+})
+
 test('release packaging writes an SHA-256 companion file for the installer', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-release-checksum-'))
   try {

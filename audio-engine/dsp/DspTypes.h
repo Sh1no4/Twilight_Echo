@@ -25,8 +25,7 @@ enum class DsdOutputMode {
   Auto,
   Pcm,
   Dop,
-  Native,
-  FooDsdAsio
+  Native
 };
 
 enum class SacdProgramMode {

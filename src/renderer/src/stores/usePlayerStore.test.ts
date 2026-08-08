@@ -489,22 +489,27 @@ test('renderer createPlayableUrl accepts twilight-media grant URLs without local
   )
 })
 
-test('resolved streaming targets are patched back into restored queues', () => {
+test('only the active streaming load commits its resolved target into shared track state', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
-  const loadAndPlay = source.match(/async function loadAndPlay[\s\S]*?\n}/)?.[0] ?? ''
+  const resolvePlayTarget = extractInternalFunctionBody(source, 'resolvePlayTarget')
+  const loadAndPlay = extractInternalFunctionBody(source, 'loadAndPlay')
+  const resolvedAt = loadAndPlay.indexOf('const playTarget = await resolvePlayTarget(track)')
+  const activeCheckAt = loadAndPlay.indexOf('if (!isActiveLoad(loadToken, track))', resolvedAt)
+  const commitAt = loadAndPlay.indexOf('track.streamUrl = playTarget', resolvedAt)
+  const patchAt = loadAndPlay.indexOf('patchTrackInQueues(track)', resolvedAt)
 
-  assert.match(loadAndPlay, /const playTarget = await resolvePlayTarget\(track\)/)
-  assert.match(loadAndPlay, /patchTrackInQueues\(track\)/)
-  assert.ok(
-    loadAndPlay.indexOf('patchTrackInQueues(track)') >
-      loadAndPlay.indexOf('resolvePlayTarget(track)'),
-    'queue should be patched after stream URL resolution mutates the track'
-  )
+  assert.doesNotMatch(resolvePlayTarget, /track\.streamUrl\s*=/)
+  assert.doesNotMatch(resolvePlayTarget, /track\.streamQuality\s*=(?!=)/)
+  assert.ok(resolvedAt >= 0, 'stream URL resolution should remain in loadAndPlay')
+  assert.ok(activeCheckAt > resolvedAt, 'resolved streams require a post-resolution generation check')
+  assert.ok(commitAt > activeCheckAt, 'stale stream resolutions must not mutate the shared track')
+  assert.ok(patchAt > commitAt, 'queue snapshots should update only after the active target commits')
 })
 
 test('NetEase streams re-resolve after a quality preference change', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const resolvePlayTarget = extractInternalFunctionBody(source, 'resolvePlayTarget')
+  const loadAndPlay = extractInternalFunctionBody(source, 'loadAndPlay')
 
   assert.match(
     resolvePlayTarget,
@@ -515,7 +520,10 @@ test('NetEase streams re-resolve after a quality preference change', () => {
     resolvePlayTarget,
     /source === 'ncm' \? \{ quality: ncmPlaybackQuality \} : undefined/
   )
-  assert.match(resolvePlayTarget, /track\.streamQuality = ncmPlaybackQuality/)
+  assert.match(
+    loadAndPlay,
+    /if \(getTrackSource\(track\) === 'ncm'\) \{\s*track\.streamQuality = appSettings\.value\.ncmPlaybackQuality/
+  )
   assert.match(resolvePlayTarget, /当前网易云账号没有可播放的音质/)
 })
 
@@ -525,10 +533,13 @@ test('cached playback paths are validated before reuse after a cache clear', () 
 
   // NCM local cache paths must not be replayed blindly: the managed music cache
   // may have been cleared, so a missing file must fall back to the provider.
+  // loadAndPlay commits the resolved target, so resolvePlayTarget itself never
+  // writes streamUrl (see the doesNotMatch assertion below).
   assert.match(
     resolvePlayTarget,
-    /if \(await isUsableLocalPlaybackFile\(track\.streamUrl\)\) return track\.streamUrl[\s\S]*?track\.streamUrl = ''/
+    /if \(await isUsableLocalPlaybackFile\(track\.streamUrl\)\) return track\.streamUrl/
   )
+  assert.doesNotMatch(resolvePlayTarget, /track\.streamUrl\s*=/)
   // Network source cache paths follow the same rule before a lazy re-download.
   assert.match(
     resolvePlayTarget,
@@ -607,6 +618,11 @@ test('player store prepares native queues before loading or synchronizing them',
   )
   assert.match(loadAndPlay, /const preparedQueue = await preparePlayerNativeQueue\(/)
   assert.match(loadAndPlay, /isAudioFileAuthorized: window\.api\.fs\.isAudioFileAuthorized/)
+  assert.match(
+    loadAndPlay,
+    /if \(!isActiveLoad\(loadToken, track\)\) \{[\s\S]*?return[\s\S]*?\}\s*await window\.api\.audioEngine\.loadQueue/,
+    'an old async queue preparation must not reach native LoadQueue'
+  )
   assert.match(loadAndPlay, /preparedQueue\.items,\s*preparedQueue\.startIndex/)
   assert.match(loadAndPlay, /nativeQueueDelegated = preparedQueue\.delegated/)
   assert.match(
@@ -1587,11 +1603,14 @@ test('heart mode is gated to the liked NCM playlist and drives smart-list playba
   const playerSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const cyclePlayMode = extractInternalFunctionBody(playerSource, 'cyclePlayMode')
   const setPlayModeInternal = extractInternalFunctionBody(playerSource, 'setPlayModeInternal')
+  const enterHeartMode = extractInternalFunctionBody(playerSource, 'enterHeartMode')
+  const refillHeartQueue = extractInternalFunctionBody(playerSource, 'refillHeartQueue')
   const next = extractInternalFunctionBody(playerSource, 'next')
   const advanceAfterPlaybackEnded = extractInternalFunctionBody(
     playerSource,
     'advanceAfterPlaybackEnded'
   )
+  const advanceHeartPlayback = extractInternalFunctionBody(playerSource, 'advanceHeartPlayback')
   const syncNativeQueueState = extractInternalFunctionBody(playerSource, 'syncNativeQueueState')
 
   // 可用性只取决于“我喜欢的音乐”歌单上下文 + 网易云流媒体曲目。
@@ -1605,8 +1624,16 @@ test('heart mode is gated to the liked NCM playlist and drives smart-list playba
     /heartModeAvailable\.value \? modes : modes\.filter\(\(mode\) => mode !== 'heart'\)/
   )
   assert.match(setPlayModeInternal, /if \(mode === 'heart'\) \{[\s\S]*if \(!heartModeAvailable\.value\) return/)
+  assert.match(playerSource, /let heartModeFetchRequest: Promise<number> \| null = null/)
   assert.match(playerSource, /function fetchHeartRecommendations[\s\S]*fetchIntelligenceList/)
   assert.match(playerSource, /function enterHeartMode[\s\S]*fetchHeartRecommendations/)
+  assert.match(enterHeartMode, /commitHeartQueue\(\[seed\]\)/)
+  assert.match(refillHeartQueue, /if \(heartModeFetchRequest\) return heartModeFetchRequest/)
+  assert.match(refillHeartQueue, /heartModeFetchRequest = request/)
+  assert.match(
+    advanceHeartPlayback,
+    /if \(playMode\.value !== 'heart'\) \{[\s\S]*await advanceAfterPlaybackEnded\(\)/
+  )
   assert.match(next, /if \(playMode\.value === 'heart'\) \{[\s\S]*advanceHeartPlayback\(\)/)
   assert.match(advanceAfterPlaybackEnded, /if \(playMode\.value === 'heart'\) \{[\s\S]*advanceHeartPlayback\(\)/)
   // 心动模式边界由渲染层处理：原生引擎只加载当前曲目且不代管队列。

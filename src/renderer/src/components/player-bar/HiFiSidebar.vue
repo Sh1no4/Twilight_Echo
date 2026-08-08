@@ -75,6 +75,7 @@ const props = defineProps<{
   originalLayerSelection: LyricLayerSourceSelection
   translationLayerSelection: LyricLayerSourceSelection
   showTranslation: boolean
+  lyricHighlightOn: boolean
   lyricControlsPending?: boolean
   playerBarButtons: Array<{
     id: string
@@ -137,6 +138,7 @@ const emit = defineEmits<{
     selection: LyricLayerSourceSelection
   ]
   toggleTranslationVisibility: []
+  toggleLyricHighlight: []
   runExtension: [command?: string]
   cyclePlaybackRate: []
   toggleAbLoop: []
@@ -561,7 +563,9 @@ const deckAccentVars = computed(() => {
         <div class="deck-display-meta">
           <span class="deck-format-plate">{{ sourceQuality.format }}</span>
           <span class="deck-tier" :data-tone="sourceQuality.tone">{{ sourceQuality.badge }}</span>
-          <span class="deck-display-sub">{{ sourceQuality.depth }} · {{ sourceQuality.bitrate }}</span>
+          <span class="deck-display-sub"
+            >{{ sourceQuality.depth }} · {{ sourceQuality.bitrate }}</span
+          >
           <span class="deck-display-sub dim">{{ sourceQuality.source }}</span>
         </div>
       </div>
@@ -686,7 +690,9 @@ const deckAccentVars = computed(() => {
             <section class="deck-card">
               <div class="deck-card-label">
                 <span><em>03</em>SOURCE</span>
-                <span class="deck-chip" :data-tone="sourceQuality.tone">{{ sourceQuality.badge }}</span>
+                <span class="deck-chip" :data-tone="sourceQuality.tone">{{
+                  sourceQuality.badge
+                }}</span>
               </div>
               <div class="deck-spec-grid">
                 <div class="deck-spec">
@@ -762,9 +768,24 @@ const deckAccentVars = computed(() => {
                 </button>
               </div>
               <div class="deck-gapless" :data-tone="gaplessStatusTone">
-                <span v-if="audioProcessing.gapless && gaplessActive" class="deck-chip" data-tone="success">Active</span>
-                <span v-if="audioProcessing.gapless && preloadReady" class="deck-chip" data-tone="success">Preload</span>
-                <span v-if="audioProcessing.gapless && gaplessBlockedReason" class="deck-chip" data-tone="warning">Blocked</span>
+                <span
+                  v-if="audioProcessing.gapless && gaplessActive"
+                  class="deck-chip"
+                  data-tone="success"
+                  >Active</span
+                >
+                <span
+                  v-if="audioProcessing.gapless && preloadReady"
+                  class="deck-chip"
+                  data-tone="success"
+                  >Preload</span
+                >
+                <span
+                  v-if="audioProcessing.gapless && gaplessBlockedReason"
+                  class="deck-chip"
+                  data-tone="warning"
+                  >Blocked</span
+                >
                 <p class="deck-note">{{ gaplessStatusText }}</p>
               </div>
               <p class="deck-note">{{ HIFI_STATUS_COPY.gaplessNote }}</p>
@@ -998,18 +1019,15 @@ const deckAccentVars = computed(() => {
               </div>
               <label class="deck-field">
                 <span>Dither</span>
-                <select
-                  class="deck-select"
-                  :value="dspOutputStage.dither"
-                  @change="onDitherChange"
-                >
+                <select class="deck-select" :value="dspOutputStage.dither" @change="onDitherChange">
                   <option v-for="option in ditherOptions" :key="option.value" :value="option.value">
                     {{ option.label }}
                   </option>
                 </select>
               </label>
               <p v-if="outputStageActive" class="deck-note warn">
-                采样率锁 / SRC / dither 启用时 outputPerfect=false（graph.outputStage，非 OutputConfig）。
+                采样率锁 / SRC / dither 启用时 outputPerfect=false（graph.outputStage，非
+                OutputConfig）。
               </p>
             </section>
           </section>
@@ -1327,7 +1345,9 @@ const deckAccentVars = computed(() => {
                   切换
                 </button>
               </div>
-              <p class="deck-note">循环切换 0.75x → 1x → 1.25x → 1.5x → 2x。非 1x 会关闭 bit-perfect。</p>
+              <p class="deck-note">
+                循环切换 0.75x → 1x → 1.25x → 1.5x → 2x。非 1x 会关闭 bit-perfect。
+              </p>
             </section>
 
             <section class="deck-card">
@@ -1373,7 +1393,9 @@ const deckAccentVars = computed(() => {
                   </button>
                 </div>
               </div>
-              <p class="deck-note">第一次点击设起点，第二次设终点并进入循环；可随时清除。直播流不支持。</p>
+              <p class="deck-note">
+                第一次点击设起点，第二次设终点并进入循环；可随时清除。直播流不支持。
+              </p>
             </section>
 
             <section class="deck-card">
@@ -1464,8 +1486,14 @@ const deckAccentVars = computed(() => {
               </p>
               <ul v-else class="deck-bookmark-list">
                 <li v-for="bm in bookmarkList" :key="bm.id" class="deck-bookmark-item">
-                  <button type="button" class="deck-bookmark-jump" @click="emit('jumpBookmark', bm)">
-                    <span class="deck-bookmark-time">{{ formatBookmarkTime(bm.positionSeconds) }}</span>
+                  <button
+                    type="button"
+                    class="deck-bookmark-jump"
+                    @click="emit('jumpBookmark', bm)"
+                  >
+                    <span class="deck-bookmark-time">{{
+                      formatBookmarkTime(bm.positionSeconds)
+                    }}</span>
                     <template v-if="renamingBookmarkId === bm.id">
                       <input
                         v-model="renameDraftValue"
@@ -1573,7 +1601,9 @@ const deckAccentVars = computed(() => {
                   :disabled="!currentTrack || lyricsReloading"
                   @click="emit('reloadLyrics', 'auto')"
                 >
-                  <i :class="lyricsReloading ? 'pi pi-spin pi-spinner' : 'ph ph-arrows-clockwise'"></i>
+                  <i
+                    :class="lyricsReloading ? 'pi pi-spin pi-spinner' : 'ph ph-arrows-clockwise'"
+                  ></i>
                   <span>
                     <strong>自动匹配</strong>
                     <em>本地优先</em>
@@ -1607,6 +1637,24 @@ const deckAccentVars = computed(() => {
             </section>
 
             <section class="deck-card">
+              <div class="deck-module-row">
+                <div class="deck-module-copy">
+                  <strong>当前歌词高光</strong>
+                  <span>{{ lyricHighlightOn ? '紧贴字形的柔和高光' : '当前关闭' }}</span>
+                </div>
+                <button
+                  type="button"
+                  class="deck-switch"
+                  :class="{ active: lyricHighlightOn }"
+                  role="switch"
+                  :aria-checked="lyricHighlightOn"
+                  aria-label="当前歌词高光"
+                  :disabled="lyricControlsPending"
+                  @click="emit('toggleLyricHighlight')"
+                >
+                  <span class="deck-switch-knob"></span>
+                </button>
+              </div>
               <div class="deck-module-row">
                 <div class="deck-module-copy">
                   <strong>桌面歌词</strong>
@@ -1670,7 +1718,6 @@ const deckAccentVars = computed(() => {
     </div>
   </div>
 </template>
-
 
 <style scoped>
 /* ===== Signal Deck v2 — 应用原生设计体系（紫罗兰主色 / 白卡 / 石板灰） ===== */
@@ -1752,7 +1799,9 @@ button:disabled {
   border-radius: 50%;
   flex-shrink: 0;
   background: var(--d-faint);
-  transition: background 0.25s ease, box-shadow 0.25s ease;
+  transition:
+    background 0.25s ease,
+    box-shadow 0.25s ease;
 }
 
 .deck-led.on {
@@ -2041,11 +2090,15 @@ html[data-theme='dark'] .deck .deck-rate-num {
 }
 
 .deck-fade-enter-active {
-  transition: opacity 0.22s ease, transform 0.22s ease;
+  transition:
+    opacity 0.22s ease,
+    transform 0.22s ease;
 }
 
 .deck-fade-leave-active {
-  transition: opacity 0.14s ease, transform 0.14s ease;
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease;
 }
 
 .deck-fade-enter-from {
@@ -2345,7 +2398,9 @@ html[data-theme='dark'] .deck .deck-card {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  transition: border-color 0.2s ease, background 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease;
 }
 
 .deck-spec:hover {

@@ -19,12 +19,17 @@ using AsioSampleType = int32_t;
 using AsioIoFormatType = int32_t;
 
 inline constexpr AsioError kAsioOk = 0;
+inline constexpr AsioError kAsioSuccess = static_cast<AsioError>(0x3f4847a0U);
 inline constexpr AsioBool kAsioFalse = 0;
 inline constexpr AsioBool kAsioTrue = 1;
 inline constexpr int32_t kAsioAbiContractVersion = 2;
 
 constexpr bool asioBoolIsTrue(AsioBool value) {
   return value != kAsioFalse;
+}
+
+constexpr bool asioErrorIsSuccess(AsioError value) {
+  return value == kAsioOk || value == kAsioSuccess;
 }
 
 inline constexpr AsioSampleType kAsioSampleInt16Lsb = 16;

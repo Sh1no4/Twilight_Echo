@@ -144,7 +144,7 @@ function previewStyle(target: LyricsStyleTarget): Record<string, string> {
     result.textShadow = `0 3px ${Math.round(6 + intensity * 14)}px color-mix(in srgb, ${value.highlightColor} ${20 + intensity * 45}%, transparent)`
   }
   if (value.highlightEffect === 'glow') {
-    result.textShadow = `0 0 ${Math.round(8 + intensity * 22)}px color-mix(in srgb, ${value.highlightColor} ${24 + intensity * 56}%, transparent)`
+    result.textShadow = `0 0 1px color-mix(in srgb, ${value.highlightColor} 72%, transparent), 0 0 3px color-mix(in srgb, ${value.highlightColor} ${Math.round(18 + intensity * 22)}%, transparent)`
   }
   if (value.highlightEffect === 'outline') {
     result.webkitTextStroke = `${(0.3 + intensity * 1.2).toFixed(1)}px ${value.highlightColor}`

@@ -225,7 +225,7 @@ const playMode = ref<PlayMode>('sequential')
 const originalQueue = shallowRef<Track[]>([])
 const heartModeContext = ref<{ likedPlaylistId: number | null }>({ likedPlaylistId: null })
 let heartModeBaseQueue: Track[] = []
-let heartModeFetchInFlight = false
+let heartModeFetchRequest: Promise<number> | null = null
 let heartModeFetchGeneration = 0
 const HEART_MODE_REFILL_THRESHOLD = 3
 const HEART_MODE_REFILL_COUNT = 20
@@ -2736,9 +2736,9 @@ async function resolvePlayTarget(track: Track): Promise<string> {
     // Local cache path previously returned by the provider. The managed cache
     // may have been cleared since, so only reuse a path that still exists;
     // otherwise re-resolve through the provider, which re-fetches online and
-    // re-caches on demand.
+    // re-caches on demand. loadAndPlay commits the resolved target back onto
+    // the track, so no clearing is needed here.
     if (await isUsableLocalPlaybackFile(track.streamUrl)) return track.streamUrl
-    track.streamUrl = ''
   }
 
   await syncPluginProviders()
@@ -2753,8 +2753,6 @@ async function resolvePlayTarget(track: Track): Promise<string> {
     throw new Error(`Unable to resolve ${source} stream URL`)
   }
 
-  track.streamUrl = streamUrl
-  if (source === 'ncm') track.streamQuality = ncmPlaybackQuality
   return streamUrl
 }
 
@@ -3449,6 +3447,10 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
       releaseLoadIfOwned()
       return
     }
+    track.streamUrl = playTarget
+    if (getTrackSource(track) === 'ncm') {
+      track.streamQuality = appSettings.value.ncmPlaybackQuality
+    }
     patchTrackInQueues(track)
     nativeSourceToTrackId.set(playTarget, track.id)
     // resolvePlayTarget 只改写了传入的 track 对象，而 active currentTrack 是
@@ -3487,6 +3489,10 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         }
         for (const item of preparedQueue.items) {
           nativeSourceToTrackId.set(item.source, item.id)
+        }
+        if (!isActiveLoad(loadToken, track)) {
+          releaseLoadIfOwned()
+          return
         }
 
         await window.api.audioEngine.loadQueue(preparedQueue.items, preparedQueue.startIndex)
@@ -4507,17 +4513,12 @@ function setHeartModeContext(playlistId: number | null): void {
 function fetchHeartRecommendations(seedTrack: Track | null): Promise<Track[]> {
   const playlistId = heartModeContext.value.likedPlaylistId
   if (playlistId == null || !seedTrack?.ncmSongId) return Promise.resolve([])
-  return useNcmStore()
-    .fetchIntelligenceList({
-      songId: seedTrack.ncmSongId,
-      playlistId,
-      startSongId: seedTrack.ncmSongId,
-      count: HEART_MODE_REFILL_COUNT
-    })
-    .catch((error) => {
-      console.error('[心动模式] 获取智能播放列表失败:', error)
-      return []
-    })
+  return useNcmStore().fetchIntelligenceList({
+    songId: seedTrack.ncmSongId,
+    playlistId,
+    startSongId: seedTrack.ncmSongId,
+    count: HEART_MODE_REFILL_COUNT
+  })
 }
 
 function commitHeartQueue(nextQueue: Track[]): void {
@@ -4539,35 +4540,22 @@ function enterHeartMode(options: { persist?: boolean } = {}): void {
   heartModeBaseQueue = [...queue.value]
   heartModeFetchGeneration += 1
   const generation = heartModeFetchGeneration
-  heartModeFetchInFlight = true
   playMode.value = 'heart'
   rendererPlayModeBoundaryPending = false
-  void (async () => {
-    try {
-      const recommended = await fetchHeartRecommendations(seed)
-      if (generation !== heartModeFetchGeneration || playMode.value !== 'heart') return
-      const current = queue.value.find((item) => item.id === seed.id) ?? seed
-      const seen = new Set<string>([current.id])
-      const additions = recommended.filter((item) => {
-        if (!item.id || seen.has(item.id)) return false
-        seen.add(item.id)
-        return true
-      })
-      commitHeartQueue([current, ...additions])
-    } catch (error) {
-      if (generation !== heartModeFetchGeneration) return
-      console.error('[心动模式] 启动失败:', error)
+  commitHeartQueue([seed])
+  void refillHeartQueue(seed).then((added) => {
+    if (generation !== heartModeFetchGeneration || playMode.value !== 'heart') return
+    if (added === 0) {
+      console.error('[心动模式] 启动未返回推荐')
       exitHeartModeToSequential()
-    } finally {
-      if (generation === heartModeFetchGeneration) heartModeFetchInFlight = false
     }
-  })()
+  })
 }
 
 function exitHeartModeToSequential(): void {
   if (playMode.value !== 'heart') return
   heartModeFetchGeneration += 1
-  heartModeFetchInFlight = false
+  heartModeFetchRequest = null
   playMode.value = 'sequential'
   rendererPlayModeBoundaryPending = false
   if (heartModeBaseQueue.length > 0) {
@@ -4589,39 +4577,49 @@ function exitHeartModeToSequential(): void {
 function exitHeartModeForManualQueueReplacement(): void {
   if (playMode.value !== 'heart') return
   heartModeFetchGeneration += 1
-  heartModeFetchInFlight = false
+  heartModeFetchRequest = null
   playMode.value = 'sequential'
   rendererPlayModeBoundaryPending = false
   heartModeBaseQueue = []
 }
 
-async function refillHeartQueue(seedTrack: Track | null): Promise<void> {
-  if (playMode.value !== 'heart' || heartModeFetchInFlight) return
+async function refillHeartQueue(seedTrack: Track | null): Promise<number> {
+  if (playMode.value !== 'heart') return 0
+  if (heartModeFetchRequest) return heartModeFetchRequest
   const playlistId = heartModeContext.value.likedPlaylistId
-  if (playlistId == null || !seedTrack?.ncmSongId) return
-  heartModeFetchInFlight = true
+  if (playlistId == null || !seedTrack?.ncmSongId) return 0
   const generation = heartModeFetchGeneration
-  try {
-    const recommended = await fetchHeartRecommendations(seedTrack)
-    if (generation !== heartModeFetchGeneration || playMode.value !== 'heart') return
-    const knownIds = new Set(queue.value.map((item) => item.id))
-    const additions = recommended.filter((item) => item.id && !knownIds.has(item.id))
-    if (additions.length === 0) return
-    const snapshots = toPlaybackQueueSnapshots(additions)
-    queue.value = [...queue.value, ...snapshots]
-    originalQueue.value = [...originalQueue.value, ...snapshots]
-    if (queueIndex.value < 0) {
-      queueIndex.value = 0
-      const track = queue.value[0]
-      if (track) playQueueTrack(track)
+  const request = (async () => {
+    try {
+      const recommended = await fetchHeartRecommendations(seedTrack)
+      if (generation !== heartModeFetchGeneration || playMode.value !== 'heart') return 0
+      const knownIds = new Set(queue.value.map((item) => item.id))
+      const additions = recommended.filter((item) => item.id && !knownIds.has(item.id))
+      if (additions.length === 0) return 0
+      const snapshots = toPlaybackQueueSnapshots(additions)
+      queue.value = [...queue.value, ...snapshots]
+      originalQueue.value = [...originalQueue.value, ...snapshots]
+      if (queueIndex.value < 0) {
+        queueIndex.value = 0
+        const track = queue.value[0]
+        if (track) playQueueTrack(track)
+      }
+      persistPlaybackSessionAfterQueueMutation()
+      void queueNativeQueueStateSync().catch((error) => {
+        setAudioEngineError(error instanceof Error ? error.message : String(error))
+      })
+      return additions.length
+    } catch (error) {
+      if (generation === heartModeFetchGeneration) {
+        console.error('[心动模式] 获取智能播放列表失败:', error)
+      }
+      return 0
+    } finally {
+      if (generation === heartModeFetchGeneration) heartModeFetchRequest = null
     }
-    persistPlaybackSessionAfterQueueMutation()
-    void queueNativeQueueStateSync().catch((error) => {
-      setAudioEngineError(error instanceof Error ? error.message : String(error))
-    })
-  } finally {
-    if (generation === heartModeFetchGeneration) heartModeFetchInFlight = false
-  }
+  })()
+  heartModeFetchRequest = request
+  return request
 }
 
 function advanceHeartPlayback(): Promise<void> {
@@ -4637,8 +4635,11 @@ function advanceHeartPlayback(): Promise<void> {
     }
     return Promise.resolve()
   }
-  return refillHeartQueue(currentTrack.value).then(() => {
-    if (playMode.value !== 'heart') return
+  return refillHeartQueue(currentTrack.value).then(async () => {
+    if (playMode.value !== 'heart') {
+      await advanceAfterPlaybackEnded()
+      return
+    }
     const afterRefillIndex = queueIndex.value + 1
     if (afterRefillIndex >= 0 && afterRefillIndex < queue.value.length) {
       queueIndex.value = afterRefillIndex

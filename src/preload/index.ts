@@ -57,7 +57,6 @@ import type {
   NcmCloudTransferProgress,
   NcmCloudUploadResult,
   AppSettings,
-  FooDsdAsioPortableStatus,
   AudioEqPreset,
   ConvolverInfo,
   OpraCatalogStatus,
@@ -567,10 +566,6 @@ const api = {
     }
   },
   audioEngine: {
-    getFooDsdAsioPortableStatus: (): Promise<FooDsdAsioPortableStatus> =>
-      ipcRenderer.invoke('audioEngine:getFooDsdAsioPortableStatus'),
-    selectFooDsdAsioPortablePath: (): Promise<FooDsdAsioPortableStatus | null> =>
-      ipcRenderer.invoke('audioEngine:selectFooDsdAsioPortablePath'),
     loadQueue: (items: AudioEngineQueueItem[], startIndex?: number): Promise<void> =>
       ipcRenderer.invoke('audioEngine:loadQueue', items, startIndex),
     play: (filePath: string, startTime?: number): Promise<AudioEnginePlayResult> =>

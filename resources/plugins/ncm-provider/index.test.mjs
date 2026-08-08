@@ -1627,6 +1627,85 @@ test('isTrackLiked falls back to the cached liked set when likelist refresh fail
   }
 })
 
+test('in-flight liked refresh cannot overwrite a completed local like', async () => {
+  let releaseRefresh
+  let refreshStarted
+  const refreshGate = new Promise((resolve) => {
+    releaseRefresh = resolve
+  })
+  const refreshStartedGate = new Promise((resolve) => {
+    refreshStarted = resolve
+  })
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    if (url.pathname === '/login/status') {
+      return {
+        code: 200,
+        data: {
+          code: 200,
+          profile: { userId: 42, nickname: 'listener', avatarUrl: 'a.jpg', signature: '' }
+        }
+      }
+    }
+    if (url.pathname === '/likelist') {
+      refreshStarted()
+      await refreshGate
+      return { ids: [] }
+    }
+    if (url.pathname === '/like') return { code: 200 }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    const pendingRefresh = provider.isTrackLiked(7)
+    await refreshStartedGate
+    await provider.likeTrack(7, true)
+    releaseRefresh()
+    await pendingRefresh
+    assert.equal(await provider.isTrackLiked(7), true)
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('liked refresh retries after the backoff window instead of extending the TTL', async () => {
+  const realNow = Date.now
+  let now = 1_000_000
+  Date.now = () => now
+  let likelistRequests = 0
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    if (url.pathname === '/login/status') {
+      return {
+        code: 200,
+        data: {
+          code: 200,
+          profile: { userId: 42, nickname: 'listener', avatarUrl: 'a.jpg', signature: '' }
+        }
+      }
+    }
+    if (url.pathname === '/likelist') {
+      likelistRequests += 1
+      throw new Error('network down')
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    await provider.isTrackLiked(7)
+    const firstRequestCount = likelistRequests
+    now += 15_000 - 1
+    await provider.isTrackLiked(7)
+    assert.equal(likelistRequests, firstRequestCount)
+    now += 1
+    await provider.isTrackLiked(7)
+    assert.ok(likelistRequests > firstRequestCount)
+  } finally {
+    Date.now = realNow
+    ncmProvider.deactivate()
+  }
+})
+
 test('follow list uses artist sublist and returns artist identities', async () => {
   const requests = []
   const provider = await activateProvider(async (path) => {

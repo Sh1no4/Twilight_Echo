@@ -101,7 +101,7 @@ function lyricStyleVars(target: LyricsStyleTarget): Record<string, string> {
   const highlightEffect: Record<LyricsHighlightEffect, string> = {
     none: 'none',
     shadow: `0 3px ${Math.round(6 + style.highlightIntensity * 0.14)}px color-mix(in srgb, ${highlight} 45%, transparent)`,
-    glow: `0 0 ${Math.round(8 + style.highlightIntensity * 0.22)}px color-mix(in srgb, ${highlight} 58%, transparent)`,
+    glow: `0 0 1px color-mix(in srgb, ${highlight} 72%, transparent), 0 0 3px color-mix(in srgb, ${highlight} ${Math.round(18 + style.highlightIntensity * 0.22)}%, transparent)`,
     outline: `0 0 1px ${highlight}, 0 0 ${Math.round(2 + style.highlightIntensity * 0.08)}px ${highlight}`
   }
   const backgroundImage =
@@ -1128,10 +1128,7 @@ onBeforeUnmount(() => {
   );
   font-weight: var(--lyric-style-font-weight, var(--te-lyric-font-weight, 600));
   letter-spacing: 0.012em;
-  text-shadow: var(
-    --lyric-style-highlight,
-    0 0 10px color-mix(in srgb, var(--te-playback-lyric-karaoke, #fff8df) 20%, transparent)
-  );
+  text-shadow: var(--lyric-style-highlight, none);
 }
 
 :global(html[data-te-motion='full'] .lyric-row.active .lyric-text) {
@@ -1149,33 +1146,12 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-:global(html[data-te-motion='full'] .lyric-row--exiting .lyric-row-content) {
-  animation: te-lyric-line-exit var(--te-motion-panel) var(--te-ease-soft) both;
-}
-
+:global(html[data-te-motion='full'] .lyric-row--exiting .lyric-row-content),
 :global(html[data-te-motion='full'] .lyric-row--entering .lyric-row-content) {
-  animation: te-lyric-line-enter var(--te-motion-panel) var(--te-ease-spring) both;
-}
-
-@keyframes te-lyric-line-exit {
-  from {
-    opacity: 1;
-    transform: translateY(0);
-  }
-  to {
-    opacity: 0.2;
-    transform: translateY(-2px);
-  }
-}
-
-@keyframes te-lyric-line-enter {
-  from {
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  /* The row itself already transitions its active/near scale. Avoid a second
+     content transform here, which causes a visible shrink-and-snap-back on
+     the previous line and a grow-and-snap-back on the new active line. */
+  animation: none;
 }
 
 .lyric-text--words {
@@ -1388,6 +1364,9 @@ onBeforeUnmount(() => {
 }
 
 .visualizer-toggle-button--close {
+  top: 8px;
+  left: 14px;
+  right: auto;
   z-index: 10000;
 }
 

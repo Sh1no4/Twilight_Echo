@@ -101,7 +101,6 @@ class IOutputBackend {
   virtual DopRuntimeFacts dopRuntimeFacts() const = 0;
   virtual NativeDsdRuntimeFacts nativeDsdRuntimeFacts() const = 0;
   virtual std::string deviceName() const = 0;
-  virtual bool supportsDsdProxyRoute() const { return false; }
 };
 
 std::string defaultBackendId();

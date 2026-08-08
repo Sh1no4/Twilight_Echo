@@ -1,7 +1,6 @@
 # TE-4.1A Playback Mode Contract
 
-The persisted and session-restored playback modes are `sequential`, `listLoop`, `repeat`, `shuffle`,
-and `heart`.
+The supported runtime playback modes are `sequential`, `listLoop`, `repeat`, `shuffle`, and `heart`.
 
 - `sequential`: playback stops at the last queue entry.
 - `listLoop`: playback wraps from the last queue entry to the first.
