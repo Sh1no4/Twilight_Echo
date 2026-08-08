@@ -10,6 +10,15 @@ const NATIVE_RUNTIME_FILES = Object.freeze([
   'twilight-vst3-scanner.exe'
 ])
 
+// The audio DLL and Node addon are the core playback runtime and must always
+// ship. The VST3 helper executables are optional: the app disables the VST3
+// host at runtime when they are absent, so packaging strips and verifies them
+// only when a release staged them.
+const REQUIRED_NATIVE_RUNTIME_FILES = Object.freeze([
+  'twilight-audio-engine.dll',
+  'twilight_audio_node.node'
+])
+
 function executableCandidates(environment = process.env) {
   const candidates = []
   if (environment.TWILIGHT_RELEASE_STRIP) candidates.push(environment.TWILIGHT_RELEASE_STRIP)
@@ -110,9 +119,17 @@ function stripNativeArtifacts(nativeDir, dependencies = {}) {
   const stripCommand =
     dependencies.stripCommand || resolveStripCommand(dependencies.environment, exists)
   const stripped = []
-  for (const name of NATIVE_RUNTIME_FILES) {
+  const missing = []
+  for (const name of REQUIRED_NATIVE_RUNTIME_FILES) {
     const filePath = path.join(nativeDir, name)
     assert.ok(exists(filePath), `Missing packaged native runtime binary: ${filePath}`)
+  }
+  for (const name of NATIVE_RUNTIME_FILES) {
+    const filePath = path.join(nativeDir, name)
+    if (!exists(filePath)) {
+      missing.push(filePath)
+      continue
+    }
     const result = run(stripCommand, ['--strip-all', filePath], {
       encoding: 'utf8',
       windowsHide: true
@@ -125,11 +142,12 @@ function stripNativeArtifacts(nativeDir, dependencies = {}) {
     clearDebugDirectory(filePath)
     stripped.push(filePath)
   }
-  return stripped
+  return { stripped, missing }
 }
 
 module.exports = {
   NATIVE_RUNTIME_FILES,
+  REQUIRED_NATIVE_RUNTIME_FILES,
   clearPeDebugDirectory,
   executableCandidates,
   resolveStripCommand,

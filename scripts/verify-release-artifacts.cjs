@@ -12,6 +12,14 @@ const DEFAULT_BUDGETS = Object.freeze({
 })
 const DEFAULT_SHIPPED_BINARY_BUDGET = 64 * MIB
 
+// Core playback runtime is always required. The VST3 helper executables are
+// optional: the app disables VST3 at runtime when they are absent, and the
+// release gate verifies them only when a release staged them.
+const REQUIRED_NATIVE_BINARIES = Object.freeze([
+  'twilight-audio-engine.dll',
+  'twilight_audio_node.node'
+])
+
 function parseArgs(argv) {
   const options = {
     nativeDir: '',
@@ -93,7 +101,13 @@ function assertBudget(filePath, maxBytes, label = path.basename(filePath)) {
 }
 
 function listNativeBinaries(nativeDir) {
-  const required = Object.keys(DEFAULT_BUDGETS).filter((name) => name !== 'installer')
+  const optional = Object.keys(DEFAULT_BUDGETS).filter(
+    (name) => name !== 'installer' && !REQUIRED_NATIVE_BINARIES.includes(name)
+  )
+  const required = [...REQUIRED_NATIVE_BINARIES]
+  for (const name of optional) {
+    if (fs.existsSync(path.resolve(nativeDir, name))) required.push(name)
+  }
   return required.map((name) => {
     const filePath = path.resolve(nativeDir, name)
     assert.ok(fs.existsSync(filePath), `Missing required native binary: ${filePath}`)
@@ -159,6 +173,7 @@ if (require.main === module) {
 module.exports = {
   DEFAULT_BUDGETS,
   DEFAULT_SHIPPED_BINARY_BUDGET,
+  REQUIRED_NATIVE_BINARIES,
   assertBudget,
   assertStrippedPe,
   findInstaller,
