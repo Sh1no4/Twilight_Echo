@@ -24,6 +24,7 @@ import type {
   SacdProgramMode
 } from './audioEngineTypes.ts'
 import type { DspGraphStatus, Vst3ScanDescriptor } from '../../shared/dspGraph.ts'
+import { tryParseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 
 export const AUDIO_OUTPUT_OPTIONS: AudioOutputOption[] = [
   {
@@ -849,21 +850,18 @@ export function normalizeAudioProcessingSettings(
 
 export function parseNativeJson<T>(value: string | T | undefined, fallback: T): T {
   if (typeof value !== 'string') return value ?? fallback
-  try {
-    return JSON.parse(value) as T
-  } catch {
-    return fallback
-  }
+  const parsed = tryParseJsonWithNestingLimit(value)
+  return parsed.ok ? (parsed.value as T) : fallback
 }
 
 export function parseDspGraphStatusOrThrow(value: string | DspGraphStatus): DspGraphStatus {
   let parsed: unknown = value
   if (typeof parsed === 'string') {
-    try {
-      parsed = JSON.parse(parsed)
-    } catch {
+    const parsedJson = tryParseJsonWithNestingLimit(parsed)
+    if (!parsedJson.ok) {
       throw new Error('native audio engine returned invalid DSP graph status JSON')
     }
+    parsed = parsedJson.value
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('native audio engine returned an invalid DSP graph status')

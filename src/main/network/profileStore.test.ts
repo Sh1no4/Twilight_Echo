@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -99,6 +99,21 @@ test('profile input validation rejects malformed profiles', async () => {
     await assert.rejects(() => store.createProfile(makeInput({ rootPath: '/music/../secret' })))
     await assert.rejects(() => store.createProfile(makeInput({ port: 70000 })))
     await assert.rejects(() => store.createProfile(makeInput({ name: '' })))
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('profile store fails closed on deeply nested or structurally invalid persisted data', async () => {
+  const { dir, store } = await makeStore()
+  const filePath = join(dir, 'profiles.json')
+  try {
+    const nested = `${'['.repeat(128)}0${']'.repeat(128)}`
+    await writeFile(filePath, `{"profiles":${nested}}`, 'utf8')
+    await assert.rejects(() => store.listProfiles())
+
+    await writeFile(filePath, JSON.stringify({ profiles: [{ id: 'malformed' }] }), 'utf8')
+    await assert.rejects(() => store.listProfiles())
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

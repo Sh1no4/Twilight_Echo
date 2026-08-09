@@ -3,6 +3,7 @@ import { createReadStream, existsSync } from 'fs'
 import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from 'fs/promises'
 import { basename, extname, join, resolve } from 'path'
 import type { DspAsset, DspAssetKind } from '../../shared/dspGraph.ts'
+import { tryParseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 
 const ASSET_INDEX_FILE = 'assets.json'
 const MAX_ASSET_BYTES = 512 * 1024 * 1024
@@ -72,9 +73,9 @@ export class DspAssetLibrary {
       await mkdir(this.filesRoot(), { recursive: true })
       try {
         const raw = await readFile(this.indexPath(), 'utf8')
-        const parsed = JSON.parse(raw) as unknown
-        if (isStoredAssetIndex(parsed)) {
-          for (const asset of parsed.assets) {
+        const parsed = tryParseJsonWithNestingLimit(raw)
+        if (parsed.ok && isStoredAssetIndex(parsed.value)) {
+          for (const asset of parsed.value.assets) {
             if (!isStoredDspAsset(asset)) continue
             this.assets.set(asset.id, asset)
           }

@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict'
 import { generateKeyPairSync, sign, type KeyObject } from 'node:crypto'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import {
   OFFICIAL_PLUGIN_INDEX_URL,
   createPluginIndexEntryFingerprint,
   createPluginIndexSignaturePayload,
   createTrustedPluginPublisherRegistry,
+  loadTrustedPluginPublisherRegistry,
   verifyPluginIndexEntry,
   type PluginIndexTrustContext,
   type TrustedPluginPublisherRegistry
@@ -32,6 +36,20 @@ const baseEntry: Record<string, unknown> = {
   tags: ['test'],
   verified: true
 }
+
+test('trusted publisher registry fails closed before parsing oversized or deeply nested files', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'twilight-trusted-registry-'))
+  t.after(async () => {
+    await rm(directory, { recursive: true, force: true })
+  })
+  const registryPath = join(directory, 'trusted-publishers.json')
+
+  await writeFile(registryPath, `${'['.repeat(128)}0${']'.repeat(128)}`, 'utf8')
+  assert.match(loadTrustedPluginPublisherRegistry(registryPath).error ?? '', /too deeply nested/)
+
+  await writeFile(registryPath, 'x'.repeat(512 * 1024 + 1), 'utf8')
+  assert.match(loadTrustedPluginPublisherRegistry(registryPath).error ?? '', /too large/)
+})
 
 test('custom verified:true is only an index claim without a trusted signature', () => {
   const result = verifyPluginIndexEntry(

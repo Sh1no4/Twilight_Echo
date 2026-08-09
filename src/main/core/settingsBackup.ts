@@ -3,6 +3,7 @@ import {
   normalizeThemeLibraryDocument,
   type ThemeLibraryDocument
 } from '../../shared/theme.ts'
+import { parseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 
 export const SETTINGS_BACKUP_SCHEMA_VERSION = 2
 
@@ -43,7 +44,7 @@ export function importAppSettingsBackup<T extends object>(
 ): AppSettingsBackupImport<T> {
   let parsed: unknown
   try {
-    parsed = JSON.parse(json)
+    parsed = parseJsonWithNestingLimit(json)
   } catch {
     throw new Error('Invalid settings backup JSON')
   }

@@ -1,6 +1,8 @@
 import {
   DEFAULT_MINI_PLAYER_SETTINGS,
   DEFAULT_MINI_PLAYER_STYLE_ID,
+  MINI_PLAYER_MIN_HEIGHT,
+  MINI_PLAYER_MIN_WIDTH,
   createDefaultMiniPlayerThemeProfile,
   normalizeMiniPlayerThemeProfile,
   type MiniPlayerThemeProfile,
@@ -86,8 +88,8 @@ function normalizeStyleDefinition(
       createDefaultMiniPlayerThemeProfile(id)
     ),
     windowSize: {
-      width: Math.min(760, Math.max(360, Math.round(definition.windowSize.width))),
-      height: Math.min(420, Math.max(140, Math.round(definition.windowSize.height)))
+      width: Math.min(760, Math.max(MINI_PLAYER_MIN_WIDTH, Math.round(definition.windowSize.width))),
+      height: Math.min(420, Math.max(MINI_PLAYER_MIN_HEIGHT, Math.round(definition.windowSize.height)))
     },
     tokens: { ...definition.tokens }
   }

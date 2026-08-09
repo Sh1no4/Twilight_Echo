@@ -2,6 +2,7 @@ import { existsSync } from 'fs'
 import { mkdir, readFile, rm, stat, writeFile } from 'fs/promises'
 import { dirname } from 'path'
 import { isDeepStrictEqual } from 'util'
+import { tryParseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 
 export const LOUDNESS_ANALYSIS_ALGORITHM_VERSION = 1
 export const LOUDNORM_DEFAULT_TARGET_LUFS = -23.0
@@ -110,11 +111,11 @@ export class LoudnessAnalysisCache {
   private async read(): Promise<LoudnessAnalysisCacheFile> {
     if (!existsSync(this.cachePath)) return { version: 1, entries: {} }
     try {
-      const parsed = JSON.parse(await readFile(this.cachePath, 'utf-8')) as Partial<LoudnessAnalysisCacheFile>
-      if (parsed.version !== 1 || !parsed.entries || typeof parsed.entries !== 'object') {
+      const parsed = tryParseJsonWithNestingLimit(await readFile(this.cachePath, 'utf-8'))
+      if (!parsed.ok || !isLoudnessAnalysisCacheFile(parsed.value)) {
         return { version: 1, entries: {} }
       }
-      return { version: 1, entries: parsed.entries as Record<string, LoudnessAnalysisResult> }
+      return parsed.value
     } catch {
       return { version: 1, entries: {} }
     }
@@ -133,6 +134,17 @@ export class LoudnessAnalysisCache {
     )
     return result
   }
+}
+
+function isLoudnessAnalysisCacheFile(value: unknown): value is LoudnessAnalysisCacheFile {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const file = value as Partial<LoudnessAnalysisCacheFile>
+  return (
+    file.version === 1 &&
+    !!file.entries &&
+    typeof file.entries === 'object' &&
+    !Array.isArray(file.entries)
+  )
 }
 
 /** Evict oldest analyzedAt entries until at or under maxEntries. */

@@ -887,6 +887,137 @@ test('audio analysis rejects queued work after repeated worker startup failures'
   analysis.destroy()
 })
 
+test('oversized audio service cache responses are rejected, discarded, and followed by a clean restart', async () => {
+  const children: ManualUtilityProcess[] = []
+  const binding = new AudioEngineServiceBinding({
+    serviceEntry: 'audioEngineService.js',
+    requestTimeoutMs: 1000,
+    restartDelayMs: 1,
+    electron: {
+      utilityProcess: {
+        fork: () => {
+          const child = new ManualUtilityProcess()
+          children.push(child)
+          return child
+        }
+      }
+    }
+  })
+  const internals = binding as unknown as {
+    pending: Map<string, unknown>
+    lastPlaybackInfo: unknown
+  }
+
+  try {
+    assert.equal(binding.GetPlaybackInfo(), '{"state":"stopped"}')
+    const poisonedRequest = children[0].messages[0] as { requestId: string }
+    children[0].emit('message', {
+      kind: 'response',
+      requestId: poisonedRequest.requestId,
+      ok: true,
+      value: 'x'.repeat(2 * 1024 * 1024)
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    assert.equal(children[0].killCount, 1)
+    assert.equal(internals.pending.size, 0)
+    assert.equal(internals.lastPlaybackInfo, '{"state":"stopped"}')
+    assert.match(binding.GetLastError(), /invalid or oversized message/)
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(children.length, 2)
+    const recovered = binding.getMetadataAsync('recovered.flac')
+    const recoveredRequest = children[1].messages[0] as { requestId: string }
+    children[1].emit('message', {
+      kind: 'response',
+      requestId: recoveredRequest.requestId,
+      ok: true,
+      value: '{"title":"recovered"}'
+    })
+    assert.equal(await recovered, '{"title":"recovered"}')
+  } finally {
+    binding.destroy()
+  }
+})
+
+test('audio service utility-process logs are bounded by chunk and process lifetime', () => {
+  const child = new ManualUtilityProcess()
+  const binding = new AudioEngineServiceBinding({
+    serviceEntry: 'audioEngineService.js',
+    electron: { utilityProcess: { fork: () => child } }
+  })
+  const logs: string[] = []
+  binding.on('log', (value: string) => logs.push(value))
+
+  try {
+    child.stdout.emit('data', Buffer.alloc(32 * 1024, 0x61))
+    for (let index = 0; index < 15; index += 1) {
+      child.stdout.emit('data', Buffer.alloc(16 * 1024, 0x61))
+    }
+    child.stdout.emit('data', Buffer.alloc(1, 0x61))
+
+    const output = logs.filter((value) => value !== '[utility process output truncated]').join('')
+    assert.equal(Buffer.byteLength(output, 'utf8'), 256 * 1024)
+    assert.equal(logs.filter((value) => value === '[utility process output truncated]').length, 1)
+  } finally {
+    binding.destroy()
+  }
+})
+
+test('oversized audio analysis responses terminate only the affected worker and recover', async () => {
+  const children: ManualUtilityProcess[] = []
+  const analysis = new AudioAnalysisServiceClient({
+    serviceEntry: 'audioAnalysisService.js',
+    taskTimeoutMs: 1000,
+    restartDelayMs: 1,
+    electron: {
+      utilityProcess: {
+        fork: () => {
+          const child = new ManualUtilityProcess()
+          children.push(child)
+          return child
+        }
+      }
+    }
+  })
+
+  try {
+    children[0].emit('message', {
+      kind: 'ready',
+      protocolVersion: 1,
+      analyses: ['bpm', 'loudness']
+    })
+    const poisoned = analysis.analyzeBpm('poisoned.flac', '{}')
+    const poisonedRequest = children[0].messages[0] as { requestId: string }
+    children[0].emit('message', {
+      kind: 'response',
+      requestId: poisonedRequest.requestId,
+      ok: true,
+      value: 'x'.repeat(600 * 1024)
+    })
+
+    await assert.rejects(poisoned, (error: unknown) => {
+      assert.equal((error as { code?: string }).code, 'ERR_AUDIO_ANALYSIS_INVALID_RESPONSE')
+      return true
+    })
+    assert.equal(children[0].killCount, 1)
+    assert.equal(analysis.getStatus().active, 0)
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(children.length, 2)
+    children[1].emit('message', {
+      kind: 'ready',
+      protocolVersion: 1,
+      analyses: ['bpm', 'loudness']
+    })
+    const recovered = analysis.analyzeBpm('recovered.flac', '{}')
+    respondWithBpm(children[1], 0, 128)
+    assert.equal((await recovered).bpm, 128)
+  } finally {
+    analysis.destroy()
+  }
+})
+
 function bpmResultJson(bpm: number): string {
   return JSON.stringify({
     bpm,

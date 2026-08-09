@@ -285,6 +285,28 @@ test('audio visualizer left artwork scales up within viewport bounds', () => {
   assert.doesNotMatch(visualizer, /width: 59\.5%/)
 })
 
+test('audio visualizer keeps transport buttons contained on compact viewports', () => {
+  const visualizer = readFileSync(
+    new URL('../../../../resources/audio-visualizer/index.html', import.meta.url),
+    'utf8'
+  )
+  const compactLayoutStart = visualizer.indexOf('@media (max-width: 900px)')
+
+  assert.notEqual(compactLayoutStart, -1)
+
+  const compactLayout = visualizer.slice(compactLayoutStart)
+  assert.match(compactLayout, /\.left-panel \{[\s\S]*transform: none;/)
+  assert.match(
+    compactLayout,
+    /\.controls-container \{[\s\S]*margin-top: clamp\(20px, 4\.25vw, 38px\)/
+  )
+  assert.match(compactLayout, /\.controls-container \{[\s\S]*gap: clamp\(8px, 2vw, 18px\)/)
+  assert.match(compactLayout, /\.btn-circle \{[\s\S]*flex: 0 0 clamp\(44px, 7\.1vw, 64px\)/)
+  assert.match(
+    compactLayout,
+    /\.btn-circle\.play-pause \{[\s\S]*flex-basis: clamp\(52px, 8vw, 72px\)/
+  )
+})
 test('audio visualizer metadata typography follows target hierarchy without recoloring', () => {
   const visualizer = readFileSync(
     new URL('../../../../resources/audio-visualizer/index.html', import.meta.url),

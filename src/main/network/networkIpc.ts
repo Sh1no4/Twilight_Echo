@@ -27,6 +27,7 @@ import type {
   NetworkEntry,
   NetworkSourceProfileInput
 } from '../../shared/networkSources.ts'
+import { parseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 
 const CREDENTIAL_SCOPE = 'network-source-credentials'
 
@@ -38,7 +39,7 @@ const secureStorageCodec: CredentialCodec = {
   decrypt(encrypted) {
     let envelope: unknown
     try {
-      envelope = JSON.parse(encrypted)
+      envelope = parseJsonWithNestingLimit(encrypted)
     } catch {
       throw new NetworkSourceFailure('auth', '凭据数据损坏')
     }
@@ -90,7 +91,7 @@ function normalizeProfileId(value: unknown): string {
 }
 
 function parseProfileInput(value: unknown): NetworkSourceProfileInput {
-  return JSON.parse(stringifyJsonForIpcStorage(value, 'profile input', 16 * 1024)) as NetworkSourceProfileInput
+  return parseJsonWithNestingLimit(stringifyJsonForIpcStorage(value, 'profile input', 16 * 1024)) as NetworkSourceProfileInput
 }
 
 function normalizeEntry(value: unknown): NetworkEntry {

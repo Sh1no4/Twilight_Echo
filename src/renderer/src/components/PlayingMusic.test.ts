@@ -281,6 +281,7 @@ test('visualizer toggle sits top-left with the frosted time-chip style', () => {
     /\.visualizer-toggle-button \{[\s\S]*border: 1px solid var\(--te-playback-control-border, rgba\(255, 255, 255, 0\.1\)\)/
   )
   assert.match(source, /\.visualizer-toggle-button--close \{[\s\S]*z-index: 10000/)
+  assert.doesNotMatch(source, /\.visualizer-toggle-button--close\s*\{[^}]*\b(?:top|left|right)\s*:/)
   assert.match(
     source,
     /\.visualizer-toggle-button--close:hover \{[\s\S]*background: var\(--te-playback-control-hover-surface, rgba\(255, 255, 255, 0\.14\)\)/

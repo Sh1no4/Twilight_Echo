@@ -11,6 +11,7 @@ import type {
   Vst3ScanDescriptor
 } from '../../shared/dspGraph.ts'
 import { getNativeAddonCandidates } from '../audio/nativeBinding.ts'
+import { tryParseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 
 const CATALOG_FILE = 'vst3-catalog.json'
 const MAX_SCAN_MODULES = 1024
@@ -48,12 +49,12 @@ export class Vst3CatalogService {
       if (this.initialized) return
       await mkdir(this.root, { recursive: true })
       try {
-        const parsed = JSON.parse(await readFile(this.catalogPath(), 'utf8')) as unknown
-        if (isCatalogState(parsed)) {
+        const parsed = tryParseJsonWithNestingLimit(await readFile(this.catalogPath(), 'utf8'))
+        if (parsed.ok && isCatalogState(parsed.value)) {
           this.state = {
-            enabled: parsed.enabled === true && process.platform === 'win32',
-            searchPaths: uniquePaths(parsed.searchPaths),
-            entries: parsed.entries.filter(isCatalogEntry)
+            enabled: parsed.value.enabled === true && process.platform === 'win32',
+            searchPaths: uniquePaths(parsed.value.searchPaths),
+            entries: parsed.value.entries.filter(isCatalogEntry)
           }
         }
       } catch {

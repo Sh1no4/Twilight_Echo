@@ -791,6 +791,41 @@
       transform: scale(1.04);
     }
 
+    /* Keep transport controls within the 16:9 canvas on compact desktop windows. */
+    @media (max-width: 900px) {
+      .left-panel {
+        transform: none;
+      }
+
+      .controls-container {
+        margin-top: clamp(20px, 4.25vw, 38px);
+        gap: clamp(8px, 2vw, 18px);
+        height: calc(clamp(52px, 8vw, 72px) + 10px);
+      }
+
+      .btn-circle {
+        width: clamp(44px, 7.1vw, 64px);
+        height: clamp(44px, 7.1vw, 64px);
+        flex: 0 0 clamp(44px, 7.1vw, 64px);
+      }
+
+      .btn-circle.play-pause {
+        width: clamp(52px, 8vw, 72px);
+        height: clamp(52px, 8vw, 72px);
+        flex-basis: clamp(52px, 8vw, 72px);
+      }
+
+      .btn-circle svg {
+        width: clamp(20px, 3vw, 28px);
+        height: clamp(20px, 3vw, 28px);
+      }
+
+      .btn-circle.play-pause svg {
+        width: clamp(22px, 3.2vw, 30px);
+        height: clamp(22px, 3.2vw, 30px);
+      }
+    }
+
     /* --- RIGHT PANEL --- */
     .right-panel {
       display: flex;

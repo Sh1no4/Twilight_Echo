@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { NetworkSourceFailure } from './errors.ts'
 import { createNetworkLibrary } from './networkLibrary.ts'
 import type { NetworkEntry } from '../../shared/networkSources.ts'
+
+function deeplyNestedValue(depth = 128): unknown {
+  let value: unknown = 'leaf'
+  for (let index = 0; index < depth; index += 1) value = [value]
+  return value
+}
 
 function makeEntry(path: string, name?: string): NetworkEntry {
   return {
@@ -87,6 +94,28 @@ test('updateEntries merges metadata onto existing entries by id', async () => {
     assert.equal(entries[0].metadata?.title, 'Song')
     assert.equal(entries[0].metadata?.duration, 123.4)
     assert.equal(entries[0].coverPath, '/cache/a.jpg')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+
+test('rejects an excessively nested network media-library document', async () => {
+  const { dir, library } = await makeLibrary()
+  try {
+    await writeFile(
+      join(dir, 'library.json'),
+      JSON.stringify({
+        p1: { roots: ['/music'], entries: [makeEntry('/music/a.flac')] },
+        padding: deeplyNestedValue()
+      }),
+      'utf-8'
+    )
+
+    await assert.rejects(
+      () => library.listEntries('p1'),
+      (error: unknown) => error instanceof NetworkSourceFailure && error.code === 'network'
+    )
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

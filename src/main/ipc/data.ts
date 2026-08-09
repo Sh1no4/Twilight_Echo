@@ -1,7 +1,7 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, type IpcMainInvokeEvent } from 'electron'
 import { randomUUID } from 'crypto'
 import { basename, dirname, extname, join, resolve } from 'path'
-import { readFileSync, existsSync } from 'fs'
+import { readFileSync, existsSync, statSync } from 'fs'
 import { readFile, writeFile, rm, stat } from 'fs/promises'
 import { parseFile } from 'music-metadata'
 import { importLyricsFromDialog } from '../lyrics/importLyrics.ts'
@@ -94,6 +94,7 @@ import {
   unprotectString
 } from '../security/secureStorage.ts'
 import { normalizeIpcString, stringifyJsonForIpcStorage } from '../security/ipcValidation.ts'
+import { tryParseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
 import { updateAppSettings } from '../audio/state'
 import { getPlayerShortcutStatuses } from '../integrations/shortcutsTray'
@@ -130,6 +131,7 @@ const MAX_BACKGROUND_IMAGE_FILE_NAME_LENGTH = 255
 const MAX_SETTINGS_PATCH_BYTES = 512 * 1024
 const MAX_SETTINGS_BACKUP_BYTES = 2 * 1024 * 1024
 const MAX_NCM_COOKIE_BYTES = 16 * 1024
+const MAX_NCM_COOKIE_FILE_BYTES = 64 * 1024
 const MAX_LIBRARY_MUTATION_ITEMS = 10_000
 
 const persistenceNotifications = new Set<string>()
@@ -1289,16 +1291,23 @@ async function saveNcmCookie(filePath: string, cookie: string): Promise<void> {
 async function loadNcmCookie(filePath: string): Promise<string> {
   if (!existsSync(filePath)) return ''
   try {
+    const fileInfo = statSync(filePath)
+    if (!fileInfo.isFile() || fileInfo.size <= 0 || fileInfo.size > MAX_NCM_COOKIE_FILE_BYTES) return ''
     const raw = readFileSync(filePath, 'utf-8')
-    const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return ''
-    const cookie = (parsed as Record<string, unknown>).cookie
+    if (Buffer.byteLength(raw, 'utf-8') > MAX_NCM_COOKIE_FILE_BYTES) return ''
+    const parsed = tryParseJsonWithNestingLimit(raw)
+    if (!parsed.ok || !parsed.value || typeof parsed.value !== 'object' || Array.isArray(parsed.value)) {
+      return ''
+    }
+    const cookie = (parsed.value as Record<string, unknown>).cookie
     if (isSecureValueEnvelope(cookie)) {
-      return unprotectString(cookie, ncmCookieScope(filePath)) ?? ''
+      return normalizeLoadedNcmCookie(unprotectString(cookie, ncmCookieScope(filePath)))
     }
     if (typeof cookie === 'string') {
-      await saveNcmCookie(filePath, cookie)
-      return cookie
+      const normalized = normalizeLoadedNcmCookie(cookie)
+      if (!normalized) return ''
+      await saveNcmCookie(filePath, normalized)
+      return normalized
     }
     return ''
   } catch (error) {
@@ -1306,6 +1315,15 @@ async function loadNcmCookie(filePath: string): Promise<string> {
       '读取网易云 Cookie 失败：',
       redactSensitiveText(error instanceof Error ? error.message : error)
     )
+    return ''
+  }
+}
+
+function normalizeLoadedNcmCookie(cookie: string | null): string {
+  if (!cookie) return ''
+  try {
+    return normalizeNcmCookieForSave(cookie)
+  } catch {
     return ''
   }
 }

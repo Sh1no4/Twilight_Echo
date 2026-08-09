@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { normalizeRemotePath, redactProfile } from './networkPath.ts'
 import { NetworkSourceFailure } from './errors.ts'
 import { hasControlCharacters } from './textValidation.ts'
+import { tryParseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 import type { NetworkAuth } from './adapters/types.ts'
 import type {
   NetworkProtocol,
@@ -44,6 +45,9 @@ const SUPPORTED_PROTOCOLS: ReadonlySet<NetworkProtocol> = new Set([
 ])
 
 const MAX_BOOKMARKS = 50
+const MAX_NETWORK_PROFILES = 256
+const MAX_NETWORK_PROFILES_FILE_BYTES = 1024 * 1024
+const MAX_ENCRYPTED_CREDENTIAL_BYTES = 16 * 1024
 
 function normalizeName(value: unknown): string {
   if (typeof value !== 'string') throw new NetworkSourceFailure('invalidProfile', '名称必须是字符串')
@@ -147,6 +151,89 @@ interface PersistedFile {
   profiles: NetworkSourceProfile[]
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isPersistedProfile(value: unknown): value is NetworkSourceProfile {
+  if (!isRecord(value) || typeof value.id !== 'string' || !value.id || value.id.length > 128) {
+    return false
+  }
+  if (typeof value.protocol !== 'string' || !SUPPORTED_PROTOCOLS.has(value.protocol as NetworkProtocol)) {
+    return false
+  }
+  if (!isRecord(value.credential) || typeof value.credential.kind !== 'string') return false
+  if (
+    !['anonymous', 'password', 'privateKey'].includes(value.credential.kind) ||
+    typeof value.credential.encryptedId !== 'string' ||
+    value.credential.encryptedId.length > MAX_ENCRYPTED_CREDENTIAL_BYTES
+  ) {
+    return false
+  }
+  if (value.credential.kind === 'anonymous' && value.credential.encryptedId !== '') return false
+  if (!isRecord(value.options)) return false
+  if (
+    typeof value.options.readOnly !== 'boolean' ||
+    !isBoundedPositiveInteger(value.options.connectTimeoutMs, 10 * 60 * 1000) ||
+    !isBoundedPositiveInteger(value.options.transferTimeoutMs, 60 * 60 * 1000) ||
+    !isBoundedPositiveInteger(value.options.maxConcurrentTransfers, 128) ||
+    !Array.isArray(value.bookmarks) ||
+    !isBoundedPositiveInteger(value.createdAt, Number.MAX_SAFE_INTEGER) ||
+    (value.lastConnectedAt !== null &&
+      !isBoundedPositiveInteger(value.lastConnectedAt, Number.MAX_SAFE_INTEGER)) ||
+    typeof value.rootPath !== 'string'
+  ) {
+    return false
+  }
+
+  try {
+    const protocol = value.protocol as NetworkProtocol
+    normalizeName(value.name)
+    normalizeHost(value.host)
+    normalizePort(value.port)
+    normalizeRemotePath(value.rootPath)
+    normalizeUsername(value.username)
+    normalizeBookmarks(value.bookmarks)
+    if (value.webdavScheme !== undefined && value.webdavScheme !== 'http' && value.webdavScheme !== 'https') {
+      return false
+    }
+    if (protocol !== 'webdav' && value.webdavScheme !== undefined) return false
+    if (value.keyPath !== undefined) {
+      if (
+        typeof value.keyPath !== 'string' ||
+        !value.keyPath.trim() ||
+        value.keyPath.length > 512 ||
+        hasControlCharacters(value.keyPath)
+      ) {
+        return false
+      }
+    }
+    if (value.credential.kind === 'privateKey' && value.keyPath === undefined) return false
+  } catch {
+    return false
+  }
+
+  return true
+}
+
+function isBoundedPositiveInteger(value: unknown, maximum: number): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value > 0 &&
+    value <= maximum
+  )
+}
+
+function isPersistedFile(value: unknown): value is PersistedFile {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.profiles) &&
+    value.profiles.length <= MAX_NETWORK_PROFILES &&
+    value.profiles.every(isPersistedProfile)
+  )
+}
+
 export function createNetworkProfileStore(deps: {
   filePath: string
   codec: CredentialCodec
@@ -155,12 +242,22 @@ export function createNetworkProfileStore(deps: {
 
   async function load(): Promise<NetworkSourceProfile[]> {
     try {
+      const info = await stat(filePath)
+      if (!info.isFile() || info.size > MAX_NETWORK_PROFILES_FILE_BYTES) {
+        throw new Error('profile store file is invalid or too large')
+      }
       const raw = await readFile(filePath, 'utf8')
-      const parsed = JSON.parse(raw) as PersistedFile
-      return Array.isArray(parsed.profiles) ? parsed.profiles : []
+      if (Buffer.byteLength(raw, 'utf8') > MAX_NETWORK_PROFILES_FILE_BYTES) {
+        throw new Error('profile store file is too large')
+      }
+      const parsed = tryParseJsonWithNestingLimit(raw)
+      if (!parsed.ok || !isPersistedFile(parsed.value)) {
+        throw new Error('profile store JSON is invalid')
+      }
+      return parsed.value.profiles
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []
-      throw new NetworkSourceFailure('network', '网络源配置读取失败')
+      throw new NetworkSourceFailure('network', '?????????')
     }
   }
 

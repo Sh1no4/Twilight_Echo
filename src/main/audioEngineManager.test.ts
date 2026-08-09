@@ -1148,6 +1148,56 @@ class RejectingDspAudioServiceBinding extends FakeAudioServiceBinding {
   }
 }
 
+class RouteFailingLateReadyAudioServiceBinding extends FakeAudioServiceBinding {
+  ready = false
+  volumeCalls = 0
+
+  override SetVolume = (volume: number): void => {
+    this.volumeCalls += 1
+    this.volume = volume
+  }
+
+  override async callAsync(method: string, args: unknown[]): Promise<unknown> {
+    // Before the service is up, every startup restore call is rejected (as the
+    // real utility-process client does with "音频服务不可用"). After ready, the
+    // output route keeps failing but SetVolume must still be applied.
+    if (!this.ready) {
+      if (
+        method === 'SetOutputBackend' ||
+        method === 'SetOutputDevice' ||
+        method === 'SetOutputConfig' ||
+        method === 'SetVolume'
+      ) {
+        throw new Error('audio service not ready')
+      }
+    } else if (
+      method === 'SetOutputBackend' ||
+      method === 'SetOutputDevice' ||
+      method === 'SetOutputConfig'
+    ) {
+      throw new Error('output route restore failed persistently')
+    }
+    return await super.callAsync(method, args)
+  }
+}
+
+class VolumeRestoreFailingAudioServiceBinding extends FakeAudioServiceBinding {
+  volumeCalls = 0
+  failVolumeRestore = true
+
+  override SetVolume = (volume: number): void => {
+    this.volumeCalls += 1
+    this.volume = volume
+  }
+
+  override async callAsync(method: string, args: unknown[]): Promise<unknown> {
+    if (method === 'SetVolume' && this.failVolumeRestore) {
+      throw new Error('volume restore rejected before service ready')
+    }
+    return await super.callAsync(method, args)
+  }
+}
+
 class DeferredAudioServiceBinding extends FakeAudioServiceBinding {
   deferredMethods = new Set<string>()
   deferredCalls: Array<{
@@ -4403,6 +4453,68 @@ test('setVolume skips native call and playback fanout when normalized volume is 
   assert.equal(playbackUpdates.length, fullUpdatesAfterChange)
 })
 
+test('service-ready restore applies the saved volume even when the output route restore fails', async () => {
+  const service = new RouteFailingLateReadyAudioServiceBinding()
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: false,
+      volume: 0.31,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+
+  await manager.start()
+  service.ready = true
+  service.emit('ready')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  // A fresh audio-service process starts at unity volume. Even though the
+  // output-route restore failed, the saved volume must still reach the native
+  // engine; otherwise the manager reports 0.31 while the engine stays loud.
+  assert.equal(service.volume, 0.31)
+  assert.ok(service.volumeCalls >= 1)
+  manager.destroy()
+})
+
+test('setVolume re-dispatches while the service native volume is not confirmed synced', async () => {
+  const service = new VolumeRestoreFailingAudioServiceBinding()
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: false,
+      volume: 0.31,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+
+  await manager.start()
+  service.emit('ready')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(service.volume, 1)
+
+  // playbackInfo already reports the saved volume, so the old dedupe guard
+  // silently dropped every renderer push. The native side is still unsynced,
+  // so this call must dispatch to the engine.
+  service.failVolumeRestore = false
+  await manager.setVolume(0.31)
+  assert.equal(service.volumeCalls, 1)
+  assert.equal(service.volume, 0.31)
+  manager.destroy()
+})
+
 test('seek skips native call and fanout when paused position is unchanged', async () => {
   const nativeBinding = new FakeNativeBinding({ state: 'paused', position: 32 })
   const manager = makeManager(
@@ -6477,6 +6589,46 @@ test('play preserves non-unity playbackRate and reasserts SetPlaybackRate on nat
   await manager.play('C:\\music\\track.flac', 0)
   assert.equal((await manager.getPlaybackInfo()).playbackRate, 1.5)
   assert.equal(nativeBinding.playbackInfo.playbackRate, 1.5)
+
+  manager.destroy()
+})
+
+test('play preserves saved volume and reasserts SetVolume on native', async () => {
+  const nativeBinding = new FakeNativeBinding({
+    state: 'stopped',
+    volume: 1,
+    playbackRate: 1,
+    outputPerfect: true,
+    perfectReasonCode: '',
+    outputInfo: makeOutputInfo({
+      outputPerfect: true,
+      supportsOutputPerfect: true,
+      perfectReasonCode: '',
+      perfectReason: ''
+    })
+  })
+  const manager = new AudioEngineManager(
+    { exclusiveMode: false, volume: 0.42 },
+    { nativeBinding }
+  )
+  assert.equal((await manager.getPlaybackInfo()).volume, 0.42)
+
+  // Simulate native GetPlaybackInfo defaulting volume to 1 after Play (the
+  // exact failure mode where a startup SetVolume was lost and the restored
+  // engine would otherwise stay at unity loudness).
+  const originalPlay = nativeBinding.Play
+  nativeBinding.Play = (source: string, startTime = 0): void => {
+    originalPlay(source, startTime)
+    nativeBinding.playbackInfo = {
+      ...nativeBinding.playbackInfo,
+      volume: 1
+    }
+  }
+
+  await manager.play('C:\\music\\track.flac', 0)
+  assert.equal((await manager.getPlaybackInfo()).volume, 0.42)
+  assert.equal(nativeBinding.playbackInfo.volume, 0.42)
+  assert.ok(nativeBinding.volumeCalls >= 1)
 
   manager.destroy()
 })

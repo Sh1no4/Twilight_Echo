@@ -10,6 +10,7 @@ import {
   DUPLICATE_BENCHMARK_WARMUP_ITERATIONS,
   buildCollisionRows,
   buildUniqueRows,
+  canonicalizeProvenanceBytes,
   collectDuplicateDetectionBenchmarkProvenance,
   createDuplicateBenchmarkManifest,
   parseDuplicateBenchmarkCli,
@@ -89,6 +90,14 @@ function assertAuthenticatedArchive(
   })
   return evidence
 }
+
+test('benchmark provenance canonicalizes CRLF without changing other bytes', () => {
+  const crlf = Uint8Array.from([0x61, 0x0d, 0x0a, 0x62, 0x0d, 0x0a, 0x0d, 0x63])
+  const expected = Uint8Array.from([0x61, 0x0a, 0x62, 0x0a, 0x0d, 0x63])
+
+  assert.deepEqual(canonicalizeProvenanceBytes(crlf), expected)
+  assert.deepEqual(canonicalizeProvenanceBytes(expected), expected)
+})
 
 test('duplicate benchmark produces independent 10k-style unique and collision fixtures', () => {
   assert.equal(buildUniqueRows(10).length, 10)

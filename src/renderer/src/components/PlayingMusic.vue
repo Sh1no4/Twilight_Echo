@@ -1364,9 +1364,6 @@ onBeforeUnmount(() => {
 }
 
 .visualizer-toggle-button--close {
-  top: 8px;
-  left: 14px;
-  right: auto;
   z-index: 10000;
 }
 

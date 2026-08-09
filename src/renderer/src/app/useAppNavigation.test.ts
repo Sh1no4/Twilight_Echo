@@ -23,6 +23,15 @@ test('streaming mode preserves and restores local menu state', () => {
   assert.equal(navigation.menuOpen.value, true)
 })
 
+test('online audio pages retain the local sidebar so the title-bar menu can open it', () => {
+  const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
+  const localSidebar = appSource.match(/const showLocalSidebar = computed\([\s\S]*?\n\)/)?.[0] ?? ''
+
+  assert.doesNotMatch(localSidebar, /!showRadioPodcastPage\.value/)
+  assert.doesNotMatch(localSidebar, /!showNetworkSourcesPage\.value/)
+  assert.match(appSource, /'menu-open': menuOpen && showLocalSidebar/)
+})
+
 test('network sources page is mutually exclusive with streaming and radio pages', () => {
   const navigation = useAppNavigation()
 

@@ -20,6 +20,8 @@ import { useMiniPlayerCustomizationDraft } from './useMiniPlayerCustomizationDra
 import { useMotionPreference } from '../app/useMotionPreference'
 import { useCover } from '../utils/coverLoader'
 import { useSmoothedValue } from '../utils/useSmoothedValue'
+import { findActiveMiniPlayerLyricIndex } from '../app/useMiniPlayerSync'
+import type { MiniPlayerLyricLineSnapshot } from '../../../shared/miniPlayer'
 import type { MotionPreference } from '../../../shared/motion.ts'
 
 const state = ref<MiniPlayerStateSnapshot>({ ...EMPTY_MINI_PLAYER_STATE })
@@ -117,10 +119,40 @@ const trackArtist = computed(() => state.value.track?.artist || '从主窗口选
 const trackAlbum = computed(() => state.value.track?.album || 'TWILIGHT ECHO')
 // Older main-process snapshots omit the field entirely (undefined); treat that
 // as "no lyric" so the idle view never dereferences a missing line.
-const currentLyric = computed(() => state.value.currentLyric ?? null)
-const showLyric = computed(
-  () => !hovered.value && currentLyric.value !== null && Boolean(state.value.track)
+const lyricLines = computed<MiniPlayerLyricLineSnapshot[]>(() => state.value.lyrics ?? [])
+const activeLyricIndex = computed(() =>
+  findActiveMiniPlayerLyricIndex(lyricLines.value, state.value.currentTime)
 )
+const currentLyricLine = computed(() =>
+  activeLyricIndex.value >= 0 ? lyricLines.value[activeLyricIndex.value] ?? null : null
+)
+const hasActiveLyric = computed(
+  () =>
+    currentLyricLine.value !== null &&
+    lyricLines.value.length > 0 &&
+    Boolean(state.value.track)
+)
+const trackQuality = computed(() => {
+  const track = state.value.track
+  if (!track) return { label: '', spec: '', isHiRes: false }
+  const format = (track.format ?? '').trim().toUpperCase()
+  const sampleRate =
+    typeof track.sampleRate === 'number' && track.sampleRate > 0
+      ? track.sampleRate >= 1000
+        ? `${(track.sampleRate / 1000).toFixed(track.sampleRate % 1000 === 0 ? 0 : 1)}kHz`
+        : `${track.sampleRate}Hz`
+      : ''
+  const bitDepth =
+    typeof track.bitDepth === 'number' && track.bitDepth > 0 ? `${track.bitDepth}bit` : ''
+  const spec = [format, bitDepth, sampleRate].filter(Boolean).join(' · ')
+  const lossless = /^(flac|alac|wav|aiff|aif|ape|dsf|dff|tta|wv|m4a)$/i.test(format)
+  const isHiRes = (track.bitDepth ?? 0) >= 24 || (track.sampleRate ?? 0) >= 96000
+  return {
+    label: isHiRes ? 'Hi-Res Lossless' : lossless ? 'Lossless' : '',
+    spec,
+    isHiRes
+  }
+})
 const queuePositionText = computed(() =>
   state.value.queueLength > 0 && state.value.queueIndex >= 0
     ? `${state.value.queueIndex + 1} / ${state.value.queueLength}`
@@ -358,6 +390,58 @@ onBeforeUnmount(() => {
 
       <span class="mini-drag-hint" aria-hidden="true"></span>
 
+      <div class="mini-window-actions mini-no-drag">
+        <button
+          type="button"
+          class="mini-tool-button"
+          :class="{ active: customizerOpen }"
+          title="自定义迷你播放器"
+          aria-label="打开迷你播放器自定义面板"
+          @click="openCustomizer"
+        >
+          <i class="ph ph-sliders-horizontal"></i>
+        </button>
+        <button
+          type="button"
+          class="mini-tool-button"
+          :class="{ active: settings.positionLocked }"
+          :title="settings.positionLocked ? '解锁窗口位置' : '锁定窗口位置'"
+          :aria-pressed="settings.positionLocked"
+          @click="togglePositionLock"
+        >
+          <i :class="settings.positionLocked ? 'ph ph-lock' : 'ph ph-lock-open'"></i>
+        </button>
+        <button
+          type="button"
+          class="mini-tool-button"
+          :class="{ active: settings.alwaysOnTop }"
+          :title="settings.alwaysOnTop ? '取消保持置顶' : '保持窗口置顶'"
+          :aria-pressed="settings.alwaysOnTop"
+          @click="toggleAlwaysOnTop"
+        >
+          <i class="ph ph-push-pin"></i>
+        </button>
+        <button
+          type="button"
+          class="mini-tool-button"
+          title="最小化"
+          aria-label="最小化"
+          @click="minimizeWindow"
+        >
+          <i class="ph ph-minus"></i>
+        </button>
+        <button
+          type="button"
+          class="mini-tool-button return-button"
+          data-te-back-button="icon"
+          title="返回完整播放器"
+          aria-label="返回完整播放器"
+          @click="returnToMainWindow"
+        >
+          <i class="ph ph-arrows-out-simple"></i>
+        </button>
+      </div>
+
       <div
         v-if="resolvedVisibility.artwork"
         :key="`artwork:${state.track?.id ?? 'empty'}`"
@@ -384,181 +468,163 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="mini-player-content">
-        <header class="mini-player-header">
-          <div :key="`meta:${state.track?.id ?? 'empty'}`" class="mini-track-meta">
-            <div v-if="showLyric" class="mini-lyric-lines">
-              <ScrollingText
-                class="mini-lyric-line mini-lyric-original"
-                :text="currentLyric!.original"
-              />
-              <ScrollingText
-                v-if="currentLyric!.translation"
-                class="mini-lyric-line mini-lyric-translation"
-                :text="currentLyric!.translation"
-              />
-            </div>
-            <template v-else>
+        <div class="mini-player-main">
+          <div class="mini-track-info">
+            <div :key="`meta:${state.track?.id ?? 'empty'}`" class="mini-track-meta">
               <div v-if="resolvedVisibility.album" class="mini-track-kicker">{{ trackAlbum }}</div>
               <h1 :title="trackTitle"><ScrollingText :text="trackTitle" /></h1>
               <p :title="trackArtist"><ScrollingText :text="trackArtist" /></p>
-            </template>
+            </div>
+            <div
+              v-if="trackQuality.spec || trackQuality.label"
+              class="mini-quality"
+              aria-label="音质信息"
+            >
+              <span
+                v-if="trackQuality.label"
+                class="mini-quality-badge"
+                :class="{ 'is-hires': trackQuality.isHiRes }"
+              >
+                {{ trackQuality.label }}
+              </span>
+              <span v-if="trackQuality.spec" class="mini-quality-spec">{{ trackQuality.spec }}</span>
+            </div>
           </div>
 
-          <div class="mini-window-actions mini-no-drag">
-            <button
-              type="button"
-              class="mini-tool-button"
-              :class="{ active: customizerOpen }"
-              title="自定义迷你播放器"
-              aria-label="打开迷你播放器自定义面板"
-              @click="openCustomizer"
-            >
-              <i class="ph ph-sliders-horizontal"></i>
-            </button>
-            <button
-              type="button"
-              class="mini-tool-button"
-              :class="{ active: settings.positionLocked }"
-              :title="settings.positionLocked ? '解锁窗口位置' : '锁定窗口位置'"
-              :aria-pressed="settings.positionLocked"
-              @click="togglePositionLock"
-            >
-              <i :class="settings.positionLocked ? 'ph ph-lock' : 'ph ph-lock-open'"></i>
-            </button>
-            <button
-              type="button"
-              class="mini-tool-button"
-              :class="{ active: settings.alwaysOnTop }"
-              :title="settings.alwaysOnTop ? '取消保持置顶' : '保持窗口置顶'"
-              :aria-pressed="settings.alwaysOnTop"
-              @click="toggleAlwaysOnTop"
-            >
-              <i class="ph ph-push-pin"></i>
-            </button>
-            <button
-              type="button"
-              class="mini-tool-button"
-              title="最小化"
-              aria-label="最小化"
-              @click="minimizeWindow"
-            >
-              <i class="ph ph-minus"></i>
-            </button>
-            <button
-              type="button"
-              class="mini-tool-button return-button"
-              data-te-back-button="icon"
-              title="返回完整播放器"
-              aria-label="返回完整播放器"
-              @click="returnToMainWindow"
-            >
-              <i class="ph ph-arrows-out-simple"></i>
-            </button>
+          <div
+            v-if="hasActiveLyric"
+            class="mini-lyric-stage"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            <Transition name="mini-lyric-switch" mode="out-in">
+              <div
+                :key="`lyric:${state.track?.id}:${activeLyricIndex}`"
+                class="mini-lyric-current"
+              >
+                <p class="mini-lyric-original" :title="currentLyricLine!.original">
+                  {{ currentLyricLine!.original }}
+                </p>
+                <p
+                  v-if="currentLyricLine!.translation"
+                  class="mini-lyric-translation"
+                  :title="currentLyricLine!.translation"
+                >
+                  {{ currentLyricLine!.translation }}
+                </p>
+              </div>
+            </Transition>
           </div>
-        </header>
+          <div v-else class="mini-lyric-empty" aria-hidden="true">
+            <span>♪ 暂无歌词</span>
+          </div>
 
-        <div
-          class="mini-progress-block mini-no-drag"
-          :class="{ 'without-time': !resolvedVisibility.time }"
-        >
-          <input
-            type="range"
-            class="mini-range mini-progress-range"
-            min="0"
-            :max="state.duration || 1"
-            step="0.1"
-            :value="state.currentTime"
-            aria-label="播放进度"
-            :disabled="!state.track"
-            @input="onProgressInput"
-          />
-          <div v-if="resolvedVisibility.time" class="mini-time-row">
-            <span>{{ formatTime(state.currentTime) }}</span>
-            <span>{{ formatTime(state.duration) }}</span>
-          </div>
         </div>
 
-        <footer class="mini-player-controls mini-no-drag">
-          <div class="mini-controls-side left">
-            <button
-              v-if="resolvedVisibility.playMode"
-              type="button"
-              class="mini-control-button mode-button"
-              :title="playModeTitle"
-              :aria-label="playModeTitle"
+        <div class="mini-player-dock">
+          <div
+            class="mini-progress-block mini-no-drag"
+            :class="{ 'without-time': !resolvedVisibility.time }"
+          >
+            <input
+              type="range"
+              class="mini-range mini-progress-range"
+              min="0"
+              :max="state.duration || 1"
+              step="0.1"
+              :value="state.currentTime"
+              aria-label="播放进度"
               :disabled="!state.track"
-              @click="sendCommand({ type: 'cycle-play-mode' })"
-            >
-              <i :class="playModeIcon"></i>
-            </button>
+              @input="onProgressInput"
+            />
+            <div v-if="resolvedVisibility.time" class="mini-time-row">
+              <span>{{ formatTime(state.currentTime) }}</span>
+              <span>{{ formatTime(state.duration) }}</span>
+            </div>
           </div>
 
-          <div class="mini-transport">
-            <button
-              type="button"
-              class="mini-control-button transport-button"
-              title="上一首"
-              aria-label="上一首"
-              :disabled="!state.track"
-              @click="sendCommand({ type: 'previous' })"
-            >
-              <i class="ph ph-skip-back"></i>
-            </button>
-            <button
-              type="button"
-              class="mini-play-button"
-              :class="{ 'is-playing': state.isPlaying }"
-              :title="state.isPlaying ? '暂停' : '播放'"
-              :aria-label="state.isPlaying ? '暂停' : '播放'"
-              :disabled="!state.track || state.isLoading"
-              @click="togglePlay"
-            >
-              <i
-                :class="
-                  state.isLoading
-                    ? 'pi pi-spin pi-spinner'
-                    : state.isPlaying
-                      ? 'ph ph-pause'
-                      : 'ph ph-play'
-                "
-              ></i>
-            </button>
-            <button
-              type="button"
-              class="mini-control-button transport-button"
-              title="下一首"
-              aria-label="下一首"
-              :disabled="!state.track"
-              @click="sendCommand({ type: 'next' })"
-            >
-              <i class="ph ph-skip-forward"></i>
-            </button>
-          </div>
+          <footer class="mini-player-controls mini-no-drag">
+            <div class="mini-controls-side left">
+              <button
+                v-if="resolvedVisibility.playMode"
+                type="button"
+                class="mini-control-button mode-button"
+                :title="playModeTitle"
+                :aria-label="playModeTitle"
+                :disabled="!state.track"
+                @click="sendCommand({ type: 'cycle-play-mode' })"
+              >
+                <i :class="playModeIcon"></i>
+              </button>
+            </div>
 
-          <div class="mini-controls-side right">
-            <span
-              v-if="resolvedVisibility.queuePosition"
-              class="mini-queue-position"
-              title="当前队列位置"
-            >
-              {{ queuePositionText }}
-            </span>
+            <div class="mini-transport">
+              <button
+                type="button"
+                class="mini-control-button transport-button"
+                title="上一首"
+                aria-label="上一首"
+                :disabled="!state.track"
+                @click="sendCommand({ type: 'previous' })"
+              >
+                <i class="ph ph-skip-back"></i>
+              </button>
+              <button
+                type="button"
+                class="mini-play-button"
+                :class="{ 'is-playing': state.isPlaying }"
+                :title="state.isPlaying ? '暂停' : '播放'"
+                :aria-label="state.isPlaying ? '暂停' : '播放'"
+                :disabled="!state.track || state.isLoading"
+                @click="togglePlay"
+              >
+                <i
+                  :class="
+                    state.isLoading
+                      ? 'pi pi-spin pi-spinner'
+                      : state.isPlaying
+                        ? 'ph ph-pause'
+                        : 'ph ph-play'
+                  "
+                ></i>
+              </button>
+              <button
+                type="button"
+                class="mini-control-button transport-button"
+                title="下一首"
+                aria-label="下一首"
+                :disabled="!state.track"
+                @click="sendCommand({ type: 'next' })"
+              >
+                <i class="ph ph-skip-forward"></i>
+              </button>
+            </div>
 
-            <label v-if="resolvedVisibility.volume" class="mini-volume" title="音量">
-              <i class="ph ph-speaker-high"></i>
-              <input
-                type="range"
-                class="mini-range mini-volume-range"
-                min="0"
-                max="1"
-                step="0.01"
-                :value="state.volume"
-                aria-label="音量"
-                @input="onVolumeInput"
-              />
-            </label>
-          </div>
-        </footer>
+            <div class="mini-controls-side right">
+              <span
+                v-if="resolvedVisibility.queuePosition"
+                class="mini-queue-position"
+                title="当前队列位置"
+              >
+                {{ queuePositionText }}
+              </span>
+
+              <label v-if="resolvedVisibility.volume" class="mini-volume" title="音量">
+                <i class="ph ph-speaker-high"></i>
+                <input
+                  type="range"
+                  class="mini-range mini-volume-range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  :value="state.volume"
+                  aria-label="音量"
+                  @input="onVolumeInput"
+                />
+              </label>
+            </div>
+          </footer>
+        </div>
       </div>
 
       <MiniPlayerCustomizer

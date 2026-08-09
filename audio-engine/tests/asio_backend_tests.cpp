@@ -150,8 +150,13 @@ void testAsioDriverActivationRequestsDriverClsid() {
   const std::string source = readTextFile(sourcePath);
   const std::string activationBody = extractFunctionBody(source, "bool AsioDriverSession::open(");
 
-  assert(activationBody.find("CLSCTX_INPROC_SERVER,\n            clsid,") != std::string::npos);
-  assert(activationBody.find("CLSCTX_INPROC_SERVER,\n            IID_IUnknown,") == std::string::npos);
+  const std::regex activatesDriverClsid(
+      R"(CoCreateInstance\s*\(\s*clsid\s*,\s*nullptr\s*,\s*CLSCTX_INPROC_SERVER\s*,\s*clsid\s*,)");
+  const std::regex activatesUnknown(
+      R"(CoCreateInstance\s*\(\s*clsid\s*,\s*nullptr\s*,\s*CLSCTX_INPROC_SERVER\s*,\s*IID_IUnknown\s*,)");
+
+  assert(std::regex_search(activationBody, activatesDriverClsid));
+  assert(!std::regex_search(activationBody, activatesUnknown));
 }
 
 void testAsioRenderCallbackDoesNotResizeScratchBuffers() {
