@@ -4,6 +4,9 @@ import test from 'node:test'
 import * as miniPlayerModule from './miniPlayer.ts'
 import {
   DEFAULT_MINI_PLAYER_SETTINGS,
+  MINI_PLAYER_MAX_WIDTH,
+  MINI_PLAYER_MIN_HEIGHT,
+  MINI_PLAYER_MIN_WIDTH,
   normalizeMiniPlayerCommand,
   normalizeMiniPlayerSettings,
   normalizeMiniPlayerStateSnapshot
@@ -23,8 +26,11 @@ test('mini player settings preserve valid monitor coordinates and clamp window s
 
   assert.equal(settings.windowX, -1920)
   assert.equal(settings.windowY, 48)
-  assert.equal(settings.windowWidth, 900)
-  assert.equal(settings.windowHeight, 140)
+  assert.equal(settings.windowWidth, MINI_PLAYER_MAX_WIDTH)
+  assert.equal(settings.windowHeight, MINI_PLAYER_MIN_HEIGHT)
+  const minimumSettings = normalizeMiniPlayerSettings({ windowWidth: 1, windowHeight: 1 })
+  assert.equal(minimumSettings.windowWidth, MINI_PLAYER_MIN_WIDTH)
+  assert.equal(minimumSettings.windowHeight, MINI_PLAYER_MIN_HEIGHT)
   assert.equal(settings.alwaysOnTop, true)
   assert.equal(settings.positionLocked, true)
   assert.equal(settings.activeStyleId, 'aurora-glass')
@@ -181,6 +187,9 @@ test('mini player state normalization keeps only the renderer snapshot contract'
       artist: 'Twilight Echo',
       album: 'Afterglow',
       cover: 'cover://abc.jpg',
+      format: 'FLAC',
+      sampleRate: 192000,
+      bitDepth: 24,
       coverSource: 'https://p1.music.126.net/cover.jpg',
       filePath: 'D:/private/song.flac'
     },
@@ -200,6 +209,9 @@ test('mini player state normalization keeps only the renderer snapshot contract'
   assert.equal(state.track?.title, 'Night Drive')
   assert.equal('filePath' in (state.track as object), false)
   assert.equal(state.track?.cover, 'cover://abc.jpg')
+  assert.equal(state.track?.format, 'FLAC')
+  assert.equal(state.track?.sampleRate, 192000)
+  assert.equal(state.track?.bitDepth, 24)
   assert.equal(state.track?.coverSource, 'https://p1.music.126.net/cover.jpg')
   assert.equal(state.currentTime, 100)
   assert.equal(state.volume, 1)
@@ -208,6 +220,28 @@ test('mini player state normalization keeps only the renderer snapshot contract'
   assert.equal(state.favoriteLiked, true)
   assert.equal(state.favoriteLoading, false)
   assert.equal(state.queueIndex, 2)
+})
+
+test('mini player track snapshot clamps quality numbers and drops unsafe ones', () => {
+  const state = normalizeMiniPlayerStateSnapshot({
+    track: {
+      id: 'local:q',
+      title: 'Quality',
+      format: '   dsd  ',
+      sampleRate: -8000,
+      bitDepth: 128
+    }
+  })
+  assert.equal(state.track?.format, 'dsd')
+  assert.equal(state.track?.sampleRate, 1)
+  assert.equal(state.track?.bitDepth, 64)
+
+  const withoutQuality = normalizeMiniPlayerStateSnapshot({
+    track: { id: 'local:q2', title: 'Plain' }
+  })
+  assert.equal(withoutQuality.track?.format, null)
+  assert.equal(withoutQuality.track?.sampleRate, null)
+  assert.equal(withoutQuality.track?.bitDepth, null)
 })
 
 test('mini player state carries the active lyric line with its translation', () => {
@@ -236,6 +270,30 @@ test('mini player state carries the active lyric line with its translation', () 
 
   const blank = normalizeMiniPlayerStateSnapshot({ currentLyric: { original: '' } })
   assert.equal(blank.currentLyric, null)
+})
+
+test('mini player state normalizes timed lyric lines for the multi-line view', () => {
+  const state = normalizeMiniPlayerStateSnapshot({
+    track: { id: 'ncm:1', title: 'Daydream' },
+    currentTime: 42,
+    lyrics: [
+      { time: 1.5, original: 'first line', translation: '第一行', extra: 'dropped' },
+      { time: 3, original: 'second line' },
+      { time: -1, original: 'negative time', translation: null },
+      { time: 'bad', original: 'bad time', translation: null },
+      { time: 5, original: '' }
+    ]
+  })
+
+  assert.deepEqual(state.lyrics, [
+    { time: 1.5, original: 'first line', translation: '第一行' },
+    { time: 3, original: 'second line', translation: null },
+    { time: 0, original: 'negative time', translation: null },
+    { time: null, original: 'bad time', translation: null }
+  ])
+
+  assert.deepEqual(normalizeMiniPlayerStateSnapshot({}).lyrics, [])
+  assert.deepEqual(normalizeMiniPlayerStateSnapshot({ lyrics: 'not-an-array' }).lyrics, [])
 })
 
 test('mini player track snapshot keeps large data: covers intact and drops unsafe cover sources', () => {

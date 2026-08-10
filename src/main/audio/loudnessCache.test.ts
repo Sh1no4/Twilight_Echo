@@ -14,6 +14,12 @@ import {
   type LoudnessAnalysisResult
 } from './loudnessCache.ts'
 
+function deeplyNestedValue(depth = 128): unknown {
+  let value: unknown = 'leaf'
+  for (let index = 0; index < depth; index += 1) value = [value]
+  return value
+}
+
 test('loudness cache key changes when file identity, algorithm, or targets change', () => {
   const base = {
     filePath: 'D:\\Music\\song.flac',
@@ -176,4 +182,40 @@ test('loudness cache prunes oldest entries when over maxEntries', async () => {
   }
   assert.equal(await cache.getEntryCount(), 2)
   await rm(dir, { recursive: true, force: true })
+})
+
+
+test('loudness cache rejects a valid-looking document with excessive unknown nesting', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'twilight-loudness-cache-deep-'))
+  try {
+    const cachePath = join(dir, 'loudness-analysis-cache.json')
+    const cache = new LoudnessAnalysisCache(cachePath)
+    const identity = {
+      filePath: 'D:\\Music\\song.flac',
+      size: 123,
+      mtimeMs: 456,
+      algorithmVersion: LOUDNESS_ANALYSIS_ALGORITHM_VERSION
+    }
+    const analysis: LoudnessAnalysisResult = {
+      integratedLufs: -14.2,
+      truePeakDb: -1.1,
+      source: 'analyzed',
+      analyzedAt: '2026-01-01T00:00:00.000Z',
+      algorithmVersion: LOUDNESS_ANALYSIS_ALGORITHM_VERSION
+    }
+
+    await writeFile(
+      cachePath,
+      JSON.stringify({
+        version: 1,
+        entries: { [buildLoudnessAnalysisCacheKey(identity)]: analysis },
+        padding: deeplyNestedValue()
+      }),
+      'utf-8'
+    )
+
+    assert.equal(await cache.get(identity), null)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })

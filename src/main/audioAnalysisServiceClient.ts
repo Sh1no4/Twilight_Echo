@@ -5,10 +5,20 @@ import { createRequire } from 'module'
 import {
   AUDIO_ANALYSIS_PROTOCOL_VERSION,
   type AudioAnalysisKind,
-  type AudioAnalysisWorkerMessage,
   type AudioAnalysisWorkerRequest
 } from '../shared/audioAnalysisContract.ts'
 import { isBpmAnalysisResult, type BpmAnalysisResult } from './bpm/bpmCache.ts'
+import { tryParseJsonWithNestingLimit } from './security/jsonSafety.ts'
+import {
+  asUtilityProcessMessageRecord,
+  inspectUtilityProcessMessage,
+  inspectUtilityProcessPayload,
+  isBoundedUtf8String,
+  parseUtilityProcessResponse,
+  UtilityProcessLogBudget,
+  MAX_UTILITY_PROCESS_CONTROL_MESSAGE_BYTES,
+  MAX_UTILITY_PROCESS_ERROR_TEXT_BYTES
+} from './security/utilityProcessSafety.ts'
 import {
   isLoudnessAnalysisResult,
   type LoudnessAnalysisResult
@@ -22,7 +32,7 @@ type UtilityProcessLike = {
   on: (
     event: 'message' | 'exit' | 'error',
     listener:
-      | ((message: AudioAnalysisWorkerMessage) => void)
+      | ((message: unknown) => void)
       | ((code: number | null) => void)
       | ((error: unknown, location?: string) => void)
   ) => void
@@ -62,6 +72,7 @@ type AnalysisWorker = {
   restartTimer: NodeJS.Timeout | null
   startupFailures: number
   disabled: boolean
+  logBudget: UtilityProcessLogBudget
 }
 
 export interface AudioAnalysisServiceClientOptions {
@@ -104,6 +115,11 @@ const DEFAULT_RESTART_DELAY_MS = 250
 const DEFAULT_MAX_CONCURRENCY = 1
 const DEFAULT_MAX_QUEUE_SIZE = 32
 const DEFAULT_MAX_STARTUP_FAILURES = 3
+const MAX_AUDIO_ANALYSIS_RESPONSE_BYTES = 512 * 1024
+const MAX_AUDIO_ANALYSIS_MESSAGE_BYTES =
+  MAX_AUDIO_ANALYSIS_RESPONSE_BYTES + MAX_UTILITY_PROCESS_CONTROL_MESSAGE_BYTES
+const AUDIO_ANALYSIS_INVALID_RESPONSE_CODE = 'ERR_AUDIO_ANALYSIS_INVALID_RESPONSE'
+const AUDIO_ANALYSIS_INVALID_RESPONSE = 'audio analysis worker returned an invalid or oversized message'
 
 export class AudioAnalysisServiceClient extends EventEmitter {
   private readonly options: AudioAnalysisServiceClientOptions
@@ -176,7 +192,8 @@ export class AudioAnalysisServiceClient extends EventEmitter {
       startupTimer: null,
       restartTimer: null,
       startupFailures: 0,
-      disabled: false
+      disabled: false,
+      logBudget: new UtilityProcessLogBudget()
     }))
     for (const worker of this.workers) this.startWorker(worker)
   }
@@ -345,6 +362,7 @@ export class AudioAnalysisServiceClient extends EventEmitter {
       })
       worker.child = child
       worker.ready = false
+      worker.logBudget.reset()
       worker.startupTimer = setTimeout(() => {
         if (worker.child !== child || worker.ready) return
         this.terminateWorker(
@@ -383,8 +401,14 @@ export class AudioAnalysisServiceClient extends EventEmitter {
           true
         )
       })
-      child.stdout?.on('data', (chunk) => this.emit('log', chunk.toString()))
-      child.stderr?.on('data', (chunk) => this.emit('error-log', chunk.toString()))
+      child.stdout?.on('data', (chunk) => {
+        if (worker.child !== child) return
+        this.emitWorkerLog(worker, 'log', chunk)
+      })
+      child.stderr?.on('data', (chunk) => {
+        if (worker.child !== child) return
+        this.emitWorkerLog(worker, 'error-log', chunk)
+      })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.lastError = message
@@ -392,38 +416,115 @@ export class AudioAnalysisServiceClient extends EventEmitter {
     }
   }
 
-  private handleWorkerMessage(worker: AnalysisWorker, message: AudioAnalysisWorkerMessage): void {
-    if (message.kind === 'ready') {
-      if (
-        message.protocolVersion !== AUDIO_ANALYSIS_PROTOCOL_VERSION ||
-        !message.analyses.includes('bpm') ||
-        !message.analyses.includes('loudness')
-      ) {
-        this.handleFatal('audio analysis worker capability contract mismatch')
+  private emitWorkerLog(
+    worker: AnalysisWorker,
+    event: 'log' | 'error-log',
+    chunk: Buffer
+  ): void {
+    const capture = worker.logBudget.capture(chunk)
+    if (capture.text) this.emit(event, capture.text)
+    if (capture.notice) this.emit(event, capture.notice)
+  }
+
+  private handleWorkerMessage(worker: AnalysisWorker, message: unknown): void {
+    const record = asUtilityProcessMessageRecord(message)
+    if (!record) {
+      this.handleWorkerProtocolViolation(worker)
+      return
+    }
+
+    let kind: unknown
+    try {
+      kind = record.kind
+    } catch {
+      this.handleWorkerProtocolViolation(worker)
+      return
+    }
+
+    if (kind === 'ready') {
+      if (!inspectUtilityProcessMessage(record, MAX_UTILITY_PROCESS_CONTROL_MESSAGE_BYTES).ok) {
+        this.handleWorkerProtocolViolation(worker)
         return
       }
-      if (worker.startupTimer) clearTimeout(worker.startupTimer)
-      worker.startupTimer = null
-      worker.ready = true
-      worker.startupFailures = 0
-      this.unavailableError = ''
-      this.pump()
+      try {
+        const analyses = record.analyses
+        if (
+          record.protocolVersion !== AUDIO_ANALYSIS_PROTOCOL_VERSION ||
+          !Array.isArray(analyses) ||
+          !analyses.includes('bpm') ||
+          !analyses.includes('loudness')
+        ) {
+          this.handleFatal('audio analysis worker capability contract mismatch')
+          return
+        }
+        if (worker.startupTimer) clearTimeout(worker.startupTimer)
+        worker.startupTimer = null
+        worker.ready = true
+        worker.startupFailures = 0
+        this.unavailableError = ''
+        this.pump()
+      } catch {
+        this.handleWorkerProtocolViolation(worker)
+      }
       return
     }
-    if (message.kind === 'fatal') {
-      this.handleFatal(message.error)
+
+    if (kind === 'fatal') {
+      if (!inspectUtilityProcessMessage(record, MAX_UTILITY_PROCESS_CONTROL_MESSAGE_BYTES).ok) {
+        this.handleWorkerProtocolViolation(worker)
+        return
+      }
+      try {
+        if (!isBoundedUtf8String(record.error, MAX_UTILITY_PROCESS_ERROR_TEXT_BYTES) || !record.error.trim()) {
+          this.handleWorkerProtocolViolation(worker)
+          return
+        }
+        this.handleFatal(record.error)
+      } catch {
+        this.handleWorkerProtocolViolation(worker)
+      }
       return
     }
-    if (message.kind !== 'response' || message.requestId !== worker.taskId) return
-    const task = this.active.get(message.requestId)
+
+    if (kind !== 'response') {
+      this.handleWorkerProtocolViolation(worker)
+      return
+    }
+    if (!inspectUtilityProcessMessage(record, MAX_AUDIO_ANALYSIS_MESSAGE_BYTES).ok) {
+      this.handleWorkerProtocolViolation(worker)
+      return
+    }
+
+    const parsed = parseUtilityProcessResponse(record)
+    if (!parsed.ok) {
+      this.handleWorkerProtocolViolation(worker)
+      return
+    }
+
+    const { response } = parsed
+    if (response.requestId !== worker.taskId) return
+    const task = this.active.get(response.requestId)
     if (!task) return
+    if (!inspectUtilityProcessPayload(response.value, MAX_AUDIO_ANALYSIS_RESPONSE_BYTES).ok) {
+      this.handleWorkerProtocolViolation(worker)
+      return
+    }
+
     this.completeTask(worker, task)
-    if (message.ok) task.resolve(message.value)
+    if (response.ok) task.resolve(response.value)
     else {
-      this.lastError = message.error || 'audio analysis worker request failed'
+      this.lastError = response.error || 'audio analysis worker request failed'
       task.reject(new Error(this.lastError))
     }
     this.pump()
+  }
+
+  private handleWorkerProtocolViolation(worker: AnalysisWorker): void {
+    this.terminateWorker(
+      worker,
+      createAnalysisError(AUDIO_ANALYSIS_INVALID_RESPONSE_CODE, AUDIO_ANALYSIS_INVALID_RESPONSE),
+      true
+    )
   }
 
   private handleFatal(reason: string): void {
@@ -711,11 +812,9 @@ function createAnalysisError(code: string, message: string): AudioAnalysisError 
 
 function parseAnalysisJson(value: unknown, label: string): unknown {
   if (typeof value !== 'string') return value
-  try {
-    return JSON.parse(value) as unknown
-  } catch {
-    throw new Error(`audio analysis worker returned invalid ${label} JSON`)
-  }
+  const parsed = tryParseJsonWithNestingLimit(value)
+  if (!parsed.ok) throw new Error(`audio analysis worker returned invalid ${label} JSON`)
+  return parsed.value
 }
 
 function analysisErrorMessage(value: unknown, fallback: string): string {

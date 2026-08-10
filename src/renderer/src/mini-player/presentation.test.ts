@@ -46,6 +46,14 @@ test('presentation variables keep controls opaque while background opacity chang
   assert.equal(variables['--mini-window-radius'], '36px')
   assert.equal(variables['--mini-progress'], '25%')
   assert.equal(variables['--mini-volume'], '60%')
+  assert.equal(variables['--mini-bootstrap-surface'], 'color-mix(in srgb, #0f172a 82%, transparent)')
+  assert.equal(variables['--mini-bootstrap-text'], '#f8fafc')
+  assert.equal(
+    variables['--mini-bootstrap-action-surface'],
+    'color-mix(in srgb, #7c4dff 88%, #fff)'
+  )
+  assert.equal(variables['--mini-bootstrap-action-text'], '#fff')
+  assert.equal(variables['--mini-surface-backdrop'], 'rgba(12, 12, 18, 0.92)')
   assert.equal(Object.hasOwn(variables, 'opacity'), false)
 })
 

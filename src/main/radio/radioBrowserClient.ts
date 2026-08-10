@@ -3,6 +3,7 @@
  * Only used when the user explicitly searches; never auto-polls.
  * Docs: https://api.radio-browser.info/
  */
+import { parseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 
 export interface RadioBrowserStation {
   stationuuid: string
@@ -133,7 +134,7 @@ async function defaultFetchJson(url: string): Promise<unknown> {
     if (Buffer.byteLength(text, 'utf8') > MAX_RESPONSE_BYTES) {
       throw new Error('Radio directory response is too large')
     }
-    return JSON.parse(text) as unknown
+    return parseJsonWithNestingLimit(text) as unknown
   } finally {
     clearTimeout(timer)
   }

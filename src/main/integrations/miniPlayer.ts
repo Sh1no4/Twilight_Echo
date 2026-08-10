@@ -119,7 +119,15 @@ function applyMiniPlayerWindowShape(win: BrowserWindow, settings: MiniPlayerSett
   const profile = settings.profiles[settings.activeStyleId]
   const cornerRadius = profile?.appearance.cornerRadius ?? 0
   const bounds = win.getBounds()
-  win.setShape(createMiniPlayerWindowShape(bounds.width, bounds.height, cornerRadius + 2))
+  // The OS window region is binary, so a rounded region is drawn as a 1px
+  // stair-step and cannot be anti-aliased. If that region is rounder than the
+  // CSS surface it becomes the visible boundary and looks jagged. Keep the
+  // region slightly *less* round instead: the staircase then hides in the
+  // transparent rim outside the CSS border-radius, and Chromium's antialiased
+  // CSS corner is what the user actually sees. The shape still cuts the corner
+  // tip so clicks outside the rounded surface fall through to the desktop.
+  const safetyRadius = Math.max(0, cornerRadius - 2)
+  win.setShape(createMiniPlayerWindowShape(bounds.width, bounds.height, safetyRadius))
 }
 
 function persistMiniPlayerBounds(win: BrowserWindow): void {

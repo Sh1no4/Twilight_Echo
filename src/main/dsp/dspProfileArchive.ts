@@ -7,6 +7,7 @@ import { randomUUID } from 'crypto'
 import type { DspAsset, DspProfile, DspScene } from '../../shared/dspGraph.ts'
 import { DspAssetLibrary } from './dspAssetLibrary.ts'
 import { parseCorrectionProfileFile } from './correctionProfile.ts'
+import { tryParseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 
 const require = createRequire(import.meta.url)
 const yauzl = require('yauzl') as {
@@ -128,9 +129,9 @@ export async function importDspProfileArchive(
     if (!manifestInfo.isFile() || manifestInfo.size > MAX_PROFILE_MANIFEST_BYTES) {
       throw new Error('DSP 配置包清单无效')
     }
-    const manifest = parseProfileManifest(
-      JSON.parse(await readFile(manifestPath, 'utf8')) as unknown
-    )
+    const parsedManifest = tryParseJsonWithNestingLimit(await readFile(manifestPath, 'utf8'))
+    if (!parsedManifest.ok) throw new Error('DSP profile archive manifest is invalid')
+    const manifest = parseProfileManifest(parsedManifest.value)
     const importedAssets: DspAsset[] = []
     for (const entry of manifest.assets) {
       const sourcePath = resolve(temporaryRoot, entry.archivePath)

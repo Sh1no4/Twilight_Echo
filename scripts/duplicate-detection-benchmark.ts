@@ -324,7 +324,7 @@ export function percentile(samples: readonly number[], quantile: number): number
 export async function collectDuplicateDetectionBenchmarkProvenance(): Promise<DuplicateDetectionBenchmarkProvenance> {
   const entry = async (path: string): Promise<{ path: string; sha256: string }> => ({
     path,
-    sha256: sha256(await readFile(resolve(REPOSITORY_ROOT, path)))
+    sha256: sha256(canonicalizeProvenanceBytes(await readFile(resolve(REPOSITORY_ROOT, path))))
   })
   return {
     algorithm: 'sha256',
@@ -375,6 +375,18 @@ export function createDuplicateBenchmarkManifest(
       }
     }
   }
+}
+
+export function canonicalizeProvenanceBytes(value: Uint8Array): Uint8Array {
+  if (value.indexOf(0x0d) === -1) return value
+
+  const normalized: number[] = []
+  for (let index = 0; index < value.length; index++) {
+    const byte = value[index]
+    if (byte === 0x0d && value[index + 1] === 0x0a) continue
+    normalized.push(byte)
+  }
+  return Uint8Array.from(normalized)
 }
 
 function sha256(value: Uint8Array): string {

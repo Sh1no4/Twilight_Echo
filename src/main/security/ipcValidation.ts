@@ -1,3 +1,5 @@
+import { stringifyJsonWithNestingLimit } from './jsonSafety.ts'
+
 export const DEFAULT_IPC_STRING_MAX_LENGTH = 4096
 
 export function normalizeIpcString(
@@ -49,8 +51,7 @@ export function stringifyJsonForIpcStorage(
   field: string,
   maxBytes: number
 ): string {
-  const json = JSON.stringify(value)
-  if (json === undefined) throw new Error(`${field} must be JSON serializable`)
+  const json = stringifyJsonWithNestingLimit(value, field)
   if (Buffer.byteLength(json, 'utf-8') > maxBytes) throw new Error(`${field} is too large`)
   return json
 }

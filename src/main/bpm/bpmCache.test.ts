@@ -11,6 +11,12 @@ import {
   type BpmAnalysisResult
 } from './bpmCache.ts'
 
+function deeplyNestedValue(depth = 128): unknown {
+  let value: unknown = 'leaf'
+  for (let index = 0; index < depth; index += 1) value = [value]
+  return value
+}
+
 test('BPM cache key changes when file identity or algorithm changes', () => {
   const base = {
     filePath: 'D:\\Music\\song.flac',
@@ -111,4 +117,40 @@ test('BPM cache conditional rollback deletes only the exact committed analysis',
   assert.equal(await cache.get(identity), null)
 
   await rm(dir, { recursive: true, force: true })
+})
+
+
+test('BPM cache rejects a valid-looking document with excessive unknown nesting', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'twilight-bpm-cache-deep-'))
+  try {
+    const cachePath = join(dir, 'bpm-analysis-cache.json')
+    const cache = new BpmAnalysisCache(cachePath)
+    const identity = {
+      filePath: 'D:\\Music\\song.flac',
+      size: 123,
+      mtimeMs: 456,
+      algorithmVersion: BPM_ANALYSIS_ALGORITHM_VERSION
+    }
+    const analysis: BpmAnalysisResult = {
+      bpm: 128,
+      confidence: 0.9,
+      source: 'analyzed',
+      analyzedAt: '2026-01-01T00:00:00.000Z',
+      algorithmVersion: BPM_ANALYSIS_ALGORITHM_VERSION
+    }
+
+    await writeFile(
+      cachePath,
+      JSON.stringify({
+        version: 1,
+        entries: { [buildBpmAnalysisCacheKey(identity)]: analysis },
+        padding: deeplyNestedValue()
+      }),
+      'utf-8'
+    )
+
+    assert.equal(await cache.get(identity), null)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })

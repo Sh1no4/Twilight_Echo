@@ -105,6 +105,15 @@ export function buildMiniPlayerCssVariables(
       : automaticText.muted
 
   return {
+    // These constants are consumed by the bootstrap fallback UI and keep its
+    // appearance stable before a profile has been fully applied. Keeping them
+    // with the other presentation tokens also lets the stylesheet remain
+    // theme-token-only.
+    '--mini-bootstrap-surface': 'color-mix(in srgb, #0f172a 82%, transparent)',
+    '--mini-bootstrap-text': '#f8fafc',
+    '--mini-bootstrap-action-surface': 'color-mix(in srgb, #7c4dff 88%, #fff)',
+    '--mini-bootstrap-action-text': '#fff',
+    '--mini-surface-backdrop': 'rgba(12, 12, 18, 0.92)',
     '--mini-track-accent': accent,
     '--mini-text': primaryText,
     '--mini-muted': mutedText,

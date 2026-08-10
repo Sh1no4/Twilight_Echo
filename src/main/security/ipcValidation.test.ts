@@ -46,10 +46,52 @@ test('normalizes finite numbers and arrays from untrusted IPC input', () => {
   )
 })
 
-test('limits JSON payloads before writing renderer-controlled data to disk', () => {
+test('limits and safely serializes JSON payloads before writing renderer-controlled data to disk', () => {
   assert.equal(stringifyJsonForIpcStorage({ ok: true }, 'payload', 32), '{"ok":true}')
   assert.throws(() => stringifyJsonForIpcStorage('x'.repeat(32), 'payload', 8), /too large/)
   assert.throws(() => stringifyJsonForIpcStorage(undefined, 'payload', 8), /serializable/)
+
+  const circular: { self?: unknown } = {}
+  circular.self = circular
+  assert.throws(
+    () => stringifyJsonForIpcStorage(circular, 'payload', 1024),
+    /payload must be JSON serializable/
+  )
+  assert.throws(
+    () => stringifyJsonForIpcStorage({ id: BigInt(1) }, 'payload', 1024),
+    /payload must be JSON serializable/
+  )
+  assert.throws(
+    () =>
+      stringifyJsonForIpcStorage(
+        {
+          toJSON() {
+            throw new Error('internal serialization detail')
+          }
+        },
+        'payload',
+        1024
+      ),
+    /payload must be JSON serializable/
+  )
+
+  const deeplyNested: { child?: unknown } = {}
+  let cursor = deeplyNested
+  for (let index = 0; index < 128; index += 1) {
+    const child: { child?: unknown } = {}
+    cursor.child = child
+    cursor = child
+  }
+  assert.throws(
+    () => stringifyJsonForIpcStorage(deeplyNested, 'payload', 1024 * 1024),
+    /payload is too deeply nested/
+  )
+
+  const shared = { value: 'still valid' }
+  assert.equal(
+    stringifyJsonForIpcStorage({ first: shared, second: shared }, 'payload', 1024),
+    '{"first":{"value":"still valid"},"second":{"value":"still valid"}}'
+  )
 })
 
 test('data IPC applies path and storage limits before touching local files', () => {
@@ -117,7 +159,7 @@ test('data IPC applies path and storage limits before touching local files', () 
     source,
     /decodeLyrics\(await readFile\(filePath\)\)\.text/
   )
-  assert.doesNotMatch(source, /readFile\(lrcPath,\s*['\"]utf-?8['\"]\)/)
+  assert.doesNotMatch(source, /readFile\(lrcPath,\s*['"]utf-?8['"]\)/)
   assert.match(
     source,
     /if \(mode === 'trash'\) \{\s*await resolveAuthorizedAudioFile\(requestedPath\)/
@@ -174,6 +216,9 @@ test('settings, background image, OPRA, and BPM IPC apply input limits before ex
   )
   assert.match(dataSource, /Buffer\.byteLength\(json, 'utf-8'\) > MAX_SETTINGS_BACKUP_BYTES/)
   assert.match(dataSource, /normalizeNcmCookieForSave\(cookie\)/)
+  assert.match(dataSource, /const MAX_NCM_COOKIE_FILE_BYTES = 64 \* 1024/)
+  assert.match(dataSource, /tryParseJsonWithNestingLimit\(raw\)/)
+  assert.match(dataSource, /normalizeLoadedNcmCookie/)
   assert.match(
     dataSource,
     /stringifyJsonForIpcStorage\(data, 'Discord activity', MAX_DISCORD_ACTIVITY_BYTES\)/

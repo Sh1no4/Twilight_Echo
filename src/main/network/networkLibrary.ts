@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { NetworkSourceFailure } from './errors.ts'
+import { tryParseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 import type { NetworkEntry } from '../../shared/networkSources.ts'
 
 interface LibraryProfileIndex {
@@ -32,8 +33,11 @@ export function createNetworkLibrary(deps: { filePath: string }): NetworkLibrary
   async function load(): Promise<LibraryDocument> {
     try {
       const raw = await readFile(filePath, 'utf8')
-      const parsed = JSON.parse(raw) as LibraryDocument
-      return parsed && typeof parsed === 'object' ? parsed : {}
+      const parsed = tryParseJsonWithNestingLimit(raw)
+      if (!parsed.ok || !isLibraryDocument(parsed.value)) {
+        throw new Error('network library index is invalid')
+      }
+      return parsed.value
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {}
       throw new NetworkSourceFailure('network', '网络媒体库索引读取失败')
@@ -108,4 +112,35 @@ export function createNetworkLibrary(deps: { filePath: string }): NetworkLibrary
       await save(document)
     }
   }
+}
+
+
+function isLibraryDocument(value: unknown): value is LibraryDocument {
+  if (!isRecord(value)) return false
+  return Object.values(value).every(isLibraryProfileIndex)
+}
+
+function isLibraryProfileIndex(value: unknown): value is LibraryProfileIndex {
+  if (!isRecord(value)) return false
+  return (
+    Array.isArray(value.roots) &&
+    value.roots.every((root) => typeof root === 'string') &&
+    Array.isArray(value.entries) &&
+    value.entries.every(isNetworkLibraryEntry)
+  )
+}
+
+function isNetworkLibraryEntry(value: unknown): value is NetworkEntry {
+  if (!isRecord(value)) return false
+  return (
+    typeof value.id === 'string' &&
+    typeof value.profileId === 'string' &&
+    typeof value.name === 'string' &&
+    typeof value.path === 'string' &&
+    (value.kind === 'directory' || value.kind === 'file' || value.kind === 'audio' || value.kind === 'playlist')
+  )
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
 }

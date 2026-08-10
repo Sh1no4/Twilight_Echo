@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import { open, mkdir, readFile, rename, stat, unlink } from 'fs/promises'
 import { dirname } from 'path'
 import type { TwilightPluginSource, TwilightPluginStateRecord } from './types.ts'
+import { tryParseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 
 export type PluginStateFile = Record<string, TwilightPluginStateRecord>
 
@@ -152,11 +153,17 @@ async function readPluginStateCandidate(filePath: string): Promise<PluginStateCa
     if (Buffer.byteLength(raw, 'utf-8') > MAX_PLUGIN_STATE_BYTES) {
       return { status: 'invalid', error: 'file is too large' }
     }
-    const parsed = JSON.parse(raw) as unknown
-    if (!isPluginStateFile(parsed)) {
+    const parsed = tryParseJsonWithNestingLimit(raw)
+    if (!parsed.ok) {
+      return {
+        status: 'invalid',
+        error: parsed.reason === 'too-deep' ? 'JSON is too deeply nested' : 'JSON is invalid'
+      }
+    }
+    if (!isPluginStateFile(parsed.value)) {
       return { status: 'invalid', error: 'JSON structure is invalid' }
     }
-    return { status: 'loaded', state: parsed, raw }
+    return { status: 'loaded', state: parsed.value, raw }
   } catch (error) {
     if (isMissingFileError(error)) return { status: 'missing' }
     return { status: 'invalid', error: errorMessage(error) }

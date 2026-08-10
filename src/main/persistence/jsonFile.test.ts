@@ -85,6 +85,59 @@ test('JSON loading distinguishes a genuinely missing file from corruption', asyn
   })
 })
 
+test('rejects over-nested persisted JSON before accepting or recovering it', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'twilight-json-nesting-'))
+  t.after(async () => {
+    await rm(directory, { recursive: true, force: true })
+  })
+  const filePath = join(directory, 'data.json')
+  const deeplyNested = `${'['.repeat(128)}0${']'.repeat(128)}`
+  await writeFile(filePath, deeplyNested, 'utf8')
+
+  let error: InstanceType<typeof PersistentJsonFileError> | null = null
+  try {
+    loadJsonFileWithBackup(filePath, options)
+  } catch (caught) {
+    assert.ok(caught instanceof PersistentJsonFileError)
+    error = caught
+  }
+
+  assert.ok(error)
+  assert.equal(error.primaryError, 'JSON is too deeply nested')
+  assert.equal(error.backupError, 'file is missing')
+  assert.equal(await readFile(error.corruptCopyPath!, 'utf8'), deeplyNested)
+
+  await writeFile(
+    filePath,
+    JSON.stringify({ version: 1, value: '['.repeat(128) }),
+    'utf8'
+  )
+  assert.deepEqual(loadJsonFileWithBackup(filePath, options), {
+    status: 'loaded',
+    value: { version: 1, value: '['.repeat(128) }
+  })
+})
+
+test('atomic JSON writes reject over-nested input before parsing or writing it', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'twilight-json-write-nesting-'))
+  t.after(async () => {
+    await rm(directory, { recursive: true, force: true })
+  })
+  const filePath = join(directory, 'data.json')
+  const deeplyNested = `${'['.repeat(128)}0${']'.repeat(128)}`
+  const permissiveOptions = {
+    label: 'nested test data',
+    maxBytes: 1024,
+    validate: (_value: unknown): _value is unknown => true
+  }
+
+  assert.throws(
+    () => writeJsonFileAtomic(filePath, deeplyNested, permissiveOptions, { bypass: true }),
+    /too deeply nested/
+  )
+  assert.deepEqual(loadJsonFileWithBackup(filePath, permissiveOptions), { status: 'missing' })
+})
+
 test('saving over a corrupt primary preserves an existing valid backup', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'twilight-json-preserve-'))
   t.after(async () => {

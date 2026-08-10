@@ -10,9 +10,15 @@ const {
   pluginSettingsPath,
   setPluginSetting
 } = (await import(new URL('./settingsStore.ts', import.meta.url).href)) as typeof import('./settingsStore')
-const { redactSensitiveText } = (await import(
+const { protectString, redactSensitiveText } = (await import(
   new URL('../security/secureStorage.ts', import.meta.url).href
 )) as typeof import('../security/secureStorage')
+
+function deeplyNestedValue(depth = 128): unknown {
+  let value: unknown = 'leaf'
+  for (let index = 0; index < depth; index += 1) value = [value]
+  return value
+}
 
 test('stores plugin settings inside plugin private data directory', async () => {
   const storagePath = await mkdtemp(join(tmpdir(), 'twilight-plugin-settings-'))
@@ -115,4 +121,27 @@ test('redacts login secrets from plugin-visible logs', () => {
   assert.match(redacted, /MUSIC_U=\[REDACTED\]/)
   assert.match(redacted, /Authorization: Bearer \[REDACTED\]/)
   assert.match(redacted, /X-Signature: \[REDACTED\]/)
+})
+
+
+test('rejects an excessively nested plugin settings document as a whole', async () => {
+  const storagePath = await mkdtemp(join(tmpdir(), 'twilight-plugin-settings-deep-file-'))
+  await writeFile(
+    pluginSettingsPath(storagePath),
+    JSON.stringify({ safe: true, padding: deeplyNestedValue() }),
+    'utf-8'
+  )
+
+  assert.deepEqual(await getPluginSetting(storagePath), {})
+})
+
+test('drops encrypted plugin values whose decrypted JSON exceeds the nesting limit', async () => {
+  const storagePath = await mkdtemp(join(tmpdir(), 'twilight-plugin-settings-deep-value-'))
+  const encrypted = protectString(
+    JSON.stringify(deeplyNestedValue()),
+    `plugin-settings:${storagePath}:cookie`
+  )
+  await writeFile(pluginSettingsPath(storagePath), JSON.stringify({ cookie: encrypted }), 'utf-8')
+
+  assert.equal(await getPluginSetting(storagePath, 'cookie'), undefined)
 })

@@ -6,6 +6,7 @@ import {
   protectJsonValue,
   unprotectJsonValue
 } from '../security/secureStorage.ts'
+import { tryParseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 
 const MAX_PLUGIN_SETTINGS_FILE_BYTES = 1024 * 1024
 const MAX_PLUGIN_SETTING_VALUE_BYTES = 512 * 1024
@@ -40,9 +41,11 @@ async function readPluginSettings(storagePath: string): Promise<Record<string, u
   try {
     const raw = await readFile(pluginSettingsPath(storagePath), 'utf-8')
     if (Buffer.byteLength(raw, 'utf-8') > MAX_PLUGIN_SETTINGS_FILE_BYTES) return {}
-    const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    const settings = parsed as Record<string, unknown>
+    const parsed = tryParseJsonWithNestingLimit(raw)
+    if (!parsed.ok || !parsed.value || typeof parsed.value !== 'object' || Array.isArray(parsed.value)) {
+      return {}
+    }
+    const settings = parsed.value as Record<string, unknown>
     let migrated = false
     for (const [key, value] of Object.entries(settings)) {
       if (isSecureValueEnvelope(value)) {

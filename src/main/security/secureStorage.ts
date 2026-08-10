@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto'
 import { hostname, userInfo } from 'os'
 import * as electron from 'electron'
+import { tryParseJsonWithNestingLimit } from './jsonSafety.ts'
 
 export interface SecureValueEnvelope {
   __twilightSecure: true
@@ -90,11 +91,8 @@ export function protectJsonValue(value: unknown, scope: string): SecureValueEnve
 export function unprotectJsonValue(envelope: SecureValueEnvelope, scope: string): unknown {
   const plainText = unprotectString(envelope, scope)
   if (plainText == null) return undefined
-  try {
-    return JSON.parse(plainText)
-  } catch {
-    return undefined
-  }
+  const parsed = tryParseJsonWithNestingLimit(plainText)
+  return parsed.ok ? parsed.value : undefined
 }
 
 export function redactSensitiveText(value: unknown): string {

@@ -505,6 +505,18 @@ html[data-te-motion='off'] *::after {
   -webkit-user-select: none;
 }
 
+/* Chromium natively lets users drag media out of the window and drop it on the
+   OS desktop (covers, artwork, QR codes). Block that at the style level;
+   main.ts additionally cancels dragstart on every non-draggable surface. */
+img,
+picture,
+canvas,
+video,
+iframe {
+  -webkit-user-drag: none;
+  user-drag: none;
+}
+
 html {
   min-height: 100%;
   background: #fbfbff;

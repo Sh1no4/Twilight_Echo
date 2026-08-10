@@ -62,7 +62,10 @@ test('failed persistence rolls back to the last confirmed settings', async () =>
     appearance: { ...profile.appearance, cornerRadius: 36 }
   }))
   await assert.rejects(draft.flush(), /disk unavailable/)
-  assert.equal(draft.activeProfile.value.appearance.cornerRadius, 25)
+  assert.equal(
+    draft.activeProfile.value.appearance.cornerRadius,
+    DEFAULT_MINI_PLAYER_SETTINGS.profiles[DEFAULT_MINI_PLAYER_SETTINGS.activeStyleId].appearance.cornerRadius
+  )
   assert.match(draft.error.value, /disk unavailable/)
   draft.dispose()
 })
@@ -80,7 +83,10 @@ test('reset replaces only the active theme profile with registered defaults', as
     appearance: { ...profile.appearance, cornerRadius: 4 }
   }))
   draft.resetActiveTheme()
-  assert.equal(draft.activeProfile.value.appearance.cornerRadius, 25)
+  assert.equal(
+    draft.activeProfile.value.appearance.cornerRadius,
+    DEFAULT_MINI_PLAYER_SETTINGS.profiles[DEFAULT_MINI_PLAYER_SETTINGS.activeStyleId].appearance.cornerRadius
+  )
   assert.equal(draft.settings.value.profiles.porcelain.background.solidColor, '#abcdef')
   await draft.flush()
   draft.dispose()

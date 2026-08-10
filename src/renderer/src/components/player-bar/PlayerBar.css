@@ -6,6 +6,8 @@
   right: 18px;
   z-index: 1002;
   pointer-events: none;
+  will-change: left;
+  transition: left 0.32s var(--te-ease-soft);
 }
 
 .player-bar-shell.menu-open {

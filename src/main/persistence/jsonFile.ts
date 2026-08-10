@@ -9,6 +9,10 @@ import {
   writeFileSync
 } from 'fs'
 import { dirname } from 'path'
+import {
+  isJsonNestingWithinLimit,
+  tryParseJsonWithNestingLimit
+} from '../security/jsonSafety.ts'
 
 export interface JsonFileOptions<T> {
   label: string
@@ -111,14 +115,14 @@ export function writeJsonFileAtomic<T>(
   if (Buffer.byteLength(json, 'utf-8') > options.maxBytes) {
     throw new Error(`${options.label} is too large`)
   }
-  let nextValue: unknown = value
-  if (nextValue === undefined) {
-    try {
-      nextValue = JSON.parse(json)
-    } catch {
-      throw new Error(`${options.label} is not valid JSON`)
+  const parsed = tryParseJsonWithNestingLimit(json)
+  if (!parsed.ok) {
+    if (parsed.reason === 'too-deep') {
+      throw new Error(`${options.label} is too deeply nested`)
     }
+    throw new Error(`${options.label} is not valid JSON`)
   }
+  const nextValue: unknown = value === undefined ? parsed.value : value
   if (!options.validate(nextValue)) {
     throw new Error(`${options.label} has an invalid structure`)
   }
@@ -202,6 +206,9 @@ function readJsonCandidate<T>(filePath: string, options: JsonFileOptions<T>): Js
     const raw = readFileSync(filePath, 'utf-8')
     if (Buffer.byteLength(raw, 'utf-8') > options.maxBytes) {
       return { status: 'invalid', error: 'file is too large' }
+    }
+    if (!isJsonNestingWithinLimit(raw)) {
+      return { status: 'invalid', error: 'JSON is too deeply nested' }
     }
     const value = JSON.parse(raw) as unknown
     if (!options.validate(value)) {

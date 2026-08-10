@@ -852,7 +852,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 
 .playlist-delete-button {
   position: absolute;
-  top: 14px;
+  top: 18px;
   right: 48px;
   width: 34px;
   height: 34px;

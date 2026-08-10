@@ -5,7 +5,13 @@ import { join } from 'path'
 import { runtime } from '../core/runtime'
 import { sleepTimerService } from '../sleepTimer.ts'
 import { registerNativeSleepTimerBoundaries } from './sleepTimerNativeBoundary.ts'
-import { normalizeOutputConfig } from '../core/settings'
+import {
+  createSettingsSnapshot,
+  normalizeAppSettings,
+  normalizeOutputConfig,
+  writeAppSettings
+} from '../core/settings'
+import { DEFAULT_SOFTWARE_VOLUME } from '../../shared/audioProcessingOptions.ts'
 import {
   AudioEngineManager,
   normalizeAudioProcessingSettings,
@@ -69,6 +75,46 @@ const MAX_AUDIO_SOURCE_LENGTH = 8192
 const MAX_AUDIO_DEVICE_LENGTH = 512
 let audioDiagnosticRecorder: AudioDiagnosticRecorder | null = null
 let lastAudioDiagnosticPlaybackSignature = ''
+
+const SOFTWARE_VOLUME_PERSIST_DELAY_MS = 350
+let softwareVolumePersistTimer: NodeJS.Timeout | null = null
+let pendingSoftwareVolume: number | null = null
+
+function persistSoftwareVolumeNow(): void {
+  softwareVolumePersistTimer = null
+  const next = pendingSoftwareVolume
+  pendingSoftwareVolume = null
+  if (typeof next !== 'number' || !Number.isFinite(next)) return
+  const clamped = Math.min(1, Math.max(0, Math.round(next * 1000) / 1000))
+  const saved =
+    typeof runtime.appSettings.softwareVolume === 'number' &&
+    Number.isFinite(runtime.appSettings.softwareVolume)
+      ? Math.min(1, Math.max(0, runtime.appSettings.softwareVolume))
+      : DEFAULT_SOFTWARE_VOLUME
+  if (Math.abs(clamped - saved) < 0.0005) return
+  runtime.appSettings = normalizeAppSettings({
+    ...runtime.appSettings,
+    softwareVolume: clamped
+  })
+  writeAppSettings(runtime.appSettings)
+  runtime.mainWindow?.webContents.send(
+    'settings:changed',
+    createSettingsSnapshot(runtime.appSettings, runtime.launchSettings)
+  )
+}
+
+function scheduleSoftwareVolumePersist(volume: number): void {
+  pendingSoftwareVolume = volume
+  if (softwareVolumePersistTimer) clearTimeout(softwareVolumePersistTimer)
+  softwareVolumePersistTimer = setTimeout(persistSoftwareVolumeNow, SOFTWARE_VOLUME_PERSIST_DELAY_MS)
+}
+
+function flushSoftwareVolumePersist(): void {
+  if (softwareVolumePersistTimer) {
+    clearTimeout(softwareVolumePersistTimer)
+    persistSoftwareVolumeNow()
+  }
+}
 
 const DSP_ASSET_KINDS: DspAssetKind[] = [
   'impulseResponse',
@@ -374,6 +420,9 @@ function isPlaybackInfo(
 }
 
 export async function setupAudioEngineIpc(): Promise<void> {
+  app.on('before-quit', () => {
+    flushSoftwareVolumePersist()
+  })
   let initialAudioProcessing = getEffectiveAudioProcessing()
   try {
     initialAudioProcessing = await authorizeAudioProcessingSettings(initialAudioProcessing)
@@ -585,6 +634,12 @@ export async function setupAudioEngineIpc(): Promise<void> {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     const normalizedVolume = normalizeFiniteNumber(volume, 'volume', 1, 0, 1)
     await requireAudioEngine().setVolume(normalizedVolume)
+    // The renderer's debounced persistence depends on a setTimeout in the
+    // window that drove the change. When that window is hidden (mini-player
+    // mode) Chromium throttles or suspends the timer, so the last volume was
+    // never written to disk. Persist here in the main process, which is never
+    // throttled, so the value survives a restart regardless of window state.
+    scheduleSoftwareVolumePersist(normalizedVolume)
     audioDiagnosticRecorder?.record('volume-changed', {
       volume: normalizedVolume,
       unity: Math.abs(normalizedVolume - 1) <= 0.001

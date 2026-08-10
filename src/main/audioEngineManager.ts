@@ -131,6 +131,7 @@ export class AudioEngineManager extends EventEmitter {
   private destroyed = false
   private nativePlaybackActive = false
   private nativeOutputRouteSynced = false
+  private nativeVolumeSynced = false
   private audioServiceReadyRestoreSerial = 0
   private lastNativeError = ''
   private pendingNativeSource: string | null = null
@@ -247,6 +248,11 @@ export class AudioEngineManager extends EventEmitter {
         pollAudioDeviceOptionsForChanges: () => this.pollAudioDeviceOptionsForChanges(),
         prepareLoudnormForPlay: (source) => this.prepareLoudnormForPlay(source),
         tryNative: (context, command, logFailure) => this.tryNative(context, command, logFailure),
+        isNativeVolumeSynced: () => this.nativeVolumeSynced,
+        markNativeVolumeSynced: (value) => {
+          this.nativeVolumeSynced = value
+        },
+        canVerifyNativeVolume: () => this.audioServiceBinding === null,
         callNativeMaybeAsync: (context, method, ...args) =>
           this.callNativeMaybeAsync(context, method, ...args),
         emit: (event, payload) => {
@@ -431,6 +437,7 @@ export class AudioEngineManager extends EventEmitter {
 
   private handleAudioServiceCrash(reason: string): void {
     this.outputConfigServiceGeneration += 1
+    this.nativeVolumeSynced = false
     if (this.outputConfigApplyStatus.state === 'pending') {
       this.outputConfigApplyStatus = {
         ...this.outputConfigApplyStatus,
@@ -507,17 +514,15 @@ export class AudioEngineManager extends EventEmitter {
     errors: string[]
   }> {
     const routeRestore = await this.restoreAudioServiceOutputRoute()
-    if (!routeRestore.synced) {
-      return {
-        outputRouteSynced: false,
-        errors: routeRestore.errors
-      }
-    }
-
+    // Volume / rate / queue state must be re-applied even when the output
+    // route restore failed. A freshly started audio-service process begins at
+    // unity volume; skipping the playback-state restore would leave the native
+    // engine loud while the manager still reports the saved volume (renderer
+    // pushes are then no-ops because playbackInfo already matches).
     const stateRestore = await this.restoreAudioServicePlaybackState()
     return {
-      outputRouteSynced: stateRestore.synced,
-      errors: stateRestore.errors
+      outputRouteSynced: routeRestore.synced && stateRestore.synced,
+      errors: [...routeRestore.errors, ...stateRestore.errors]
     }
   }
 
@@ -558,14 +563,14 @@ export class AudioEngineManager extends EventEmitter {
         )
       )
     }
-    results.push(
-      await this.restoreAudioServiceOutputRouteStep(
-        'volume',
-        '音频服务恢复后应用音量',
-        'SetVolume',
-        this.playbackInfo.volume
-      )
+    const volumeResult = await this.restoreAudioServiceOutputRouteStep(
+      'volume',
+      '音频服务恢复后应用音量',
+      'SetVolume',
+      this.playbackInfo.volume
     )
+    this.nativeVolumeSynced = volumeResult.ok
+    results.push(volumeResult)
     results.push(
       await this.restoreAudioServiceOutputRouteStep(
         'playback-rate',
@@ -585,12 +590,13 @@ export class AudioEngineManager extends EventEmitter {
     const routeRestore = await this.restoreAudioServiceOutputRoute('初始化')
     this.nativeOutputRouteSynced = routeRestore.synced
     await this.applyNativeDspSettings('初始化 DSP 配置', {}, false)
-    await this.restoreAudioServiceOutputRouteStep(
+    const volumeStep = await this.restoreAudioServiceOutputRouteStep(
       'volume',
       '初始化软件音量',
       'SetVolume',
       this.playbackInfo.volume
     )
+    this.nativeVolumeSynced = volumeStep.ok
     if (this.processing.directMode) await this.applyDirectModeRuntimeOverrides(true)
     this.startClock()
     this.scheduler.setImmediate(() => this.emit('ready'))

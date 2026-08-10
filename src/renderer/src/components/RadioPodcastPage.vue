@@ -221,8 +221,12 @@ function formatDuration(seconds: number): string {
         <i class="pi pi-arrow-left"></i>
         <span>返回</span>
       </button>
-      <h1>电台 / 播客</h1>
-      <div class="tabs" role="tablist">
+      <div class="page-heading">
+        <span class="page-kicker">ONLINE LISTENING</span>
+        <h1>电台与播客</h1>
+        <p>把正在听的内容放在前面，用轻量工具补充新的电台和播客。</p>
+      </div>
+      <div class="tabs" role="tablist" aria-label="在线音频类型">
         <button
           type="button"
           role="tab"
@@ -230,6 +234,7 @@ function formatDuration(seconds: number): string {
           :class="{ active: tab === 'radio' }"
           @click="tab = 'radio'"
         >
+          <i class="pi pi-broadcast"></i>
           电台
         </button>
         <button
@@ -239,6 +244,7 @@ function formatDuration(seconds: number): string {
           :class="{ active: tab === 'podcast' }"
           @click="tab = 'podcast'"
         >
+          <i class="pi pi-microphone"></i>
           播客
         </button>
       </div>
@@ -248,110 +254,169 @@ function formatDuration(seconds: number): string {
       {{ formError || radio.error.value || podcast.error.value }}
     </p>
 
-    <section v-if="tab === 'radio'" class="panel">
-      <div class="form-card">
-        <h2>添加电台</h2>
-        <label>
-          名称
-          <input
-            v-model="stationName"
-            type="text"
-            placeholder="例如：BBC Radio 1"
-            maxlength="120"
-          />
-        </label>
-        <label>
-          流地址
-          <input
-            v-model="stationUrl"
-            type="url"
-            placeholder="https://… 或 http://…"
-            maxlength="2048"
-          />
-        </label>
-        <label class="checkbox">
-          <input v-model="allowHttp" type="checkbox" />
-          允许 HTTP 明文流（仅用户显式确认时使用）
-        </label>
-        <div class="form-actions">
-          <button type="button" class="primary" :disabled="formBusy" @click="addStation">
-            添加
+    <section v-if="tab === 'radio'" class="radio-workspace">
+      <aside class="radio-tools" aria-label="电台工具">
+        <section class="tool-card">
+          <div class="card-heading">
+            <span class="card-icon"><i class="pi pi-plus"></i></span>
+            <div>
+              <h2>添加电台</h2>
+              <p>输入名称和直播流地址，保存后即可播放。</p>
+            </div>
+          </div>
+          <label>
+            电台名称
+            <input
+              v-model="stationName"
+              type="text"
+              placeholder="例如：BBC Radio 1"
+              maxlength="120"
+            />
+          </label>
+          <label>
+            流地址
+            <input
+              v-model="stationUrl"
+              type="url"
+              placeholder="https:// 或 http://"
+              maxlength="2048"
+            />
+          </label>
+          <label class="checkbox">
+            <input v-model="allowHttp" type="checkbox" />
+            <span>允许 HTTP 流地址</span>
+          </label>
+          <button
+            type="button"
+            class="primary wide-action"
+            :disabled="formBusy"
+            @click="addStation"
+          >
+            添加到我的电台
           </button>
-        </div>
-        <label>
-          导入 M3U / PLS
+        </section>
+
+        <section class="tool-card tool-card-muted">
+          <div class="card-heading">
+            <span class="card-icon"><i class="pi pi-upload"></i></span>
+            <div>
+              <h2>导入播放列表</h2>
+              <p>粘贴 M3U 或 PLS 内容，批量导入电台。</p>
+            </div>
+          </div>
           <textarea
             v-model="playlistText"
             rows="4"
             placeholder="#EXTM3U&#10;#EXTINF:-1,Station&#10;https://example/stream"
           ></textarea>
-        </label>
-        <button type="button" :disabled="formBusy || !playlistText.trim()" @click="importPlaylist">
-          导入列表
-        </button>
-        <h2>目录搜索（radio-browser.info）</h2>
-        <label>
-          关键词
-          <input
-            v-model="directoryQuery"
-            type="search"
-            placeholder="例如：jazz / 古典 / BBC"
-            maxlength="120"
-            @keydown.enter.prevent="searchDirectory"
-          />
-        </label>
-        <div class="form-actions">
           <button
             type="button"
-            class="primary"
-            :disabled="directoryBusy || !directoryQuery.trim()"
-            @click="searchDirectory"
+            :disabled="formBusy || !playlistText.trim()"
+            @click="importPlaylist"
           >
-            {{ directoryBusy ? '搜索中…' : '搜索目录' }}
+            导入列表
           </button>
-        </div>
-        <ul v-if="directoryResults.length > 0" class="directory-results">
-          <li v-for="row in directoryResults" :key="row.stationuuid">
-            <div>
-              <strong>{{ row.name }}</strong>
-              <small>
-                <span v-if="row.countryCode">{{ row.countryCode }}</span>
-                <span v-if="row.bitrate">{{ row.bitrate }} kbps</span>
-                <span v-if="row.codec">{{ row.codec }}</span>
-                <span v-if="row.tags?.length">{{ row.tags.slice(0, 3).join(', ') }}</span>
-              </small>
-            </div>
-            <button type="button" :disabled="formBusy" @click="addDirectoryStation(row)">
-              添加
-            </button>
-          </li>
-        </ul>
-      </div>
+        </section>
 
-      <div class="station-grid">
-        <article v-for="station in radio.stations.value" :key="station.id" class="station-card">
-          <div class="station-main">
-            <strong>{{ station.name }}</strong>
-            <small>{{ station.streamUrl }}</small>
-            <span v-if="station.allowInsecureHttp" class="badge http">HTTP</span>
+        <section class="tool-card discovery-card">
+          <div class="card-heading">
+            <span class="card-icon"><i class="pi pi-search"></i></span>
+            <div>
+              <h2>发现电台</h2>
+              <p>从 radio-browser.info 搜索新的直播流。</p>
+            </div>
           </div>
-          <div class="station-actions">
-            <button type="button" class="primary" @click="playStation(station.id)">播放</button>
-            <button type="button" @click="removeStation(station.id)">删除</button>
+          <div class="inline-search">
+            <input
+              v-model="directoryQuery"
+              type="search"
+              placeholder="jazz / 中文 / BBC"
+              maxlength="120"
+              @keydown.enter.prevent="searchDirectory"
+            />
+            <button
+              type="button"
+              class="primary"
+              :disabled="directoryBusy || !directoryQuery.trim()"
+              @click="searchDirectory"
+            >
+              {{ directoryBusy ? '搜索中…' : '搜索' }}
+            </button>
           </div>
-        </article>
-        <p v-if="radio.stations.value.length === 0" class="empty">还没有收藏的电台</p>
-      </div>
+          <ul v-if="directoryResults.length > 0" class="directory-results">
+            <li v-for="row in directoryResults" :key="row.stationuuid">
+              <div>
+                <strong>{{ row.name }}</strong>
+                <small>
+                  <span v-if="row.countryCode">{{ row.countryCode }}</span>
+                  <span v-if="row.bitrate">{{ row.bitrate }} kbps</span>
+                  <span v-if="row.codec">{{ row.codec }}</span>
+                  <span v-if="row.tags?.length">{{ row.tags.slice(0, 3).join(', ') }}</span>
+                </small>
+              </div>
+              <button type="button" :disabled="formBusy" @click="addDirectoryStation(row)">
+                收藏
+              </button>
+            </li>
+          </ul>
+        </section>
+      </aside>
+
+      <section class="station-collection" aria-labelledby="station-library-title">
+        <div class="collection-heading">
+          <div>
+            <span class="section-kicker">MY LIBRARY</span>
+            <h2 id="station-library-title">我的电台</h2>
+            <p>播放是主操作，管理操作保持克制。</p>
+          </div>
+          <span class="collection-count">{{ radio.stations.value.length }} 个电台</span>
+        </div>
+        <div v-if="radio.stations.value.length > 0" class="station-grid">
+          <article v-for="station in radio.stations.value" :key="station.id" class="station-card">
+            <div class="station-main">
+              <span class="station-icon"><i class="pi pi-broadcast"></i></span>
+              <div>
+                <strong>{{ station.name }}</strong>
+                <small>{{ station.streamUrl }}</small>
+                <span v-if="station.allowInsecureHttp" class="badge http">HTTP</span>
+              </div>
+            </div>
+            <div class="station-actions">
+              <button type="button" class="primary" @click="playStation(station.id)">
+                <i class="pi pi-play"></i>
+                播放
+              </button>
+              <button type="button" class="quiet-button" @click="removeStation(station.id)">
+                删除
+              </button>
+            </div>
+          </article>
+        </div>
+        <div v-else class="collection-empty">
+          <span class="empty-icon"><i class="pi pi-broadcast"></i></span>
+          <h3>还没有收藏的电台</h3>
+          <p>从左侧手动添加、导入播放列表，或搜索发现新的电台。</p>
+        </div>
+      </section>
     </section>
 
-    <section v-else class="panel podcast-panel">
-      <div class="form-card">
-        <h2>订阅播客</h2>
-        <label>
-          RSS / Atom 地址
-          <input v-model="feedUrl" type="url" placeholder="https://example.com/feed.xml" />
-        </label>
-        <div class="form-actions">
+    <section v-else class="podcast-workspace">
+      <section class="podcast-subscribe-card">
+        <div class="card-heading">
+          <span class="card-icon"><i class="pi pi-rss"></i></span>
+          <div>
+            <h2>订阅播客</h2>
+            <p>输入 RSS 或 Atom 地址，将新内容收进你的订阅列表。</p>
+          </div>
+        </div>
+        <div class="podcast-subscribe-form">
+          <label class="sr-only" for="podcast-feed-url">RSS / Atom 地址</label>
+          <input
+            id="podcast-feed-url"
+            v-model="feedUrl"
+            type="url"
+            placeholder="https://example.com/feed.xml"
+          />
           <button
             type="button"
             class="primary"
@@ -364,29 +429,41 @@ function formatDuration(seconds: number): string {
             刷新全部
           </button>
         </div>
-      </div>
+      </section>
 
       <div class="podcast-layout">
-        <ul class="subscription-list">
-          <li
-            v-for="sub in podcast.subscriptions.value"
-            :key="sub.id"
-            :class="{ active: selectedPodcastId === sub.id }"
-            data-te-interactive
-            @click="selectedPodcastId = sub.id"
-          >
-            <strong>{{ sub.title }}</strong>
-            <small>{{ sub.episodes.length }} 集</small>
-            <button type="button" class="linkish" @click.stop="unsubscribePodcast(sub.id)">
-              取消订阅
-            </button>
-          </li>
-          <li v-if="podcast.subscriptions.value.length === 0" class="empty">还没有订阅</li>
-        </ul>
+        <aside class="podcast-library" aria-labelledby="podcast-library-title">
+          <div class="library-heading">
+            <div>
+              <span class="section-kicker">SUBSCRIPTIONS</span>
+              <h2 id="podcast-library-title">我的订阅</h2>
+            </div>
+            <span>{{ podcast.subscriptions.value.length }}</span>
+          </div>
+          <ul class="subscription-list">
+            <li
+              v-for="sub in podcast.subscriptions.value"
+              :key="sub.id"
+              :class="{ active: selectedPodcastId === sub.id }"
+              data-te-interactive
+              @click="selectedPodcastId = sub.id"
+            >
+              <div>
+                <strong>{{ sub.title }}</strong>
+                <small>{{ sub.episodes.length }} 集</small>
+              </div>
+              <button type="button" class="linkish" @click.stop="unsubscribePodcast(sub.id)">
+                取消订阅
+              </button>
+            </li>
+            <li v-if="podcast.subscriptions.value.length === 0" class="empty">暂无订阅</li>
+          </ul>
+        </aside>
 
-        <div v-if="selectedPodcast" class="episode-panel">
+        <section v-if="selectedPodcast" class="episode-panel" aria-label="播客剧集">
           <div class="episode-header">
             <div>
+              <span class="section-kicker">EPISODES</span>
               <h2>{{ selectedPodcast.title }}</h2>
               <p v-if="selectedPodcast.author">{{ selectedPodcast.author }}</p>
               <p v-if="selectedPodcast.lastError" class="page-error">
@@ -394,6 +471,7 @@ function formatDuration(seconds: number): string {
               </p>
             </div>
             <button type="button" :disabled="podcast.busy.value" @click="refreshSelected">
+              <i class="pi pi-refresh"></i>
               刷新
             </button>
           </div>
@@ -414,14 +492,21 @@ function formatDuration(seconds: number): string {
                   class="primary"
                   @click="playEpisode(selectedPodcast, episode.guid)"
                 >
+                  <i class="pi pi-play"></i>
                   播放
                 </button>
               </div>
             </li>
-            <li v-if="selectedPodcast.episodes.length === 0" class="empty">暂无剧集，请刷新订阅</li>
+            <li v-if="selectedPodcast.episodes.length === 0" class="empty">
+              这个播客还没有可播放的剧集
+            </li>
           </ul>
+        </section>
+        <div v-else class="episode-empty">
+          <span class="empty-icon"><i class="pi pi-microphone"></i></span>
+          <h2>选择一个播客</h2>
+          <p>从左侧订阅列表选择播客，查看最新剧集并开始播放。</p>
         </div>
-        <p v-else class="empty episode-panel">选择左侧订阅以查看剧集</p>
       </div>
     </section>
   </div>
@@ -437,7 +522,7 @@ function formatDuration(seconds: number): string {
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  padding: 24px 28px 126px;
+  padding: 52px clamp(24px, 5vw, 72px) 132px;
   color: var(--te-text, #0f172a);
   scrollbar-width: thin;
   scrollbar-color: var(--te-scrollbar-thumb) transparent;
@@ -446,321 +531,602 @@ function formatDuration(seconds: number): string {
 .radio-podcast-page::-webkit-scrollbar {
   width: 8px;
 }
-
 .radio-podcast-page::-webkit-scrollbar-track {
   background: transparent;
 }
-
 .radio-podcast-page::-webkit-scrollbar-thumb {
   background: var(--te-scrollbar-thumb);
   border-radius: 999px;
 }
 
 .radio-podcast-page > * {
-  max-width: 1100px;
-  margin-left: auto;
-  margin-right: auto;
+  width: min(100%, 1180px);
+  margin-inline: auto;
 }
+
 .page-header {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 20px;
   align-items: center;
-  gap: 12px 18px;
-  margin-bottom: 18px;
+  margin-bottom: 28px;
 }
-.page-header h1 {
-  margin: 0;
-  font-size: 1.4rem;
-  flex: 1;
-}
+
+.back-btn,
 .tabs button,
-.form-card button,
+.tool-card button,
+.podcast-subscribe-form button,
 .station-actions button,
 .episode-header button,
 .episode-list button,
-.subscription-list .linkish {
-  border: 1px solid rgba(15, 23, 42, 0.12);
-  background: rgba(255, 255, 255, 0.72);
-  border-radius: 10px;
-  padding: 8px 12px;
-  cursor: pointer;
-}
-.back-btn {
+.subscription-list .linkish,
+.directory-results button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 7px;
   min-height: 36px;
-  padding: 0 14px 0 11px;
+  box-sizing: border-box;
+  border: 1px solid var(--te-settings-control-border, rgba(15, 23, 42, 0.12));
+  border-radius: 10px;
+  padding: 0 12px;
+  background: var(--te-card-bg, rgba(255, 255, 255, 0.72));
+  color: inherit;
   cursor: pointer;
   font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease,
+    transform 0.18s ease;
 }
 
+.back-btn {
+  padding-inline: 11px 14px;
+}
 .back-btn:hover {
-  transform: translateX(-1px);
+  transform: translateX(-2px);
+}
+button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--te-primary-500) 38%, transparent);
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
 }
 
-.episode-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  align-items: center;
+.page-heading {
+  min-width: 0;
 }
-.directory-results {
-  list-style: none;
+.page-kicker,
+.section-kicker {
+  display: block;
+  color: var(--te-primary-500);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  line-height: 1.2;
+}
+.page-heading h1 {
+  margin: 5px 0 4px;
+  font-size: clamp(25px, 3vw, 34px);
+  letter-spacing: -0.045em;
+  line-height: 1.04;
+}
+.page-heading p,
+.card-heading p,
+.collection-heading p,
+.episode-empty p {
   margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 8px;
-  max-height: 280px;
-  overflow: auto;
+  color: var(--te-settings-text-muted);
+  font-size: 13px;
+  line-height: 1.55;
 }
-.directory-results li {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background: rgba(255, 255, 255, 0.45);
-}
-.directory-results small {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  opacity: 0.75;
-  margin-top: 4px;
-}
+
 .tabs {
-  display: flex;
-  gap: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  border: 1px solid var(--te-settings-control-border, rgba(15, 23, 42, 0.1));
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--te-card-bg) 74%, transparent);
+}
+.tabs button {
+  min-height: 34px;
+  border-color: transparent;
+  background: transparent;
 }
 .tabs button.active,
 button.primary {
-  background: #2563eb;
-  color: #fff;
   border-color: transparent;
+  background: var(--te-primary-500);
+  color: var(--te-primary-on-primary, #fff);
+  box-shadow: 0 7px 18px color-mix(in srgb, var(--te-primary-500) 20%, transparent);
 }
+
 .page-error {
-  color: #b91c1c;
-  margin: 0 0 12px;
+  margin: 0 auto 18px;
+  padding: 10px 13px;
+  border: 1px solid color-mix(in srgb, var(--te-danger-soft-fg) 25%, transparent);
+  border-radius: 12px;
+  background: var(--te-danger-soft-bg);
+  color: var(--te-danger-soft-fg);
+  font-size: 13px;
+  font-weight: 600;
 }
-.panel {
+
+.radio-workspace {
   display: grid;
-  gap: 18px;
+  grid-template-columns: minmax(276px, 340px) minmax(0, 1fr);
+  gap: clamp(18px, 3vw, 34px);
+  align-items: start;
 }
-.form-card {
+.radio-tools {
   display: grid;
-  gap: 10px;
-  padding: 16px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.55);
-  border: 1px solid rgba(15, 23, 42, 0.06);
+  gap: 14px;
 }
-.form-card h2 {
+.tool-card,
+.podcast-subscribe-card,
+.podcast-library,
+.episode-panel,
+.station-collection {
+  box-sizing: border-box;
+  border: 1px solid var(--te-card-border, rgba(15, 23, 42, 0.08));
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--te-card-bg) 90%, transparent);
+  box-shadow: 0 14px 36px color-mix(in srgb, var(--te-text) 5%, transparent);
+}
+.tool-card {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+.tool-card-muted {
+  background: color-mix(in srgb, var(--te-card-bg) 78%, transparent);
+}
+.card-heading {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+}
+.card-heading h2,
+.collection-heading h2,
+.library-heading h2,
+.episode-header h2,
+.episode-empty h2,
+.collection-empty h3 {
   margin: 0;
-  font-size: 1rem;
+  letter-spacing: -0.025em;
+  line-height: 1.18;
 }
-.form-card label {
+.card-heading h2 {
+  font-size: 15px;
+}
+.card-icon,
+.station-icon,
+.empty-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--te-primary-500) 13%, transparent);
+  color: var(--te-primary-500);
+}
+
+.tool-card label {
   display: grid;
   gap: 6px;
-  font-size: 0.85rem;
+  color: var(--te-settings-text-muted);
+  font-size: 12px;
+  font-weight: 700;
 }
-.form-card label.checkbox {
-  grid-template-columns: auto 1fr;
-  align-items: center;
-}
-.form-card input[type='text'],
-.form-card input[type='url'],
-.form-card textarea {
-  width: 100%;
-  border-radius: 10px;
-  border: 1px solid rgba(15, 23, 42, 0.12);
-  padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.9);
-}
-.form-actions {
+.tool-card label.checkbox {
   display: flex;
+  align-items: center;
   gap: 8px;
+  font-weight: 600;
+}
+.tool-card input[type='text'],
+.tool-card input[type='url'],
+.tool-card input[type='search'],
+.tool-card textarea,
+.podcast-subscribe-form input {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--te-settings-control-border, rgba(15, 23, 42, 0.12));
+  border-radius: 10px;
+  padding: 9px 11px;
+  background: var(--te-settings-control-bg, rgba(255, 255, 255, 0.88));
+  color: inherit;
+  font: inherit;
+  outline: none;
+}
+.tool-card textarea {
+  resize: vertical;
+}
+.tool-card input:focus,
+.tool-card textarea:focus,
+.podcast-subscribe-form input:focus {
+  border-color: color-mix(in srgb, var(--te-primary-500) 58%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--te-primary-500) 12%, transparent);
+}
+.wide-action {
+  width: 100%;
+}
+.inline-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.directory-results,
+.subscription-list,
+.episode-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.directory-results {
+  max-height: 308px;
+  overflow: auto;
+  padding-right: 3px;
+}
+.directory-results li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--te-card-border, rgba(15, 23, 42, 0.08));
+}
+.directory-results strong,
+.station-main strong,
+.subscription-list strong,
+.episode-list strong {
+  display: block;
+  font-size: 13px;
+  line-height: 1.35;
+}
+.directory-results small,
+.subscription-list small,
+.episode-list small {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  margin-top: 3px;
+  color: var(--te-settings-text-muted);
+  font-size: 11px;
+}
+.directory-results button {
+  min-height: 30px;
+  padding-inline: 9px;
+  font-size: 12px;
+}
+
+.station-collection {
+  min-height: 470px;
+  padding: clamp(18px, 3vw, 30px);
+}
+.collection-heading,
+.library-heading,
+.episode-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.collection-heading {
+  margin-bottom: 22px;
+}
+.collection-heading h2 {
+  margin-top: 5px;
+  font-size: 22px;
+}
+.collection-count,
+.library-heading > span {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 6px 9px;
+  background: color-mix(in srgb, var(--te-primary-500) 10%, transparent);
+  color: var(--te-primary-500);
+  font-size: 12px;
+  font-weight: 750;
 }
 .station-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(218px, 1fr));
   gap: 12px;
-}
-
-@media (max-width: 900px) {
-  .station-grid {
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 10px;
-  }
-
-  .station-card {
-    padding: 12px;
-    min-height: 108px;
-  }
-
-  .station-main strong {
-    font-size: 13px;
-  }
-
-  .station-main small {
-    font-size: 11px;
-  }
-}
-
-@media (max-width: 640px) {
-  .station-grid {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 10px;
-  }
-
-  .station-card {
-    padding: 12px;
-    min-height: 0;
-  }
-
-  .station-actions button {
-    padding: 7px 10px;
-    font-size: 12px;
-  }
 }
 .station-card {
   display: flex;
+  min-height: 144px;
   flex-direction: column;
   justify-content: space-between;
-  gap: 12px;
-  padding: 14px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.6);
-  border: 1px solid rgba(15, 23, 42, 0.06);
-  min-height: 120px;
+  gap: 16px;
+  padding: 15px;
+  border: 1px solid var(--te-card-border, rgba(15, 23, 42, 0.08));
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--te-card-bg) 75%, transparent);
+  transition:
+    transform 0.2s var(--te-ease-soft),
+    border-color 0.2s ease;
+}
+.station-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--te-primary-500) 30%, transparent);
 }
 .station-main {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+.station-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+}
+.station-main > div {
+  min-width: 0;
 }
 .station-main small {
+  display: block;
   overflow: hidden;
+  margin-top: 4px;
+  color: var(--te-settings-text-muted);
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
-  opacity: 0.7;
 }
 .station-actions {
   display: flex;
-  gap: 8px;
+  gap: 7px;
+}
+.station-actions button {
+  min-height: 33px;
+}
+.quiet-button {
+  background: transparent !important;
 }
 .badge {
   display: inline-flex;
   align-items: center;
   width: fit-content;
+  margin-top: 7px;
   border-radius: 999px;
-  padding: 2px 8px;
-  font-size: 0.72rem;
-  background: rgba(37, 99, 235, 0.12);
-  color: #1d4ed8;
+  padding: 2px 7px;
+  background: color-mix(in srgb, var(--te-primary-500) 11%, transparent);
+  color: var(--te-primary-500);
+  font-size: 10px;
+  font-weight: 750;
 }
 .badge.http {
-  background: rgba(245, 158, 11, 0.18);
+  background: color-mix(in srgb, #f59e0b 15%, transparent);
   color: #b45309;
 }
 .badge.progress {
-  margin-left: 6px;
+  margin: 0 0 0 6px;
+}
+
+.collection-empty,
+.episode-empty {
+  display: grid;
+  min-height: 260px;
+  place-content: center;
+  justify-items: center;
+  padding: 26px;
+  text-align: center;
+}
+.collection-empty .empty-icon,
+.episode-empty .empty-icon {
+  width: 42px;
+  height: 42px;
+  margin-bottom: 12px;
+  border-radius: 13px;
+}
+.collection-empty h3,
+.episode-empty h2 {
+  margin-bottom: 6px;
+  font-size: 17px;
+}
+
+.podcast-workspace {
+  display: grid;
+  gap: 18px;
+}
+.podcast-subscribe-card {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  gap: 24px;
+  align-items: center;
+  padding: 20px 22px;
+}
+.podcast-subscribe-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 .podcast-layout {
   display: grid;
-  grid-template-columns: minmax(200px, 280px) 1fr;
-  gap: 14px;
-  min-height: 360px;
+  grid-template-columns: minmax(250px, 310px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
 }
-.subscription-list,
-.episode-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 8px;
-  align-content: start;
+.podcast-library {
+  padding: 16px;
 }
-.subscription-list li,
-.episode-list li {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
+.library-heading {
   align-items: center;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.55);
-  border: 1px solid rgba(15, 23, 42, 0.06);
+  padding: 2px 2px 14px;
+}
+.library-heading h2 {
+  margin-top: 5px;
+  font-size: 17px;
+}
+.subscription-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid transparent;
+  border-radius: 11px;
   cursor: pointer;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease;
+}
+.subscription-list li:hover {
+  background: color-mix(in srgb, var(--te-primary-500) 6%, transparent);
 }
 .subscription-list li.active {
-  border-color: rgba(37, 99, 235, 0.45);
-  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.2);
+  border-color: color-mix(in srgb, var(--te-primary-500) 32%, transparent);
+  background: color-mix(in srgb, var(--te-primary-500) 10%, transparent);
+}
+.subscription-list li > div {
+  min-width: 0;
+}
+.subscription-list strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .subscription-list .linkish {
-  font-size: 0.75rem;
-  padding: 4px 8px;
-}
-.episode-panel {
-  padding: 12px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.45);
-  border: 1px solid rgba(15, 23, 42, 0.06);
-}
-.episode-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-.episode-header h2 {
-  margin: 0 0 4px;
-  font-size: 1.05rem;
-}
-.episode-header p {
-  margin: 0;
-  opacity: 0.7;
-  font-size: 0.85rem;
+  min-height: 28px;
+  padding-inline: 8px;
+  font-size: 11px;
 }
 .empty {
-  opacity: 0.65;
-  padding: 18px;
+  color: var(--te-settings-text-muted);
+  font-size: 13px;
 }
-.hint {
-  margin: 12px 0 0;
-  font-size: 0.8rem;
-  opacity: 0.65;
+.episode-panel {
+  padding: clamp(18px, 3vw, 28px);
+  min-height: 390px;
 }
-:global(html[data-theme='dark'] .radio-podcast-page) {
-  color: #e2e8f0;
+.episode-header {
+  margin-bottom: 18px;
 }
-:global(html[data-theme='dark'] .form-card),
-:global(html[data-theme='dark'] .station-card),
-:global(html[data-theme='dark'] .subscription-list li),
-:global(html[data-theme='dark'] .episode-list li),
-:global(html[data-theme='dark'] .episode-panel) {
-  background: rgba(15, 23, 42, 0.55);
-  border-color: rgba(148, 163, 184, 0.12);
+.episode-header h2 {
+  margin-top: 5px;
+  font-size: 22px;
 }
-:global(html[data-theme='dark'] .tabs button),
-:global(html[data-theme='dark'] .form-card button),
-:global(html[data-theme='dark'] .station-actions button),
-:global(html[data-theme='dark'] .episode-header button),
-:global(html[data-theme='dark'] .episode-list button),
-:global(html[data-theme='dark'] .subscription-list .linkish) {
-  background: rgba(30, 41, 59, 0.9);
-  color: #e2e8f0;
-  border-color: rgba(148, 163, 184, 0.18);
+.episode-header p {
+  margin: 4px 0 0;
+  color: var(--te-settings-text-muted);
+  font-size: 13px;
 }
-:global(html[data-theme='dark'] .tabs button.active),
-:global(html[data-theme='dark'] button.primary) {
-  background: #3b82f6;
-  color: #fff;
+.episode-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 0;
+  border-top: 1px solid var(--te-card-border, rgba(15, 23, 42, 0.08));
 }
-@media (max-width: 840px) {
+.episode-list li:first-child {
+  border-top: 0;
+}
+.episode-actions {
+  display: flex;
+  align-items: center;
+}
+.episode-list button {
+  min-height: 34px;
+}
+.episode-empty {
+  min-height: 390px;
+  border: 1px dashed var(--te-card-border, rgba(15, 23, 42, 0.18));
+  border-radius: 20px;
+}
+
+:global(html[data-theme='dark'] .tool-card),
+:global(html[data-theme='dark'] .podcast-subscribe-card),
+:global(html[data-theme='dark'] .podcast-library),
+:global(html[data-theme='dark'] .episode-panel),
+:global(html[data-theme='dark'] .station-collection),
+:global(html[data-theme='dark'] .station-card) {
+  background: color-mix(in srgb, var(--te-card-bg) 82%, transparent);
+}
+
+@media (max-width: 880px) {
+  .page-header {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .tabs {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+  .radio-workspace {
+    grid-template-columns: 1fr;
+  }
+  .radio-tools {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .discovery-card {
+    grid-column: 1 / -1;
+  }
+  .podcast-subscribe-card {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+
+@media (max-width: 680px) {
+  .radio-podcast-page {
+    padding: 38px 16px 120px;
+  }
+  .page-header {
+    gap: 14px;
+  }
+  .page-heading {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .tabs {
+    grid-row: 3;
+  }
+  .radio-tools {
+    grid-template-columns: 1fr;
+  }
+  .discovery-card {
+    grid-column: auto;
+  }
+  .station-collection {
+    padding: 17px;
+  }
+  .station-grid {
+    grid-template-columns: 1fr;
+  }
+  .podcast-subscribe-form {
+    grid-template-columns: 1fr;
+  }
   .podcast-layout {
     grid-template-columns: 1fr;
+  }
+  .episode-header {
+    flex-direction: column;
+  }
+  .episode-list li {
+    grid-template-columns: 1fr;
+  }
+  .episode-actions {
+    justify-content: flex-start;
   }
 }
 </style>

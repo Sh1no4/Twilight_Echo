@@ -598,12 +598,22 @@ interface MiniPlayerTrackSnapshot {
   artist: string
   album: string
   cover: string | null
+  format: string | null
+  sampleRate: number | null
+  bitDepth: number | null
   coverSource: string | null
+}
+
+interface MiniPlayerLyricLineSnapshot {
+  time: number | null
+  original: string
+  translation: string | null
 }
 
 interface MiniPlayerStateSnapshot {
   track: MiniPlayerTrackSnapshot | null
   currentLyric: { original: string; translation: string | null } | null
+  lyrics: MiniPlayerLyricLineSnapshot[]
   isPlaying: boolean
   isLoading: boolean
   currentTime: number

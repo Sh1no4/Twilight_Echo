@@ -85,6 +85,25 @@ test('plugin state restores a corrupt primary from backup and returns an observa
   assert.equal(await readFile(pluginStateCorruptPath(filePath), 'utf-8'), '{not-json')
 })
 
+test('plugin state recovers from a deeply nested primary file before parsing it', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'twilight-plugin-state-depth-'))
+  t.after(async () => {
+    await rm(directory, { recursive: true, force: true })
+  })
+  const filePath = join(directory, 'plugin-state.json')
+  const persistence = new PluginStatePersistence(filePath)
+  await persistence.save(state('1.0.0'))
+  await persistence.save(state('2.0.0'))
+  const nested = `${'['.repeat(128)}0${']'.repeat(128)}`
+  await writeFile(filePath, nested, 'utf-8')
+
+  const recovered = await new PluginStatePersistence(filePath).load()
+  assert.equal(recovered.status, 'recovered')
+  if (recovered.status !== 'recovered') return
+  assert.match(recovered.warning, /too deeply nested/)
+  assert.equal(recovered.state['com.example.transactional'].activeVersion, '1.0.0')
+})
+
 test('plugin state corruption without a valid backup is visible instead of silently clearing state', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'twilight-plugin-state-unrecoverable-'))
   t.after(async () => {

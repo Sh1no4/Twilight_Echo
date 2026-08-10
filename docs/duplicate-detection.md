@@ -40,8 +40,9 @@ The runner performs three unmeasured warmups followed by twenty measured iterati
 emits every measured timing and p50/p95 values, and fails when either scenario exceeds its declared
 p95 budget. The evidence records SHA-256 hashes for the production implementation, shared contract,
 runner, runner contract, `package.json`, and `pnpm-lock.yaml`; the manifest additionally hashes the
-exact evidence JSON. `pnpm run test:duplicate-detection-benchmark` rejects stale or hand-edited
-evidence by recomputing those hashes and the manifest summary.
+exact evidence JSON. Provenance hashes canonicalize CRLF line endings to LF so the same checkout
+authenticates on Windows and POSIX hosts. `pnpm run test:duplicate-detection-benchmark` rejects
+stale or hand-edited evidence by recomputing those hashes and the manifest summary.
 
 Required CI runs the tag/duplicate behavior suite, the evidence/benchmark contract, and a fresh
 10k benchmark as separate sequential steps. `pnpm run benchmark:duplicate-detection:ci` is the

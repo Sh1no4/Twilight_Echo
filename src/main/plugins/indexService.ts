@@ -24,6 +24,7 @@ import type {
   TwilightPluginInstallEvidence,
   TwilightPluginManifest
 } from './types'
+import { parseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 
 interface PluginIndexRaw {
   schemaVersion: number
@@ -194,7 +195,7 @@ export class PluginIndexService {
         redirected
       } = await this.readRemoteIndex(remoteUrl)
       if (!this.isCurrentLoad(generation)) return this.latestSnapshot(generation)
-      const parsed = JSON.parse(raw) as unknown
+      const parsed = parseJsonWithNestingLimit(raw) as unknown
       const fetchedAtDate = this.currentTime()
       const fetchedAt = fetchedAtDate.toISOString()
       const expiresAt = new Date(fetchedAtDate.getTime() + this.cacheTtlMs).toISOString()
@@ -400,7 +401,7 @@ export class PluginIndexService {
     try {
       const raw = await this.readIndexSource(this.cacheIndexPath)
       if (!this.isCurrentLoad(generation)) return this.latestSnapshot(generation)
-      const parsed = JSON.parse(raw) as unknown
+      const parsed = parseJsonWithNestingLimit(raw) as unknown
       const envelope = parseCacheEnvelope(parsed)
       const loadedAtDate = this.currentTime()
       const loadedAt = loadedAtDate.toISOString()
@@ -479,7 +480,7 @@ export class PluginIndexService {
     const localUrl = pathToFileURL(this.localIndexPath).toString()
     const raw = await this.readIndexSource(this.localIndexPath)
     if (!this.isCurrentLoad(generation)) return this.latestSnapshot(generation)
-    const parsed = JSON.parse(raw) as unknown
+    const parsed = parseJsonWithNestingLimit(raw) as unknown
     const loadedAtDate = this.currentTime()
     const stale = remoteError !== null
     this.currentBaseUrl = localUrl
@@ -911,7 +912,7 @@ export class PluginIndexService {
     const extractedRoot = join(tempRoot, 'manifest-check')
     await extractPluginPackage(packagePath, extractedRoot)
     const manifest = validatePluginManifest(
-      JSON.parse(await readFile(join(extractedRoot, 'plugin.json'), 'utf-8'))
+      parseJsonWithNestingLimit(await readFile(join(extractedRoot, 'plugin.json'), 'utf-8'))
     )
     const mismatches = manifestComparisonKeys.filter((key) =>
       JSON.stringify(manifest[key]) !== JSON.stringify(entry[key])

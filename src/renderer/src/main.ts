@@ -21,6 +21,23 @@ if (isMiniPlayer || isTrayPlayer) {
 
 installAutoHideScrollbars()
 
+// Chromium starts an OS drag for images, links, and arbitrary elements, letting
+// users drag app content out of the window onto the desktop. Block every
+// dragstart that did not originate on an explicitly draggable app surface.
+// The app's intentional HTML5 drag-and-drop (playback queue reorder, DSP rack
+// reorder, playlist-detail reorder) marks its rows draggable="true", so those
+// keep working while everything else is confined to the window.
+document.addEventListener(
+  'dragstart',
+  (event) => {
+    const target = event.target
+    if (!(target instanceof Element) || !target.closest('[draggable="true"]')) {
+      event.preventDefault()
+    }
+  },
+  true
+)
+
 async function mountApp(): Promise<void> {
   if (!isTrayPlayer) await bootstrapThemeRuntime()
   const rootComponent = isMiniPlayer

@@ -21,6 +21,7 @@ const {
   resolveMingwBuildLayout,
   validateMingwBuildCommands,
   validateMingwCTestRegistration,
+  validateMingwNativeDependencyConfiguration,
   validateMingwToolchain
 } = require('./audio-engine-toolchain.cjs')
 const {
@@ -223,6 +224,54 @@ test('accepts a configured MinGW build only when every native CTest is registere
   assert.equal(result.ok, true)
   assert.equal(result.status, 0)
   assert.deepEqual(result.missing, [])
+})
+
+test('fails closed when the MinGW cache was configured without vcpkg native dependencies', () => {
+  const buildDir = 'C:/twilight-build/mingw-static'
+  const cache = `${buildDir}/CMakeCache.txt`
+  const result = validateMingwNativeDependencyConfiguration({
+    buildDir,
+    existsSync: createExistsSync([cache]),
+    readFileSync: () => [
+      'VCPKG_TARGET_TRIPLET:UNINITIALIZED=x64-mingw-static',
+      'TAE_BUILD_NAPI:BOOL=ON',
+      'FFMPEG_FOUND:BOOL=FALSE',
+      'EBUR128_INCLUDE_DIR:PATH=EBUR128_INCLUDE_DIR-NOTFOUND'
+    ].join('\n')
+  })
+
+  assert.equal(result.ok, false)
+  assert.match(result.message, /VCPKG_INSTALLED_DIR/)
+  assert.match(result.message, /FFMPEG_FOUND/)
+  assert.match(result.message, /EBUR128_INCLUDE_DIR/)
+})
+
+test('accepts a MinGW cache only when vcpkg FFmpeg and libebur128 resolve from the selected build', () => {
+  const buildDir = 'C:/twilight-build/mingw-static'
+  const installRoot = `${buildDir}/vcpkg_installed`
+  const tripletRoot = `${installRoot}/x64-mingw-static`
+  const cache = `${buildDir}/CMakeCache.txt`
+  const result = validateMingwNativeDependencyConfiguration({
+    buildDir,
+    existsSync: createExistsSync([
+      cache,
+      `${tripletRoot}/include/ebur128.h`,
+      `${tripletRoot}/lib/libebur128.a`,
+      `${tripletRoot}/include/libavformat/avformat.h`
+    ]),
+    readFileSync: () => [
+      `VCPKG_INSTALLED_DIR:PATH=${installRoot}`,
+      'VCPKG_TARGET_TRIPLET:STRING=x64-mingw-static',
+      'TAE_BUILD_NAPI:BOOL=ON',
+      'FFMPEG_FOUND:BOOL=TRUE',
+      `EBUR128_INCLUDE_DIR:PATH=${tripletRoot}/include`,
+      `EBUR128_LIBRARY:FILEPATH=${tripletRoot}/lib/libebur128.a`,
+      `FFMPEG_INCLUDE_DIRS:STRING=${tripletRoot}/include`
+    ].join('\n')
+  })
+
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.issues, [])
 })
 
 test('prepares a MinGW environment with GNU patch before the w64devkit tools', () => {
@@ -771,6 +820,15 @@ test('MinGW build runner reuses the preflight environment for builds and tests',
     script,
     /spawnSync\(command\[0\], command\[1\], \{[\s\S]*env: preflight\.environment/
   )
+})
+
+test('MinGW configure resets a stale cache that lost vcpkg native dependencies', () => {
+  const script = readFileSync(join(__dirname, 'configure-audio-engine-mingw.cjs'), 'utf8')
+
+  assert.match(script, /function cleanInvalidNativeDependencyConfiguration\(\)/)
+  assert.match(script, /validateMingwNativeDependencyConfiguration\(\{ buildDir \}\)/)
+  assert.match(script, /cleanInvalidNativeDependencyConfiguration\(\)\nconst status = runCmake\(\)/)
+  assert.match(script, /if \(!verifyNativeDependencies\(\)\) process\.exit\(1\)/)
 })
 
 test('MinGW configure clears CTestTestfile.cmake with other stale configure state', () => {
