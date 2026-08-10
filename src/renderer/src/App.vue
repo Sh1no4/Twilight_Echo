@@ -771,17 +771,6 @@ const titleSurface = computed<TitleSurface>(() => {
           <PluginPage v-if="showPluginPage" @back="hidePluginPage" />
         </Transition>
         <Transition name="settings-page">
-          <SettingsPage
-            v-if="showSettingsPage"
-            :initial-section="settingsInitialSection"
-            @back="closeSettingsPage"
-            @open-equalizer="openEqualizerPage"
-            @open-dsp-rack="openDspRackPage"
-            @open-theme-studio="openThemeStudioPage"
-            @reopen-onboarding="handleReopenOnboarding"
-          />
-        </Transition>
-        <Transition name="settings-page">
           <ThemeStudioPage
             v-if="showThemeStudioPage"
             :initial-domain="themeStudioInitialDomain"
@@ -815,6 +804,19 @@ const titleSurface = computed<TitleSurface>(() => {
       />
     </div>
   </div>
+  <div class="settings-overlay-root" :class="{ 'settings-overlay-root--active': showSettingsPage }">
+    <Transition name="settings-page">
+      <SettingsPage
+        v-if="showSettingsPage"
+        :initial-section="settingsInitialSection"
+        @back="closeSettingsPage"
+        @open-equalizer="openEqualizerPage"
+        @open-dsp-rack="openDspRackPage"
+        @open-theme-studio="openThemeStudioPage"
+        @reopen-onboarding="handleReopenOnboarding"
+      />
+    </Transition>
+  </div>
   <Transition name="onboarding-page">
     <OnboardingWizard v-if="showOnboarding" @finish="handleOnboardingFinish" />
   </Transition>
@@ -827,6 +829,49 @@ html[data-te-shell-layout='custom'] body,
 html[data-te-shell-layout='custom'] #app {
   min-height: 100%;
   height: 100%;
+}
+
+.app-shell-title {
+  position: relative;
+  z-index: 2100;
+}
+
+/* The overlay starts below the native title strip, so it can never intercept
+   the settings/return and window-control buttons. Keep a solid base directly
+   on this dedicated stacking context; it must never inherit the home surface
+   or the transparent-window treatment. */
+.settings-overlay-root--active {
+  position: fixed;
+  inset: 32px 0 0;
+  z-index: 2000;
+  overflow: hidden;
+  isolation: isolate;
+  background: #17181a !important;
+}
+
+/* Paint the settings-specific image above that solid base. The final image
+   layer is deliberately opaque, so even a transparent PNG or transparent
+   theme color can only reveal this settings backplate — never the homepage. */
+.settings-overlay-root--active::before {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  content: '';
+  pointer-events: none;
+  background-color: #17181a;
+  background-image:
+    var(--te-settings-bg-image, none),
+    linear-gradient(var(--te-settings-bg), var(--te-settings-bg)), linear-gradient(#17181a, #17181a);
+  background-position: center, center, center;
+  background-size: cover, cover, cover;
+  background-repeat: no-repeat, no-repeat, no-repeat;
+  background-attachment: fixed, fixed, fixed;
+}
+
+.settings-overlay-root--active .settings-preview-page {
+  z-index: 1;
+  pointer-events: auto;
 }
 
 html[data-te-shell-layout='custom'] .app-shell {
@@ -1109,7 +1154,7 @@ body.te-no-blur .login-page-leave-to {
 
 /* Settings and plugin pages: shared overlay transition */
 .settings-page-enter-active {
-  z-index: 70;
+  z-index: 2000;
   transition:
     opacity var(--te-motion-panel) ease,
     transform var(--te-motion-page) var(--te-ease-out-expo);
@@ -1117,7 +1162,7 @@ body.te-no-blur .login-page-leave-to {
 }
 
 .settings-page-leave-active {
-  z-index: 69;
+  z-index: 1999;
   pointer-events: none;
   transition:
     opacity var(--te-motion-hover) ease,

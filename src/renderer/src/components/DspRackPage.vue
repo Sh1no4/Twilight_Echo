@@ -2731,8 +2731,11 @@ onBeforeUnmount(() => {
   min-height: 0;
   min-width: 0;
   padding: calc(28px + 28px) 32px 24px;
-  background-color: var(--te-settings-bg, #f5f6f8);
-  background-image: var(--te-settings-bg-image, none);
+  background-color: var(--te-app-bg);
+  background-image: var(--te-app-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
   color: var(--te-settings-text, #1a1a1a);
   font-family: var(--te-font-sans);
   overflow-x: hidden;

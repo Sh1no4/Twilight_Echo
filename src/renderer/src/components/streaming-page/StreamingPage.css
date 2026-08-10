@@ -18,13 +18,14 @@
   bottom: 0;
   width: var(--te-menu-width);
   box-sizing: border-box;
-  background: var(--te-card-bg);
+  /* Only the bottom-most global background renders; no separate surface. */
+  background: transparent;
   border-right: 1px solid var(--te-card-border);
   z-index: 1000;
   overflow: hidden;
   box-shadow: 8px 0 24px rgba(15, 23, 42, 0.04);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
   transform: translate3d(-100%, 0, 0);
   will-change: transform;
   transition:
@@ -38,11 +39,7 @@
 
 :global(html[data-theme='dark'] .streaming-page .streaming-sidebar) {
   border-right-color: transparent;
-  background-color: var(--te-streaming-bg);
-  background-image: var(--te-streaming-bg-image);
-  background-position: left center;
-  background-size: cover;
-  background-repeat: no-repeat;
+  background: transparent;
   box-shadow: none;
 }
 
@@ -2045,9 +2042,14 @@
 }
 
 :global(html[data-window-transparent='on'] .streaming-page),
-:global(html[data-window-transparent='on'] .streaming-page .streaming-sidebar),
 :global(html[data-window-transparent='on'] .streaming-page .streaming-content) {
   background-color: var(--te-tp-surface) !important;
+  background-image: var(--te-app-bg-image) !important;
+}
+
+:global(html[data-window-transparent='on'] .streaming-page .streaming-sidebar) {
+  /* The sidebar stays frosted transparent over the global background. */
+  background: transparent !important;
   background-image: none !important;
 }
 

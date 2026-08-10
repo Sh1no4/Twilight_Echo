@@ -499,6 +499,9 @@ const showWasapiPushMode = computed(() => audioOutput.value === 'wasapi' && excl
 // 高级引擎参数折叠状态
 const advancedParamsOpen = ref(false)
 
+// 设备列表在设备较多时成本很高，默认收起并按需挂载。
+const audioOutputPanelExpanded = ref(false)
+
 // DSP 信号链状态
 const eqChainActive = computed(
   () => audioProcessing.value.dspEnabled && audioProcessing.value.eqEnabled
@@ -1455,6 +1458,7 @@ function cloneLiquidGlass(): LiquidGlassSettings {
   const lg = settings.value.liquidGlass
   return {
     followPointer: lg.followPointer,
+    overLight: lg.overLight,
     light: { ...lg.light },
     dark: { ...lg.dark }
   }
@@ -3015,58 +3019,77 @@ onBeforeUnmount(() => {
                 <p>Audio Output</p>
                 <h3>输出设备与链路</h3>
               </div>
-              <button
-                type="button"
-                class="icon-button"
-                title="刷新设备列表"
-                @click="refreshAudioOutputState"
-              >
-                <i class="pi pi-refresh"></i>
-              </button>
-            </div>
-            <div class="device-grid">
-              <button
-                v-for="device in audioDeviceOptions"
-                :key="device.id"
-                type="button"
-                class="device-card"
-                :class="{ active: audioDevice === device.id }"
-                @click="selectAudioDevice(device.id)"
-              >
-                <i :class="deviceIcon(device)"></i>
-                <span>{{ device.label }}</span>
-                <small>{{ deviceSpecText(device) }}</small>
-                <div
-                  v-if="
-                    normalizeCapabilityState(device.dopSupportState) !== 'unsupported' ||
-                    normalizeCapabilityState(device.nativeDsdSupportState) !== 'unsupported'
-                  "
-                  class="device-capability-row"
+              <div class="device-panel-actions">
+                <label class="device-panel-disclosure">
+                  <input
+                    v-model="audioOutputPanelExpanded"
+                    type="checkbox"
+                    aria-controls="audio-output-device-panel"
+                    :aria-expanded="audioOutputPanelExpanded"
+                  />
+                  <span>{{ audioOutputPanelExpanded ? '收起设备列表' : '展开设备列表' }}</span>
+                </label>
+                <button
+                  type="button"
+                  class="icon-button"
+                  title="刷新设备列表"
+                  @click="refreshAudioOutputState"
                 >
-                  <span
-                    v-if="normalizeCapabilityState(device.dopSupportState) !== 'unsupported'"
-                    class="device-capability-chip"
-                    :class="capabilityStateTone(device.dopSupportState)"
-                    :title="capabilityStateTitle(device, 'DoP')"
-                  >
-                    DoP {{ capabilityStateLabel(device.dopSupportState) }}
-                  </span>
-                  <span
-                    v-if="normalizeCapabilityState(device.nativeDsdSupportState) !== 'unsupported'"
-                    class="device-capability-chip"
-                    :class="capabilityStateTone(device.nativeDsdSupportState)"
-                    :title="capabilityStateTitle(device, 'Native DSD')"
-                  >
-                    Native DSD {{ capabilityStateLabel(device.nativeDsdSupportState) }}
-                  </span>
-                </div>
-                <b v-if="audioDevice === device.id">当前</b>
-              </button>
+                  <i class="pi pi-refresh"></i>
+                </button>
+              </div>
             </div>
-            <p class="device-capability-note">
-              列表为设备能力声明；是否 Native DSD / DoP 以播放时 HiFi
-              状态为准（筛选≠当前输出模式）。
-            </p>
+            <div
+              v-if="audioOutputPanelExpanded"
+              id="audio-output-device-panel"
+              class="device-panel-content"
+            >
+              <div class="device-grid">
+                <button
+                  v-for="device in audioDeviceOptions"
+                  :key="device.id"
+                  type="button"
+                  class="device-card"
+                  :class="{ active: audioDevice === device.id }"
+                  @click="selectAudioDevice(device.id)"
+                >
+                  <i :class="deviceIcon(device)"></i>
+                  <span>{{ device.label }}</span>
+                  <small>{{ deviceSpecText(device) }}</small>
+                  <div
+                    v-if="
+                      normalizeCapabilityState(device.dopSupportState) !== 'unsupported' ||
+                      normalizeCapabilityState(device.nativeDsdSupportState) !== 'unsupported'
+                    "
+                    class="device-capability-row"
+                  >
+                    <span
+                      v-if="normalizeCapabilityState(device.dopSupportState) !== 'unsupported'"
+                      class="device-capability-chip"
+                      :class="capabilityStateTone(device.dopSupportState)"
+                      :title="capabilityStateTitle(device, 'DoP')"
+                    >
+                      DoP {{ capabilityStateLabel(device.dopSupportState) }}
+                    </span>
+                    <span
+                      v-if="
+                        normalizeCapabilityState(device.nativeDsdSupportState) !== 'unsupported'
+                      "
+                      class="device-capability-chip"
+                      :class="capabilityStateTone(device.nativeDsdSupportState)"
+                      :title="capabilityStateTitle(device, 'Native DSD')"
+                    >
+                      Native DSD {{ capabilityStateLabel(device.nativeDsdSupportState) }}
+                    </span>
+                  </div>
+                  <b v-if="audioDevice === device.id">当前</b>
+                </button>
+              </div>
+              <p class="device-capability-note">
+                列表为设备能力声明；是否 Native DSD / DoP 以播放时 HiFi
+                状态为准（筛选≠当前输出模式）。
+              </p>
+            </div>
           </div>
 
           <div class="section-block">
@@ -5142,6 +5165,27 @@ onBeforeUnmount(() => {
                 <hr />
                 <div class="setting-item">
                   <div class="setting-copy">
+                    <strong>亮色背景加深</strong>
+                    <span>浅色背景下使用深色玻璃，让玻璃在亮背景上更清晰。</span>
+                  </div>
+                  <span
+                    class="toggle-switch"
+                    :class="{ active: settings.liquidGlass.overLight }"
+                    role="switch"
+                    :aria-checked="settings.liquidGlass.overLight"
+                    @click="
+                      updateSettings({
+                        liquidGlass: {
+                          ...cloneLiquidGlass(),
+                          overLight: !settings.liquidGlass.overLight
+                        }
+                      })
+                    "
+                  ></span>
+                </div>
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
                     <strong>编辑主题</strong>
                     <span>分别设置浅色与深色模式下的玻璃参数。</span>
                   </div>
@@ -5284,6 +5328,37 @@ onBeforeUnmount(() => {
                       suffix="%"
                       aria-label="编辑玻璃饱和度"
                       @change="setLiquidGlassField('saturation', $event)"
+                    />
+                  </div>
+                </div>
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>弹性跟随</strong>
+                    <span>玻璃向光标方向伸展的程度，0 表示固定不跟随。</span>
+                  </div>
+                  <div class="range-pill">
+                    <span>弹性</span>
+                    <input
+                      class="range-input"
+                      type="range"
+                      min="0"
+                      max="100"
+                      :value="settings.liquidGlass[liquidGlassTab].elasticity"
+                      @input="
+                        setLiquidGlassField(
+                          'elasticity',
+                          Number(($event.target as HTMLInputElement).value)
+                        )
+                      "
+                    />
+                    <EditableRangeValue
+                      :value="settings.liquidGlass[liquidGlassTab].elasticity"
+                      :min="0"
+                      :max="100"
+                      suffix="%"
+                      aria-label="编辑弹性跟随"
+                      @change="setLiquidGlassField('elasticity', $event)"
                     />
                   </div>
                 </div>
@@ -6281,11 +6356,15 @@ onBeforeUnmount(() => {
 
 <style>
 html[data-theme='dark'] .settings-preview-page {
-  background-color: var(--te-settings-bg);
-  background-image: var(--te-settings-bg-image);
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
+  /* This block is emitted after SettingsPage.css, so preserve the complete
+     opaque image stack rather than resetting the page to a transparent layer. */
+  background-color: var(--te-settings-backplate, #17181a) !important;
+  background-image:
+    var(--te-settings-bg-image, none), linear-gradient(var(--te-settings-bg), var(--te-settings-bg)) !important;
+  background-position: center, center;
+  background-size: cover, cover;
+  background-repeat: no-repeat, no-repeat;
+  background-attachment: fixed, fixed;
   color: var(--te-text);
 }
 

@@ -3531,6 +3531,8 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   z-index: 0;
   pointer-events: none;
   border-radius: inherit;
+  /* Elasticity lets the playbar reach toward the cursor; 0 keeps it pinned. */
+  transform: translate(var(--te-lg-elastic-x, 0px), var(--te-lg-elastic-y, 0px));
   background:
     linear-gradient(
       var(--te-lg-angle, 135deg),
@@ -3542,6 +3544,15 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
       rgba(var(--te-lg-sheen-rgb), 0) 100%
     ),
     rgba(var(--te-lg-surface-rgb), var(--te-lg-tint, 0.12));
+  /* A fixed full-width backdrop would otherwise be recomputed on every main-page
+     scroll. Keep the inexpensive tint at rest and promote blur/refraction only
+     while the user is actually interacting with the player. */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  filter: none;
+}
+
+.player-bar-liquid:is(:hover, :focus-within) .player-bar-warp {
   backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
   -webkit-backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
   filter: url(#te-lg-playbar);

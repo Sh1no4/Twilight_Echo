@@ -176,7 +176,8 @@ function handleImportClick(): void {
   left: 0;
   bottom: 0;
   width: var(--te-menu-width);
-  background: color-mix(in srgb, var(--te-navigation-bg) var(--te-navigation-opacity), transparent);
+  /* Frosted surface: the bottom-most global background shows through. */
+  background: transparent;
   border-right: 1px solid var(--te-navigation-border);
   border-radius: 0 var(--te-navigation-radius) var(--te-navigation-radius) 0;
   z-index: 1000;
@@ -199,17 +200,7 @@ function handleImportClick(): void {
 
 :global(html[data-theme='dark'] .side-menu) {
   border-right-color: var(--te-navigation-border);
-  background-color: color-mix(
-    in srgb,
-    var(--te-navigation-bg) var(--te-navigation-opacity),
-    transparent
-  );
-  background-image: var(--te-local-bg-image);
-  background-position: left center;
-  background-size: cover;
-  background-repeat: no-repeat;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  background: transparent;
 }
 
 :global(html[data-te-navigation-style='expanded']) {

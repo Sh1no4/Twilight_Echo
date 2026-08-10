@@ -1,13 +1,15 @@
 /**
  * Pointer-reactive specular highlight for the liquid glass material.
  *
- * Cards use a single document-level listener writing shared CSS variables, so cost
- * is O(1) in listeners regardless of how many cards are mounted — the album grid
- * renders in batches up to the full library, so per-element listeners are not an
- * option. A single global light source is also the physically plausible model.
+ * Cards share one document-level listener, so cost stays O(1) in listeners no
+ * matter how many cards are mounted — the album grid renders in batches up to the
+ * full library, so per-element listeners are not an option. The listener resolves
+ * the card under the pointer and writes element-scoped CSS variables, so only the
+ * hovered card rotates its highlight; every other card keeps the static base
+ * angle.
  *
  * The playbar computes its own element-relative offset, since it is one surface and
- * can afford the higher fidelity.
+ * can afford the higher fidelity; it also only reacts while the pointer is over it.
  *
  * Per the chosen design this drives highlight angle only — no elastic scale or
  * translate, which would shift a fixed-layout playbar and jitter neighbouring
@@ -59,23 +61,6 @@ export function resolvePointerOffset(
   }
 }
 
-/**
- * Pointer offset against the viewport, used as the shared light source for cards.
- */
-export function resolveViewportPointerOffset(
-  pointerX: number,
-  pointerY: number,
-  viewportWidth: number,
-  viewportHeight: number
-): PointerOffset {
-  return resolvePointerOffset(pointerX, pointerY, {
-    left: 0,
-    top: 0,
-    width: viewportWidth,
-    height: viewportHeight
-  })
-}
-
 /** Specular gradient angle in degrees for a given horizontal offset. */
 export function resolveHighlightAngle(offsetX: number): number {
   return BASE_HIGHLIGHT_ANGLE + clampOffset(offsetX) * ANGLE_GAIN
@@ -85,13 +70,31 @@ export interface LiquidGlassPointerVariables {
   '--te-lg-angle': string
   '--te-lg-pointer-x': string
   '--te-lg-pointer-y': string
+  '--te-lg-elastic-x': string
+  '--te-lg-elastic-y': string
 }
 
-export function pointerCssVariables(offset: PointerOffset): LiquidGlassPointerVariables {
+/** Maximum warp-layer shift toward the cursor at 100% elasticity. */
+export const MAX_ELASTIC_SHIFT_PX = 10
+/**
+ * Pointer-driven glass repaint is deliberately capped below the display refresh
+ * rate. Updating a blurred SVG-filtered surface every 16 ms starves scrolling on
+ * dense card grids; 32 ms keeps the light responsive while leaving compositor
+ * time for the actual UI.
+ */
+export const LIQUID_GLASS_POINTER_FRAME_INTERVAL_MS = 32
+
+export function pointerCssVariables(
+  offset: PointerOffset,
+  elasticity = 0
+): LiquidGlassPointerVariables {
+  const factor = Math.max(0, Math.min(100, elasticity)) / 100
   return {
     '--te-lg-angle': `${resolveHighlightAngle(offset.x).toFixed(2)}deg`,
     '--te-lg-pointer-x': offset.x.toFixed(2),
-    '--te-lg-pointer-y': offset.y.toFixed(2)
+    '--te-lg-pointer-y': offset.y.toFixed(2),
+    '--te-lg-elastic-x': `${((offset.x / 100) * factor * MAX_ELASTIC_SHIFT_PX).toFixed(2)}px`,
+    '--te-lg-elastic-y': `${((offset.y / 100) * factor * MAX_ELASTIC_SHIFT_PX).toFixed(2)}px`
   }
 }
 
@@ -108,15 +111,20 @@ export interface FrameCoalescer<T> {
   cancel: () => void
 }
 
-interface FrameCoalescerOptions {
+export interface FrameCoalescerOptions {
   requestFrame?: (callback: () => void) => number
   cancelFrame?: (handle: number) => void
+  /** Minimum time between flushes. Zero retains one update per animation frame. */
+  minIntervalMs?: number
+  /** Injectable clock for deterministic tests. */
+  now?: () => number
 }
 
 /**
  * Coalesces bursts of updates into one callback per animation frame, latest wins.
  * Pointer events fire far faster than frames; without this the hot path would write
- * style on every event.
+ * style on every event. Callers can additionally cap flush frequency when each
+ * update invalidates an expensive blur/filter surface.
  */
 export function createFrameCoalescer<T>(
   flush: (payload: T) => void,
@@ -132,20 +140,43 @@ export function createFrameCoalescer<T>(
     (typeof cancelAnimationFrame === 'function'
       ? cancelAnimationFrame
       : (handle: number): void => clearTimeout(handle as unknown as NodeJS.Timeout))
+  const now =
+    options.now ??
+    (typeof performance !== 'undefined' && typeof performance.now === 'function'
+      ? () => performance.now()
+      : () => Date.now())
+  const minIntervalMs = Math.max(
+    0,
+    Number.isFinite(options.minIntervalMs) ? options.minIntervalMs! : 0
+  )
 
   let handle: number | null = null
   let pending: { payload: T } | null = null
+  let lastFlushAt = Number.NEGATIVE_INFINITY
+
+  function flushFrame(): void {
+    handle = null
+    const next = pending
+    if (!next) return
+
+    const timestamp = now()
+    if (timestamp - lastFlushAt < minIntervalMs) {
+      // Preserve the latest input and wait for the next compositor frame instead
+      // of using a timer that could contend with rendering work.
+      handle = requestFrame(flushFrame)
+      return
+    }
+
+    pending = null
+    lastFlushAt = timestamp
+    flush(next.payload)
+  }
 
   return {
     schedule(payload: T): void {
       pending = { payload }
       if (handle !== null) return
-      handle = requestFrame(() => {
-        handle = null
-        const next = pending
-        pending = null
-        if (next) flush(next.payload)
-      })
+      handle = requestFrame(flushFrame)
     },
     hasPending(): boolean {
       return pending !== null
@@ -156,6 +187,8 @@ export function createFrameCoalescer<T>(
         handle = null
       }
       pending = null
+      // Re-enabling a surface should never wait behind an old interaction.
+      lastFlushAt = Number.NEGATIVE_INFINITY
     }
   }
 }
