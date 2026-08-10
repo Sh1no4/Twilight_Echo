@@ -16,9 +16,7 @@ const SongList = defineAsyncComponent(() => import('./components/SongList.vue'))
 const PlayingMusic = defineAsyncComponent(() => import('./components/PlayingMusic.vue'))
 const StreamingPage = defineAsyncComponent(() => import('./components/StreamingPage.vue'))
 const RadioPodcastPage = defineAsyncComponent(() => import('./components/RadioPodcastPage.vue'))
-const NetworkSourcesPage = defineAsyncComponent(() =>
-  import('./components/NetworkSourcesPage.vue')
-)
+const NetworkSourcesPage = defineAsyncComponent(() => import('./components/NetworkSourcesPage.vue'))
 const LoginPage = defineAsyncComponent(() => import('./components/LoginPage.vue'))
 const SettingsPage = defineAsyncComponent(() => import('./components/SettingsPage.vue'))
 const ThemeStudioPage = defineAsyncComponent(() => import('./components/ThemeStudioPage.vue'))
@@ -54,6 +52,7 @@ import {
   type StreamingArtistNavigationRequest
 } from './utils/streamingArtistResolution'
 import AppNoticeHost from './components/AppNoticeHost.vue'
+import LiquidGlassDefs from './components/LiquidGlassDefs.vue'
 
 type TitleSurface = 'default' | 'settings' | 'streaming'
 type StreamingInitialTab = 'home' | 'library' | 'recent'
@@ -675,6 +674,10 @@ const titleSurface = computed<TitleSurface>(() => {
 
 <template>
   <div class="app-shell">
+    <LiquidGlassDefs
+      :active="settings.surfaceMaterial === 'liquidGlass'"
+      :follow-pointer="settings.liquidGlass.followPointer"
+    />
     <div class="app-shell-title">
       <TitleBar
         :glass="showPlayingPage"
@@ -798,7 +801,8 @@ const titleSurface = computed<TitleSurface>(() => {
             :page="activePluginPage"
             @back="closePluginPage"
           />
-        </Transition>      </div>
+        </Transition>
+      </div>
     </div>
     <div class="app-shell-player">
       <PlayerBar

@@ -1408,7 +1408,9 @@ html[data-theme='dark'] .more-drawer:not(.drawer-glass) {
 /* Dark theme volume slider: the default accent-at-18% mix reads as near-black
    on the dark drawer, so the unfilled track needs a brighter neutral to stay
    visible. The glass drawer gets the same neutral inside its own rule. */
-html[data-theme='dark'] .volume-drawer:not(.drawer-glass) .volume-drawer-slider::-webkit-slider-runnable-track {
+html[data-theme='dark']
+  .volume-drawer:not(.drawer-glass)
+  .volume-drawer-slider::-webkit-slider-runnable-track {
   background:
     linear-gradient(90deg, var(--accent-color, #3b82f6), var(--accent-color, #3b82f6)) 0 /
       var(--range-value, 70%) 100% no-repeat,
@@ -2977,4 +2979,467 @@ html[data-te-effects-mode='reduced'][data-te-background-treatment='gradient'] bo
 html[data-te-effects-mode='reduced'][data-te-background-treatment='image'] body::before {
   background-image: none !important;
   filter: none !important;
+}
+
+/* ===== Liquid glass material =====
+   Switchable alternative to the standard card/playbar surface, selected by
+   settings.surfaceMaterial and applied through the theme runtime as
+   data-te-surface-material. Tuning lives in --te-lg-* (written by the theme
+   runtime) and --te-lg-angle (written by the pointer tracker).
+
+   Structure: the refracting layer is the card's ::after, carrying both
+   backdrop-filter and filter: url(#te-lg-card). Putting the SVG filter on the card
+   itself would displace its cover art and text too, so the warp is confined to a
+   dedicated layer. At z-index -1 inside an isolated stacking context it paints
+   above the card's own background but below all in-flow content, which keeps
+   content sharp without editing any of the card components.
+
+   ::before is deliberately untouched — five of these classes already use it for
+   hover glows and layers. */
+
+html[data-te-surface-material='liquidGlass']
+  :is(
+    .artist-card,
+    .album-card,
+    .playlist-card,
+    .glass-card,
+    .feature-card,
+    .playlist-grid-card,
+    .playlist-tile,
+    .favorites-card,
+    .streaming-placeholder,
+    .empty-recommend,
+    .detail-playlist-header,
+    .track-table-wrapper,
+    .profile-panel,
+    .liked-panel,
+    .playlist-list-item,
+    .profile-card,
+    .recent-card,
+    .ranking-card,
+    .create-playlist-card,
+    .folder-card,
+    .empty-list-card,
+    .filter-card,
+    .sponsor-card,
+    .update-card,
+    .dsp-module-card,
+    .device-card,
+    .card,
+    .account-card,
+    .plugin-card,
+    .market-card,
+    .plugin-extension-card,
+    .bili-qr-card,
+    .chart-card,
+    .parameter-card,
+    .square-card,
+    .opra-panel,
+    .opra-result-item,
+    .device-panel,
+    .plugin-panel,
+    .output-diagnostic-panel,
+    .background-accordion-panel
+  ) {
+  position: relative;
+  /* Contains the negative-z warp layer so it cannot slip behind an ancestor. */
+  isolation: isolate;
+  background: transparent !important;
+  /* Rim stays outside the filter: real glass edges read as a crisp highlight, and a
+     displaced rim would smear. */
+  border-color: transparent !important;
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, calc(var(--te-lg-specular, 0.55) * 0.9)),
+    inset 0 1px 1px rgba(255, 255, 255, calc(var(--te-lg-specular, 0.55) * 0.5)),
+    inset 0 -1px 1px rgba(0, 0, 0, 0.06),
+    0 10px 30px rgba(0, 0, 0, 0.16) !important;
+}
+
+html[data-te-surface-material='liquidGlass']
+  :is(
+    .artist-card,
+    .album-card,
+    .playlist-card,
+    .glass-card,
+    .feature-card,
+    .playlist-grid-card,
+    .playlist-tile,
+    .favorites-card,
+    .streaming-placeholder,
+    .empty-recommend,
+    .detail-playlist-header,
+    .profile-panel,
+    .liked-panel,
+    .playlist-list-item,
+    .profile-card,
+    .recent-card,
+    .ranking-card,
+    .create-playlist-card,
+    .folder-card,
+    .empty-list-card,
+    .filter-card,
+    .sponsor-card,
+    .update-card,
+    .dsp-module-card,
+    .device-card,
+    .card,
+    .account-card,
+    .plugin-card,
+    .market-card,
+    .plugin-extension-card,
+    .bili-qr-card,
+    .chart-card,
+    .parameter-card,
+    .square-card,
+    .opra-panel,
+    .opra-result-item,
+    .device-panel,
+    .plugin-panel,
+    .output-diagnostic-panel,
+    .background-accordion-panel
+  )::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: inherit;
+  /* Tint plus a directional sheen. Both sit on the warped layer, so the highlight
+     refracts with the backdrop instead of floating flat above it. */
+  background:
+    linear-gradient(
+      var(--te-lg-angle, 135deg),
+      rgba(255, 255, 255, 0) 0%,
+      rgba(255, 255, 255, calc(var(--te-lg-specular, 0.55) * 0.22)) 38%,
+      rgba(255, 255, 255, calc(var(--te-lg-specular, 0.55) * 0.06)) 62%,
+      rgba(255, 255, 255, 0) 100%
+    ),
+    rgba(255, 255, 255, var(--te-lg-tint, 0.12));
+  backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
+  -webkit-backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
+  filter: url(#te-lg-card);
+}
+
+/* Dark tone: the sheen stays light (it is a specular highlight) but the tint
+   darkens, otherwise a light film washes out dark surfaces. */
+html[data-te-surface-material='liquidGlass'][data-theme='dark']
+  :is(
+    .artist-card,
+    .album-card,
+    .playlist-card,
+    .glass-card,
+    .feature-card,
+    .playlist-grid-card,
+    .playlist-tile,
+    .favorites-card,
+    .streaming-placeholder,
+    .empty-recommend,
+    .detail-playlist-header,
+    .profile-panel,
+    .liked-panel,
+    .playlist-list-item,
+    .profile-card,
+    .recent-card,
+    .ranking-card,
+    .create-playlist-card,
+    .folder-card,
+    .empty-list-card,
+    .filter-card,
+    .sponsor-card,
+    .update-card,
+    .dsp-module-card,
+    .device-card,
+    .card,
+    .account-card,
+    .plugin-card,
+    .market-card,
+    .plugin-extension-card,
+    .bili-qr-card,
+    .chart-card,
+    .parameter-card,
+    .square-card,
+    .opra-panel,
+    .opra-result-item,
+    .device-panel,
+    .plugin-panel,
+    .output-diagnostic-panel,
+    .background-accordion-panel
+  )::after {
+  background:
+    linear-gradient(
+      var(--te-lg-angle, 135deg),
+      rgba(255, 255, 255, 0) 0%,
+      rgba(255, 255, 255, calc(var(--te-lg-specular, 0.35) * 0.26)) 38%,
+      rgba(255, 255, 255, calc(var(--te-lg-specular, 0.35) * 0.07)) 62%,
+      rgba(255, 255, 255, 0) 100%
+    ),
+    rgba(126, 134, 152, var(--te-lg-tint, 0.16));
+}
+
+html[data-te-surface-material='liquidGlass'][data-theme='dark']
+  :is(
+    .artist-card,
+    .album-card,
+    .playlist-card,
+    .glass-card,
+    .feature-card,
+    .playlist-grid-card,
+    .playlist-tile,
+    .favorites-card,
+    .streaming-placeholder,
+    .empty-recommend,
+    .detail-playlist-header,
+    .track-table-wrapper,
+    .profile-panel,
+    .liked-panel,
+    .playlist-list-item,
+    .profile-card,
+    .recent-card,
+    .ranking-card,
+    .create-playlist-card,
+    .folder-card,
+    .empty-list-card,
+    .filter-card,
+    .sponsor-card,
+    .update-card,
+    .dsp-module-card,
+    .device-card,
+    .card,
+    .account-card,
+    .plugin-card,
+    .market-card,
+    .plugin-extension-card,
+    .bili-qr-card,
+    .chart-card,
+    .parameter-card,
+    .square-card,
+    .opra-panel,
+    .opra-result-item,
+    .device-panel,
+    .plugin-panel,
+    .output-diagnostic-panel,
+    .background-accordion-panel
+  ) {
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, calc(var(--te-lg-specular, 0.35) * 0.8)),
+    inset 0 1px 1px rgba(255, 255, 255, calc(var(--te-lg-specular, 0.35) * 0.45)),
+    inset 0 -1px 1px rgba(0, 0, 0, 0.22),
+    0 12px 34px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* feature-card and playlist-tile have dark-tone rules that set ::after to
+   display: none; the warp layer has to opt back in. */
+html[data-te-surface-material='liquidGlass'][data-theme='dark']
+  :is(.feature-card, .playlist-tile)::after {
+  display: block !important;
+}
+
+/* The one scrollable surface keeps the rim but no warp layer: an inset:0 absolute
+   child scrolls with content, so the refraction would drift out of view. */
+html[data-te-surface-material='liquidGlass'] .track-table-wrapper {
+  backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
+  -webkit-backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
+  background: rgba(255, 255, 255, var(--te-lg-tint, 0.12)) !important;
+}
+
+html[data-te-surface-material='liquidGlass'][data-theme='dark'] .track-table-wrapper {
+  background: rgba(126, 134, 152, var(--te-lg-tint, 0.16)) !important;
+}
+
+/* ===== Liquid glass degradation =====
+   Three existing contracts strip heavy effects. Each must also drop the SVG filter:
+   refraction without its blurred backdrop reads as a smeared artifact, not glass. */
+
+html[data-te-surface-material='liquidGlass']
+  body.te-no-blur
+  :is(
+    .artist-card,
+    .album-card,
+    .playlist-card,
+    .glass-card,
+    .feature-card,
+    .playlist-grid-card,
+    .playlist-tile,
+    .favorites-card,
+    .streaming-placeholder,
+    .empty-recommend,
+    .detail-playlist-header,
+    .profile-panel,
+    .liked-panel,
+    .playlist-list-item,
+    .profile-card,
+    .recent-card,
+    .ranking-card,
+    .create-playlist-card,
+    .folder-card,
+    .empty-list-card,
+    .filter-card,
+    .sponsor-card,
+    .update-card,
+    .dsp-module-card,
+    .device-card,
+    .card,
+    .account-card,
+    .plugin-card,
+    .market-card,
+    .plugin-extension-card,
+    .bili-qr-card,
+    .chart-card,
+    .parameter-card,
+    .square-card,
+    .opra-panel,
+    .opra-result-item,
+    .device-panel,
+    .plugin-panel,
+    .output-diagnostic-panel,
+    .background-accordion-panel
+  )::after {
+  filter: none !important;
+}
+
+html[data-te-surface-material='liquidGlass'][data-te-effects-mode='reduced']
+  :is(
+    .artist-card,
+    .album-card,
+    .playlist-card,
+    .glass-card,
+    .feature-card,
+    .playlist-grid-card,
+    .playlist-tile,
+    .favorites-card,
+    .streaming-placeholder,
+    .empty-recommend,
+    .detail-playlist-header,
+    .profile-panel,
+    .liked-panel,
+    .playlist-list-item,
+    .profile-card,
+    .recent-card,
+    .ranking-card,
+    .create-playlist-card,
+    .folder-card,
+    .empty-list-card,
+    .filter-card,
+    .sponsor-card,
+    .update-card,
+    .dsp-module-card,
+    .device-card,
+    .card,
+    .account-card,
+    .plugin-card,
+    .market-card,
+    .plugin-extension-card,
+    .bili-qr-card,
+    .chart-card,
+    .parameter-card,
+    .square-card,
+    .opra-panel,
+    .opra-result-item,
+    .device-panel,
+    .plugin-panel,
+    .output-diagnostic-panel,
+    .background-accordion-panel
+  )::after {
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Reduced/disabled motion keeps the material but pins the light source; the pointer
+   tracker also detaches its listener, so the angle variable stops changing. */
+html[data-te-surface-material='liquidGlass']:is([data-te-motion='reduced'], [data-te-motion='off'])
+  :is(
+    .artist-card,
+    .album-card,
+    .playlist-card,
+    .glass-card,
+    .feature-card,
+    .playlist-grid-card,
+    .playlist-tile,
+    .favorites-card,
+    .streaming-placeholder,
+    .empty-recommend,
+    .detail-playlist-header,
+    .profile-panel,
+    .liked-panel,
+    .playlist-list-item,
+    .profile-card,
+    .recent-card,
+    .ranking-card,
+    .create-playlist-card,
+    .folder-card,
+    .empty-list-card,
+    .filter-card,
+    .sponsor-card,
+    .update-card,
+    .dsp-module-card,
+    .device-card,
+    .card,
+    .account-card,
+    .plugin-card,
+    .market-card,
+    .plugin-extension-card,
+    .bili-qr-card,
+    .chart-card,
+    .parameter-card,
+    .square-card,
+    .opra-panel,
+    .opra-result-item,
+    .device-panel,
+    .plugin-panel,
+    .output-diagnostic-panel,
+    .background-accordion-panel
+  )::after {
+  transition: none !important;
+}
+
+/* Transparent Linux windows cannot sample the desktop behind the window, so in-app
+   blur only re-blurs the app's own layers while forcing per-frame recomposition.
+   Mirrors the existing window-transparency carve-out. */
+html[data-te-surface-material='liquidGlass'][data-window-transparent='on'][data-platform='linux']
+  :is(
+    .artist-card,
+    .album-card,
+    .playlist-card,
+    .glass-card,
+    .feature-card,
+    .playlist-grid-card,
+    .playlist-tile,
+    .favorites-card,
+    .streaming-placeholder,
+    .empty-recommend,
+    .detail-playlist-header,
+    .profile-panel,
+    .liked-panel,
+    .playlist-list-item,
+    .profile-card,
+    .recent-card,
+    .ranking-card,
+    .create-playlist-card,
+    .folder-card,
+    .empty-list-card,
+    .filter-card,
+    .sponsor-card,
+    .update-card,
+    .dsp-module-card,
+    .device-card,
+    .card,
+    .account-card,
+    .plugin-card,
+    .market-card,
+    .plugin-extension-card,
+    .bili-qr-card,
+    .chart-card,
+    .parameter-card,
+    .square-card,
+    .opra-panel,
+    .opra-result-item,
+    .device-panel,
+    .plugin-panel,
+    .output-diagnostic-panel,
+    .background-accordion-panel
+  )::after {
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
