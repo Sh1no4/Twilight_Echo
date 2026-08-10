@@ -3262,8 +3262,12 @@ void testCueDopPregapOutputsCanonicalCarrierAndResetsMarkerAfterSeek() {
 
   const auto pregap = renderBackendFrames(backend, 2);
   assert(pregap.size() == 4);
-  const float marker05Silence = dopCarrierFloat(0x69, 0x69, 0x05);
-  const float markerFaSilence = dopCarrierFloat(0x69, 0x69, 0xfa);
+  // DSD idle is the 0x69 alternating pattern, but a DoP payload carries it
+  // MSB-first, so the byte on the wire is its bit reversal 0x96. The source
+  // here is DSF (LSB-first), so the packer reverses the 0x69 pregap fill onto
+  // 0x96 - unlike the native DSD path above, which passes 0x69 through raw.
+  const float marker05Silence = dopCarrierFloat(0x96, 0x96, 0x05);
+  const float markerFaSilence = dopCarrierFloat(0x96, 0x96, 0xfa);
   assert(std::abs(pregap[0] - marker05Silence) < 0.0000001f);
   assert(std::abs(pregap[1] - marker05Silence) < 0.0000001f);
   assert(std::abs(pregap[2] - markerFaSilence) < 0.0000001f);
@@ -3274,8 +3278,12 @@ void testCueDopPregapOutputsCanonicalCarrierAndResetsMarkerAfterSeek() {
   assert(renderedPath.back().floatRenderCalls == 0);
 
   const auto source = renderBackendFrames(backend, 1);
-  assert(std::abs(source[0] - marker05Silence) > 0.0001f);
-  assert(std::abs(source[1] - marker05Silence) > 0.0001f);
+  // Compare at carrier-LSB resolution, not with a coarse absolute tolerance.
+  // A 24-bit carrier word is exact in float32, and the source payload here
+  // (0x8844 / 0x9955) sits only ~700 LSBs from the 0x9696 idle word, which a
+  // 1e-4 epsilon cannot resolve even though the words plainly differ.
+  assert(std::abs(source[0] - marker05Silence) > 0.0000001f);
+  assert(std::abs(source[1] - marker05Silence) > 0.0000001f);
 
   // Seeking back into the virtual prefix must neither advance source time nor
   // inherit an arbitrary marker phase from decoder prefetch.

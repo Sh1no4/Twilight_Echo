@@ -351,6 +351,7 @@ export function createPlaybackInfoFanoutSignature(
     diagnostics.lifetimeRecoveryCount,
     diagnostics.driverRestartCount,
     diagnostics.deviceLostCount,
+    diagnostics.driverXrunCount ?? 0,
     diagnostics.lastError,
     outputInfo.deviceRecovered,
     outputInfo.recoveryCount,
@@ -1140,6 +1141,7 @@ export function createDefaultPlaybackInfo(
     lifetimeRecoveryCount: 0,
     driverRestartCount: 0,
     deviceLostCount: 0,
+    driverXrunCount: 0,
     lastError: ''
   }
   const outputInfo: OutputInfo = {

@@ -1,40 +1,48 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
-  DEFAULT_LYRICS_APPEARANCE,
-  cloneLyricsAppearance,
-  normalizeLyricsAppearance,
-  resolveLyricsFontFamily,
-  syncLegacyLyricsAppearance,
+  LYRICS_RANGES,
   type LyricsAppearanceSettings,
   type LyricsStyleTarget,
   type LyricsTextStyle
 } from '../../../shared/lyricsAppearance.ts'
-import { useSettingsStore } from '../stores/useSettingsStore'
+import { lyricsPreviewStyle } from '../utils/lyricsStyleVars'
+import { useLyricsAppearanceEditor } from '../composables/useLyricsAppearanceEditor'
+import { useLyricsFontPicker, type LyricsFontOption } from '../composables/useLyricsFontPicker'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
-const { settings, updateSettings } = useSettingsStore()
-const activeTarget = ref<LyricsStyleTarget>('normal')
-const draft = ref(cloneLyricsAppearance(settings.value.lyricsAppearance))
-const saveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
-let saveTimer = 0
-let saveSequence = 0
+
+const {
+  draft,
+  activeTarget,
+  style,
+  saveState,
+  statusLabel,
+  presets,
+  activePresetId,
+  canSavePreset,
+  patchStyle,
+  setGlobal,
+  syncFontSizeToAll,
+  resetTarget,
+  resetAll,
+  reloadFromSettings,
+  applyPreset,
+  savePreset,
+  deletePreset
+} = useLyricsAppearanceEditor()
+
+const fontPicker = useLyricsFontPicker()
+const fontMenuOpen = ref(false)
+const presetName = ref('')
 
 const targetOptions: Array<{ value: LyricsStyleTarget; label: string; hint: string }> = [
   { value: 'normal', label: '普通歌词', hint: '未播放与非当前行' },
   { value: 'active', label: '当前歌词', hint: '正在播放的主歌词' },
-  { value: 'translation', label: '翻译歌词', hint: '当前与普通翻译共用' }
+  { value: 'translation', label: '翻译歌词', hint: '译文行' },
+  { value: 'romanization', label: '罗马音', hint: '音译行，需在歌词管理中开启' }
 ]
-const fontOptions = [
-  { value: 'inherit', label: '跟随界面' },
-  { value: 'system', label: '系统默认' },
-  { value: 'inter', label: 'Inter / Roboto' },
-  { value: 'lxgw', label: '霞鹜文楷' },
-  { value: 'sarasa', label: '更纱黑体' },
-  { value: 'comic', label: 'Comic Sans' },
-  { value: 'custom', label: '自定义字体名' }
-] as const
 const backgroundOptions = [
   { value: 'none', label: '无背景' },
   { value: 'solid', label: '纯色' },
@@ -47,124 +55,64 @@ const highlightOptions = [
   { value: 'glow', label: '柔光' },
   { value: 'outline', label: '描边' }
 ] as const
-const style = computed(() => draft.value.styles[activeTarget.value])
-const statusLabel = computed(() => {
-  if (saveState.value === 'saving') return '保存中…'
-  if (saveState.value === 'saved') return '已保存'
-  if (saveState.value === 'error') return '保存失败'
-  return '实时预览'
+
+const ranges = LYRICS_RANGES
+
+/** Label for the font control, whether the choice is built in or a local family. */
+const fontLabel = computed(() => {
+  if (style.value.fontFamily === 'custom') {
+    return style.value.customFontFamily || '自定义字体名'
+  }
+  const match = fontPicker.builtinMatches.value.find(
+    (option) => option.builtin === style.value.fontFamily
+  )
+  return match?.label ?? '跟随界面'
 })
 
-function patchStyle<K extends keyof LyricsTextStyle>(key: K, value: LyricsTextStyle[K]): void {
-  if (key === 'fontSize') {
-    draft.value = syncLegacyLyricsAppearance(draft.value, { fontSize: value as number })
-    scheduleSave()
-    return
+const customFontMissing = computed(
+  () =>
+    style.value.fontFamily === 'custom' &&
+    style.value.customFontFamily.trim().length > 0 &&
+    !fontPicker.isFontAvailable(style.value.customFontFamily)
+)
+
+function chooseFont(option: LyricsFontOption): void {
+  if (option.builtin) {
+    patchStyle('fontFamily', option.builtin)
+  } else if (option.familyName) {
+    // Locally installed families ride on the existing `custom` storage rather
+    // than growing the schema with a parallel field.
+    patchStyle('fontFamily', 'custom')
+    patchStyle('customFontFamily', option.familyName)
   }
-  draft.value = {
-    ...draft.value,
-    styles: {
-      ...draft.value.styles,
-      [activeTarget.value]: { ...style.value, [key]: value }
-    }
-  }
-  scheduleSave()
+  fontMenuOpen.value = false
+  fontPicker.query.value = ''
 }
 
-function setGlobal<K extends 'inactiveOpacity' | 'focusLineCount' | 'karaokeEnabled'>(
-  key: K,
-  value: LyricsAppearanceSettings[K]
-): void {
-  draft.value = { ...draft.value, [key]: value }
-  scheduleSave()
-}
-
-function resetTarget(): void {
-  const defaults = cloneLyricsAppearance(DEFAULT_LYRICS_APPEARANCE)
-  draft.value = {
-    ...draft.value,
-    styles: {
-      ...draft.value.styles,
-      [activeTarget.value]: { ...defaults.styles[activeTarget.value] }
-    }
-  }
-  scheduleSave()
-}
-
-function resetAll(): void {
-  draft.value = cloneLyricsAppearance(DEFAULT_LYRICS_APPEARANCE)
-  scheduleSave(0)
-}
-
-function scheduleSave(delay = 180): void {
-  if (saveTimer) window.clearTimeout(saveTimer)
-  const normalized = normalizeLyricsAppearance(draft.value)
-  draft.value = normalized
-  settings.value = { ...settings.value, lyricsAppearance: cloneLyricsAppearance(normalized) }
-  saveState.value = 'saving'
-  const sequence = ++saveSequence
-  saveTimer = window.setTimeout(async () => {
-    saveTimer = 0
-    try {
-      await updateSettings({ lyricsAppearance: cloneLyricsAppearance(normalized) })
-      if (sequence === saveSequence) saveState.value = 'saved'
-    } catch {
-      if (sequence === saveSequence) saveState.value = 'error'
-    }
-  }, delay)
+async function toggleFontMenu(): Promise<void> {
+  fontMenuOpen.value = !fontMenuOpen.value
+  if (fontMenuOpen.value) await fontPicker.load()
 }
 
 function previewStyle(target: LyricsStyleTarget): Record<string, string> {
-  const value = draft.value.styles[target]
-  const alpha = value.opacity / 100
-  const backgroundAlpha = value.backgroundOpacity / 100
-  const intensity = value.highlightIntensity / 100
-  const result: Record<string, string> = {
-    fontFamily: resolveLyricsFontFamily(value),
-    fontSize: `clamp(${Math.max(12, value.fontSize - 3)}px, ${value.fontSize / 16}vw, ${value.fontSize}px)`,
-    fontWeight: String(value.fontWeight),
-    lineHeight: String(value.lineHeight),
-    textAlign: value.align,
-    color:
-      value.colorMode === 'custom'
-        ? `color-mix(in srgb, ${value.color} ${alpha * 100}%, transparent)`
-        : `color-mix(in srgb, var(--te-playback-lyric-active-text) ${Math.max(22, alpha * 100)}%, transparent)`,
-    backgroundColor:
-      value.backgroundStyle === 'none'
-        ? 'transparent'
-        : `color-mix(in srgb, ${value.backgroundColor} ${backgroundAlpha * 100}%, transparent)`
-  }
-  if (value.backgroundStyle === 'gradient') {
-    result.backgroundImage = `linear-gradient(135deg, color-mix(in srgb, ${value.backgroundColor} ${backgroundAlpha * 100}%, transparent), transparent)`
-  }
-  if (value.backgroundStyle === 'glass') {
-    result.backdropFilter = 'blur(16px) saturate(130%)'
-  }
-  if (value.highlightEffect === 'shadow') {
-    result.textShadow = `0 3px ${Math.round(6 + intensity * 14)}px color-mix(in srgb, ${value.highlightColor} ${20 + intensity * 45}%, transparent)`
-  }
-  if (value.highlightEffect === 'glow') {
-    result.textShadow = `0 0 1px color-mix(in srgb, ${value.highlightColor} 72%, transparent), 0 0 3px color-mix(in srgb, ${value.highlightColor} ${Math.round(18 + intensity * 22)}%, transparent)`
-  }
-  if (value.highlightEffect === 'outline') {
-    result.webkitTextStroke = `${(0.3 + intensity * 1.2).toFixed(1)}px ${value.highlightColor}`
-  }
-  return result
+  return lyricsPreviewStyle(draft.value.styles[target], target)
+}
+
+function commitPreset(): void {
+  savePreset(presetName.value)
+  presetName.value = ''
 }
 
 watch(
   () => props.open,
   (open) => {
     if (open) {
-      draft.value = cloneLyricsAppearance(settings.value.lyricsAppearance)
-      saveState.value = 'idle'
+      reloadFromSettings()
+      fontMenuOpen.value = false
+      fontPicker.query.value = ''
     }
   }
 )
-
-onBeforeUnmount(() => {
-  if (saveTimer) window.clearTimeout(saveTimer)
-})
 </script>
 
 <template>
@@ -180,7 +128,7 @@ onBeforeUnmount(() => {
           <div>
             <span class="customizer-kicker">PlayingMusic</span>
             <h2>歌词个性化</h2>
-            <p>分别调整普通、当前和翻译歌词，所有更改实时应用并自动保存。</p>
+            <p>分别调整普通、当前、翻译与罗马音歌词，所有更改实时应用并自动保存。</p>
           </div>
           <button
             type="button"
@@ -219,31 +167,111 @@ onBeforeUnmount(() => {
             <p class="is-translation" :style="previewStyle('translation')">
               The melody is crossing the night
             </p>
+            <p class="is-romanization" :style="previewStyle('romanization')">
+              cǐ kè xuán lǜ zhèng chuān guò yè sè
+            </p>
           </div>
         </section>
 
         <div class="customizer-scroll">
           <section class="control-section">
             <div class="section-heading">
+              <h3>外观方案</h3>
+            </div>
+            <div class="preset-grid">
+              <button
+                v-for="preset in presets"
+                :key="preset.id"
+                type="button"
+                class="preset-chip"
+                :aria-pressed="activePresetId === preset.id"
+                @click="applyPreset(preset.id)"
+              >
+                <span>{{ preset.name }}</span>
+                <i
+                  v-if="!preset.builtin"
+                  class="pi pi-trash"
+                  role="button"
+                  :aria-label="`删除方案 ${preset.name}`"
+                  @click.stop="deletePreset(preset.id)"
+                ></i>
+              </button>
+            </div>
+            <div class="preset-save">
+              <input
+                v-model="presetName"
+                type="text"
+                maxlength="48"
+                placeholder="方案名称"
+                :disabled="!canSavePreset"
+                @keydown.enter.prevent="commitPreset"
+              />
+              <button
+                type="button"
+                :disabled="!canSavePreset || !presetName.trim()"
+                @click="commitPreset"
+              >
+                存为方案
+              </button>
+            </div>
+            <p v-if="!canSavePreset" class="preset-hint">自定义方案已达上限，请先删除一个。</p>
+          </section>
+
+          <section class="control-section">
+            <div class="section-heading">
               <h3>字体与排版</h3>
               <button type="button" @click="resetTarget">恢复本项默认</button>
             </div>
-            <label class="control-field control-field--wide">
+            <div class="control-field control-field--wide font-field">
               <span>字体</span>
-              <select
-                :value="style.fontFamily"
-                @change="
-                  patchStyle(
-                    'fontFamily',
-                    ($event.target as HTMLSelectElement).value as LyricsTextStyle['fontFamily']
-                  )
-                "
+              <button
+                type="button"
+                class="font-trigger"
+                :aria-expanded="fontMenuOpen"
+                @click="toggleFontMenu"
               >
-                <option v-for="option in fontOptions" :key="option.value" :value="option.value">
-                  {{ option.label }}
-                </option>
-              </select>
-            </label>
+                <span :style="{ fontFamily: previewStyle(activeTarget).fontFamily }">{{
+                  fontLabel
+                }}</span>
+                <i class="pi pi-chevron-down"></i>
+              </button>
+              <div v-if="fontMenuOpen" class="font-menu">
+                <input
+                  v-model="fontPicker.query.value"
+                  type="text"
+                  class="font-search"
+                  placeholder="搜索字体…"
+                />
+                <div class="font-list">
+                  <p class="font-group">内置</p>
+                  <button
+                    v-for="option in fontPicker.builtinMatches.value"
+                    :key="option.key"
+                    type="button"
+                    class="font-option"
+                    :style="{ fontFamily: option.preview }"
+                    @click="chooseFont(option)"
+                  >
+                    {{ option.label }}
+                  </button>
+                  <p class="font-group">
+                    本机字体
+                    <small v-if="fontPicker.loading.value">载入中…</small>
+                    <small v-else-if="!fontPicker.installedMatches.value.length">无匹配</small>
+                  </p>
+                  <button
+                    v-for="option in fontPicker.installedMatches.value"
+                    :key="option.key"
+                    type="button"
+                    class="font-option"
+                    :style="{ fontFamily: option.preview }"
+                    @click="chooseFont(option)"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
+              </div>
+            </div>
             <label v-if="style.fontFamily === 'custom'" class="control-field control-field--wide">
               <span>本机字体名称</span>
               <input
@@ -254,28 +282,34 @@ onBeforeUnmount(() => {
                 @input="patchStyle('customFontFamily', ($event.target as HTMLInputElement).value)"
               />
             </label>
+            <p v-if="customFontMissing" class="field-warning">
+              系统中未找到该字体，歌词会回退到界面字体。
+            </p>
             <div class="control-grid">
-              <label class="range-field"
+              <label class="range-field range-field--font-size"
                 ><span
                   >字号 <strong>{{ style.fontSize }}px</strong></span
                 ><input
                   type="range"
-                  min="12"
-                  max="48"
-                  step="1"
+                  :min="ranges.fontSize.min"
+                  :max="ranges.fontSize.max"
+                  :step="ranges.fontSize.step"
                   :value="style.fontSize"
                   @input="
                     patchStyle('fontSize', Number(($event.target as HTMLInputElement).value))
                   "
               /></label>
+              <button type="button" class="sync-size-button" @click="syncFontSizeToAll">
+                同步到全部
+              </button>
               <label class="range-field"
                 ><span
                   >字重 <strong>{{ style.fontWeight }}</strong></span
                 ><input
                   type="range"
-                  min="300"
-                  max="900"
-                  step="100"
+                  :min="ranges.fontWeight.min"
+                  :max="ranges.fontWeight.max"
+                  :step="ranges.fontWeight.step"
                   :value="style.fontWeight"
                   @input="
                     patchStyle('fontWeight', Number(($event.target as HTMLInputElement).value))
@@ -286,9 +320,9 @@ onBeforeUnmount(() => {
                   >行间距 <strong>{{ style.lineHeight.toFixed(2) }}</strong></span
                 ><input
                   type="range"
-                  min="1.1"
-                  max="2.8"
-                  step="0.05"
+                  :min="ranges.lineHeight.min"
+                  :max="ranges.lineHeight.max"
+                  :step="ranges.lineHeight.step"
                   :value="style.lineHeight"
                   @input="
                     patchStyle('lineHeight', Number(($event.target as HTMLInputElement).value))
@@ -299,12 +333,42 @@ onBeforeUnmount(() => {
                   >文字透明度 <strong>{{ style.opacity }}%</strong></span
                 ><input
                   type="range"
-                  min="10"
-                  max="100"
-                  step="5"
+                  :min="ranges.opacity.min"
+                  :max="ranges.opacity.max"
+                  :step="ranges.opacity.step"
                   :value="style.opacity"
                   @input="patchStyle('opacity', Number(($event.target as HTMLInputElement).value))"
               /></label>
+              <label class="range-field"
+                ><span
+                  >字间距 <strong>{{ style.letterSpacing.toFixed(2) }}em</strong></span
+                ><input
+                  type="range"
+                  :min="ranges.letterSpacing.min"
+                  :max="ranges.letterSpacing.max"
+                  :step="ranges.letterSpacing.step"
+                  :value="style.letterSpacing"
+                  @input="
+                    patchStyle('letterSpacing', Number(($event.target as HTMLInputElement).value))
+                  "
+              /></label>
+            </div>
+            <div class="segment-field">
+              <span>字形</span>
+              <div class="segment-control">
+                <button
+                  v-for="option in [
+                    { value: 'normal', label: '常规' },
+                    { value: 'italic', label: '斜体' }
+                  ]"
+                  :key="option.value"
+                  type="button"
+                  :aria-pressed="style.fontStyle === option.value"
+                  @click="patchStyle('fontStyle', option.value as LyricsTextStyle['fontStyle'])"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
             </div>
             <div class="segment-field">
               <span>对齐方式</span>
@@ -445,9 +509,9 @@ onBeforeUnmount(() => {
                 >非当前行整体可见度 <strong>{{ draft.inactiveOpacity }}%</strong></span
               ><input
                 type="range"
-                min="10"
-                max="100"
-                step="5"
+                :min="ranges.inactiveOpacity.min"
+                :max="ranges.inactiveOpacity.max"
+                :step="ranges.inactiveOpacity.step"
                 :value="draft.inactiveOpacity"
                 @input="
                   setGlobal('inactiveOpacity', Number(($event.target as HTMLInputElement).value))
@@ -486,6 +550,159 @@ onBeforeUnmount(() => {
               <span><strong>逐字高亮</strong><small>仅在歌词含逐字时间戳时生效</small></span
               ><i :class="draft.karaokeEnabled ? 'pi pi-check-circle' : 'pi pi-circle'"></i>
             </button>
+            <button
+              type="button"
+              class="switch-row"
+              :aria-pressed="draft.hidePassedLines"
+              @click="setGlobal('hidePassedLines', !draft.hidePassedLines)"
+            >
+              <span><strong>隐藏已唱歌词</strong><small>播放时淡出当前行之前的内容</small></span
+              ><i :class="draft.hidePassedLines ? 'pi pi-check-circle' : 'pi pi-circle'"></i>
+            </button>
+          </section>
+
+          <section class="control-section">
+            <h3>布局与几何</h3>
+            <div class="control-grid">
+              <label class="range-field"
+                ><span
+                  >封面间距 <strong>{{ draft.coverGap }}px</strong></span
+                ><input
+                  type="range"
+                  :min="ranges.coverGap.min"
+                  :max="ranges.coverGap.max"
+                  :step="ranges.coverGap.step"
+                  :value="draft.coverGap"
+                  @input="setGlobal('coverGap', Number(($event.target as HTMLInputElement).value))"
+              /></label>
+              <label class="range-field"
+                ><span
+                  >歌词最大宽度 <strong>{{ draft.lyricsMaxWidth }}px</strong></span
+                ><input
+                  type="range"
+                  :min="ranges.lyricsMaxWidth.min"
+                  :max="ranges.lyricsMaxWidth.max"
+                  :step="ranges.lyricsMaxWidth.step"
+                  :value="draft.lyricsMaxWidth"
+                  @input="
+                    setGlobal('lyricsMaxWidth', Number(($event.target as HTMLInputElement).value))
+                  "
+              /></label>
+              <label class="range-field"
+                ><span
+                  >歌词水平偏移 <strong>{{ draft.lyricsOffsetX }}px</strong></span
+                ><input
+                  type="range"
+                  :min="ranges.lyricsOffsetX.min"
+                  :max="ranges.lyricsOffsetX.max"
+                  :step="ranges.lyricsOffsetX.step"
+                  :value="draft.lyricsOffsetX"
+                  @input="
+                    setGlobal('lyricsOffsetX', Number(($event.target as HTMLInputElement).value))
+                  "
+              /></label>
+              <label class="range-field"
+                ><span
+                  >当前行位置 <strong>{{ Math.round(draft.anchorPosition * 100) }}%</strong></span
+                ><input
+                  type="range"
+                  :min="ranges.anchorPosition.min"
+                  :max="ranges.anchorPosition.max"
+                  :step="ranges.anchorPosition.step"
+                  :value="draft.anchorPosition"
+                  @input="
+                    setGlobal('anchorPosition', Number(($event.target as HTMLInputElement).value))
+                  "
+              /></label>
+              <label class="range-field"
+                ><span
+                  >封面尺寸 <strong>{{ draft.coverSize }}%</strong></span
+                ><input
+                  type="range"
+                  :min="ranges.coverSize.min"
+                  :max="ranges.coverSize.max"
+                  :step="ranges.coverSize.step"
+                  :value="draft.coverSize"
+                  @input="
+                    setGlobal('coverSize', Number(($event.target as HTMLInputElement).value))
+                  "
+              /></label>
+              <label class="range-field"
+                ><span
+                  >封面圆角 <strong>{{ draft.coverRadius }}px</strong></span
+                ><input
+                  type="range"
+                  :min="ranges.coverRadius.min"
+                  :max="ranges.coverRadius.max"
+                  :step="ranges.coverRadius.step"
+                  :value="draft.coverRadius"
+                  @input="
+                    setGlobal('coverRadius', Number(($event.target as HTMLInputElement).value))
+                  "
+              /></label>
+              <label class="range-field"
+                ><span
+                  >译文间距 <strong>{{ draft.translationSpacing }}px</strong></span
+                ><input
+                  type="range"
+                  :min="ranges.translationSpacing.min"
+                  :max="ranges.translationSpacing.max"
+                  :step="ranges.translationSpacing.step"
+                  :value="draft.translationSpacing"
+                  @input="
+                    setGlobal(
+                      'translationSpacing',
+                      Number(($event.target as HTMLInputElement).value)
+                    )
+                  "
+              /></label>
+            </div>
+          </section>
+
+          <section class="control-section">
+            <h3>动效</h3>
+            <div class="control-grid">
+              <label class="range-field"
+                ><span
+                  >缩放强度 <strong>{{ draft.scaleIntensity }}%</strong></span
+                ><input
+                  type="range"
+                  :min="ranges.scaleIntensity.min"
+                  :max="ranges.scaleIntensity.max"
+                  :step="ranges.scaleIntensity.step"
+                  :value="draft.scaleIntensity"
+                  @input="
+                    setGlobal('scaleIntensity', Number(($event.target as HTMLInputElement).value))
+                  "
+              /></label>
+              <label class="range-field"
+                ><span
+                  >模糊强度 <strong>{{ draft.blurIntensity }}%</strong></span
+                ><input
+                  type="range"
+                  :min="ranges.blurIntensity.min"
+                  :max="ranges.blurIntensity.max"
+                  :step="ranges.blurIntensity.step"
+                  :value="draft.blurIntensity"
+                  @input="
+                    setGlobal('blurIntensity', Number(($event.target as HTMLInputElement).value))
+                  "
+              /></label>
+              <label class="range-field"
+                ><span
+                  >滚动跟随速度 <strong>{{ draft.cascadeSpeed }}</strong></span
+                ><input
+                  type="range"
+                  :min="ranges.cascadeSpeed.min"
+                  :max="ranges.cascadeSpeed.max"
+                  :step="ranges.cascadeSpeed.step"
+                  :value="draft.cascadeSpeed"
+                  @input="
+                    setGlobal('cascadeSpeed', Number(($event.target as HTMLInputElement).value))
+                  "
+              /></label>
+            </div>
+            <p class="section-hint">动效受系统「减少动态效果」偏好约束，关闭后此处设置不生效。</p>
           </section>
         </div>
       </aside>
@@ -646,6 +863,9 @@ onBeforeUnmount(() => {
 .preview-lines .is-translation {
   margin-top: -4px;
 }
+.preview-lines .is-romanization {
+  margin-top: -6px;
+}
 .customizer-scroll {
   min-height: 0;
   overflow-y: auto;
@@ -671,6 +891,153 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 15px 18px;
+}
+.section-hint,
+.preset-hint,
+.field-warning {
+  margin: 0;
+  color: var(--te-neutral-500);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.field-warning {
+  color: var(--te-warning-soft-fg);
+}
+
+/* Presets */
+.preset-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.preset-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 999px;
+  color: var(--te-neutral-900);
+  background: var(--te-card-bg);
+  cursor: pointer;
+  font-size: 12px;
+}
+.preset-chip[aria-pressed='true'] {
+  border-color: var(--te-primary-400);
+  color: var(--te-primary-500);
+  background: color-mix(in srgb, var(--te-primary-400) 14%, transparent);
+}
+.preset-chip .pi-trash {
+  opacity: 0.55;
+  font-size: 11px;
+}
+.preset-chip .pi-trash:hover {
+  opacity: 1;
+}
+.preset-save {
+  display: flex;
+  gap: 8px;
+}
+.preset-save input {
+  flex: 1;
+  min-height: 38px;
+  padding: 0 11px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 10px;
+  color: var(--te-neutral-900);
+  background: var(--te-card-bg);
+}
+.preset-save button,
+.sync-size-button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 10px;
+  color: var(--te-neutral-900);
+  background: var(--te-card-bg);
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.preset-save button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.sync-size-button {
+  align-self: end;
+}
+
+/* Font combobox */
+.font-field {
+  position: relative;
+}
+.font-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 11px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 10px;
+  color: var(--te-neutral-900);
+  background: var(--te-card-bg);
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+.font-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 12px;
+  background: var(--te-settings-bg);
+  box-shadow: 0 18px 46px color-mix(in srgb, var(--te-neutral-900) 26%, transparent);
+}
+.font-search {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 9px;
+  color: var(--te-neutral-900);
+  background: var(--te-card-bg);
+}
+.font-list {
+  display: grid;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.font-group {
+  display: flex;
+  justify-content: space-between;
+  margin: 8px 0 4px;
+  padding: 0 8px;
+  color: var(--te-neutral-500);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.font-option {
+  min-height: 34px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  color: var(--te-neutral-900);
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  text-align: left;
+}
+.font-option:hover {
+  background: color-mix(in srgb, var(--te-primary-400) 12%, transparent);
 }
 .control-field,
 .range-field,

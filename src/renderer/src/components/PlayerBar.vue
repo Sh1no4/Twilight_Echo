@@ -32,6 +32,8 @@ import shuffleIcon from '../assets/icons/shuffle.svg'
 import heartModeIcon from '../assets/icons/heart-mode.svg'
 import { useFavoriteButton } from './player-bar/useFavoriteButton'
 import { useFloatingPanels } from './player-bar/useFloatingPanels'
+import { usePlaybarAutoHide } from './player-bar/usePlaybarAutoHide.ts'
+import { resolveSeekTargetSeconds, type PlayerBarMode } from '../../../shared/playerBar.ts'
 import { useEscapeToClose } from '../app/useDismissLayer.ts'
 import { usePlaybackQueueVirtualScroll } from './player-bar/usePlaybackQueueVirtualScroll'
 import { usePlaybackQueueDrawerActions } from './player-bar/usePlaybackQueueDrawerActions'
@@ -48,9 +50,15 @@ const props = withDefaults(
     glass?: boolean
     menuOpen?: boolean
     preview?: boolean
+    /** Standard = full bar; mini drops cover / inline progress for a border rail. */
+    mode?: PlayerBarMode
+    /** Hide until the pointer approaches the bottom edge. Mini shape only. */
+    autoHide?: boolean
   }>(),
-  { preview: false }
+  { preview: false, mode: 'standard', autoHide: false }
 )
+
+const isMini = computed(() => props.mode === 'mini')
 
 const {
   currentTrack,
@@ -221,6 +229,15 @@ function onProgressInput(event: Event): void {
   if (isLiveStream.value) return
   const target = event.target as HTMLInputElement
   seek(Number(target.value))
+}
+
+/** Border rail carries a 0..1 ratio so its width never has to match the timeline. */
+function onMiniRailInput(event: Event): void {
+  if (isLiveStream.value) return
+  const target = event.target as HTMLInputElement
+  const seconds = resolveSeekTargetSeconds(Number(target.value), effectiveDuration.value)
+  if (seconds === null) return
+  seek(seconds)
 }
 
 const RATE_PRESETS = [0.75, 1, 1.25, 1.5, 2] as const
@@ -559,6 +576,8 @@ function dismissAllFloatingPanels(): void {
 
 useEscapeToClose(floatingPanelOpen, dismissAllFloatingPanels)
 
+const autoHideActive = computed(() => props.autoHide && !props.preview)
+
 const {
   favoriteButtonVisible,
   favoriteButtonLiked,
@@ -881,7 +900,10 @@ const outputLatencyText = computed(() => {
 const outputDiagnosticsText = computed(() => {
   const diagnostics = outputInfo.value?.diagnostics ?? playbackInfo.value?.diagnostics
   if (!diagnostics) return 'Underrun 0 · Drop 0 · Restart 0 · Lost 0 · Recovery 0'
-  return `Underrun ${diagnostics.sessionUnderrunCount} · Drop ${diagnostics.sessionBufferDropCount} · Restart ${diagnostics.driverRestartCount} · Lost ${diagnostics.deviceLostCount} · Recovery ${diagnostics.sessionRecoveryCount}`
+  const base = `Underrun ${diagnostics.sessionUnderrunCount} · Drop ${diagnostics.sessionBufferDropCount} · Restart ${diagnostics.driverRestartCount} · Lost ${diagnostics.deviceLostCount} · Recovery ${diagnostics.sessionRecoveryCount}`
+  // 驱动瞬时负载事件不会重启流，只在真的发生过时才追加，避免给正常播放增加噪音字段。
+  const xrun = diagnostics.driverXrunCount ?? 0
+  return xrun > 0 ? `${base} · Xrun ${xrun}` : base
 })
 const nativeDsdRuntimeReasonText = computed(() => {
   const reason = outputInfo.value?.nativeDsdRuntimeReason?.trim()
@@ -1115,6 +1137,41 @@ watch(
   { flush: 'post' }
 )
 
+const {
+  revealed: playbarRevealed,
+  flashReveal,
+  onBarPointerEnter,
+  onBarPointerLeave,
+  onBarFocusIn,
+  onBarFocusOut
+} = usePlaybarAutoHide({
+  autoHide: autoHideActive,
+  revealThresholdPx: computed(() => settings.value.playerBar.revealThresholdPx),
+  hideDelayMs: computed(() => settings.value.playerBar.hideDelayMs),
+  keepOpen: floatingPanelOpen,
+  barRef: playerBarRef
+})
+
+const playbarHidden = computed(() => autoHideActive.value && !playbarRevealed.value)
+
+/**
+ * Surface the resolved state on the shell. The two geometry consumers
+ * (side-menu clearance, now-playing lyric centering) measure `.player-bar-shell`
+ * and a transformed bar keeps its layout height, so they need this to tell a
+ * hidden bar from a present one.
+ */
+const shellDataAttrs = computed(() => ({
+  'data-te-playbar-mode': props.mode,
+  'data-te-playbar-hidden': playbarHidden.value ? 'true' : 'false'
+}))
+
+// A track change or play/pause is feedback the user asked for; surface it briefly
+// even when the pointer is nowhere near the bottom edge.
+watch(
+  () => [currentTrack.value?.id, isPlaying.value],
+  () => flashReveal()
+)
+
 onMounted(() => {
   if (!props.preview) void syncExtensions()
   syncGlassPointer()
@@ -1131,6 +1188,7 @@ onBeforeUnmount(() => {
     ref="playerBarShellRef"
     class="player-bar-shell"
     :class="{ 'menu-open': menuOpen }"
+    v-bind="shellDataAttrs"
   >
     <!-- 播放列表面板（向上抽屉） -->
     <button
@@ -1285,18 +1343,47 @@ onBeforeUnmount(() => {
     <div
       ref="playerBarRef"
       class="player-bar"
-      :class="{ 'player-bar-glass': glass, 'player-bar-liquid': liquidGlassActive }"
+      :class="{
+        'player-bar-glass': glass,
+        'player-bar-liquid': liquidGlassActive,
+        'player-bar-mini': isMini
+      }"
       :style="{
         '--accent-color': dominantColor,
         '--play-button-color': playButtonColor
       }"
+      @pointerenter="onBarPointerEnter"
+      @pointerleave="onBarPointerLeave"
+      @focusin="onBarFocusIn"
+      @focusout="onBarFocusOut"
     >
       <!-- Refracting layer. Absolute so it stays out of the grid flow, and behind
            content so controls and text are never displaced by the filter. -->
       <span v-if="liquidGlassActive" class="player-bar-warp" aria-hidden="true"></span>
+
+      <!-- 迷你模式：进度轨贴在底边框上，取代内联进度条 -->
+      <div v-if="isMini && !isLiveStream" class="mini-progress-rail">
+        <div class="mini-progress-track" aria-hidden="true">
+          <div class="mini-progress-fill" :style="progressFillStyle"></div>
+        </div>
+        <input
+          type="range"
+          class="mini-progress-slider"
+          min="0"
+          max="1"
+          step="0.0005"
+          :value="effectiveDuration > 0 ? currentTime / effectiveDuration : 0"
+          :disabled="effectiveDuration <= 0"
+          aria-label="播放进度"
+          :aria-valuetext="`${formatTime(currentTime)} / ${formatTime(effectiveDuration)}`"
+          @input="onMiniRailInput"
+        />
+      </div>
+
       <!-- 左侧：整块按曲目 identity remount，避免 cover:// 解码粘住上一首 -->
       <div :key="playerLeftKey" class="player-left">
         <div
+          v-if="!isMini"
           ref="coverRef"
           class="player-cover-slot player-artwork-slot"
           data-te-interactive
@@ -1337,7 +1424,7 @@ onBeforeUnmount(() => {
             {{ currentTrack.artist }}
           </button>
           <div
-            v-if="streamNowPlaying && isLiveStream"
+            v-if="streamNowPlaying && isLiveStream && !isMini"
             class="player-stream-now-playing"
             :title="streamNowPlaying"
           >
@@ -1372,6 +1459,7 @@ onBeforeUnmount(() => {
           <button type="button" class="resume-offer__dismiss" @click="onDismissResume">忽略</button>
         </div>
         <div
+          v-if="!isMini"
           :key="`progress:${currentTrack.id}:${currentTrack.queueEntryId || ''}`"
           class="progress-area"
           :data-track-id="currentTrack.id"
@@ -1504,6 +1592,7 @@ onBeforeUnmount(() => {
         </button>
 
         <button
+          v-if="!isMini"
           class="icon-btn mini-player-btn player-misc-icon"
           title="切换到迷你播放器"
           aria-label="切换到迷你播放器"
@@ -1514,6 +1603,7 @@ onBeforeUnmount(() => {
         </button>
 
         <button
+          v-if="!isMini"
           class="icon-btn desktop-lyrics-btn player-misc-icon"
           :class="{ active: desktopLyricsOn }"
           title="桌面歌词"

@@ -257,6 +257,85 @@ test('an empty list produces no targets and does not throw', () => {
   assert.equal(result.interludeDotsTop, null)
 })
 
+test('the appearance multipliers at their defaults reproduce the built-in look exactly', () => {
+  const plain = layout(6, 2, [2])
+  const explicit = layout(6, 2, [2], {
+    inactiveDim: 1,
+    scaleIntensity: 1,
+    blurIntensity: 1,
+    cascadeSpeedFactor: 1,
+    focusWindow: null
+  })
+  assert.deepEqual(explicit.lines, plain.lines, 'neutral multipliers must not shift a single value')
+  assert.equal(plain.lines[0].scale, LYRIC_SCALE_INACTIVE)
+})
+
+test('the inactive dim only touches lines that have not been presented', () => {
+  const result = layout(6, 2, [0, 1, 2], { inactiveDim: 0.4, isPlaying: true })
+
+  assert.equal(result.lines[0].opacity, LYRIC_OPACITY_PRESENTED, 'presented lines keep full weight')
+  assert.equal(result.lines[2].opacity, LYRIC_OPACITY_PRESENTED)
+  assert.ok(
+    Math.abs(result.lines[4].opacity - LYRIC_OPACITY_NORMAL * 0.4) < 1e-9,
+    'upcoming lines carry the dim'
+  )
+})
+
+test('a zero intensity flattens scale and blur without disturbing position', () => {
+  const flat = layout(6, 2, [2], { scaleIntensity: 0, blurIntensity: 0, isPlaying: true })
+  const plain = layout(6, 2, [2], { isPlaying: true })
+
+  assert.ok(
+    flat.lines.every(
+      (line) => line.scale === LYRIC_SCALE_ACTIVE || line.scale === LYRIC_SCALE_BACKGROUND
+    ),
+    'no line should shrink'
+  )
+  assert.ok(flat.lines.every((line) => line.blur === 0))
+  assert.deepEqual(
+    flat.lines.map((line) => line.top),
+    plain.lines.map((line) => line.top),
+    'visual intensity must not move the rows'
+  )
+})
+
+test('the cascade factor scales the wave without reordering it', () => {
+  const fast = layout(6, 0, [0], { cascadeSpeedFactor: 0.5 })
+  const base = layout(6, 0, [0])
+
+  assert.equal(fast.lines[0].delay, 0)
+  assert.ok(Math.abs(fast.lines[1].delay - base.lines[1].delay / 2) < 1e-9)
+  for (let index = 1; index < fast.lines.length; index += 1) {
+    assert.ok(fast.lines[index].delay > fast.lines[index - 1].delay)
+  }
+})
+
+test('the focus window collapses outsiders instead of leaving holes behind them', () => {
+  const focusWindow = new Set([1, 2, 3])
+  const result = layout(6, 2, [2], { focusWindow, isPlaying: true })
+
+  assert.equal(result.lines[0].opacity, LYRIC_OPACITY_HIDDEN)
+  assert.equal(result.lines[5].opacity, LYRIC_OPACITY_HIDDEN)
+
+  // The three survivors must stay adjacent — a collapsed line contributes no height.
+  assert.equal(result.lines[2].top - result.lines[1].top, ROW_HEIGHT)
+  assert.equal(result.lines[3].top - result.lines[2].top, ROW_HEIGHT)
+  assert.equal(result.lines[1].top, result.lines[0].top, 'the hidden line above takes no space')
+
+  // Collapsing lines above the anchor drops them from `stackedAbove` and from the
+  // running position by the same amount, so the focused line must not budge.
+  const anchored = layout(6, 2, [2], { isPlaying: true })
+  assert.equal(result.lines[2].top, anchored.lines[2].top, 'the anchor holds its mark')
+})
+
+test('the focus window yields while paused so the full lyric stays browsable', () => {
+  const focusWindow = new Set([2])
+  const paused = layout(6, 2, [2], { focusWindow, isPlaying: false })
+  const open = layout(6, 2, [2], { isPlaying: false })
+
+  assert.deepEqual(paused.lines, open.lines)
+})
+
 test('in-sight culling keeps a line of slack on both edges', () => {
   assert.ok(isLyricLineInSight(0, 60, 600))
   assert.ok(isLyricLineInSight(-60, 60, 600), 'just above the top edge still renders')

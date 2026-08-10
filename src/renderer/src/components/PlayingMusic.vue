@@ -22,10 +22,13 @@ import PlayingLyricWords from './PlayingLyricWords.vue'
 import PlayingMusicTimeChip from './PlayingMusicTimeChip.vue'
 import LyricsAppearanceCustomizer from './LyricsAppearanceCustomizer.vue'
 import {
+  DEFAULT_LYRICS_APPEARANCE,
+  resolveCascadeSpeedFactor,
   resolveLyricsFontFamily,
-  type LyricsHighlightEffect,
   type LyricsStyleTarget
 } from '../../../shared/lyricsAppearance.ts'
+import { lyricsStyleVars } from '../utils/lyricsStyleVars'
+import { getLyricFocusLineIndices } from '../utils/lyricFocusWindow'
 import { waitForAnimationFrameWithFallback } from '../utils/animationFrameFallback'
 import { createLyricViewportController } from '../utils/lyricViewportController'
 import { LYRIC_ALIGN_POSITION } from '../utils/lyricLineLayout'
@@ -92,46 +95,7 @@ const lyricsCustomizerOpen = ref(false)
 const lyricTextStyle = computed(() => lyricsAppearance.value.styles)
 
 function lyricStyleVars(target: LyricsStyleTarget): Record<string, string> {
-  const style = lyricTextStyle.value[target]
-  const color =
-    style.colorMode === 'custom'
-      ? style.color
-      : target === 'active'
-        ? 'var(--te-playback-lyric-active-text, #fff)'
-        : target === 'translation'
-          ? 'var(--te-playback-lyric-translation, rgba(255, 255, 255, 0.58))'
-          : 'var(--te-playback-lyric-text, rgba(255, 255, 255, 0.42))'
-  const background =
-    style.backgroundStyle === 'none'
-      ? target === 'active'
-        ? 'var(--te-playback-lyric-active-surface, transparent)'
-        : 'transparent'
-      : `color-mix(in srgb, ${style.backgroundColor} ${style.backgroundOpacity}%, transparent)`
-  const highlight = style.highlightColor
-  const highlightEffect: Record<LyricsHighlightEffect, string> = {
-    none: 'none',
-    shadow: `0 3px ${Math.round(6 + style.highlightIntensity * 0.14)}px color-mix(in srgb, ${highlight} 45%, transparent)`,
-    glow: `0 0 1px color-mix(in srgb, ${highlight} 72%, transparent), 0 0 3px color-mix(in srgb, ${highlight} ${Math.round(18 + style.highlightIntensity * 0.22)}%, transparent)`,
-    outline: `0 0 1px ${highlight}, 0 0 ${Math.round(2 + style.highlightIntensity * 0.08)}px ${highlight}`
-  }
-  const backgroundImage =
-    style.backgroundStyle === 'gradient'
-      ? `linear-gradient(135deg, ${background}, transparent)`
-      : 'none'
-  const backdropFilter = style.backgroundStyle === 'glass' ? 'blur(16px) saturate(130%)' : 'none'
-  return {
-    '--lyric-style-font-family': resolveLyricsFontFamily(style),
-    '--lyric-style-font-size': `${style.fontSize}px`,
-    '--lyric-style-font-weight': String(style.fontWeight),
-    '--lyric-style-line-height': String(style.lineHeight),
-    '--lyric-style-align': style.align,
-    '--lyric-style-color': color,
-    '--lyric-style-opacity': String(style.opacity / 100),
-    '--lyric-style-background': background,
-    '--lyric-style-background-image': backgroundImage,
-    '--lyric-style-backdrop-filter': backdropFilter,
-    '--lyric-style-highlight': highlightEffect[style.highlightEffect]
-  }
+  return lyricsStyleVars(lyricTextStyle.value[target], target)
 }
 
 const isBlurBackground = computed(() => nowPlayingBackground.value === 'blur')
@@ -145,18 +109,14 @@ const lyricStyle = computed<Record<string, string>>(() => {
     '--te-lyric-font-size': `${appearance.fontSize}px`,
     '--te-lyric-font-weight': String(appearance.fontWeight),
     '--te-lyric-line-height': String(appearance.lineHeight),
-    '--lyric-dim': String(appearance.inactiveOpacity / 100)
+    '--te-lyric-translation-spacing': `${appearance.translationSpacing}px`
   }
 
   if (appearance.fontFamily !== 'inherit') {
-    const fontFamily = {
-      system: "system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif",
-      inter: "'Inter', 'MiSans', 'Microsoft YaHei', sans-serif",
-      lxgw: "'LXGW WenKai', 'MiSans', 'Microsoft YaHei', sans-serif",
-      sarasa: "'Sarasa Gothic SC', 'MiSans', 'Microsoft YaHei', sans-serif",
-      comic: "'Comic Sans MS', 'MiSans', 'Microsoft YaHei', sans-serif"
-    }[appearance.fontFamily]
-    styles['--te-lyric-font-family'] = fontFamily
+    styles['--te-lyric-font-family'] = resolveLyricsFontFamily({
+      fontFamily: appearance.fontFamily,
+      customFontFamily: ''
+    })
   }
 
   if (appearance.colorMode === 'custom') {
@@ -173,6 +133,32 @@ const lyricStyle = computed<Record<string, string>>(() => {
       `color-mix(in srgb, ${appearance.activeColor} 72%, transparent)`
   }
 
+  return styles
+})
+
+const layoutStyle = computed<Record<string, string>>(() => {
+  const appearance = lyricsAppearance.value
+  return {
+    '--te-lyric-cover-gap': `${appearance.coverGap}px`,
+    '--te-lyric-max-width': `${appearance.lyricsMaxWidth}px`,
+    '--te-lyric-offset-x': `${appearance.lyricsOffsetX}px`
+  }
+})
+
+/**
+ * The cover geometry belongs to the active theme, so only write these when the
+ * user has actually moved them off the defaults — an unconditional inline value
+ * would silently outrank whatever the theme set.
+ */
+const coverStyle = computed<Record<string, string>>(() => {
+  const appearance = lyricsAppearance.value
+  const styles: Record<string, string> = {}
+  if (appearance.coverSize !== DEFAULT_LYRICS_APPEARANCE.coverSize) {
+    styles['--te-playback-cover-size'] = `${appearance.coverSize}%`
+  }
+  if (appearance.coverRadius !== DEFAULT_LYRICS_APPEARANCE.coverRadius) {
+    styles['--te-playback-cover-radius'] = `${appearance.coverRadius}px`
+  }
   return styles
 })
 
@@ -234,6 +220,9 @@ const lyricInterludeDotsTop = ref<number | null>(null)
 function measurePlaybarReservedPx(): number {
   const bar = document.querySelector<HTMLElement>('.player-bar-shell')
   if (!bar) return 0
+  // A tucked-away auto-hide bar keeps its layout box, so measuring it would keep
+  // the lyric centre line offset around empty space.
+  if (bar.dataset.tePlaybarHidden === 'true') return 0
   const height = bar.getBoundingClientRect().height
   return Number.isFinite(height) && height > 0 ? height : 0
 }
@@ -292,6 +281,20 @@ const reserveLyricsColumn = computed(
 )
 const activeLyricIndex = ref(-1)
 const highlightedLyricIndex = ref(-1)
+
+/**
+ * Focus mode keeps a handful of lines around the active one. The rows all stay
+ * mounted — the layout collapses the rest — so springs and measured heights
+ * survive a line entering or leaving the window.
+ */
+const lyricFocusWindow = computed<ReadonlySet<number> | null>(() => {
+  const focusLineCount = lyricsAppearance.value.focusLineCount
+  if (focusLineCount === 'all') return null
+  const total = displayLyricLines.value.length
+  if (total <= focusLineCount) return null
+  return new Set(getLyricFocusLineIndices(total, highlightedLyricIndex.value, focusLineCount))
+})
+
 /**
  * One controller now owns lyric motion. Previously a second controller derived
  * scale and blur from scroll position, which made those values slaves to the
@@ -306,12 +309,19 @@ const lyricViewport = createLyricViewportController({
   getActiveIndex: () => activeLyricIndex.value,
   getBufferedIndices: () => lyricBufferedIndices.value,
   alignPosition: LYRIC_ACTIVE_ANCHOR_RATIO,
+  getAlignPosition: () => lyricsAppearance.value.anchorPosition,
   getBottomReservedPx: measurePlaybarReservedPx,
   isSpringEnabled: () => lyricMotionFull.value && viewMode.value === 'cover',
   isBlurEnabled: () => lyricMotionFull.value,
   isScaleEnabled: () => lyricMotionFull.value,
   isPlaying: () => isPlaying.value,
   isNonDynamic: () => isNonDynamicTimeline(lyricLines.value),
+  getFocusWindow: () => lyricFocusWindow.value,
+  getInactiveDim: () => lyricsAppearance.value.inactiveOpacity / 100,
+  getScaleIntensity: () => lyricsAppearance.value.scaleIntensity / 100,
+  getBlurIntensity: () => lyricsAppearance.value.blurIntensity / 100,
+  getCascadeSpeedFactor: () => resolveCascadeSpeedFactor(lyricsAppearance.value.cascadeSpeed),
+  shouldHidePassedLines: () => lyricsAppearance.value.hidePassedLines,
   getInterludeAfterIndex: () => lyricInterludeAfterIndex.value,
   getInterludeDotsHeight: () => INTERLUDE_DOTS_HEIGHT_PX,
   onInterludeDotsTop: (top) => {
@@ -320,6 +330,19 @@ const lyricViewport = createLyricViewportController({
 })
 
 const lyricTimeline = computed(() => buildLyricTimeline(lyricLines.value))
+
+/**
+ * Type and spacing changes alter measured row heights, and geometry changes move
+ * the anchor, so the layout has to be recomputed rather than left to the next
+ * line change — otherwise a size tweak only takes effect on the following lyric.
+ */
+watch(
+  () => lyricsAppearance.value,
+  async () => {
+    await lyricViewport.recenter('resize')
+  },
+  { deep: true }
+)
 
 watch(
   () => [currentTrack.value?.id, lyricLines.value] as const,
@@ -346,10 +369,7 @@ function lyricTime(position = playbackClockSnapshot.value.position): number {
  * come". The held set is what stops the view flickering between two overlapping
  * lines and what holds the anchor still through a short instrumental gap.
  */
-function syncActiveLyricIndex(
-  time = playbackClockSnapshot.value.position,
-  isSeek = false
-): void {
+function syncActiveLyricIndex(time = playbackClockSnapshot.value.position, isSeek = false): void {
   const timeline = lyricTimeline.value
   const adjusted = lyricTime(time)
   const next = advanceLyricPlayhead(timeline, lyricPlayheadState, adjusted, isSeek)
@@ -364,9 +384,7 @@ function syncActiveLyricIndex(
   // Fall back to a direct lookup when nothing is presented, so an untimed or
   // line-only source still highlights something.
   const nextIndex =
-    next.buffered.size > 0
-      ? next.scrollToIndex
-      : findActiveLyricIndex(lyricLines.value, adjusted)
+    next.buffered.size > 0 ? next.scrollToIndex : findActiveLyricIndex(lyricLines.value, adjusted)
   if (nextIndex !== activeLyricIndex.value) activeLyricIndex.value = nextIndex
 }
 
@@ -541,9 +559,14 @@ onBeforeUnmount(() => {
         class="visualizer-surface"
         :active="viewMode === 'visualizer'"
       />
-      <main v-else class="layout" :class="{ 'layout--single': !reserveLyricsColumn }">
+      <main
+        v-else
+        class="layout"
+        :class="{ 'layout--single': !reserveLyricsColumn }"
+        :style="layoutStyle"
+      >
         <section class="cover-column">
-          <div class="cover-frame">
+          <div class="cover-frame" :style="coverStyle">
             <CoverImg
               v-if="currentTrack.cover || currentTrack.coverSource"
               :cover="currentTrack.cover"
@@ -633,9 +656,12 @@ onBeforeUnmount(() => {
                     :style="lyricStyleVars('translation')"
                     >{{ item.line.translation }}</span
                   >
-                  <span v-if="item.line.romanization" class="lyric-romanization">{{
-                    item.line.romanization
-                  }}</span>
+                  <span
+                    v-if="item.line.romanization"
+                    class="lyric-romanization"
+                    :style="lyricStyleVars('romanization')"
+                    >{{ item.line.romanization }}</span
+                  >
                 </span>
               </button>
             </div>
@@ -883,7 +909,7 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
-  gap: 40px;
+  gap: var(--te-lyric-cover-gap, 40px);
   align-items: stretch;
   height: 100%;
   min-height: 0;
@@ -1043,6 +1069,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   padding-left: 6px;
   align-self: stretch;
+  transform: translateX(var(--te-lyric-offset-x, 0px));
 }
 
 :global(html[data-te-motion='full'] .lyrics-column) {
@@ -1140,7 +1167,7 @@ onBeforeUnmount(() => {
 .lyrics-list {
   position: absolute;
   inset: 0;
-  max-width: 820px;
+  max-width: var(--te-lyric-max-width, 820px);
   margin: 0 auto;
 }
 
@@ -1208,6 +1235,7 @@ onBeforeUnmount(() => {
   padding: 12px 20px;
   font-family: var(--lyric-style-font-family, var(--te-lyric-font-family, inherit));
   font-weight: var(--lyric-style-font-weight, var(--te-lyric-font-weight, 600));
+  font-style: var(--lyric-style-font-style, normal);
   text-align: var(--lyric-style-align, center);
   cursor: pointer;
   color: var(--lyric-style-color, var(--te-playback-lyric-text, rgba(255, 255, 255, 0.42)));
@@ -1254,11 +1282,21 @@ onBeforeUnmount(() => {
   box-shadow: var(--te-playback-lyric-active-shadow, none);
 }
 
+/*
+ * A row that carries its own surface needs a visible edge and a little breathing
+ * room, otherwise the background reads as a rectangle glued to the text.
+ */
+.lyric-row--custom-background {
+  border-color: color-mix(in srgb, var(--lyric-style-background, transparent) 70%, transparent);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+}
+
 .lyric-text {
   min-width: 0;
   width: 100%;
   font-size: clamp(12px, var(--lyric-style-font-size, var(--te-lyric-font-size, 18px)), 48px);
   line-height: var(--lyric-style-line-height, var(--te-lyric-line-height, 1.85));
+  letter-spacing: var(--lyric-style-letter-spacing, 0);
   text-align: var(--lyric-style-align, center);
   word-break: break-word;
 }
@@ -1271,8 +1309,10 @@ onBeforeUnmount(() => {
 
 .lyric-row.active .lyric-text {
   font-weight: var(--lyric-style-font-weight, var(--te-lyric-font-weight, 600));
-  letter-spacing: 0.012em;
+  /* The active line adds a hair of tracking on top of whatever the style asks for. */
+  letter-spacing: calc(var(--lyric-style-letter-spacing, 0em) + 0.012em);
   text-shadow: var(--lyric-style-highlight, none);
+  -webkit-text-stroke: var(--lyric-style-stroke, 0 transparent);
 }
 
 :global(html[data-te-motion='full'] .lyric-row--exiting) {
@@ -1377,12 +1417,15 @@ onBeforeUnmount(() => {
 .lyric-translation {
   min-width: 0;
   width: 100%;
+  margin-top: var(--te-lyric-translation-spacing, 0);
   padding: 3px 7px;
   border-radius: 9px;
   font-family: var(--lyric-style-font-family, var(--te-lyric-font-family, inherit));
   font-size: clamp(12px, var(--lyric-style-font-size, var(--te-lyric-font-size, 18px)), 48px);
   font-weight: var(--lyric-style-font-weight, 500);
+  font-style: var(--lyric-style-font-style, normal);
   line-height: var(--lyric-style-line-height, 1.45);
+  letter-spacing: var(--lyric-style-letter-spacing, 0);
   text-align: var(--lyric-style-align, center);
   color: var(--lyric-style-color, var(--te-playback-lyric-translation, rgba(255, 255, 255, 0.58)));
   opacity: var(--lyric-style-opacity, 1);
@@ -1391,6 +1434,7 @@ onBeforeUnmount(() => {
   backdrop-filter: var(--lyric-style-backdrop-filter, none);
   -webkit-backdrop-filter: var(--lyric-style-backdrop-filter, none);
   text-shadow: var(--lyric-style-highlight, none);
+  -webkit-text-stroke: var(--lyric-style-stroke, 0 transparent);
   word-break: break-word;
   transition:
     opacity var(--te-motion-hover) ease,
@@ -1409,15 +1453,33 @@ onBeforeUnmount(() => {
 .lyric-romanization {
   min-width: 0;
   width: 100%;
-  font-size: calc(var(--te-lyric-font-size, 18px) - 3px);
-  line-height: 1.35;
-  text-align: center;
-  color: var(--te-playback-lyric-romanization, rgba(255, 255, 255, 0.46));
+  font-family: var(--lyric-style-font-family, var(--te-lyric-font-family, inherit));
+  font-size: clamp(
+    12px,
+    var(--lyric-style-font-size, calc(var(--te-lyric-font-size, 18px) - 3px)),
+    48px
+  );
+  font-weight: var(--lyric-style-font-weight, 400);
+  font-style: var(--lyric-style-font-style, normal);
+  line-height: var(--lyric-style-line-height, 1.35);
+  letter-spacing: var(--lyric-style-letter-spacing, 0);
+  text-align: var(--lyric-style-align, center);
+  color: var(--lyric-style-color, var(--te-playback-lyric-romanization, rgba(255, 255, 255, 0.46)));
+  opacity: var(--lyric-style-opacity, 1);
+  background: var(--lyric-style-background, transparent);
+  background-image: var(--lyric-style-background-image, none);
+  backdrop-filter: var(--lyric-style-backdrop-filter, none);
+  -webkit-backdrop-filter: var(--lyric-style-backdrop-filter, none);
+  text-shadow: var(--lyric-style-highlight, none);
+  -webkit-text-stroke: var(--lyric-style-stroke, 0 transparent);
   word-break: break-word;
 }
 
 .lyric-row.active .lyric-romanization {
-  color: var(--te-playback-lyric-romanization-active, rgba(255, 255, 255, 0.72));
+  color: var(
+    --lyric-style-color,
+    var(--te-playback-lyric-romanization-active, rgba(255, 255, 255, 0.72))
+  );
 }
 
 .empty-shell {
@@ -1459,12 +1521,15 @@ onBeforeUnmount(() => {
   .layout {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
-    gap: 28px;
+    /* A single column stacks, so the configured side-by-side gap would be far too
+       generous here; cap it rather than ignore it outright. */
+    gap: min(var(--te-lyric-cover-gap, 40px), 28px);
   }
 
   .lyrics-column {
     padding-left: 0;
     border-left: none;
+    transform: none;
   }
 
   .cover-column {

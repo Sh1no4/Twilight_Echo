@@ -40,6 +40,9 @@ export const LYRIC_NARROW_BLUR_SCALE = 0.8
 export const LYRIC_CASCADE_BASE_DELAY = 0.05
 export const LYRIC_CASCADE_DECAY = 1.05
 
+/** Range the built-in scale amount spans: 100 (active) down to 97 (inactive). */
+export const LYRIC_SCALE_RANGE = LYRIC_SCALE_ACTIVE - LYRIC_SCALE_INACTIVE
+
 export const LYRIC_ALIGN_POSITION = 0.35
 export const LYRIC_INTERLUDE_DOTS_GAP_PX = 40
 export const LYRIC_INTERLUDE_DOTS_OFFSET_PX = 10
@@ -75,6 +78,25 @@ export interface LyricLayoutOptions {
   enableBlur?: boolean
   hidePassedLines?: boolean
   isNonDynamic?: boolean
+  /**
+   * Line indices the focus window keeps. Everything else collapses out of the
+   * flow, the same way a background voice does, so the kept lines sit together
+   * instead of floating in the gaps the hidden ones left behind. `null` keeps
+   * the whole timeline.
+   */
+  focusWindow?: ReadonlySet<number> | null
+  /**
+   * Multiplier for lines that have not been presented yet, 0-1. Applied only to
+   * those lines: folding it into the presented or non-dynamic opacities as well
+   * would compound two dimmings into one unreadable wash.
+   */
+  inactiveDim?: number
+  /** Scales the inactive-line shrink, 0-1 of the built-in amount. */
+  scaleIntensity?: number
+  /** Scales the depth blur, 0-1 of the built-in amount. */
+  blurIntensity?: number
+  /** Multiplier on the cascade delay. 1 is the built-in rhythm. */
+  cascadeSpeedFactor?: number
   /** Present and at least the minimum duration. */
   interludeAfterIndex?: number | null
   interludeDotsHeight?: number
@@ -123,11 +145,27 @@ export function computeLyricLayout(options: LyricLayoutOptions): LyricLayoutResu
     enableBlur = true,
     hidePassedLines = false,
     isNonDynamic = false,
+    focusWindow = null,
+    inactiveDim = 1,
+    scaleIntensity = 1,
+    blurIntensity = 1,
+    cascadeSpeedFactor = 1,
     interludeAfterIndex = null,
     interludeDotsHeight = 0
   } = options
 
   const visibleHeight = Math.max(0, viewportHeight - Math.max(0, bottomReservedPx))
+  const dim = clamp(inactiveDim, 0, 1)
+  const scaleAmount = clamp(scaleIntensity, 0, 1)
+  const blurAmount = clamp(blurIntensity, 0, 1)
+
+  /**
+   * Outside the focus window a line collapses rather than merely fading: leaving
+   * its height in the flow would space the surviving lines apart by the gaps the
+   * hidden ones used to fill.
+   */
+  const isFocusHidden = (lineIndex: number): boolean =>
+    focusWindow != null && isPlaying && !focusWindow.has(lineIndex)
 
   // `scrollToIndex` is a *line* index, but the caller may hand us a sparse or
   // partial set of rows, so array position and line index are not interchangeable.
@@ -142,12 +180,15 @@ export function computeLyricLayout(options: LyricLayoutOptions): LyricLayoutResu
   const scrollToIndex = lines[anchorPosition]?.index ?? requestedScrollIndex
 
   // Height of everything above the anchor. Background voices collapse while
-  // playing, so they must not push the anchor down.
+  // playing, so they must not push the anchor down. Focus-hidden lines collapse
+  // for the same reason — counting them would leave the anchor stranded below a
+  // stack of invisible rows.
   let stackedAbove = 0
   for (let position = 0; position < anchorPosition; position += 1) {
     const line = lines[position]
     if (!line) continue
     if (line.isBackground && isPlaying) continue
+    if (isFocusHidden(line.index)) continue
     stackedAbove += line.height
   }
 
@@ -162,25 +203,27 @@ export function computeLyricLayout(options: LyricLayoutOptions): LyricLayoutResu
   const scrollBoundaryMin = -stackedAbove
   const latestPresented = buffered.size > 0 ? Math.max(...buffered) : -1
   const blurScale = viewportWidth <= LYRIC_NARROW_VIEWPORT_PX ? LYRIC_NARROW_BLUR_SCALE : 1
-  const inactiveScale = enableScale ? LYRIC_SCALE_INACTIVE : LYRIC_SCALE_ACTIVE
+  const inactiveScale = enableScale
+    ? LYRIC_SCALE_ACTIVE - LYRIC_SCALE_RANGE * scaleAmount
+    : LYRIC_SCALE_ACTIVE
 
   const results: LyricLineTarget[] = []
   let interludeDotsTop: number | null = null
   let dotsPlaced = false
   let delay = 0
-  let baseDelay = LYRIC_CASCADE_BASE_DELAY
+  let baseDelay = LYRIC_CASCADE_BASE_DELAY * Math.max(0, cascadeSpeedFactor)
 
   for (let position = 0; position < lines.length; position += 1) {
     const line = lines[position]
     const lineIndex = line.index
     const presented = buffered.has(lineIndex)
     const active = presented || (lineIndex >= scrollToIndex && lineIndex < latestPresented)
+    const focusHidden = isFocusHidden(lineIndex)
 
     if (
       !dotsPlaced &&
       interludeAfterIndex != null &&
-      (lineIndex === scrollToIndex + 1 ||
-        (lineIndex === scrollToIndex && interludeAfterIndex < 0))
+      (lineIndex === scrollToIndex + 1 || (lineIndex === scrollToIndex && interludeAfterIndex < 0))
     ) {
       dotsPlaced = true
       interludeDotsTop = curPos + LYRIC_INTERLUDE_DOTS_OFFSET_PX
@@ -188,12 +231,14 @@ export function computeLyricLayout(options: LyricLayoutOptions): LyricLayoutResu
     }
 
     let opacity: number
-    if (hidePassedLines && isPlaying && lineIndex < scrollToIndex) {
+    if (focusHidden) {
+      opacity = LYRIC_OPACITY_HIDDEN
+    } else if (hidePassedLines && isPlaying && lineIndex < scrollToIndex) {
       opacity = LYRIC_OPACITY_HIDDEN
     } else if (presented) {
       opacity = LYRIC_OPACITY_PRESENTED
     } else {
-      opacity = isNonDynamic ? LYRIC_OPACITY_NON_DYNAMIC : LYRIC_OPACITY_NORMAL
+      opacity = (isNonDynamic ? LYRIC_OPACITY_NON_DYNAMIC : LYRIC_OPACITY_NORMAL) * dim
     }
 
     let blur = 0
@@ -202,7 +247,8 @@ export function computeLyricLayout(options: LyricLayoutOptions): LyricLayoutResu
         lineIndex < scrollToIndex
           ? Math.abs(scrollToIndex - lineIndex) + 1
           : Math.abs(lineIndex - Math.max(scrollToIndex, latestPresented))
-      blur = clamp((1 + distance) * LYRIC_BLUR_PER_INDEX * blurScale, 0, LYRIC_BLUR_MAX)
+      blur =
+        clamp((1 + distance) * LYRIC_BLUR_PER_INDEX * blurScale, 0, LYRIC_BLUR_MAX) * blurAmount
     }
 
     let scale = LYRIC_SCALE_ACTIVE
@@ -212,12 +258,12 @@ export function computeLyricLayout(options: LyricLayoutOptions): LyricLayoutResu
 
     results.push({ index: lineIndex, top: curPos, scale, opacity, blur, delay, presented })
 
-    if (!line.isBackground || active || !isPlaying) curPos += line.height
+    if ((!line.isBackground || active || !isPlaying) && !focusHidden) curPos += line.height
 
     // Only lines that have reached the visible area consume delay, and the step
     // tightens below the anchor.
     if (curPos >= 0 && !isSeeking) {
-      if (!line.isBackground) delay += baseDelay
+      if (!line.isBackground && !focusHidden) delay += baseDelay
       if (lineIndex >= scrollToIndex) baseDelay /= LYRIC_CASCADE_DECAY
     }
   }
@@ -225,16 +271,15 @@ export function computeLyricLayout(options: LyricLayoutOptions): LyricLayoutResu
   return {
     lines: results,
     interludeDotsTop,
-    scrollBoundary: [scrollBoundaryMin, Math.max(scrollBoundaryMin, curPos + scrollOffset - visibleHeight / 2)],
+    scrollBoundary: [
+      scrollBoundaryMin,
+      Math.max(scrollBoundaryMin, curPos + scrollOffset - visibleHeight / 2)
+    ],
     contentBottom: curPos
   }
 }
 
 /** True when a line's box intersects the viewport, with one line of slack. */
-export function isLyricLineInSight(
-  top: number,
-  height: number,
-  viewportHeight: number
-): boolean {
+export function isLyricLineInSight(top: number, height: number, viewportHeight: number): boolean {
   return !(top > viewportHeight + height || top + height < -height)
 }

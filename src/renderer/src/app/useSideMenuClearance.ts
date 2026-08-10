@@ -33,6 +33,13 @@ export function useSideMenuClearance(options: SideMenuClearanceOptions) {
       return
     }
 
+    // An auto-hidden mini bar is translated out of view but keeps its layout box,
+    // so its rect would still push the sidebar up. The shell flags the state.
+    if (playerBar.dataset.tePlaybarHidden === 'true') {
+      setSideMenuBottomOffset(0)
+      return
+    }
+
     const sideMenuRect = sideMenu.getBoundingClientRect()
     const playerBarRect = playerBar.getBoundingClientRect()
     const overlapsHorizontally =

@@ -47,3 +47,37 @@ test('compiled dashboard dark styles never dim or filter the document root', () 
     /html\[data-theme=['"]dark['"]\]\s+\.home\s+\.feature-backdrop\s+img\s*\{/
   )
 })
+
+test('compiled playbar glass degradation still reaches the warp layer', () => {
+  // Regression: these four rules used to wrap the ancestor in `:global()`, which
+  // compiles to the bare ancestor — `filter: none` landed on <body>/<html> and the
+  // warp layer kept its displacement filter with no blurred backdrop under it.
+  const source = readFileSync(new URL('./player-bar/PlayerBar.css', import.meta.url), 'utf8')
+  const result = compileStyle({
+    source,
+    filename: 'PlayerBar.css',
+    id: 'data-v-playbar-glass',
+    scoped: true
+  })
+
+  assert.deepEqual(result.errors, [])
+  for (const ancestor of [
+    'body\\.te-no-blur',
+    "html\\[data-te-effects-mode='reduced'\\]",
+    "html\\[data-window-transparent='on'\\]\\[data-platform='linux'\\]"
+  ]) {
+    assert.match(
+      result.code,
+      new RegExp(
+        `${ancestor}\\s+\\.player-bar-liquid\\s+\\.player-bar-warp\\[data-v-playbar-glass\\]`
+      )
+    )
+  }
+  assert.match(
+    result.code,
+    /html\[data-theme='dark'\]\s+\.player-bar-liquid\[data-v-playbar-glass\]/
+  )
+  // No degradation rule may collapse onto the document root or <body> itself.
+  assert.doesNotMatch(result.code, /^\s*body\.te-no-blur\s*\{/m)
+  assert.doesNotMatch(result.code, /^\s*html\[data-te-effects-mode='reduced'\]\s*\{/m)
+})

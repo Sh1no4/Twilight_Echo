@@ -447,6 +447,11 @@ void finalizeDopCarrier(PcmBlock& block, size_t renderedFrames, uint64_t* marker
   const size_t bytesPerFrame = audioFormatBytesPerFrame(block.format);
   if (bytesPerSample == 0 || bytesPerFrame == 0) return;
 
+  // DSD idle is the 0x69 alternating pattern; a DoP payload carries it MSB-first,
+  // which is 0x96. Both payload bytes are identical so byte order is moot here,
+  // but the value has to match the packer's MSB-first convention or a strict DAC
+  // sees a payload it did not expect where it expects silence.
+  constexpr uint8_t kDopIdlePayloadByte = 0x96;
   const size_t boundedRendered = std::min(renderedFrames, block.frames);
   for (size_t frame = 0; frame < block.frames; ++frame) {
     const uint8_t marker = dop::dopMarkerForFrame(static_cast<size_t>(*markerIndex + frame));
@@ -455,11 +460,11 @@ void finalizeDopCarrier(PcmBlock& block, size_t renderedFrames, uint64_t* marker
       if (frame >= boundedRendered) {
         if (block.format.sampleFormat == AudioSampleFormat::Int24In32Interleaved) {
           sample[0] = 0x00;
-          sample[1] = 0x69;
-          sample[2] = 0x69;
+          sample[1] = kDopIdlePayloadByte;
+          sample[2] = kDopIdlePayloadByte;
         } else {
-          sample[0] = 0x69;
-          sample[1] = 0x69;
+          sample[0] = kDopIdlePayloadByte;
+          sample[1] = kDopIdlePayloadByte;
         }
       }
       sample[bytesPerSample - 1] = marker;
@@ -1075,7 +1080,15 @@ struct AudioPipeline::DecodeStream {
         const size_t silenceFrames = static_cast<size_t>(std::min<uint64_t>(
             remainingVirtualPregapFrames, static_cast<uint64_t>(kDecodeChunkFrames)));
         const size_t silenceBytes = silenceFrames * static_cast<size_t>(channels) * 2;
-        std::fill(dsdBytes.begin(), dsdBytes.begin() + silenceBytes, 0x69);
+        // These are *source* DSD bytes: the packer normalizes them to the DoP
+        // payload's MSB-first order using the stream's own bit order, so the
+        // idle pattern has to be written the way this source would encode it.
+        // 0x69 is the LSB-first spelling; MSB-first sources need it reversed so
+        // both land on the same 0x96 payload byte after normalization.
+        const uint8_t silenceSourceByte = dsdReader && dsdReader->streamInfo().bitOrder == DsdBitOrder::MsbFirst
+                                              ? dop::kBitReverseTable[0x69]
+                                              : 0x69;
+        std::fill(dsdBytes.begin(), dsdBytes.begin() + silenceBytes, silenceSourceByte);
         const size_t packedFrames = dopPacker.pack(dsdBytes.data(), silenceBytes, &pcmBytes);
         if (packedFrames == 0) {
           markEof();
@@ -4436,6 +4449,11 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
         renderDitherRandom_,
         renderDitherPreviousNoise_,
         renderDitherError_);
+    // Give back the DSP chain's +12 dB internal headroom. The volume clamp above
+    // only runs when volume != 1.0, and dither returns early for float32 output,
+    // so without this a unity-volume EQ boost reached the driver unclamped.
+    // Mirrors the dither guard: DSD transports are never touched here.
+    render::clampRenderedFramesToFullScale(output, totalRead > 0 ? totalRead : frameCount, channels);
   }
   // ReplayGain, routing, and integer-output dither must never turn a virtual pregap into noise.
   for (size_t span = 0; span < virtualSilenceSpanCount; ++span) {

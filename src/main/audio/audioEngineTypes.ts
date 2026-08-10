@@ -157,6 +157,12 @@ export interface OutputDiagnostics {
   lifetimeRecoveryCount: number
   driverRestartCount: number
   deviceLostCount: number
+  /**
+   * Transient driver load events (ASIO Overload / LatenciesChanged). Counted but
+   * never acted on — they do not invalidate the stream. Optional so existing
+   * fixtures and older engine builds stay assignable.
+   */
+  driverXrunCount?: number
   dsdIdleFrameCount?: number
   dsdShortReadCount?: number
   dsdTransport?: string

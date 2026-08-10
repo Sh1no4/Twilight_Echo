@@ -1126,6 +1126,9 @@ const api = {
       return () => playerShortcutCallbacks.delete(cb)
     }
   },
+  fonts: {
+    listInstalled: (): Promise<string[]> => ipcRenderer.invoke('fonts:listInstalled')
+  },
   themes: {
     getSystemTone: (): Promise<ThemeTone> => ipcRenderer.invoke('themes:getSystemTone'),
     getBootstrap: (): Promise<ThemeBootstrap> => ipcRenderer.invoke('themes:getBootstrap'),

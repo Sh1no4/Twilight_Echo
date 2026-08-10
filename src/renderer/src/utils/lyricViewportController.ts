@@ -57,6 +57,11 @@ export interface LyricViewportControllerOptions {
   /** Presented (hot plus held) lines. Falls back to the active index. */
   getBufferedIndices?: () => ReadonlySet<number>
   alignPosition?: number
+  /**
+   * Read per layout rather than captured at construction, so the anchor can move
+   * while the page is open. Takes precedence over `alignPosition`.
+   */
+  getAlignPosition?: () => number
   alignAnchor?: LyricAlignAnchor
   /**
    * Vertical space at the bottom covered by an overlay such as the player bar,
@@ -69,6 +74,14 @@ export interface LyricViewportControllerOptions {
   isScaleEnabled?: () => boolean
   isPlaying?: () => boolean
   isNonDynamic?: () => boolean
+  /** Line indices the focus window keeps, or `null` for the whole timeline. */
+  getFocusWindow?: () => ReadonlySet<number> | null
+  /** Opacity multiplier for lines that have not been presented yet, 0-1. */
+  getInactiveDim?: () => number
+  getScaleIntensity?: () => number
+  getBlurIntensity?: () => number
+  getCascadeSpeedFactor?: () => number
+  shouldHidePassedLines?: () => boolean
   getInterludeAfterIndex?: () => number | null
   getInterludeDotsHeight?: () => number
   /** Called with the dots position each frame, or `null` when hidden. */
@@ -100,7 +113,7 @@ function isDocumentHidden(): boolean {
 
 export function createLyricViewportController(options: LyricViewportControllerOptions) {
   const rows = new Map<number, RowState>()
-  const alignPosition = options.alignPosition ?? LYRIC_ALIGN_POSITION
+  const fallbackAlignPosition = options.alignPosition ?? LYRIC_ALIGN_POSITION
   const alignAnchor = options.alignAnchor ?? 'center'
 
   let stage: LyricStageElement | null = null
@@ -163,7 +176,7 @@ export function createLyricViewportController(options: LyricViewportControllerOp
       buffered: bufferedIndices(),
       viewportHeight: stage.clientHeight,
       viewportWidth: stage.clientWidth,
-      alignPosition,
+      alignPosition: options.getAlignPosition?.() ?? fallbackAlignPosition,
       alignAnchor,
       scrollOffset,
       bottomReservedPx: Math.max(0, options.getBottomReservedPx?.() ?? 0),
@@ -172,6 +185,12 @@ export function createLyricViewportController(options: LyricViewportControllerOp
       enableScale: options.isScaleEnabled?.() ?? true,
       enableBlur: options.isBlurEnabled?.() ?? true,
       isNonDynamic: options.isNonDynamic?.() ?? false,
+      hidePassedLines: options.shouldHidePassedLines?.() ?? false,
+      focusWindow: options.getFocusWindow?.() ?? null,
+      inactiveDim: options.getInactiveDim?.() ?? 1,
+      scaleIntensity: options.getScaleIntensity?.() ?? 1,
+      blurIntensity: options.getBlurIntensity?.() ?? 1,
+      cascadeSpeedFactor: options.getCascadeSpeedFactor?.() ?? 1,
       interludeAfterIndex: options.getInterludeAfterIndex?.() ?? null,
       interludeDotsHeight: options.getInterludeDotsHeight?.() ?? 0
     })

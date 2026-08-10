@@ -750,10 +750,61 @@ void testDopPackerInt24() {
   std::vector<uint8_t> pcm;
   assert(packer.pack(dsd, sizeof(dsd), &pcm) == 2);
   assert(pcm.size() == 12);
-  assert(pcm[0] == 0x11 && pcm[1] == 0x22 && pcm[2] == 0x05);
-  assert(pcm[3] == 0x55 && pcm[4] == 0x66 && pcm[5] == 0x05);
-  assert(pcm[6] == 0x33 && pcm[7] == 0x44 && pcm[8] == 0xfa);
-  assert(pcm[9] == 0x77 && pcm[10] == 0x88 && pcm[11] == 0xfa);
+  // DoP v1.1 int24 little-endian: [later byte][earlier byte][marker], payload
+  // MSB-first. The source is DSF (LSB-first), so each byte is bit-reversed:
+  // 0x11->0x88 0x22->0x44 0x33->0xcc 0x44->0x22 0x55->0xaa 0x66->0x66
+  // 0x77->0xee 0x88->0x11
+  assert(pcm[0] == 0x44 && pcm[1] == 0x88 && pcm[2] == 0x05);
+  assert(pcm[3] == 0x66 && pcm[4] == 0xaa && pcm[5] == 0x05);
+  assert(pcm[6] == 0x22 && pcm[7] == 0xcc && pcm[8] == 0xfa);
+  assert(pcm[9] == 0x11 && pcm[10] == 0xee && pcm[11] == 0xfa);
+}
+
+/**
+ * Guards the two faults that used to cancel out in the fixtures above: the
+ * payload byte pair being written in reverse order, and the bit-order
+ * normalization reversing the wrong source order.
+ *
+ * Both source bytes here are asymmetric under bit reversal AND distinct from
+ * each other, so a byte swap, a missing reversal, or a spurious reversal each
+ * produce a different failure. The older fixtures used values that happened to
+ * be bit-reversals of one another, which made a 16-bit time reversal invisible.
+ */
+void testDopPackerPayloadOrderAndBitOrderAreIndependent() {
+  // 0x01 -> 0x80, 0x02 -> 0x40 under bit reversal; neither is symmetric.
+  const uint8_t dsd[] = {0x01, 0x02};
+
+  std::vector<uint8_t> lsbPcm;
+  size_t lsbMarker = 0;
+  const size_t lsbFrames = dop::packDopFramesResizeOnly(
+      dsd,
+      sizeof(dsd),
+      1,
+      DsdPacking::DffInterleaved,
+      DsdBitOrder::LsbFirst,
+      AudioSampleFormat::Int24Interleaved,
+      lsbMarker,
+      &lsbPcm);
+  // earlier=rev(0x01)=0x80, later=rev(0x02)=0x40 -> [0x40][0x80][0x05]
+  const std::vector<uint8_t> lsbExpected = {0x40, 0x80, 0x05};
+  assert(lsbFrames == 1);
+  assert(lsbPcm == lsbExpected);
+
+  std::vector<uint8_t> msbPcm;
+  size_t msbMarker = 0;
+  const size_t msbFrames = dop::packDopFramesResizeOnly(
+      dsd,
+      sizeof(dsd),
+      1,
+      DsdPacking::DffInterleaved,
+      DsdBitOrder::MsbFirst,
+      AudioSampleFormat::Int24Interleaved,
+      msbMarker,
+      &msbPcm);
+  // DFF is already MSB-first: earlier=0x01, later=0x02 -> [0x02][0x01][0x05]
+  const std::vector<uint8_t> msbExpected = {0x02, 0x01, 0x05};
+  assert(msbFrames == 1);
+  assert(msbPcm == msbExpected);
 }
 
 void testDopPackerHelperPacksInterleavedInt24In32WithoutPreclear() {
@@ -800,10 +851,11 @@ void testDopPackerDsd256() {
   std::vector<uint8_t> pcm;
   assert(packer.pack(dsd, sizeof(dsd), &pcm) == 2);
   assert(pcm.size() == 12);
-  assert(pcm[0] == 0x11 && pcm[1] == 0x22 && pcm[2] == 0x05);
-  assert(pcm[3] == 0x55 && pcm[4] == 0x66 && pcm[5] == 0x05);
-  assert(pcm[6] == 0x33 && pcm[7] == 0x44 && pcm[8] == 0xfa);
-  assert(pcm[9] == 0x77 && pcm[10] == 0x88 && pcm[11] == 0xfa);
+  // Same payload layout as testDopPackerInt24; only the carrier rate differs.
+  assert(pcm[0] == 0x44 && pcm[1] == 0x88 && pcm[2] == 0x05);
+  assert(pcm[3] == 0x66 && pcm[4] == 0xaa && pcm[5] == 0x05);
+  assert(pcm[6] == 0x22 && pcm[7] == 0xcc && pcm[8] == 0xfa);
+  assert(pcm[9] == 0x11 && pcm[10] == 0xee && pcm[11] == 0xfa);
 }
 
 void testDopPackerDsd512() {
@@ -823,10 +875,13 @@ void testDopPackerDsd512() {
   std::vector<uint8_t> pcm;
   assert(packer.pack(dsd, sizeof(dsd), &pcm) == 2);
   assert(pcm.size() == 12);
-  assert(pcm[0] == 0x12 && pcm[1] == 0x34 && pcm[2] == 0x05);
-  assert(pcm[3] == 0x9a && pcm[4] == 0xbc && pcm[5] == 0x05);
-  assert(pcm[6] == 0x56 && pcm[7] == 0x78 && pcm[8] == 0xfa);
-  assert(pcm[9] == 0xde && pcm[10] == 0xf0 && pcm[11] == 0xfa);
+  // LSB-first source bit-reversed to the MSB-first DoP payload:
+  // 0x12->0x48 0x34->0x2c 0x56->0x6a 0x78->0x1e
+  // 0x9a->0x59 0xbc->0x3d 0xde->0x7b 0xf0->0x0f
+  assert(pcm[0] == 0x2c && pcm[1] == 0x48 && pcm[2] == 0x05);
+  assert(pcm[3] == 0x3d && pcm[4] == 0x59 && pcm[5] == 0x05);
+  assert(pcm[6] == 0x1e && pcm[7] == 0x6a && pcm[8] == 0xfa);
+  assert(pcm[9] == 0x0f && pcm[10] == 0x7b && pcm[11] == 0xfa);
 }
 
 void testDopPackerInt24In32() {
@@ -842,8 +897,10 @@ void testDopPackerInt24In32() {
   std::vector<uint8_t> pcm;
   assert(packer.pack(dsd, sizeof(dsd), &pcm) == 2);
   assert(pcm.size() == 8);
-  assert(pcm[0] == 0x00 && pcm[1] == 0x12 && pcm[2] == 0x34 && pcm[3] == 0x05);
-  assert(pcm[4] == 0x00 && pcm[5] == 0x56 && pcm[6] == 0x78 && pcm[7] == 0xfa);
+  // Int24-in-32, valid bits MSB-aligned: [pad][later][earlier][marker].
+  // LSB-first source reversed: 0x12->0x48 0x34->0x2c 0x56->0x6a 0x78->0x1e
+  assert(pcm[0] == 0x00 && pcm[1] == 0x2c && pcm[2] == 0x48 && pcm[3] == 0x05);
+  assert(pcm[4] == 0x00 && pcm[5] == 0x1e && pcm[6] == 0x6a && pcm[7] == 0xfa);
 }
 
 void testSacdIsoProbePlayableEntry() {
@@ -1521,6 +1578,7 @@ int main() {
   testDsdInterleaveHelperConvertsBitOrderWithoutPreclearSentinel();
   testDsdInterleaveHelperCanCopyDffWhenBitOrderMatches();
   testDopPackerHelperPacksInterleavedInt24In32WithoutPreclear();
+  testDopPackerPayloadOrderAndBitOrderAreIndependent();
   testDopPackerInt24();
   testDopPackerDsd256();
   testDopPackerDsd512();

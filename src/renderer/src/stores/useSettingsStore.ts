@@ -10,8 +10,18 @@ import {
   cloneLyricsAppearance,
   normalizeLyricsAppearance
 } from '../../../shared/lyricsAppearance.ts'
+import {
+  DEFAULT_LYRICS_PRESET_CONFIG,
+  cloneLyricsPresetConfig,
+  normalizeLyricsPresetConfig
+} from '../../../shared/lyricsPresets.ts'
 import { DEFAULT_GENRE_SEPARATORS } from '../../../shared/genreSeparators.ts'
 import { DEFAULT_LIQUID_GLASS, normalizeLiquidGlass } from '../../../shared/liquidGlass.ts'
+import {
+  DEFAULT_PLAYER_BAR_SETTINGS,
+  clonePlayerBarSettings,
+  normalizePlayerBarSettings
+} from '../../../shared/playerBar.ts'
 import type {
   AppSettings,
   AudioOutputId,
@@ -116,6 +126,7 @@ const fallbackSettings: AppSettings = {
   },
   useCoverTheme: true,
   lyricsAppearance: cloneLyricsAppearance(DEFAULT_LYRICS_APPEARANCE),
+  lyricsPresets: cloneLyricsPresetConfig(DEFAULT_LYRICS_PRESET_CONFIG),
   libraryFolders: [],
   genreSeparators: DEFAULT_GENRE_SEPARATORS,
   watchLibrary: true,
@@ -177,6 +188,7 @@ const fallbackSettings: AppSettings = {
   },
   surfaceMaterial: 'standard',
   liquidGlass: DEFAULT_LIQUID_GLASS,
+  playerBar: clonePlayerBarSettings(DEFAULT_PLAYER_BAR_SETTINGS),
   nowPlayingBackground: 'blur',
   playbackResumeMode: 'off',
   sleepTimer: DEFAULT_SLEEP_TIMER_SETTINGS,
@@ -389,6 +401,7 @@ function applySnapshot(snapshot: SettingsSnapshot): void {
       ...(incoming.cachePolicy ?? {})
     },
     lyricsAppearance: normalizeLyricsAppearance(incoming.lyricsAppearance),
+    lyricsPresets: normalizeLyricsPresetConfig(incoming.lyricsPresets),
     cardAppearance: {
       ...fallbackSettings.cardAppearance,
       ...(incoming.cardAppearance ?? {}),
@@ -537,10 +550,24 @@ export function useSettingsStore(): {
       }
       applyDomSettings()
     }
+    // Playbar shape must flip on the same frame as the click; waiting for the
+    // IPC round trip shows one frame of the old shape.
+    if (Object.prototype.hasOwnProperty.call(patch, 'playerBar') && patch.playerBar) {
+      settings.value = {
+        ...settings.value,
+        playerBar: normalizePlayerBarSettings(patch.playerBar)
+      }
+    }
     if (Object.prototype.hasOwnProperty.call(patch, 'lyricsAppearance') && patch.lyricsAppearance) {
       settings.value = {
         ...settings.value,
         lyricsAppearance: cloneLyricsAppearance(patch.lyricsAppearance)
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'lyricsPresets') && patch.lyricsPresets) {
+      settings.value = {
+        ...settings.value,
+        lyricsPresets: cloneLyricsPresetConfig(patch.lyricsPresets)
       }
     }
     if (Object.prototype.hasOwnProperty.call(patch, 'miniPlayer') && patch.miniPlayer) {

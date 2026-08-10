@@ -15,7 +15,18 @@ enum class AsioHostEvent {
   DriverReset,
   DriverRestart,
   DeviceLost,
-  BufferFailure
+  /** The stream is no longer usable and must be rebuilt. */
+  BufferFailure,
+  /**
+   * A transient driver-side load event (ASIO Overload / LatenciesChanged).
+   *
+   * Purely informational: the stream stays valid, so this is counted and
+   * surfaced but never triggers recovery. Rebuilding on it converts a momentary
+   * glitch into a certain multi-hundred-millisecond dropout, and a short burst
+   * of them would trip the recovery rate limiter into its 10 s cooldown - a
+   * CPU spike would take audio down for far longer than the spike itself.
+   */
+  Xrun
 };
 
 enum class AsioDsdPacking : uint8_t {

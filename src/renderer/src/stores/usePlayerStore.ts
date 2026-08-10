@@ -556,6 +556,7 @@ function scheduleRendererPlaybackWatchdog(track: Track, loadToken: number): void
     if (!audio || !audio.src || !audio.paused || audio.ended) return
 
     try {
+      await stopNativeAudio()
       await audio.play()
     } catch (err) {
       if (!isActiveLoad(loadToken, track)) return
@@ -855,6 +856,10 @@ async function playWithRendererAudio(
 ): Promise<boolean> {
   const audio = getPlaybackAudio()
   audio.pause()
+  // Renderer HTMLAudio is a shared-mode Windows stream. Never start it while the
+  // native engine (e.g. WASAPI Exclusive) could still be playing, or the same
+  // track is heard twice. Stopping is a cheap no-op when native is already idle.
+  await stopNativeAudio()
   if (!isActiveLoad(loadToken, track)) return false
 
   const playableUrl = await createPlayableUrl(target, track, loadToken)
@@ -1893,7 +1898,9 @@ function getNowMs(): number {
 const playbackSessionClock = createPlaybackSessionClock({ now: getNowMs })
 const playbackClockSnapshot = ref<PlaybackClockSnapshot>(playbackSessionClock.snapshot())
 
-function publishPlaybackClockSnapshot(snapshot = playbackSessionClock.snapshot()): PlaybackClockSnapshot {
+function publishPlaybackClockSnapshot(
+  snapshot = playbackSessionClock.snapshot()
+): PlaybackClockSnapshot {
   playbackClockSnapshot.value = snapshot
   return snapshot
 }
@@ -1951,7 +1958,8 @@ function publishLatestCurrentTime(): void {
 
 function setCurrentTimeImmediate(time: number, clockAlreadyUpdated = false): void {
   clearPendingTimePublish()
-  if (!clockAlreadyUpdated) publishPlaybackClockSnapshot(playbackSessionClock.setPosition(time, 'intent'))
+  if (!clockAlreadyUpdated)
+    publishPlaybackClockSnapshot(playbackSessionClock.setPosition(time, 'intent'))
   publishCurrentTime(time)
 }
 
@@ -1964,13 +1972,15 @@ function beginPlaybackPositionTransition(
   options: { keepRendererClockAlive?: boolean } = {}
 ): void {
   clearPendingNativePause()
-  const position = publishPlaybackClockSnapshot(playbackSessionClock.begin({
-    trackId: currentTrack.value?.id ?? '',
-    position: time,
-    duration: duration.value,
-    rate: playbackRate.value,
-    state: isPlaying.value || options.keepRendererClockAlive ? 'playing' : 'loading'
-  })).position
+  const position = publishPlaybackClockSnapshot(
+    playbackSessionClock.begin({
+      trackId: currentTrack.value?.id ?? '',
+      position: time,
+      duration: duration.value,
+      rate: playbackRate.value,
+      state: isPlaying.value || options.keepRendererClockAlive ? 'playing' : 'loading'
+    })
+  ).position
   setCurrentTimeImmediate(position, true)
 }
 
@@ -2046,7 +2056,8 @@ function startRendererPlaybackClock(): void {
 }
 
 function setCurrentTimeThrottled(time: number, clockAlreadyUpdated = false): void {
-  if (!clockAlreadyUpdated) publishPlaybackClockSnapshot(playbackSessionClock.setPosition(time, 'intent'))
+  if (!clockAlreadyUpdated)
+    publishPlaybackClockSnapshot(playbackSessionClock.setPosition(time, 'intent'))
   latestPlaybackTime = time
   enforceAbLoop(time)
   const now = getNowMs()
@@ -2463,174 +2474,182 @@ async function ensureCurrentTrackLyricsLoaded(
   }
 
   const run = async (): Promise<void> => {
-  // Manual content is applied by the presentation layer. Keeping it out of
-  // the queue record means choosing Auto later can always recover
-  // the resolver result instead of treating a previous edit as embedded data.
-  if (requestedSource === 'manual') {
-    // Finish loading state on the track record: null means "still resolving".
-    // Manual text is projected from the override; empty override → 暂无歌词.
+    // Manual content is applied by the presentation layer. Keeping it out of
+    // the queue record means choosing Auto later can always recover
+    // the resolver result instead of treating a previous edit as embedded data.
+    if (requestedSource === 'manual') {
+      // Finish loading state on the track record: null means "still resolving".
+      // Manual text is projected from the override; empty override → 暂无歌词.
+      if (
+        currentTrack.value?.id === triggerTrack.id &&
+        currentTrack.value.lyrics == null &&
+        currentTrack.value.translatedLyrics == null
+      ) {
+        commitResolvedLyrics(triggerTrack, triggerTrack, {
+          lyrics: '',
+          translatedLyrics: null,
+          lyricsSource: null,
+          translatedLyricsSource: null
+        })
+      }
+      completeIfCurrent('empty')
+      return
+    }
+
     if (
-      currentTrack.value?.id === triggerTrack.id &&
-      currentTrack.value.lyrics == null &&
-      currentTrack.value.translatedLyrics == null
+      (requestedSource !== 'auto' ||
+        originalLayerSource === 'local' ||
+        originalLayerSource === 'provider' ||
+        translationLayerSource === 'local' ||
+        translationLayerSource === 'provider') &&
+      !automaticLyricsBaselines.has(triggerTrack.id)
     ) {
-      commitResolvedLyrics(triggerTrack, triggerTrack, {
-        lyrics: '',
-        translatedLyrics: null,
-        lyricsSource: null,
-        translatedLyricsSource: null
+      automaticLyricsBaselines.set(triggerTrack.id, { ...triggerTrack })
+    }
+    const resolverTrack = resolverLyricsInput(
+      triggerTrack,
+      automaticLyricsBaselines.get(triggerTrack.id),
+      requestedSource
+    )
+
+    // Already have parseable lyrics (hydrated / previous resolve) — keep them and
+    // only top up missing translation via provider when allowed.
+    const hasOriginal = hasLyricContent(resolverTrack.lyrics)
+
+    const source = getTrackSource(resolverTrack)
+    const canLoadLocalLyrics =
+      source === 'local' &&
+      (resolverOriginalSource === 'local' ||
+        (resolverOriginalSource === 'automatic' && !hasOriginal)) &&
+      !!resolverTrack.dir &&
+      !!resolverTrack.fileName
+    const canLoadProviderLyrics =
+      allowProviderLookup &&
+      (resolverOriginalSource === 'provider' ||
+        resolverTranslationSource === 'provider' ||
+        (resolverOriginalSource === 'automatic' && !hasOriginal) ||
+        (resolverTranslationSource === 'automatic' &&
+          !hasLyricContent(resolverTrack.translatedLyrics)))
+    const canLoadOnlineLyrics =
+      resolverOriginalSource === 'automatic' &&
+      appSettings.value?.onlineLyricsFallback === true &&
+      !!resolverTrack.title?.trim() &&
+      !!resolverTrack.artist?.trim() &&
+      !hasOriginal
+
+    if (!canLoadLocalLyrics && !canLoadProviderLyrics && !canLoadOnlineLyrics) {
+      // Finish loading state: null means "still resolving"; '' means "confirmed empty".
+      commitResolvedLyrics(triggerTrack, resolverTrack, {
+        lyrics: hasOriginal ? resolverTrack.lyrics! : '',
+        translatedLyrics: resolverTrack.translatedLyrics ?? null,
+        lyricsSource: resolverTrack.lyricsSource ?? (hasOriginal ? 'embedded' : null),
+        translatedLyricsSource: resolverTrack.translatedLyricsSource ?? null
       })
+      completeIfCurrent(
+        hasOriginal || hasLyricContent(resolverTrack.translatedLyrics) ? 'ready' : 'empty'
+      )
+      return
     }
-    completeIfCurrent('empty')
-    return
-  }
 
-  if (
-    (requestedSource !== 'auto' ||
-      originalLayerSource === 'local' ||
-      originalLayerSource === 'provider' ||
-      translationLayerSource === 'local' ||
-      translationLayerSource === 'provider') &&
-    !automaticLyricsBaselines.has(triggerTrack.id)
-  ) {
-    automaticLyricsBaselines.set(triggerTrack.id, { ...triggerTrack })
-  }
-  const resolverTrack = resolverLyricsInput(
-    triggerTrack,
-    automaticLyricsBaselines.get(triggerTrack.id),
-    requestedSource
-  )
-
-  // Already have parseable lyrics (hydrated / previous resolve) — keep them and
-  // only top up missing translation via provider when allowed.
-  const hasOriginal = hasLyricContent(resolverTrack.lyrics)
-
-  const source = getTrackSource(resolverTrack)
-  const canLoadLocalLyrics =
-    source === 'local' &&
-    (resolverOriginalSource === 'local' ||
-      (resolverOriginalSource === 'automatic' && !hasOriginal)) &&
-    !!resolverTrack.dir &&
-    !!resolverTrack.fileName
-  const canLoadProviderLyrics =
-    allowProviderLookup &&
-    (resolverOriginalSource === 'provider' ||
-      resolverTranslationSource === 'provider' ||
-      (resolverOriginalSource === 'automatic' && !hasOriginal) ||
-      (resolverTranslationSource === 'automatic' &&
-        !hasLyricContent(resolverTrack.translatedLyrics)))
-  const canLoadOnlineLyrics =
-    resolverOriginalSource === 'automatic' &&
-    appSettings.value?.onlineLyricsFallback === true &&
-    !!resolverTrack.title?.trim() &&
-    !!resolverTrack.artist?.trim() &&
-    !hasOriginal
-
-  if (!canLoadLocalLyrics && !canLoadProviderLyrics && !canLoadOnlineLyrics) {
-    // Finish loading state: null means "still resolving"; '' means "confirmed empty".
-    commitResolvedLyrics(triggerTrack, resolverTrack, {
-      lyrics: hasOriginal ? resolverTrack.lyrics! : '',
-      translatedLyrics: resolverTrack.translatedLyrics ?? null,
-      lyricsSource: resolverTrack.lyricsSource ?? (hasOriginal ? 'embedded' : null),
-      translatedLyricsSource: resolverTrack.translatedLyricsSource ?? null
-    })
-    completeIfCurrent(hasOriginal || hasLyricContent(resolverTrack.translatedLyrics) ? 'ready' : 'empty')
-    return
-  }
-
-  let resolved: Awaited<ReturnType<typeof resolveLyricsWithSources>>
-  try {
-    resolved = await resolveLyricsWithSources({
-      track: resolverTrack,
-      originalSource: resolverOriginalSource,
-      translationSource: resolverTranslationSource,
-      loadLocalLyrics: canLoadLocalLyrics
-        ? () =>
-            window.api.data
-              .getLyrics(resolverTrack.dir!, resolverTrack.fileName, resolverTrack.filePath)
-              .catch(() => null)
-        : undefined,
-      loadProviderLyrics: canLoadProviderLyrics
-        ? async () => {
-            await syncPluginProviders()
-            return useMediaProviders().resolveLyrics(resolverTrack, {
-              signal: request.controller.signal
-            })
-          }
-        : undefined,
-      loadOnlineLyrics: canLoadOnlineLyrics
-        ? async () => {
-            const result = await window.api.data.searchOnlineLyrics({
-              title: resolverTrack.title,
-              artist: resolverTrack.artist,
-              album: resolverTrack.album || undefined,
-              durationSeconds:
-                typeof resolverTrack.duration === 'number' &&
-                Number.isFinite(resolverTrack.duration)
-                  ? resolverTrack.duration
-                  : undefined
-            })
-            return result.best?.syncedLyrics ?? result.best?.plainLyrics ?? null
-          }
-        : undefined,
-      // LRCLIB does not carry translations. When the online fallback supplied
-      // the original lyrics, try the provider path once more just for the
-      // NetEase tlyric translation; a miss simply keeps the layer hidden.
-      loadOnlineTranslation: canLoadOnlineLyrics
-        ? async () => {
-            await syncPluginProviders()
-            const lyrics = await useMediaProviders().resolveLyrics(resolverTrack)
-            return lyrics?.translatedLyrics ?? null
-          }
-        : undefined
-    })
-  } catch {
-    // A failed optional source must settle the request without erasing lyrics
-    // that may already be attached to the active track.
-    resolved = {
-      lyrics: resolverTrack.lyrics ?? null,
-      translatedLyrics: resolverTrack.translatedLyrics ?? null,
-      lyricsSource: resolverTrack.lyricsSource ?? (hasOriginal ? 'embedded' : null),
-      translatedLyricsSource: resolverTrack.translatedLyricsSource ?? null,
-      failure: 'provider'
+    let resolved: Awaited<ReturnType<typeof resolveLyricsWithSources>>
+    try {
+      resolved = await resolveLyricsWithSources({
+        track: resolverTrack,
+        originalSource: resolverOriginalSource,
+        translationSource: resolverTranslationSource,
+        loadLocalLyrics: canLoadLocalLyrics
+          ? () =>
+              window.api.data
+                .getLyrics(resolverTrack.dir!, resolverTrack.fileName, resolverTrack.filePath)
+                .catch(() => null)
+          : undefined,
+        loadProviderLyrics: canLoadProviderLyrics
+          ? async () => {
+              await syncPluginProviders()
+              return useMediaProviders().resolveLyrics(resolverTrack, {
+                signal: request.controller.signal
+              })
+            }
+          : undefined,
+        loadOnlineLyrics: canLoadOnlineLyrics
+          ? async () => {
+              const result = await window.api.data.searchOnlineLyrics({
+                title: resolverTrack.title,
+                artist: resolverTrack.artist,
+                album: resolverTrack.album || undefined,
+                durationSeconds:
+                  typeof resolverTrack.duration === 'number' &&
+                  Number.isFinite(resolverTrack.duration)
+                    ? resolverTrack.duration
+                    : undefined
+              })
+              return result.best?.syncedLyrics ?? result.best?.plainLyrics ?? null
+            }
+          : undefined,
+        // LRCLIB does not carry translations. When the online fallback supplied
+        // the original lyrics, try the provider path once more just for the
+        // NetEase tlyric translation; a miss simply keeps the layer hidden.
+        loadOnlineTranslation: canLoadOnlineLyrics
+          ? async () => {
+              await syncPluginProviders()
+              const lyrics = await useMediaProviders().resolveLyrics(resolverTrack)
+              return lyrics?.translatedLyrics ?? null
+            }
+          : undefined
+      })
+    } catch {
+      // A failed optional source must settle the request without erasing lyrics
+      // that may already be attached to the active track.
+      resolved = {
+        lyrics: resolverTrack.lyrics ?? null,
+        translatedLyrics: resolverTrack.translatedLyrics ?? null,
+        lyricsSource: resolverTrack.lyricsSource ?? (hasOriginal ? 'embedded' : null),
+        translatedLyricsSource: resolverTrack.translatedLyricsSource ?? null,
+        failure: 'provider'
+      }
     }
-  }
 
-  // Source selection can change while an async local/provider resolver is
-  // pending. Do not let a stale forced lookup overwrite the newer Auto (or
-  // manual) choice when it finally completes.
-  const currentOverride = lyricsManagement.entryFor(triggerTrack.id)
-  const currentRequestedSource = currentOverride?.source ?? 'auto'
-  const currentLayerSource = (
-    key: 'originalSelection' | 'translationSelection'
-  ): LyricResolverSource | 'manual' => {
-    const selection = currentOverride?.[key]
-    if (selection === 'local' || selection === 'provider' || selection === 'manual') {
-      return selection
+    // Source selection can change while an async local/provider resolver is
+    // pending. Do not let a stale forced lookup overwrite the newer Auto (or
+    // manual) choice when it finally completes.
+    const currentOverride = lyricsManagement.entryFor(triggerTrack.id)
+    const currentRequestedSource = currentOverride?.source ?? 'auto'
+    const currentLayerSource = (
+      key: 'originalSelection' | 'translationSelection'
+    ): LyricResolverSource | 'manual' => {
+      const selection = currentOverride?.[key]
+      if (selection === 'local' || selection === 'provider' || selection === 'manual') {
+        return selection
+      }
+      if (currentRequestedSource === 'local' || currentRequestedSource === 'provider') {
+        return currentRequestedSource
+      }
+      return 'automatic'
     }
-    if (currentRequestedSource === 'local' || currentRequestedSource === 'provider') {
-      return currentRequestedSource
+    if (
+      `${currentRequestedSource}:${currentLayerSource('originalSelection')}:${currentLayerSource('translationSelection')}` !==
+      sourceSelectionSignature
+    ) {
+      completeIfCurrent()
+      return
     }
-    return 'automatic'
-  }
-  if (
-    `${currentRequestedSource}:${currentLayerSource('originalSelection')}:${currentLayerSource('translationSelection')}` !==
-    sourceSelectionSignature
-  ) {
-    completeIfCurrent()
-    return
-  }
-  if (resolved.failure && !hasLyricContent(resolved.lyrics) && !hasLyricContent(resolved.translatedLyrics)) {
-    if (isCurrentRequest()) {
-      lyricsLoadState.value = { trackId: triggerTrack.id, status: 'failed' }
-      scheduleCurrentLyricsRetry(triggerTrack.id, request.activation)
+    if (
+      resolved.failure &&
+      !hasLyricContent(resolved.lyrics) &&
+      !hasLyricContent(resolved.translatedLyrics)
+    ) {
+      if (isCurrentRequest()) {
+        lyricsLoadState.value = { trackId: triggerTrack.id, status: 'failed' }
+        scheduleCurrentLyricsRetry(triggerTrack.id, request.activation)
+      }
+      return
     }
-    return
-  }
-  commitResolvedLyrics(triggerTrack, resolverTrack, resolved)
-  completeIfCurrent(
-    hasLyricContent(resolved.lyrics) || hasLyricContent(resolved.translatedLyrics) ? 'ready' : 'empty'
-  )
+    commitResolvedLyrics(triggerTrack, resolverTrack, resolved)
+    completeIfCurrent(
+      hasLyricContent(resolved.lyrics) || hasLyricContent(resolved.translatedLyrics)
+        ? 'ready'
+        : 'empty'
+    )
   }
 
   request.promise = Promise.resolve().then(run)
@@ -2705,10 +2724,7 @@ async function resolvePlayTarget(track: Track): Promise<string> {
     if (!network || !window.api?.networkSources) {
       throw new Error('Unable to resolve network stream URL')
     }
-    const plan = await window.api.networkSources.resolvePlayback(
-      network.profileId,
-      network.entry
-    )
+    const plan = await window.api.networkSources.resolvePlayback(network.profileId, network.entry)
     const target = plan.kind === 'direct-url' ? plan.url : plan.cacheFilePath
     if (!target) throw new Error('Unable to resolve network stream URL')
     track.filePath = target
@@ -3775,6 +3791,7 @@ async function togglePlayState(): Promise<void> {
     } else {
       const audio = getPlaybackAudio()
       if (audio.paused) {
+        await stopNativeAudio()
         await audio.play()
       } else {
         maybeRecordResumeBookmark(track, latestPlaybackTime)
@@ -4570,9 +4587,7 @@ function exitHeartModeToSequential(): void {
     queue.value = restored
     originalQueue.value = [...restored]
     const currentId = currentTrack.value?.id
-    queueIndex.value = currentId
-      ? restored.findIndex((item) => item.id === currentId)
-      : 0
+    queueIndex.value = currentId ? restored.findIndex((item) => item.id === currentId) : 0
     if (queueIndex.value < 0) queueIndex.value = 0
     void queueNativeQueueStateSync().catch((error) => {
       setAudioEngineError(error instanceof Error ? error.message : String(error))

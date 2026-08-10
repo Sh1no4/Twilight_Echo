@@ -744,6 +744,7 @@ export class OutputRouter {
       info.outputInfo.devicePathKind,
       diagnostics.deviceLostCount,
       diagnostics.driverRestartCount,
+      diagnostics.driverXrunCount ?? 0,
       info.outputInfo.deviceRecovered,
       info.outputInfo.recoveryCount
     ].join('|')

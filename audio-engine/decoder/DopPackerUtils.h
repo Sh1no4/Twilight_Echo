@@ -26,8 +26,22 @@ inline constexpr std::array<uint8_t, 256> makeBitReverseTable() {
 
 inline constexpr auto kBitReverseTable = makeBitReverseTable();
 
+/**
+ * Convert a source DSD byte to the MSB-first order a DoP payload requires.
+ *
+ * DoP carries the DSD bitstream with the earliest sample in the most
+ * significant bit of the 16-bit payload field. DFF is already MSB-first, so it
+ * passes through untouched; DSF is LSB-first and must be bit-reversed.
+ *
+ * This used to reverse exactly the wrong one of the two. Combined with the
+ * payload byte pair being written in reverse order (see writeDopSample), the
+ * two faults compounded into a full 16-bit time reversal of every DoP frame:
+ * the local bit density survived, so a DAC still locked and the music still
+ * played, which is why it went unnoticed - but the wire bits were not the
+ * source bits, so the "bit-perfect" claim did not hold.
+ */
 inline uint8_t normalizeDsdByte(uint8_t value, DsdBitOrder bitOrder) {
-  return bitOrder == DsdBitOrder::MsbFirst ? kBitReverseTable[value] : value;
+  return bitOrder == DsdBitOrder::LsbFirst ? kBitReverseTable[value] : value;
 }
 
 inline uint8_t dopMarkerForFrame(size_t markerIndex) {
@@ -40,6 +54,20 @@ inline size_t dopCarrierBytesPerSample(AudioSampleFormat outputFormat) {
   return 0;
 }
 
+/**
+ * Write one DoP carrier sample.
+ *
+ * dCS DoP v1.1 defines the 24-bit word as
+ *   bits 23..16 = marker (0x05 / 0xFA, alternating per frame)
+ *   bits 15..8  = the earlier DSD byte in time
+ *   bits 7..0   = the later DSD byte in time
+ *
+ * Little-endian containers therefore store the *later* byte at the lowest
+ * address, which is the opposite of the intuitive "write first, then second"
+ * order this function used to emit.
+ *
+ * `first` is the earlier byte in time, `second` the later one.
+ */
 inline void writeDopSample(
     uint8_t* output,
     size_t sample,
@@ -49,15 +77,17 @@ inline void writeDopSample(
     uint8_t marker) {
   const size_t offset = sample * bytesPerSample;
   if (bytesPerSample == 4) {
+    // Int24-in-32, valid bits MSB-aligned: pad, later, earlier, marker.
     output[offset + 0] = 0x00;
-    output[offset + 1] = first;
-    output[offset + 2] = second;
+    output[offset + 1] = second;
+    output[offset + 2] = first;
     output[offset + 3] = marker;
     return;
   }
 
-  output[offset + 0] = first;
-  output[offset + 1] = second;
+  // Packed int24 little-endian: later, earlier, marker.
+  output[offset + 0] = second;
+  output[offset + 1] = first;
   output[offset + 2] = marker;
 }
 

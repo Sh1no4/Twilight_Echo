@@ -8,6 +8,9 @@ import {
 } from '../../../shared/theme.ts'
 
 const playingMusic = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+// Lyric layer colours are resolved in a shared helper so the page and the
+// customizer preview cannot drift; it is as much a playback surface as the page.
+const lyricStyleVars = readFileSync(new URL('../utils/lyricsStyleVars.ts', import.meta.url), 'utf8')
 const playerBarComponent = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
 const playerBar = readFileSync(new URL('./player-bar/PlayerBar.css', import.meta.url), 'utf8')
 const equalizer = readFileSync(new URL('./EqualizerPage.vue', import.meta.url), 'utf8')
@@ -111,7 +114,7 @@ test('every registered playback token is wired into a real playback or DSP surfa
   const playbackVariables = THEME_TOKEN_DEFINITIONS.filter(
     (definition) => definition.group === 'playback'
   ).map((definition) => definition.cssVariable)
-  const playbackSurfaces = [playingMusic, playerBar, equalizer, dspRack].join('\n')
+  const playbackSurfaces = [playingMusic, lyricStyleVars, playerBar, equalizer, dspRack].join('\n')
   assert.ok(playbackVariables.length >= 20)
   for (const variable of playbackVariables) assert.match(playbackSurfaces, new RegExp(variable))
 })
