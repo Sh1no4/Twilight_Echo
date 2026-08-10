@@ -56,12 +56,22 @@ import {
   normalizeLiquidGlass,
   normalizeSurfaceMaterial
 } from '../../shared/liquidGlass.ts'
+import {
+  DEFAULT_PLAYER_BAR_SETTINGS,
+  clonePlayerBarSettings,
+  normalizePlayerBarSettings
+} from '../../shared/playerBar.ts'
 import { DEFAULT_SLEEP_TIMER_SETTINGS, type SleepTimerSettings } from '../../shared/sleepTimer.ts'
 import {
   DEFAULT_LYRICS_APPEARANCE,
   cloneLyricsAppearance,
   normalizeLyricsAppearance
 } from '../../shared/lyricsAppearance.ts'
+import {
+  DEFAULT_LYRICS_PRESET_CONFIG,
+  cloneLyricsPresetConfig,
+  normalizeLyricsPresetConfig
+} from '../../shared/lyricsPresets.ts'
 import { DEFAULT_GENRE_SEPARATORS, normalizeGenreSeparators } from '../../shared/genreSeparators.ts'
 import {
   loadSettingsFile,
@@ -134,6 +144,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   useCoverTheme: true,
   lyricsAppearance: cloneLyricsAppearance(DEFAULT_LYRICS_APPEARANCE),
+  lyricsPresets: cloneLyricsPresetConfig(DEFAULT_LYRICS_PRESET_CONFIG),
   libraryFolders: [],
   genreSeparators: DEFAULT_GENRE_SEPARATORS,
   watchLibrary: true,
@@ -195,6 +206,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   surfaceMaterial: 'standard',
   liquidGlass: DEFAULT_LIQUID_GLASS,
+  playerBar: clonePlayerBarSettings(DEFAULT_PLAYER_BAR_SETTINGS),
   nowPlayingBackground: 'blur',
   playbackResumeMode: 'off',
   sleepTimer: DEFAULT_SLEEP_TIMER_SETTINGS,
@@ -684,6 +696,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     windowTransparencyEffect: normalizeWindowTransparencyEffect(settings.windowTransparencyEffect),
     useCoverTheme: settings.useCoverTheme !== false,
     lyricsAppearance: normalizeLyricsAppearance(settings.lyricsAppearance, rawSettings),
+    lyricsPresets: normalizeLyricsPresetConfig(settings.lyricsPresets),
     libraryFolders: normalizeStringArray(settings.libraryFolders),
     genreSeparators: normalizeGenreSeparators(settings.genreSeparators),
     watchLibrary: settings.watchLibrary !== false,
@@ -704,6 +717,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     cardAppearance: normalizeCardAppearance(settings.cardAppearance),
     surfaceMaterial: normalizeSurfaceMaterial(settings.surfaceMaterial),
     liquidGlass: normalizeLiquidGlass(settings.liquidGlass),
+    playerBar: normalizePlayerBarSettings(settings.playerBar),
     nowPlayingBackground: normalizeNowPlayingBackground(settings.nowPlayingBackground),
     playbackResumeMode: normalizePlaybackResumeMode(settings.playbackResumeMode),
     sleepTimer: normalizeSleepTimerSettings(settings.sleepTimer),

@@ -534,14 +534,8 @@ test('window transparency is gated on native support (Wayland fallback to opaque
     'utf8'
   )
   const mainTypes = readFileSync(new URL('../../../main/core/types.ts', import.meta.url), 'utf8')
-  const rendererTypes = readFileSync(
-    new URL('../types/settings.ts', import.meta.url),
-    'utf8'
-  )
-  const baseCss = readFileSync(
-    new URL('../assets/base.css', import.meta.url),
-    'utf8'
-  )
+  const rendererTypes = readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8')
+  const baseCss = readFileSync(new URL('../assets/base.css', import.meta.url), 'utf8')
 
   // Main process must expose a Wayland-aware support check and snapshot field.
   assert.match(mainSettings, /export function supportsNativeWindowTransparency\(\)/)
@@ -554,10 +548,7 @@ test('window transparency is gated on native support (Wayland fallback to opaque
 
   // Renderer must not enable translucent styling when the platform cannot
   // present transparent pixels (otherwise the whole app disappears).
-  assert.match(
-    storeSource,
-    /dataset\.windowTransparent = transparencyActive \? 'on' : 'off'/
-  )
+  assert.match(storeSource, /dataset\.windowTransparent = transparencyActive \? 'on' : 'off'/)
   assert.match(
     storeSource,
     /settings\.value\.windowTransparency === true && windowTransparencySupported\.value === true/
@@ -575,7 +566,61 @@ test('settings page warns and disables transparency controls on unsupported plat
 
   assert.match(source, /const transparencyUnsupported = computed/)
   assert.match(source, /windowTransparencySupported\.value === false/)
-  assert.match(source, /当前系统不支持透明窗口（Linux Wayland，或 Windows 未开启系统透明效果）/)
+  // Prettier wraps this string in the template, so the assertion has to tolerate
+  // a line break where the source happens to fold it.
+  assert.match(source, /当前系统不支持透明窗口（Linux Wayland，或 Windows\s+未开启系统透明效果）/)
   assert.match(source, /toggleSetting\('windowTransparency'\)/)
   assert.match(source, /aria-disabled="!transparencySupported"/)
+})
+
+test('playbar shape persists across settings layers and flips without an IPC round trip', () => {
+  const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
+  const mainSource = readFileSync(
+    new URL('../../../main/core/settings.ts', import.meta.url),
+    'utf8'
+  )
+
+  // Main and renderer must start from the same normalized shape, or the first
+  // frame after launch renders a different bar than the one that gets persisted.
+  for (const source of [storeSource, mainSource]) {
+    assert.match(source, /playerBar: clonePlayerBarSettings\(DEFAULT_PLAYER_BAR_SETTINGS\)/)
+    assert.match(source, /from '(?:\.\.\/)+shared\/playerBar\.ts'/)
+  }
+  assert.match(mainSource, /playerBar: normalizePlayerBarSettings\(settings\.playerBar\)/)
+
+  // The optimistic branch: the shape has to change on the click frame, and the
+  // patch still goes through normalization so a bad value cannot reach the DOM.
+  assert.match(storeSource, /Object\.prototype\.hasOwnProperty\.call\(patch, 'playerBar'\)/)
+  assert.match(storeSource, /playerBar: normalizePlayerBarSettings\(patch\.playerBar\)/)
+
+  for (const types of [
+    readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8'),
+    readFileSync(new URL('../../../preload/types.ts', import.meta.url), 'utf8'),
+    readFileSync(new URL('../../../preload/index.d.ts', import.meta.url), 'utf8'),
+    readFileSync(new URL('../../../main/core/types.ts', import.meta.url), 'utf8')
+  ]) {
+    assert.match(types, /playerBar: PlayerBarSettings/)
+  }
+})
+
+test('playbar settings UI exposes shape, playing-page shape and the auto-hide tuning', () => {
+  const source = readSettingsPageSources()
+
+  assert.match(source, /playerBarModeOptions/)
+  assert.match(source, /playerBarPageModeOptions/)
+  assert.match(source, /setPlayerBarMode\(option\.value\)/)
+  assert.match(source, /setPlayerBarPlayingPageMode\(/)
+  assert.match(source, /togglePlayerBarAutoHide\(\)/)
+  // Auto-hide only means something once the playing page resolves to mini, so
+  // the toggle is gated rather than silently ineffective.
+  assert.match(source, /const playingPageResolvesMini = computed/)
+  assert.match(source, /bar\.playingPageMode === 'inherit' \? bar\.mode === 'mini'/)
+  assert.match(source, /:aria-disabled="!playingPageResolvesMini"/)
+  // Sliders must be bounded by the shared contract, not by hand-typed numbers.
+  assert.match(source, /:min="PLAYER_BAR_BOUNDS\.revealThresholdPx\.min"/)
+  assert.match(source, /:max="PLAYER_BAR_BOUNDS\.revealThresholdPx\.max"/)
+  assert.match(source, /setPlayerBarNumber\('revealThresholdPx',/)
+  assert.match(source, /setPlayerBarNumber\('hideDelayMs',/)
+  // Appearance reset has to drop the playbar back to the shared default too.
+  assert.match(source, /playerBar: clonePlayerBarSettings\(DEFAULT_PLAYER_BAR_SETTINGS\)/)
 })

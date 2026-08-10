@@ -14,6 +14,8 @@ import type { ThemeSelection, ThemeWindowInheritance } from '../../shared/theme.
 import type { MotionPreference } from '../../shared/motion.ts'
 import type { LiquidGlassSettings, SurfaceMaterial } from '../../shared/liquidGlass.ts'
 import type { LyricsAppearanceSettings } from '../../shared/lyricsAppearance.ts'
+import type { LyricsPresetConfig } from '../../shared/lyricsPresets.ts'
+import type { PlayerBarSettings } from '../../shared/playerBar.ts'
 
 export type { MiniPlayerSettings } from '../../shared/miniPlayer'
 export type { MotionPreference } from '../../shared/motion.ts'
@@ -22,6 +24,7 @@ export type {
   LiquidGlassTheme,
   SurfaceMaterial
 } from '../../shared/liquidGlass.ts'
+export type { PlayerBarMode, PlayerBarPageMode, PlayerBarSettings } from '../../shared/playerBar.ts'
 
 /** Global shortcuts are string-only; remote control may send structured seek/volume/queue commands. */
 export type PlayerShortcutAction =
@@ -179,6 +182,7 @@ export interface AppSettings {
   windowTransparencyEffect: WindowTransparencyEffectSettings
   useCoverTheme: boolean
   lyricsAppearance: LyricsAppearanceSettings
+  lyricsPresets: LyricsPresetConfig
   libraryFolders: string[]
   genreSeparators: string
   watchLibrary: boolean
@@ -196,6 +200,8 @@ export interface AppSettings {
   /** Switches cards and the playbar between the standard surface and liquid glass. */
   surfaceMaterial: SurfaceMaterial
   liquidGlass: LiquidGlassSettings
+  /** Standard vs mini playbar shape, plus now-playing auto-hide. */
+  playerBar: PlayerBarSettings
   nowPlayingBackground: NowPlayingBackground
   playbackResumeMode: PlaybackResumeMode
   sleepTimer: SleepTimerSettings
