@@ -67,6 +67,22 @@ struct AsioOpenConfig {
   long bufferSizeFrames = 0;
 };
 
+/**
+ * Why an open attempt failed, which decides whether another format is worth
+ * trying.
+ *
+ * A driver that cannot be activated or initialized will reject every format
+ * identically, so retrying only hides the real error. A driver that refused
+ * this particular rate or sample type may well accept the next candidate.
+ */
+enum class AsioOpenFailureKind : uint8_t {
+  None,
+  /** Activation, init, or another driver-wide fault. Retrying is pointless. */
+  Driver,
+  /** This rate/sample type/buffer size was refused. Another may work. */
+  Format
+};
+
 struct AsioOpenResult {
   AudioFormat actualFormat;
   long bufferSizeFrames = 0;
@@ -76,6 +92,7 @@ struct AsioOpenResult {
   // Native DSD drivers are inconsistent about ASIOFuture(kFutureGetIoFormat).
   // Preserve the negotiation outcome separately from the runtime channel proof.
   std::string nativeDsdNegotiation;
+  AsioOpenFailureKind failureKind = AsioOpenFailureKind::None;
 };
 
 struct AsioHostDiagnostics {
@@ -96,6 +113,23 @@ class IAsioHost {
 
   virtual std::vector<AsioDeviceInfo> enumerateDevices() = 0;
   virtual AsioHostDiagnostics diagnostics() const = 0;
+
+  /**
+   * Fill in the capability fields the ASIO registry cannot report: output
+   * channel count, the sample rates the driver actually accepts, the runtime
+   * channel sample type, the buffer-size range, and whether the driver can
+   * switch to a DSD I/O format.
+   *
+   * The registry only exposes driver identity, so without this probe every
+   * capability field stays at its default and format selection degenerates to
+   * a single guess that the driver is free to reject. Implementations open the
+   * driver once, query it, and restore whatever they changed.
+   *
+   * Returns false when the driver could not be interrogated at all; `info` is
+   * then left untouched and callers must fall back to identity-only data.
+   */
+  virtual bool probeDevice(const std::string& deviceId, AsioDeviceInfo* info, std::string* error) = 0;
+
   virtual bool open(const AsioOpenConfig& config, AsioOpenResult* result, std::string* error) = 0;
   virtual bool createBuffers(AsioBufferSwitchCallback bufferSwitch, AsioEventCallback eventCallback, std::string* error) = 0;
   virtual bool start(std::string* error) = 0;
@@ -111,7 +145,30 @@ class IAsioHost {
 std::unique_ptr<IAsioHost> createRealAsioHost();
 
 std::vector<int> asioDefaultSampleRateProbeSet();
+
+/**
+ * DSD semantic sample rates to probe, ascending, covering DSD64..DSD512 in both
+ * the 44.1kHz and 48kHz families.
+ *
+ * Kept separate from the PCM probe set on purpose. These are the values ASIO
+ * DSD drivers expect from CanSampleRate/SetSampleRate once a DSD I/O format is
+ * active, and feeding them into PCM rate selection would let a PCM stream
+ * negotiate a megahertz "rate". The PCM set tops out in the low megahertz for
+ * DoP carriers, so it can never answer whether DSD256 is available — which is
+ * why DSD capability has to be probed with its own rate list.
+ */
+std::vector<int> asioDsdSemanticRateProbeSet();
+
 std::string asioSampleFormatName(AudioSampleFormat format);
 std::string enumerateAsioDevicesJson();
+
+/**
+ * Device ids of ASIO drivers that a capability probe proved can accept a raw
+ * DSD I/O format. Used to auto-discover a DSD-capable route when the main
+ * output cannot carry DSD and the user has not pinned one explicitly.
+ *
+ * Ordering is the enumeration order, so the choice is stable across calls.
+ */
+std::vector<std::string> asioNativeDsdCapableDeviceIds();
 
 }  // namespace twilight::audio

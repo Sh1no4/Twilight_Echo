@@ -24,6 +24,11 @@ import type {
   SacdProgramMode
 } from './audioEngineTypes.ts'
 import type { DspGraphStatus, Vst3ScanDescriptor } from '../../shared/dspGraph.ts'
+import {
+  DEFAULT_DSD_ROUTE,
+  dsdRouteSettingsEqual,
+  normalizeDsdRouteSettings
+} from '../../shared/audioProcessingOptions.ts'
 
 export const AUDIO_OUTPUT_OPTIONS: AudioOutputOption[] = [
   {
@@ -86,6 +91,7 @@ export const DEFAULT_AUDIO_PROCESSING: AudioProcessingSettings = {
   highResolution: true,
   dsdToPcm: false,
   dsdOutputMode: 'auto',
+  dsdRoute: DEFAULT_DSD_ROUTE,
   sacdProgramMode: 'auto',
   eqEnabled: false,
   eqMode: 'graphic',
@@ -515,6 +521,7 @@ export function audioProcessingSettingsEqual(
     left.highResolution === right.highResolution &&
     left.dsdToPcm === right.dsdToPcm &&
     left.dsdOutputMode === right.dsdOutputMode &&
+    dsdRouteSettingsEqual(left.dsdRoute, right.dsdRoute) &&
     left.sacdProgramMode === right.sacdProgramMode &&
     left.eqEnabled === right.eqEnabled &&
     left.eqMode === right.eqMode &&
@@ -827,6 +834,7 @@ export function normalizeAudioProcessingSettings(
     highResolution: settings?.highResolution !== false,
     dsdToPcm: dsdOutputMode === 'pcm',
     dsdOutputMode,
+    dsdRoute: normalizeDsdRouteSettings(settings?.dsdRoute),
     sacdProgramMode,
     eqEnabled: settings?.eqEnabled === true,
     eqMode,

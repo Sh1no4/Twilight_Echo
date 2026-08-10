@@ -53,6 +53,86 @@ export const DSD_OUTPUT_MODE_OPTIONS: readonly LabeledOption<DsdOutputMode>[] = 
   { value: 'native', label: 'Native', description: 'Native DSD（平台/设备支持时）' }
 ] as const
 
+/**
+ * DSD 兼容层路由。与 dsdOutputMode 正交：mode 决定「要什么形态」，route 决定
+ * 「从哪条线出去」。部分 DAC 的自带 ASIO 驱动不接受 DSD 采样类型（或用户只有
+ * WASAPI），DSD 必然被降级为 DoP / PCM；此时可把 DSD 单独路由到一个已注册的
+ * DSD 代理 ASIO 驱动，由代理转成硬件要的线格式，而 PCM 仍走主输出。
+ *
+ * 引擎侧只认 backend + device，不认代理品牌名——代理识别只是 UI 标签。
+ */
+export interface DsdRouteSettings {
+  enabled: boolean
+  /** 空 = 沿用主输出后端 */
+  backend: string
+  /** 空 = 沿用主输出设备 */
+  device: string
+  /** PCM→DSD 上采样是否也走此路由 */
+  applyToPcmToDsd: boolean
+  /** true = 无法直通时报错停止，不静默降级为 PCM */
+  strictPassthrough: boolean
+}
+
+export const DEFAULT_DSD_ROUTE: DsdRouteSettings = {
+  enabled: false,
+  backend: '',
+  device: '',
+  applyToPcmToDsd: true,
+  strictPassthrough: false
+}
+
+export function isDsdRouteSettings(value: unknown): value is DsdRouteSettings {
+  if (!value || typeof value !== 'object') return false
+  const route = value as Partial<DsdRouteSettings>
+  return (
+    typeof route.enabled === 'boolean' &&
+    typeof route.backend === 'string' &&
+    typeof route.device === 'string' &&
+    typeof route.applyToPcmToDsd === 'boolean' &&
+    typeof route.strictPassthrough === 'boolean'
+  )
+}
+
+export function normalizeDsdRouteSettings(value: unknown): DsdRouteSettings {
+  const route = (value ?? {}) as Partial<DsdRouteSettings>
+  const backend = typeof route.backend === 'string' ? route.backend.trim() : ''
+  const device = typeof route.device === 'string' ? route.device.trim() : ''
+  return {
+    enabled: route.enabled === true,
+    backend,
+    device,
+    applyToPcmToDsd: route.applyToPcmToDsd !== false,
+    strictPassthrough: route.strictPassthrough === true
+  }
+}
+
+export function dsdRouteSettingsEqual(left: DsdRouteSettings, right: DsdRouteSettings): boolean {
+  return (
+    left.enabled === right.enabled &&
+    left.backend === right.backend &&
+    left.device === right.device &&
+    left.applyToPcmToDsd === right.applyToPcmToDsd &&
+    left.strictPassthrough === right.strictPassthrough
+  )
+}
+
+/** 只有开启且至少指定了一项覆写时，路由才真正偏离主输出。 */
+export function dsdRouteTargetsDistinctRoute(route: DsdRouteSettings): boolean {
+  return route.enabled && (route.backend.length > 0 || route.device.length > 0)
+}
+
+/**
+ * setAudioProcessing 的合并是浅展开：传入的 dsdRoute 会整体替换旧对象，缺失字段
+ * 由 normalizeDsdRouteSettings 补默认值（backend/device 变空串）。所以调用方必须
+ * 传完整路由，改单个字段用这个 helper 而不要手写 { enabled: true }。
+ */
+export function withDsdRoutePatch(
+  current: DsdRouteSettings,
+  patch: Partial<DsdRouteSettings>
+): DsdRouteSettings {
+  return normalizeDsdRouteSettings({ ...current, ...patch })
+}
+
 /** Canonical perfect-reason codes that Stage-1 UI must recognize. */
 export const STAGE1_PERFECT_REASON_CODES = [
   'volume_not_unity',

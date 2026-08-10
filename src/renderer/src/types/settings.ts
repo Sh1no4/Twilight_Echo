@@ -43,6 +43,7 @@ export type ChannelRoutingMode =
   | 'mono-to-multichannel'
 export type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native'
 export type SacdProgramMode = 'auto' | 'stereo' | 'multichannel'
+export type { DsdRouteSettings } from '../../../shared/audioProcessingOptions.ts'
 export type UiDensity = 'compact' | 'standard' | 'comfortable'
 export type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 export type LyricAlign = 'center' | 'left'
@@ -175,6 +176,7 @@ export interface AudioProcessingSettings {
   highResolution: boolean
   dsdToPcm: boolean
   dsdOutputMode: DsdOutputMode
+  dsdRoute: import('../../../shared/audioProcessingOptions.ts').DsdRouteSettings
   sacdProgramMode: SacdProgramMode
   eqEnabled: boolean
   eqMode: EqMode

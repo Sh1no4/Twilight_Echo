@@ -1,5 +1,7 @@
 #include "RealAsioHost.h"
 
+#include "DeviceCapabilityCache.h"
+
 #if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
 #include "windows/AsioControlThread.h"
 #include "windows/AsioDriverCatalog.h"
@@ -77,11 +79,61 @@ std::vector<AsioDeviceInfo> RealAsioHost::enumerateDevices() {
   if (!asioEnabled()) return {};
   std::vector<AsioDeviceInfo> devices;
   for (const auto& entry : asio_windows::AsioDriverCatalog::enumerate()) {
-    devices.push_back(deviceInfoFor(entry));
+    AsioDeviceInfo device = deviceInfoFor(entry);
+    // The registry has identity only. Prefer a previously probed capability
+    // record so format selection ranks against what the driver really accepts
+    // instead of a hardcoded guess set.
+    if (const auto cached = DeviceCapabilityCache::instance().get(device.id)) {
+      AsioDeviceInfo merged = *cached;
+      merged.id = device.id;
+      merged.name = device.name;
+      if (merged.driverName.empty()) merged.driverName = device.driverName;
+      device = merged;
+    }
+    devices.push_back(std::move(device));
   }
   return devices;
 #else
   return {};
+#endif
+}
+
+bool RealAsioHost::probeDevice(const std::string& deviceId, AsioDeviceInfo* info, std::string* error) {
+#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+  if (!info) {
+    if (error) *error = "ASIO capability probe requires an output record";
+    return false;
+  }
+  if (!asioEnabled()) {
+    if (error) *error = "ASIO backend is disabled by TWILIGHT_DISABLE_ASIO=1";
+    return false;
+  }
+  const auto entry = asio_windows::AsioDriverCatalog::resolve(deviceId);
+  if (!entry) {
+    if (error) *error = "ASIO device was not found or legacy device name is ambiguous";
+    return false;
+  }
+
+  AsioDeviceInfo probed = deviceInfoFor(*entry);
+  probed.capabilityVersion = DeviceCapabilityCache::instance().version(probed.id);
+
+  // A probe owns its own control thread and driver instance so it can never
+  // disturb the session this host may already be holding open.
+  auto controlThread = std::make_shared<asio_windows::AsioControlThread>();
+  asio_windows::AsioDriverSession session(*entry, controlThread);
+  const bool ok = session.probe(&probed, error);
+  session.close();
+  controlThread->stop();
+  if (!ok) return false;
+
+  DeviceCapabilityCache::instance().put(probed);
+  *info = probed;
+  return true;
+#else
+  (void)deviceId;
+  (void)info;
+  if (error) *error = "ASIO is available only in a Windows x64 build";
+  return false;
 #endif
 }
 
@@ -214,6 +266,18 @@ std::vector<int> asioDefaultSampleRateProbeSet() {
       1536000};
 }
 
+std::vector<int> asioDsdSemanticRateProbeSet() {
+  return {
+      2822400,   // DSD64
+      3072000,   // DSD64  (48k family)
+      5644800,   // DSD128
+      6144000,   // DSD128 (48k family)
+      11289600,  // DSD256
+      12288000,  // DSD256 (48k family)
+      22579200,  // DSD512
+      24576000};  // DSD512 (48k family)
+}
+
 std::string asioSampleFormatName(AudioSampleFormat format) {
   return sampleFormatToString(format);
 }
@@ -227,10 +291,32 @@ std::string enumerateAsioDevicesJson() {
     first = false;
     json << "{\"id\":\"" << jsonEscape(device.id) << "\",\"label\":\"" << jsonEscape(device.name)
          << "\",\"name\":\"" << jsonEscape(device.name)
-         << "\",\"backend\":\"asio\",\"isDefault\":" << (device.isDefault ? "true" : "false") << '}';
+         << "\",\"backend\":\"asio\",\"isDefault\":" << (device.isDefault ? "true" : "false")
+         << ",\"supportsNativeDsd\":" << (device.nativeDsdCapable ? "true" : "false")
+         << ",\"supportsDop\":" << (device.dopCapable ? "true" : "false") << '}';
   }
   json << ']';
   return json.str();
+}
+
+std::vector<std::string> asioNativeDsdCapableDeviceIds() {
+#if defined(_WIN32) && defined(_WIN64) && defined(TAE_ENABLE_ASIO)
+  auto host = createRealAsioHost();
+  std::vector<std::string> capable;
+  for (const auto& device : host->enumerateDevices()) {
+    AsioDeviceInfo probed = device;
+    // Probe results are cached, so repeated auto-discovery costs one driver
+    // interrogation per device per process, not one per track.
+    if (!device.nativeDsdCapable) {
+      std::string probeError;
+      if (!host->probeDevice(device.id, &probed, &probeError)) continue;
+    }
+    if (probed.nativeDsdCapable) capable.push_back(probed.id);
+  }
+  return capable;
+#else
+  return {};
+#endif
 }
 
 }  // namespace twilight::audio

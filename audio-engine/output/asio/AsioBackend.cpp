@@ -3,6 +3,7 @@
 #include "DeviceCapabilityCache.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <charconv>
 #include <cctype>
@@ -13,6 +14,7 @@
 #include <set>
 #include <thread>
 #include <tuple>
+#include <vector>
 
 namespace twilight::audio {
 namespace {
@@ -521,42 +523,75 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
     return false;
   }
 
+  // The ASIO registry reports identity only. Interrogate the driver before
+  // ranking formats so candidates come from real capabilities rather than a
+  // hardcoded guess set.
+  AsioDeviceInfo device = *deviceIt;
+  ensureDeviceCapabilities(&device);
+
   AudioFormat selected;
-  if (!chooseFormat(*deviceIt, requestedFormat, &selected)) {
+  const std::vector<AudioFormat> candidates = rankFormatCandidates(device, requestedFormat);
+  if (candidates.empty()) {
     if (error) *error = "ASIO 设备没有可协商的输出格式";
     diagnostics_.lastError = error ? *error : "ASIO 设备没有可协商的输出格式";
     outputInfo_.backend = "asio";
     outputInfo_.actualBackend = "asio";
     outputInfo_.accessMode = "exclusive";
     outputInfo_.devicePathKind = "asio";
-    outputInfo_.deviceName = deviceIt->name.empty() ? deviceIt->driverName : deviceIt->name;
+    outputInfo_.deviceName = device.name.empty() ? device.driverName : device.name;
     outputInfo_.actualDeviceName = outputInfo_.deviceName;
-    outputInfo_.driverName = deviceIt->driverName;
-    outputInfo_.actualDriverName = deviceIt->driverName;
+    outputInfo_.driverName = device.driverName;
+    outputInfo_.actualDriverName = device.driverName;
     outputInfo_.perfectReasonCode = "format_not_supported";
     outputInfo_.capabilityReason = diagnostics_.lastError;
     outputInfo_.perfectReason = diagnostics_.lastError;
     outputInfo_.diagnostics = diagnostics_;
     return false;
   }
-  deviceInfo_ = *deviceIt;
-  selected.channelCount = routedOutputChannels(deviceInfo_, requestedFormat.channelCount);
-  openConfig_.deviceId = deviceIt->id;
-  openConfig_.format = selected;
-  openConfig_.bufferSizeFrames = chooseBufferSize(deviceInfo_, selected);
+  deviceInfo_ = device;
+  openConfig_.deviceId = device.id;
 
+  // Walk the ranked candidates. A driver may reject a rate or sample type that
+  // looked plausible from its capability record, and a single rejection must
+  // not become "audio engine unavailable" while other candidates remain.
   AsioOpenResult result;
-  if (!host_->open(openConfig_, &result, error)) {
+  std::string lastOpenError;
+  bool opened = false;
+  for (const AudioFormat& candidate : candidates) {
+    AudioFormat attempt = candidate;
+    attempt.channelCount = routedOutputChannels(deviceInfo_, requestedFormat.channelCount);
+    openConfig_.format = attempt;
+    openConfig_.bufferSizeFrames = chooseBufferSize(deviceInfo_, attempt);
+
+    std::string attemptError;
+    result = AsioOpenResult{};
+    if (host_->open(openConfig_, &result, &attemptError)) {
+      selected = attempt;
+      opened = true;
+      break;
+    }
+    if (lastOpenError.empty() || !attemptError.empty()) lastOpenError = attemptError;
+    host_->close();
+    // Only a format refusal leaves another candidate worth trying. A driver-wide
+    // fault rejects everything identically, so retrying would just bury the real
+    // error behind the last candidate's message.
+    if (result.failureKind == AsioOpenFailureKind::Driver) break;
+  }
+
+  if (!opened) {
+    if (error) {
+      *error = lastOpenError.empty() ? "ASIO 设备拒绝了所有候选输出格式" : lastOpenError;
+    }
     diagnostics_.nativeDsdNegotiation = result.nativeDsdNegotiation;
-    if (error) diagnostics_.lastError = *error;
+    diagnostics_.lastError = error ? *error : "ASIO 设备拒绝了所有候选输出格式";
     outputInfo_.backend = "asio";
     outputInfo_.actualBackend = "asio";
     outputInfo_.accessMode = "exclusive";
     outputInfo_.devicePathKind = "asio";
-    outputInfo_.deviceName = deviceIt->name.empty() ? deviceIt->driverName : deviceIt->name;
+    outputInfo_.deviceName = device.name.empty() ? device.driverName : device.name;
     outputInfo_.actualDeviceName = outputInfo_.deviceName;
-    outputInfo_.driverName = deviceIt->driverName;
-    outputInfo_.actualDriverName = deviceIt->driverName;
+    outputInfo_.driverName = device.driverName;
+    outputInfo_.actualDriverName = device.driverName;
     outputInfo_.perfectReasonCode = "backend_open_failure";
     outputInfo_.capabilityReason = diagnostics_.lastError;
     outputInfo_.perfectReason = diagnostics_.lastError;
@@ -571,11 +606,11 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   outputFormat_.channelCount = requestedFormat.channelCount > 0 ? requestedFormat.channelCount : selected.channelCount;
   if (outputFormat_.bitDepth <= 0) outputFormat_.bitDepth = selected.bitDepth;
   outputFormat_ = normalizeAsioDopOutputFormat(openConfig_.format, outputFormat_);
-  driverName_ = result.driverName.empty() ? deviceIt->driverName : result.driverName;
+  driverName_ = result.driverName.empty() ? device.driverName : result.driverName;
   driverVersion_ = result.driverVersion;
   bufferSizeFrames_ = result.bufferSizeFrames;
   latencyFrames_ = result.latencyFrames;
-  deviceName_ = deviceIt->name.empty() ? driverName_ : deviceIt->name;
+  deviceName_ = device.name.empty() ? driverName_ : device.name;
 
   outputInfo_ = {};
   outputInfo_.exclusive = true;
@@ -830,6 +865,73 @@ std::string AsioBackend::deviceName() const {
   return deviceName_;
 }
 
+void AsioBackend::ensureDeviceCapabilities(AsioDeviceInfo* device) const {
+  if (!device) return;
+  // Sample rates plus a sample type is the minimum needed to rank candidates
+  // against reality. Anything less means this record is registry-only.
+  const bool hasCapabilities = !device->supportedSampleRates.empty() && !device->sampleFormats.empty();
+  if (hasCapabilities) return;
+
+  AsioDeviceInfo probed = *device;
+  std::string probeError;
+  if (host_->probeDevice(device->id, &probed, &probeError)) {
+    *device = probed;
+    return;
+  }
+  // A probe-hostile driver still deserves an attempt. Leaving the record as-is
+  // keeps the legacy guess-set path, which the candidate retry loop now makes
+  // survivable.
+}
+
+std::vector<AudioFormat> AsioBackend::rankFormatCandidates(
+    const AsioDeviceInfo& device,
+    const AudioFormat& requestedFormat) const {
+  std::vector<AudioFormat> ranked;
+  AudioFormat best;
+  if (!chooseFormat(device, requestedFormat, &best)) return ranked;
+  ranked.push_back(best);
+
+  // A Native DSD request has one legal wire form per packing; the session
+  // negotiates the packing itself, so alternates would only re-ask the same
+  // question.
+  if (isNativeDsdRequest(requestedFormat)) return ranked;
+
+  // Alternates for PCM: keep the negotiated rate but offer the other container
+  // types drivers commonly expose, then the device's own default rate. This is
+  // what turns a single driver refusal from a playback failure into a retry.
+  const std::array<AudioSampleFormat, 5> containerOrder = {
+      AudioSampleFormat::Int32Interleaved,
+      AudioSampleFormat::Int24In32Interleaved,
+      AudioSampleFormat::Int24Interleaved,
+      AudioSampleFormat::Float32Interleaved,
+      AudioSampleFormat::Int16Interleaved};
+
+  const auto pushCandidate = [&](int sampleRate, AudioSampleFormat sampleFormat) {
+    if (sampleRate <= 0) return;
+    const int depth = bitDepthForFormat(sampleFormat);
+    const bool duplicate = std::any_of(ranked.begin(), ranked.end(), [&](const AudioFormat& existing) {
+      return existing.sampleRate == sampleRate && existing.sampleFormat == sampleFormat;
+    });
+    if (duplicate) return;
+    AudioFormat candidate = best;
+    candidate.sampleRate = sampleRate;
+    candidate.sampleFormat = sampleFormat;
+    candidate.bitDepth = depth;
+    ranked.push_back(candidate);
+  };
+
+  for (const AudioSampleFormat sampleFormat : containerOrder) {
+    pushCandidate(best.sampleRate, sampleFormat);
+  }
+  if (device.defaultSampleRate > 0 && device.defaultSampleRate != best.sampleRate) {
+    pushCandidate(device.defaultSampleRate, best.sampleFormat);
+    for (const AudioSampleFormat sampleFormat : containerOrder) {
+      pushCandidate(device.defaultSampleRate, sampleFormat);
+    }
+  }
+  return ranked;
+}
+
 bool AsioBackend::chooseFormat(const AsioDeviceInfo& device, const AudioFormat& requestedFormat, AudioFormat* selected) const {
   if (!selected || requestedFormat.sampleRate <= 0 || requestedFormat.channelCount <= 0) return false;
 
@@ -837,6 +939,22 @@ bool AsioBackend::chooseFormat(const AsioDeviceInfo& device, const AudioFormat& 
   // raw DSD request directly and only treat it as capable after getChannelInfo()
   // reports a matching DSD type at runtime.
   if (isNativeDsdRequest(requestedFormat) && !device.nativeDsdCapable) {
+    *selected = requestedFormat;
+    return true;
+  }
+
+  // A DSD-capable device whose probed rate list does not name this rate still
+  // gets the request verbatim.
+  //
+  // Capability data is advisory: only the driver can actually refuse a rate, and
+  // it does so at open() where the session negotiates the I/O format and the
+  // candidate loop can react. Filtering the rate out here instead reports "no
+  // negotiable format", which the pipeline reads as "this device cannot do DSD"
+  // and answers by degrading to DoP or PCM. That made a *better* probe produce
+  // *worse* routing: before capabilities were probed, this same request took the
+  // branch above and passed through untouched.
+  if (isNativeDsdRequest(requestedFormat) &&
+      !containsSampleRate(device.nativeDsdSampleRates, requestedFormat.sampleRate)) {
     *selected = requestedFormat;
     return true;
   }
@@ -853,14 +971,16 @@ bool AsioBackend::chooseFormat(const AsioDeviceInfo& device, const AudioFormat& 
   if (sampleFormats.empty()) sampleFormats.push_back(device.defaultSampleFormat);
   if (!containsFormat(sampleFormats, device.defaultSampleFormat)) sampleFormats.push_back(device.defaultSampleFormat);
   if (device.bitDepths.empty()) {
-    if (!containsFormat(sampleFormats, AudioSampleFormat::Int16Interleaved)) {
-      sampleFormats.push_back(AudioSampleFormat::Int16Interleaved);
-    }
-    if (!containsFormat(sampleFormats, AudioSampleFormat::Int24Interleaved)) {
-      sampleFormats.push_back(AudioSampleFormat::Int24Interleaved);
-    }
-    if (!containsFormat(sampleFormats, AudioSampleFormat::Float32Interleaved)) {
-      sampleFormats.push_back(AudioSampleFormat::Float32Interleaved);
+    // Int32Lsb / Int32Lsb24 are the types most professional drivers expose, and
+    // some expose nothing else. Omitting them made the fallback guess miss the
+    // common case outright.
+    for (const AudioSampleFormat fallback : {
+             AudioSampleFormat::Int16Interleaved,
+             AudioSampleFormat::Int24Interleaved,
+             AudioSampleFormat::Int24In32Interleaved,
+             AudioSampleFormat::Int32Interleaved,
+             AudioSampleFormat::Float32Interleaved}) {
+      if (!containsFormat(sampleFormats, fallback)) sampleFormats.push_back(fallback);
     }
   }
 
@@ -873,7 +993,18 @@ bool AsioBackend::chooseFormat(const AsioDeviceInfo& device, const AudioFormat& 
       const int normalized = bitDepthForFormat(sampleFormat);
       if (isNativeDsdRequest(requestedFormat) && !isDsdSampleFormat(sampleFormat)) continue;
       if (!isNativeDsdRequest(requestedFormat) && isDsdSampleFormat(sampleFormat)) continue;
-      if (!device.bitDepths.empty()) {
+      // bitDepths describes PCM container widths, so it only gates PCM
+      // candidates. DSD and DoP carrier formats arrive from the device's own
+      // nativeDsd*/dopCarrier* declarations, which already are the capability
+      // statement for those paths.
+      //
+      // Applying the whitelist to them silently discards every DSD candidate:
+      // a probe reports the one PCM width it observed on channel 0 (commonly
+      // 32), and DSD normalizes to a 1-bit depth that can never match it.
+      const bool declaredCapabilityFormat =
+          (device.nativeDsdCapable && containsFormat(device.nativeDsdSampleFormats, sampleFormat)) ||
+          (device.dopCapable && containsFormat(device.dopCarrierSampleFormats, sampleFormat));
+      if (!device.bitDepths.empty() && !isDsdSampleFormat(sampleFormat) && !declaredCapabilityFormat) {
         const bool supportedDepth = std::find_if(device.bitDepths.begin(), device.bitDepths.end(), [&](int depth) {
                                       return normalizeBitDepth(depth) == normalized;
                                     }) != device.bitDepths.end();

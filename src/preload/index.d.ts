@@ -352,6 +352,15 @@ type ChannelRoutingMode =
   | 'mono-to-multichannel'
 type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native'
 type SacdProgramMode = 'auto' | 'stereo' | 'multichannel'
+
+/** DSD 兼容层路由；与 dsdOutputMode 正交。 */
+interface DsdRouteSettings {
+  enabled: boolean
+  backend: string
+  device: string
+  applyToPcmToDsd: boolean
+  strictPassthrough: boolean
+}
 type EqualizerFilterType =
   | 'peak'
   | 'lowShelf'
@@ -402,6 +411,7 @@ interface AudioProcessingSettings {
   highResolution: boolean
   dsdToPcm: boolean
   dsdOutputMode: DsdOutputMode
+  dsdRoute: DsdRouteSettings
   sacdProgramMode: SacdProgramMode
   eqEnabled: boolean
   eqMode: EqMode

@@ -490,6 +490,16 @@ export type ChannelRoutingMode =
   | 'mono-to-multichannel'
 export type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native'
 export type SacdProgramMode = 'auto' | 'stereo' | 'multichannel'
+
+/** DSD 兼容层路由；与 dsdOutputMode 正交。见 shared/audioProcessingOptions.ts。 */
+export interface DsdRouteSettings {
+  enabled: boolean
+  backend: string
+  device: string
+  applyToPcmToDsd: boolean
+  strictPassthrough: boolean
+}
+
 export type EqualizerFilterType =
   | 'peak'
   | 'lowShelf'
@@ -518,6 +528,7 @@ export interface AudioProcessingSettings {
   highResolution: boolean
   dsdToPcm: boolean
   dsdOutputMode: DsdOutputMode
+  dsdRoute: DsdRouteSettings
   sacdProgramMode: SacdProgramMode
   eqEnabled: boolean
   eqMode: EqMode
@@ -1130,6 +1141,14 @@ export interface OutputDiagnostics {
   lifetimeRecoveryCount: number
   driverRestartCount: number
   deviceLostCount: number
+  /**
+   * DSD 兼容层路由的运行时事实：实际是否经覆写路由输出、走的哪条线，
+   * 以及覆写失败回退时的原因。可选，旧引擎不上报这些字段。
+   */
+  dsdRouteOverrideActive?: boolean
+  dsdRouteBackend?: string
+  dsdRouteDevice?: string
+  dsdRouteFallbackReason?: string
   lastError: string
 }
 

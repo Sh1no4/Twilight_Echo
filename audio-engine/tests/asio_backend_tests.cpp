@@ -237,6 +237,102 @@ void testAsioRecoveryQueueChecksStopRequestedWhileHoldingQueueLock() {
   assert(stopCheckPos < pushPos);
 }
 
+// Regression: a driver refusing the first ranked candidate must not become a
+// hard "backend unavailable". Before candidate retry, open() asked the host
+// exactly once and any refusal ended playback.
+void testOpenRetriesRemainingCandidatesAfterDriverRefusal() {
+  auto host = makeHost();
+  auto* rawHost = host.get();
+  // Refuse the first two candidates as format rejections; the third must still
+  // be attempted.
+  rawHost->openFailure = MockAsioHost::OpenFailure::FormatRefused;
+  rawHost->failOpenCount = 2;
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("asio:mock", sourceFormat(48000, 24), &error));
+  assert(rawHost->openCalls == 3);
+  assert(backend.outputInfo().actualBackend == "asio");
+}
+
+// Regression: when every candidate is refused the error must name the real
+// driver refusal, not a generic engine failure.
+void testOpenReportsDriverRefusalWhenAllCandidatesFail() {
+  auto host = makeHost();
+  auto* rawHost = host.get();
+  rawHost->openFailure = MockAsioHost::OpenFailure::FormatRefused;
+  rawHost->failOpenCount = 99;
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(!backend.open("asio:mock", sourceFormat(48000, 24), &error));
+  assert(rawHost->openCalls > 1);
+  assert(backend.outputInfo().perfectReasonCode == "backend_open_failure");
+}
+
+// A driver-wide fault rejects every format identically. Retrying would bury the
+// real error behind the last candidate's message, so the sequence must stop at
+// the first attempt.
+void testOpenDoesNotRetryAfterDriverLevelFault() {
+  auto host = makeHost();
+  auto* rawHost = host.get();
+  rawHost->failDriverInitCount = 1;
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(!backend.open("asio:mock", sourceFormat(48000, 24), &error));
+  assert(rawHost->openCalls == 1);
+  assert(error == "mock driver init failure");
+}
+
+// The ASIO registry reports identity only. A registry-only record must trigger
+// a capability probe so format ranking sees what the driver really accepts.
+void testOpenProbesRegistryOnlyDeviceRecord() {
+  auto host = std::make_unique<MockAsioHost>();
+  // Identity only, exactly what RealAsioHost::enumerateDevices can know.
+  AsioDeviceInfo registryOnly;
+  registryOnly.id = "asio:mock";
+  registryOnly.name = "Mock ASIO";
+  registryOnly.driverName = "Mock ASIO";
+  host->devices.push_back(registryOnly);
+  // What the probe contributes once it interrogates the driver.
+  host->probeResults.push_back(makeMockAsioDevice("asio:mock", {44100, 48000, 96000}, 2));
+
+  auto* rawHost = host.get();
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("asio:mock", sourceFormat(96000, 24), &error));
+  assert(rawHost->probeCalls == 1);
+  assert(rawHost->lastOpenConfig.format.sampleRate == 96000);
+}
+
+// A probe costs a driver open, so an already-populated capability record must
+// not pay for one.
+void testOpenSkipsProbeWhenCapabilitiesAlreadyKnown() {
+  auto host = makeHost();
+  auto* rawHost = host.get();
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("asio:mock", sourceFormat(48000, 24), &error));
+  assert(rawHost->probeCalls == 0);
+}
+
+// A probe-hostile driver must still get an open attempt; the retry loop is what
+// makes the legacy guess path survivable.
+void testOpenStillAttemptsWhenProbeFails() {
+  auto host = std::make_unique<MockAsioHost>();
+  AsioDeviceInfo registryOnly;
+  registryOnly.id = "asio:mock";
+  registryOnly.name = "Mock ASIO";
+  registryOnly.driverName = "Mock ASIO";
+  host->devices.push_back(registryOnly);
+  host->failProbeCount = 99;
+
+  auto* rawHost = host.get();
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("asio:mock", sourceFormat(48000, 24), &error));
+  assert(rawHost->probeCalls == 1);
+  assert(rawHost->openCalls >= 1);
+}
+
 void testAsioEmptyCatalogReportsArchitectureMismatch() {
   class DiagnosticHost final : public IAsioHost {
    public:
@@ -247,6 +343,10 @@ void testAsioEmptyCatalogReportsArchitectureMismatch() {
       result.buildEnabled = true;
       result.registeredDriverCount32 = 2;
       return result;
+    }
+    bool probeDevice(const std::string&, AsioDeviceInfo*, std::string* error) override {
+      if (error) *error = "no ASIO driver to probe";
+      return false;
     }
     bool open(const AsioOpenConfig&, AsioOpenResult*, std::string*) override { return false; }
     bool createBuffers(AsioBufferSwitchCallback, AsioEventCallback, std::string*) override { return false; }
@@ -821,6 +921,9 @@ void testNativeDsdUnderrunWarmupCallbacks() {
   assert(backend.outputInfo().diagnostics.sessionUnderrunCount >= 1);
 }
 
+// A rate the driver genuinely refuses must still fail the open — but the
+// refusal has to come from the driver, not from the backend pre-filtering on a
+// cached capability list.
 void testNativeDsdRejectsUnsupportedRate() {
   MockAsioHost::DsdProfile profile;
   profile.nativeDsdCapable = true;
@@ -828,12 +931,104 @@ void testNativeDsdRejectsUnsupportedRate() {
   profile.nativeDsdSampleFormats = {AudioSampleFormat::DsdInt8Lsb1};
   auto host = std::make_unique<MockAsioHost>();
   host->devices.push_back(makeMockAsioDevice("asio:native-rate", {48000}, 2, AudioSampleFormat::Float32Interleaved, profile));
+  auto* rawHost = host.get();
 
   AsioBackend backend(std::move(host));
   std::string error;
   assert(!backend.open("asio:native-rate", sourceFormat(5644800, 1, 2, AudioSampleFormat::DsdInt8Lsb1), &error));
   assert(!error.empty());
-  assert(backend.outputInfo().perfectReasonCode == "format_not_supported");
+  // The attempt must reach the driver. Skipping it is what silently downgraded
+  // DSD to PCM on drivers whose probe under-reported their DSD rates.
+  assert(rawHost->openCalls > 0);
+  assert(backend.outputInfo().perfectReasonCode == "backend_open_failure");
+}
+
+// Regression: DSD256 on a driver whose probed DSD rate list omits that rate.
+//
+// Real DSD drivers routinely answer CanSampleRate inconsistently outside an
+// active DSD I/O format, so the probe can mark a device DSD-capable while
+// listing only a subset of its rates. Pre-filtering on that list reported "no
+// negotiable format", which the pipeline read as "cannot do DSD" and answered by
+// resampling to PCM — the driver was never even asked.
+void testNativeDsdAttemptsRateMissingFromProbedCapabilities() {
+  MockAsioHost::DsdProfile profile;
+  profile.nativeDsdCapable = true;
+  // Probe saw DSD64 only; the hardware also does DSD256.
+  profile.nativeDsdSampleRates = {2822400};
+  profile.nativeDsdSampleFormats = {AudioSampleFormat::DsdInt8Lsb1};
+  auto host = std::make_unique<MockAsioHost>();
+  auto device = makeMockAsioDevice(
+      "asio:dsd256",
+      {44100, 48000, 96000, 192000, 384000},
+      2,
+      AudioSampleFormat::Int32Interleaved,
+      profile);
+  host->devices.push_back(device);
+  auto* rawHost = host.get();
+  // The driver really does accept DSD256, so it must not refuse the attempt.
+  rawHost->enforceDeclaredNativeDsdRates = false;
+  rawHost->channelFormats = {AudioSampleFormat::DsdInt8Lsb1, AudioSampleFormat::DsdInt8Lsb1};
+
+  AsioBackend backend(std::move(host));
+  std::string error;
+  const AudioFormat request = sourceFormat(11289600, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
+  assert(backend.open("asio:dsd256", request, &error));
+  // Verbatim DSD256, not a PCM rate from the device's PCM capability list.
+  assert(rawHost->lastOpenConfig.format.sampleRate == 11289600);
+  assert(rawHost->lastOpenConfig.format.sampleFormat == AudioSampleFormat::DsdInt8Lsb1);
+  assert(isDsdSampleFormat(backend.outputFormat().sampleFormat));
+  assert(backend.outputFormat().sampleRate == 11289600);
+}
+
+// The probed PCM container width must not gate DSD candidates. A probe records
+// the one PCM type it saw on channel 0 (commonly Int32 => 32), while DSD
+// normalizes to a 1-bit depth, so a shared whitelist discards every DSD
+// candidate for a rate the device does advertise.
+void testNativeDsdCandidateSurvivesProbedPcmBitDepth() {
+  MockAsioHost::DsdProfile profile;
+  profile.nativeDsdCapable = true;
+  profile.nativeDsdSampleRates = {2822400, 5644800, 11289600};
+  profile.nativeDsdSampleFormats = {AudioSampleFormat::DsdInt8Lsb1};
+  auto host = std::make_unique<MockAsioHost>();
+  auto device = makeMockAsioDevice(
+      "asio:pcm-depth",
+      {44100, 48000, 192000},
+      2,
+      AudioSampleFormat::Int32Interleaved,
+      profile);
+  // Exactly what a probe contributes: one observed PCM container width.
+  device.bitDepths = {32};
+  device.defaultBitDepth = 32;
+  host->devices.push_back(device);
+  auto* rawHost = host.get();
+  rawHost->channelFormats = {AudioSampleFormat::DsdInt8Lsb1, AudioSampleFormat::DsdInt8Lsb1};
+
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("asio:pcm-depth", sourceFormat(11289600, 1, 2, AudioSampleFormat::DsdInt8Lsb1), &error));
+  assert(rawHost->lastOpenConfig.format.sampleRate == 11289600);
+  assert(isDsdSampleFormat(rawHost->lastOpenConfig.format.sampleFormat));
+}
+
+// The PCM probe set tops out in the low megahertz for DoP carriers, so it can
+// never answer whether DSD64..DSD512 are available. DSD capability needs its own
+// rate list, in both the 44.1k and 48k families.
+void testDsdSemanticRateProbeSetCoversDsd64Through512() {
+  const auto dsdRates = asioDsdSemanticRateProbeSet();
+  for (int rate : {2822400, 5644800, 11289600, 22579200}) {
+    assert(std::find(dsdRates.begin(), dsdRates.end(), rate) != dsdRates.end());
+  }
+  for (int rate : {3072000, 6144000, 12288000, 24576000}) {
+    assert(std::find(dsdRates.begin(), dsdRates.end(), rate) != dsdRates.end());
+  }
+  assert(std::is_sorted(dsdRates.begin(), dsdRates.end()));
+
+  // Keep the two sets disjoint: a PCM stream must never negotiate a DSD
+  // semantic rate, and a DSD probe must not waste calls on PCM rates.
+  const auto pcmRates = asioDefaultSampleRateProbeSet();
+  for (int rate : dsdRates) {
+    assert(std::find(pcmRates.begin(), pcmRates.end(), rate) == pcmRates.end());
+  }
 }
 
 void testNativeDsdRuntimeSampleTypeMismatch() {
@@ -1539,6 +1734,12 @@ int main() {
   testAsioHostEventCallbackQueuesRecoveryOffDriverCallback();
   testAsioRecoveryQueueChecksStopRequestedWhileHoldingQueueLock();
   testAsioEmptyCatalogReportsArchitectureMismatch();
+  testOpenRetriesRemainingCandidatesAfterDriverRefusal();
+  testOpenReportsDriverRefusalWhenAllCandidatesFail();
+  testOpenDoesNotRetryAfterDriverLevelFault();
+  testOpenProbesRegistryOnlyDeviceRecord();
+  testOpenSkipsProbeWhenCapabilitiesAlreadyKnown();
+  testOpenStillAttemptsWhenProbeFails();
   testFormatNegotiation();
   testOpenFailureAndFallbackFormats();
   testExtremeSampleRates();
@@ -1554,6 +1755,9 @@ int main() {
   testNativeDsdRuntimeDiscoveryWithoutCatalogCapability();
   testNativeDsdUnderrunWarmupCallbacks();
   testNativeDsdRejectsUnsupportedRate();
+  testNativeDsdAttemptsRateMissingFromProbedCapabilities();
+  testNativeDsdCandidateSurvivesProbedPcmBitDepth();
+  testDsdSemanticRateProbeSetCoversDsd64Through512();
   testNativeDsdRuntimeSampleTypeMismatch();
   testNativeDsdRuntimeChannelFormatMismatch();
   testChannelCounts();

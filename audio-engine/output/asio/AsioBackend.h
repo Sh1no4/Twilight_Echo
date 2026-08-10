@@ -48,6 +48,20 @@ class AsioBackend final : public IOutputBackend {
   struct FormatCandidate;
 
   bool chooseFormat(const AsioDeviceInfo& device, const AudioFormat& requestedFormat, AudioFormat* selected) const;
+  /**
+   * Ranked format candidates, best first. The driver is the only authority on
+   * what it accepts, so open() walks this list instead of committing to a
+   * single guess that a rejection turns into a hard playback failure.
+   */
+  std::vector<AudioFormat> rankFormatCandidates(
+      const AsioDeviceInfo& device,
+      const AudioFormat& requestedFormat) const;
+  /**
+   * Ensure `device` carries probed capabilities, interrogating the driver on a
+   * cache miss. Falls back to the identity-only record when the probe fails so
+   * a probe-hostile driver still gets the legacy best-effort path.
+   */
+  void ensureDeviceCapabilities(AsioDeviceInfo* device) const;
   long chooseBufferSize(const AsioDeviceInfo& device, const AudioFormat& requestedFormat) const;
   int routedOutputChannels(const AsioDeviceInfo& device, int sourceChannels) const;
   void renderBuffer(long bufferIndex);

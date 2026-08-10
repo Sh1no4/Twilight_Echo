@@ -7,6 +7,9 @@ import type {
 } from '../../shared/dspGraph.ts'
 import type { DspStatePayload } from '../../shared/audioServiceContract.ts'
 import type { CueRange } from '../../shared/cue.ts'
+import type { DsdRouteSettings } from '../../shared/audioProcessingOptions.ts'
+
+export type { DsdRouteSettings }
 
 export type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 export type PlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle'
@@ -52,6 +55,8 @@ export interface AudioProcessingSettings {
   highResolution: boolean
   dsdToPcm: boolean
   dsdOutputMode: DsdOutputMode
+  /** DSD 兼容层路由：与 dsdOutputMode 正交，决定 DSD 走哪条 backend/device。 */
+  dsdRoute: DsdRouteSettings
   sacdProgramMode: SacdProgramMode
   eqEnabled: boolean
   eqMode: EqMode
@@ -175,6 +180,11 @@ export interface OutputDiagnostics {
   asioRegisteredDriverCount32?: number
   asioRegisteredDriverCount64?: number
   asioLoadableDriverCount64?: number
+  /** DSD 兼容层路由的运行时事实（实际走了哪条线），不是配置意图。 */
+  dsdRouteOverrideActive?: boolean
+  dsdRouteBackend?: string
+  dsdRouteDevice?: string
+  dsdRouteFallbackReason?: string
   lastError: string
 }
 

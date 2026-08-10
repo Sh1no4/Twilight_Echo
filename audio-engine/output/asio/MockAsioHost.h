@@ -27,7 +27,10 @@ class MockAsioHost final : public IAsioHost {
 
   enum class OpenFailure {
     DriverInit,
-    DriverOpen
+    DriverOpen,
+    // A refusal of this specific rate / sample type. The backend is expected to
+    // try its next ranked candidate, unlike the two driver-wide faults above.
+    FormatRefused
   };
 
   std::vector<AsioDeviceInfo> devices;
@@ -50,11 +53,28 @@ class MockAsioHost final : public IAsioHost {
   int failDriverOpenCount = 0;
   int failCreateBuffersCount = 0;
   int failStartCount = 0;
+  int probeCalls = 0;
+  int failProbeCount = 0;
+  /**
+   * Refuse a raw DSD open whose semantic rate is absent from the target
+   * device's declared nativeDsdSampleRates, as a real driver does.
+   *
+   * Without this the mock accepts every format, so a test cannot tell a backend
+   * that pre-filters on cached capabilities from one that asks the driver. The
+   * driver is the only authority on acceptance; capability data only ranks
+   * candidates. Devices that declare no DSD rates are not constrained.
+   */
+  bool enforceDeclaredNativeDsdRates = true;
+  // Capabilities the probe contributes, keyed by device id. Devices in
+  // `devices` may start capability-free to model the registry-only enumeration
+  // the real host performs before any probe.
+  std::vector<AsioDeviceInfo> probeResults;
   OpenFailure openFailure = OpenFailure::DriverOpen;
   bool started = false;
 
   std::vector<AsioDeviceInfo> enumerateDevices() override;
   AsioHostDiagnostics diagnostics() const override;
+  bool probeDevice(const std::string& deviceId, AsioDeviceInfo* info, std::string* error) override;
   bool open(const AsioOpenConfig& config, AsioOpenResult* result, std::string* error) override;
   bool createBuffers(AsioBufferSwitchCallback bufferSwitch, AsioEventCallback eventCallback, std::string* error) override;
   bool start(std::string* error) override;

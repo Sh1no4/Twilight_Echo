@@ -765,8 +765,7 @@ std::atomic<int> g_fakeTopologyStartFailures{0};
 std::atomic<bool> g_fakeTopologyDeviceInvalidated{false};
 // Simulates a compatibility-route device that is configured but not present
 // (proxy driver uninstalled, or the device is busy). Any open() for this id fails.
-constexpr const char* kFakeMissingDeviceId = "missing-dsd-proxy";
-std::atomic<bool> g_fakeMissingDeviceEnabled{false};
+constexpr const char* kMissingDsdProxyDeviceId = "missing-dsd-proxy";
 std::atomic<int> g_decodeFirstReadDelayMs{0};
 std::atomic<int> g_decodeEveryReadDelayMs{0};
 std::mutex g_decoderSeekMutex;
@@ -2040,6 +2039,204 @@ void testAsioAutoPrefersNativeDsd() {
   assertLatestPlaybackContains(engine, "\"outputPerfect\":true");
 }
 
+// ---- DSD compatibility route -----------------------------------------------
+// The user's main output cannot carry Native DSD (harness default is
+// wasapi-exclusive, which the fake backend reports as non-DSD-capable), so DSD
+// would normally degrade to DoP. An override sends only the DSD stream to a
+// separate ASIO backend/device, which is exactly the foo_dsd_asio proxy case.
+
+void testDsdRouteOverrideCarriesNativeDsdOffMainBackend() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+  // Main output stays on wasapi-exclusive; only DSD is rerouted to asio.
+  assert(
+      engine.setDspConfig(
+          "{\"dsdRoute\":{\"enabled\":true,\"backend\":\"asio\",\"device\":\"dsd-proxy\"}}") ==
+      TAE_RESULT_OK);
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  // The DSD request went out over the override backend and device, not the main one.
+  assert(snapshots.front().backendId == "asio");
+  assert(snapshots.front().info.deviceName == "dsd-proxy");
+  assert(formatLooksDsdSourceRequest(snapshots.front().requestedFormat));
+  assert(snapshots.front().typedStarted);
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"native\"");
+  assertLatestPlaybackContains(engine, "\"dsdRouteOverrideActive\":true");
+  assertLatestPlaybackContains(engine, "\"dsdRouteBackend\":\"asio\"");
+  assertLatestPlaybackContains(engine, "\"dsdRouteDevice\":\"dsd-proxy\"");
+}
+
+void testDsdRouteOverrideFallsBackToMainRouteWhenProxyMissing() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+  assert(engine.setOutputBackend("asio") == TAE_RESULT_OK);
+  // Points at a device the fake backend always refuses to open.
+  const std::string config = std::string("{\"dsdRoute\":{\"enabled\":true,\"device\":\"") +
+                             kMissingDsdProxyDeviceId + "\"}}";
+  assert(engine.setDspConfig(config) == TAE_RESULT_OK);
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(2));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 2);
+  // First attempt targets the missing proxy and fails to open.
+  assert(snapshots[0].info.deviceName == kMissingDsdProxyDeviceId);
+  assert(!snapshots[0].started && !snapshots[0].typedStarted);
+  // Non-strict mode retries the main route rather than degrading straight to DoP.
+  assert(snapshots[1].info.deviceName != kMissingDsdProxyDeviceId);
+  assert(formatLooksDsdSourceRequest(snapshots[1].requestedFormat));
+  assert(snapshots[1].typedStarted);
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"native\"");
+  // The stream did NOT leave over the override, so status must not claim it did.
+  assertLatestPlaybackContains(engine, "\"dsdRouteOverrideActive\":false");
+}
+
+void testDsdRouteStrictPassthroughFailsInsteadOfDegradingToPcm() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+  assert(engine.setOutputBackend("asio") == TAE_RESULT_OK);
+  // Native DSD cannot be proven and DoP is unproven, so the only remaining
+  // option would be a silent PCM downgrade -- which strict mode forbids.
+  g_fakeNativeDsdBehavior = FakeNativeDsdBehavior::Mismatch;
+  g_fakeDopBehavior = FakeDopBehavior::Unproven;
+  assert(
+      engine.setDspConfig(
+          "{\"dsdRoute\":{\"enabled\":true,\"device\":\"dsd-proxy\",\"strictPassthrough\":true}}") ==
+      TAE_RESULT_OK);
+
+  // Playback fails outright instead of opening a PCM stream behind the user's back.
+  assert(engine.play(harness.dsdPath(), 0.0) != TAE_RESULT_OK);
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  // Whatever was attempted, nothing was ever started and no PCM fallback ran.
+  for (const auto& snapshot : snapshots) {
+    assert(!snapshot.started);
+    assert(!snapshot.typedStarted);
+    assert(!formatLooksPcmTrackRequest(snapshot.requestedFormat));
+  }
+}
+
+void testDsdRouteOverrideIsNotUsedForPlainPcmSources() {
+  EngineHarness harness("twilight-dsd-route-pcm-source.dsf", kDsd64Rate);
+  auto& engine = harness.engine();
+  assert(engine.setOutputBackend("asio") == TAE_RESULT_OK);
+  // Force PCM output mode: the source is DSD but the user asked for PCM, so the
+  // compatibility route must not be involved at all.
+  assert(
+      engine.setDspConfig(
+          "{\"dsdOutputMode\":\"pcm\",\"dsdRoute\":{\"enabled\":true,\"backend\":\"asio\","
+          "\"device\":\"dsd-proxy\"}}") == TAE_RESULT_OK);
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  assertFormatLooksDsdPcmFallbackRequest(snapshots.front().requestedFormat);
+  // PCM never rides the proxy device.
+  assert(snapshots.front().info.deviceName != "dsd-proxy");
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+  assertLatestPlaybackContains(engine, "\"dsdRouteOverrideActive\":false");
+}
+
+// ---- Auto-discovered DSD compatibility route --------------------------------
+// The removed foo_dsd_asio path used to route DSD to a proxy automatically. Its
+// replacement must do the same without matching on vendor names: discovery is
+// driven purely by which drivers a capability probe proved can accept raw DSD.
+
+/** Scoped DSD-capable device discovery override. */
+struct ScopedNativeDsdDiscovery {
+  explicit ScopedNativeDsdDiscovery(std::vector<std::string> deviceIds) {
+    AudioPipeline::setNativeDsdDeviceDiscoveryForTests(
+        [ids = std::move(deviceIds)]() { return ids; });
+  }
+  ~ScopedNativeDsdDiscovery() {
+    AudioPipeline::setNativeDsdDeviceDiscoveryForTests(nullptr);
+  }
+};
+
+void testDsdRouteAutoDiscoveryUsesProbeVerifiedProxy() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+  // Main output is wasapi-exclusive, which cannot carry Native DSD. No dsdRoute
+  // is configured at all -- discovery alone must find the capable driver.
+  ScopedNativeDsdDiscovery discovery({"auto-proxy"});
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  assert(snapshots.front().backendId == "asio");
+  assert(snapshots.front().info.deviceName == "auto-proxy");
+  assert(formatLooksDsdSourceRequest(snapshots.front().requestedFormat));
+  assert(snapshots.front().typedStarted);
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"native\"");
+  assertLatestPlaybackContains(engine, "\"dsdRouteOverrideActive\":true");
+  assertLatestPlaybackContains(engine, "\"dsdRouteDevice\":\"auto-proxy\"");
+}
+
+void testDsdRouteAutoDiscoveryIsInertWithoutCapableDevice() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+  // Nothing on the system can take raw DSD, so behavior must be unchanged from
+  // before auto-discovery existed: degrade over the main route.
+  ScopedNativeDsdDiscovery discovery({});
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(!snapshots.empty());
+  assert(snapshots.front().info.deviceName != "auto-proxy");
+  assertLatestPlaybackContains(engine, "\"dsdRouteOverrideActive\":false");
+}
+
+void testExplicitDsdRouteWinsOverAutoDiscovery() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+  // Discovery would pick auto-proxy, but the user pinned dsd-proxy. The explicit
+  // choice must win: auto-discovery never overrides a deliberate setting.
+  ScopedNativeDsdDiscovery discovery({"auto-proxy"});
+  assert(
+      engine.setDspConfig(
+          "{\"dsdRoute\":{\"enabled\":true,\"backend\":\"asio\",\"device\":\"dsd-proxy\"}}") ==
+      TAE_RESULT_OK);
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  assert(snapshots.front().info.deviceName == "dsd-proxy");
+  assertLatestPlaybackContains(engine, "\"dsdRouteDevice\":\"dsd-proxy\"");
+}
+
+void testDsdRouteAutoDiscoveryFallsBackToMainRouteWhenProxyRefuses() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+  // Discovery points at a device the fake backend always refuses. An
+  // auto-discovered route is a guess, so it must always retry the main route
+  // rather than failing playback.
+  ScopedNativeDsdDiscovery discovery({kMissingDsdProxyDeviceId});
+  assert(engine.setOutputBackend("asio") == TAE_RESULT_OK);
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(!snapshots.empty());
+  bool anyStarted = false;
+  for (const auto& snapshot : snapshots) {
+    if (snapshot.started || snapshot.typedStarted) anyStarted = true;
+  }
+  assert(anyStarted);
+}
+
 void testAlsaNativeDsdAcceptsTransportFrameRate() {
   EngineHarness harness;
   auto& engine = harness.engine();
@@ -3287,6 +3484,14 @@ int main() {
   testAsioDopCandidateAfterStartFallsBackToPcm();
   testAsioPcmModeDoesNotTryNativeDsd();
   testAsioNativeDsdMismatchFallsBackToDop();
+  testDsdRouteOverrideCarriesNativeDsdOffMainBackend();
+  testDsdRouteOverrideFallsBackToMainRouteWhenProxyMissing();
+  testDsdRouteStrictPassthroughFailsInsteadOfDegradingToPcm();
+  testDsdRouteOverrideIsNotUsedForPlainPcmSources();
+  testDsdRouteAutoDiscoveryUsesProbeVerifiedProxy();
+  testDsdRouteAutoDiscoveryIsInertWithoutCapableDevice();
+  testExplicitDsdRouteWinsOverAutoDiscovery();
+  testDsdRouteAutoDiscoveryFallsBackToMainRouteWhenProxyRefuses();
   testAsioNativeDsdAndDopFailureFallsBackToPcm();
   testAsioNativeDsdUnsupportedAndDopFailureFallsBackToPcm();
   testDsd256StartsOnWasapiExclusiveDop();

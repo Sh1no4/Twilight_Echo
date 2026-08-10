@@ -19,6 +19,13 @@
 #include <vector>
 
 namespace twilight::audio {
+
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
+// Declared rather than included: the pipeline decides routing policy and must
+// not take a dependency on the ASIO host headers. Defined in the ASIO backend.
+std::vector<std::string> asioNativeDsdCapableDeviceIds();
+#endif
+
 namespace {
 
 constexpr size_t kDecodeChunkFrames = 2048;
@@ -88,6 +95,21 @@ AudioPipeline::BackendFactory& backendFactoryOverride() {
   return factory;
 }
 
+AudioPipeline::NativeDsdDeviceDiscovery& nativeDsdDeviceDiscoveryOverride() {
+  static AudioPipeline::NativeDsdDeviceDiscovery discovery;
+  return discovery;
+}
+
+/** Probe-verified DSD-capable device ids, honoring a test override. */
+std::vector<std::string> discoverNativeDsdCapableDevices() {
+  if (nativeDsdDeviceDiscoveryOverride()) return nativeDsdDeviceDiscoveryOverride()();
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
+  return asioNativeDsdCapableDeviceIds();
+#else
+  return {};
+#endif
+}
+
 QueueItem makeManualItem(const std::string& source) {
   QueueItem item;
   item.id = source;
@@ -145,6 +167,27 @@ bool backendCanAttemptNativeDsd(const std::string& backendId) {
 
 bool backendCanTypedPassthrough(const std::string& backendId) {
   return backendId == "asio" || backendId == "wasapi-exclusive" || backendId == "coreaudio-exclusive";
+}
+
+/**
+ * Auto-discovered DSD compatibility route.
+ *
+ * When the main output cannot carry DSD (a DAC whose own ASIO driver refuses
+ * DSD sample types, or a WASAPI-only setup) and the user has not pinned a route
+ * explicitly, look for an ASIO driver that a capability probe proved can accept
+ * a raw DSD I/O format. This is how a registered DSD proxy driver gets used
+ * without the user having to know it exists.
+ *
+ * Nothing here matches on vendor or product names: the choice comes from the
+ * driver's own answer to CanDoIoFormat, so any vendor's proxy qualifies and a
+ * rename cannot break it. An explicit user route always wins over this.
+ */
+std::string autoDiscoveredNativeDsdDeviceId(const std::string& mainBackendId) {
+  // The main route already reaches a DSD-capable backend; its own device is
+  // tried first by the normal path, so auto-discovery would add nothing.
+  if (backendCanAttemptNativeDsd(mainBackendId)) return {};
+  const auto capable = discoverNativeDsdCapableDevices();
+  return capable.empty() ? std::string{} : capable.front();
 }
 
 bool formatCanTypedPassthrough(const AudioFormat& format) {
@@ -1382,6 +1425,10 @@ void AudioPipeline::setBackendFactoryForTests(BackendFactory factory) {
   backendFactoryOverride() = std::move(factory);
 }
 
+void AudioPipeline::setNativeDsdDeviceDiscoveryForTests(NativeDsdDeviceDiscovery discovery) {
+  nativeDsdDeviceDiscoveryOverride() = std::move(discovery);
+}
+
 TAE_Result AudioPipeline::play(
     const std::string& source,
     double startTimeSeconds,
@@ -1489,13 +1536,33 @@ TAE_Result AudioPipeline::playInternal(
   // reach a registered DSD-capable proxy driver. Empty fields inherit the main
   // route; the engine never inspects which proxy this is.
   const DsdRouteOverride& dsdRoute = requestedDspConfig.dsdRoute;
-  const bool dsdRouteActive = dsdRouteOverrideTargetsDistinctRoute(dsdRoute);
-  const std::string dsdBackendId =
+  bool dsdRouteActive = dsdRouteOverrideTargetsDistinctRoute(dsdRoute);
+  std::string dsdBackendId =
       dsdRouteActive && !dsdRoute.backendId.empty() ? dsdRoute.backendId : backendId;
-  const std::string dsdDeviceId =
+  std::string dsdDeviceId =
       dsdRouteActive && !dsdRoute.deviceId.empty() ? dsdRoute.deviceId : deviceId;
+
+  // No explicit route and the main backend cannot carry DSD: look for a
+  // DSD-capable ASIO driver rather than silently degrading to DoP/PCM. Only
+  // engaged for real DSD sources, and never when the user pinned a route.
+  bool dsdRouteAutoDiscovered = false;
+  if (!dsdRouteActive && dsdProbe.has_value() && !backendCanAttemptNativeDsd(backendId) &&
+      !dsdOutputModePrefersPcm(requestedDspConfig.dsdOutputMode)) {
+    const std::string discovered = autoDiscoveredNativeDsdDeviceId(backendId);
+    if (!discovered.empty()) {
+      dsdRouteActive = true;
+      dsdRouteAutoDiscovered = true;
+      dsdBackendId = "asio";
+      dsdDeviceId = discovered;
+    }
+  }
+
+  // An auto-discovered route is a best-effort guess, so it must always be able
+  // to fall back to the main route; only an explicit strict-passthrough opt-in
+  // suppresses that.
   const bool dsdRouteRetriesMainRoute =
-      dsdRouteActive && !dsdRoute.strictPassthrough && (dsdBackendId != backendId || dsdDeviceId != deviceId);
+      dsdRouteActive && (dsdRouteAutoDiscovered || !dsdRoute.strictPassthrough) &&
+      (dsdBackendId != backendId || dsdDeviceId != deviceId);
 
   const bool canTryDop = allowDop &&
                          shouldAttemptDopForCurrentConfig(
@@ -1676,7 +1743,10 @@ TAE_Result AudioPipeline::playInternal(
 
     // PCM->DSD upconversion is a DSD wire path, so it honors the compatibility
     // route when the user opted in. Plain PCM always stays on the main route.
-    const bool pcmToDsdUsesOverride = wantPcmToDsd && dsdRouteActive && dsdRoute.applyToPcmToDsd;
+    // Auto-discovery is triggered by a DSD source, so it never claims the
+    // PCM->DSD upconversion path; that stays an explicit user opt-in.
+    const bool pcmToDsdUsesOverride =
+        wantPcmToDsd && dsdRouteActive && !dsdRouteAutoDiscovered && dsdRoute.applyToPcmToDsd;
     const std::string pcmStageBackendId = pcmToDsdUsesOverride ? dsdBackendId : backendId;
     const std::string pcmStageDeviceId = pcmToDsdUsesOverride ? dsdDeviceId : deviceId;
 
@@ -2130,10 +2200,21 @@ TAE_Result AudioPipeline::playInternal(
 
   {
     std::lock_guard lock(mutex_);
+    // Re-reading the backend picks up post-start runtime facts, but it also
+    // resets diagnostics the backend cannot know. The compatibility route is
+    // decided here in the pipeline, so carry those four fields across.
+    const bool routeOverrideActive = outputInfo_.diagnostics.dsdRouteOverrideActive;
+    const std::string routeBackend = outputInfo_.diagnostics.dsdRouteBackend;
+    const std::string routeDevice = outputInfo_.diagnostics.dsdRouteDevice;
+    const std::string routeFallbackReason = outputInfo_.diagnostics.dsdRouteFallbackReason;
     outputFormat_ = output_->outputFormat();
     outputInfo_ = output_->outputInfo();
     outputInfo_.backend = backendId_;
     outputInfo_.deviceName = deviceName_;
+    outputInfo_.diagnostics.dsdRouteOverrideActive = routeOverrideActive;
+    outputInfo_.diagnostics.dsdRouteBackend = routeBackend;
+    outputInfo_.diagnostics.dsdRouteDevice = routeDevice;
+    outputInfo_.diagnostics.dsdRouteFallbackReason = routeFallbackReason;
     updatePerfectLocked();
   }
 
@@ -3287,6 +3368,13 @@ PipelineStatus AudioPipeline::buildStatusLocked() {
     backendInfo.diagnostics.typedRawPath = outputInfo_.diagnostics.typedRawPath;
     backendInfo.diagnostics.processingBypassed = outputInfo_.diagnostics.processingBypassed;
   }
+  // The compatibility route is decided by the pipeline; the backend cannot know
+  // it. Copy unconditionally: PCM->DSD upconversion uses the route while its
+  // source stream is PCM (stream_.isDsd == false).
+  backendInfo.diagnostics.dsdRouteOverrideActive = outputInfo_.diagnostics.dsdRouteOverrideActive;
+  backendInfo.diagnostics.dsdRouteBackend = outputInfo_.diagnostics.dsdRouteBackend;
+  backendInfo.diagnostics.dsdRouteDevice = outputInfo_.diagnostics.dsdRouteDevice;
+  backendInfo.diagnostics.dsdRouteFallbackReason = outputInfo_.diagnostics.dsdRouteFallbackReason;
   if (stream_.isDsd && stream_.dsdMode != DsdMode::Native && nativeDsdFallbackFacts_.has_value()) {
     applyNativeDsdRuntimeFacts(&backendInfo, *nativeDsdFallbackFacts_);
   } else if (output_) {

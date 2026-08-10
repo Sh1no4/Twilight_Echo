@@ -16,6 +16,14 @@ class AsioDriverSession final {
   ~AsioDriverSession();
 
   bool open(const AsioOpenConfig& config, AsioOpenResult* result, std::string* error);
+
+  /**
+   * Interrogate the driver for its real capabilities without creating buffers
+   * or starting a stream. Restores the driver's original sample rate and I/O
+   * format before returning so a probe never disturbs a later open().
+   */
+  bool probe(AsioDeviceInfo* info, std::string* error);
+
   bool createBuffers(
       AsioBufferSwitchCallback bufferSwitch,
       AsioEventCallback eventCallback,

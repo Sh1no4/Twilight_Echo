@@ -48,8 +48,12 @@ import {
   HIFI_STATUS_COPY,
   LOUDNORM_TARGET_LUFS,
   LOUDNORM_TRUE_PEAK_CEILING_DB,
-  loudnormStatusCopy
+  dsdRouteTargetsDistinctRoute,
+  loudnormStatusCopy,
+  withDsdRoutePatch,
+  type DsdRouteSettings
 } from '../../../shared/audioProcessingOptions.ts'
+import { isDsdProxyDevice } from '../../../shared/dsdProxyDrivers.ts'
 import type {
   AppSettings,
   AppTheme,
@@ -1085,6 +1089,75 @@ function setCrossfeedCutoff(event: Event): void {
 
 async function selectDsdOutputMode(value: DsdOutputMode): Promise<void> {
   await setAudioProcessing({ dsdOutputMode: value, dsdToPcm: value === 'pcm' })
+}
+
+// ---- DSD 兼容层路由 ----------------------------------------------------------
+// 路由与 dsdOutputMode 正交：这里只决定 DSD 从哪条 backend/device 出去。
+// 代理识别仅用于给设备打标签，不参与路由决策。
+
+const dsdRoute = computed<DsdRouteSettings>(() => audioProcessing.value.dsdRoute)
+const dsdRouteActive = computed(() => dsdRouteTargetsDistinctRoute(dsdRoute.value))
+
+/** 兼容层可选后端：只列出能承载 DSD 直通的后端。 */
+const dsdRouteBackendOptions = computed(() =>
+  audioOutputOptions.value.filter((option) => option.id === 'asio' || option.id === 'alsa')
+)
+
+/** 兼容层设备候选：跟随所选后端（未选则跟随主输出后端）。 */
+const dsdRouteDeviceOptions = computed(() => {
+  const backend = dsdRoute.value.backend || audioOutput.value
+  return audioDeviceOptions.value.filter((device) => {
+    const id = (device.id ?? '').toLowerCase()
+    const deviceBackend = device.backend ?? (id.startsWith('asio:') ? 'asio' : '')
+    return deviceBackend === backend || id.startsWith(`${backend}:`)
+  })
+})
+
+const dsdRouteProxyDevices = computed(() =>
+  dsdRouteDeviceOptions.value.filter((device) => isDsdProxyDevice(device))
+)
+
+/** 运行时实际路由回报（来自引擎 diagnostics，不是配置意图）。 */
+const dsdRouteRuntimeText = computed(() => {
+  const diagnostics = outputInfo.value?.diagnostics
+  if (!diagnostics) return ''
+  if (diagnostics.dsdRouteOverrideActive) {
+    const target = [diagnostics.dsdRouteBackend, diagnostics.dsdRouteDevice]
+      .filter((part) => typeof part === 'string' && part.length > 0)
+      .join(' / ')
+    return target ? `DSD 正经由兼容层路由输出：${target}` : 'DSD 正经由兼容层路由输出'
+  }
+  if (diagnostics.dsdRouteFallbackReason) {
+    return `兼容层路由未生效，已回退主输出：${diagnostics.dsdRouteFallbackReason}`
+  }
+  return ''
+})
+
+function patchDsdRoute(patch: Partial<DsdRouteSettings>): void {
+  // 必须传完整路由：setAudioProcessing 的合并是浅展开。
+  updateAudioProcessing({ dsdRoute: withDsdRoutePatch(dsdRoute.value, patch) })
+}
+
+function toggleDsdRouteEnabled(): void {
+  patchDsdRoute({ enabled: !dsdRoute.value.enabled })
+}
+
+function setDsdRouteBackend(event: Event): void {
+  const backend = (event.target as HTMLSelectElement).value
+  // 换后端后旧设备 id 不再有效，一并清掉避免指向不存在的设备。
+  patchDsdRoute({ backend, device: '' })
+}
+
+function setDsdRouteDevice(event: Event): void {
+  patchDsdRoute({ device: (event.target as HTMLSelectElement).value })
+}
+
+function toggleDsdRoutePcmToDsd(): void {
+  patchDsdRoute({ applyToPcmToDsd: !dsdRoute.value.applyToPcmToDsd })
+}
+
+function toggleDsdRouteStrict(): void {
+  patchDsdRoute({ strictPassthrough: !dsdRoute.value.strictPassthrough })
 }
 
 function setDsdOutputMode(event: Event): void {
@@ -3001,6 +3074,126 @@ onBeforeUnmount(() => {
                   </button>
                 </div>
               </div>
+              <hr />
+              <div class="setting-item top-align dsd-compat-route">
+                <div class="setting-copy">
+                  <strong>DSD 兼容层路由</strong>
+                  <span>
+                    DAC 自带 ASIO 驱动不接受 DSD 采样类型（或只有 WASAPI）时，DSD 会被迫降级为 DoP /
+                    PCM。把 DSD 单独路由到已注册的 DSD 代理 ASIO 驱动可以恢复直通，PCM
+                    仍走主输出、不受影响。
+                  </span>
+                  <small>
+                    代理驱动（如 foo_dsd_asio）是独立的系统级 ASIO 驱动，与是否安装 foobar2000
+                    无关；本软件不加载任何第三方组件，只按你选定的 后端与设备协商。
+                  </small>
+                  <span
+                    v-if="dsdRouteRuntimeText"
+                    class="setting-substatus"
+                    :class="{ available: outputInfo?.diagnostics?.dsdRouteOverrideActive }"
+                  >
+                    {{ dsdRouteRuntimeText }}
+                  </span>
+                </div>
+                <span
+                  class="toggle-switch"
+                  :class="{ active: dsdRoute.enabled, inactive: !dsdRoute.enabled }"
+                  role="switch"
+                  :aria-checked="dsdRoute.enabled"
+                  aria-label="启用 DSD 兼容层路由"
+                  @click="toggleDsdRouteEnabled()"
+                ></span>
+              </div>
+              <template v-if="dsdRoute.enabled">
+                <div class="setting-item compact-row">
+                  <div class="setting-copy">
+                    <strong>路由后端</strong>
+                    <span>留空则沿用主输出后端。</span>
+                  </div>
+                  <select
+                    class="settings-select"
+                    :value="dsdRoute.backend"
+                    aria-label="DSD 兼容层路由后端"
+                    @change="setDsdRouteBackend"
+                  >
+                    <option value="">跟随主输出（{{ audioOutput }}）</option>
+                    <option
+                      v-for="option in dsdRouteBackendOptions"
+                      :key="option.id"
+                      :value="option.id"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select>
+                </div>
+                <div class="setting-item compact-row">
+                  <div class="setting-copy">
+                    <strong>路由设备</strong>
+                    <span v-if="dsdRouteProxyDevices.length > 0">
+                      检测到 {{ dsdRouteProxyDevices.length }} 个疑似 DSD 代理驱动。
+                    </span>
+                    <span v-else> 未检测到疑似代理驱动；若已安装仍可手动选择对应设备。 </span>
+                  </div>
+                  <select
+                    class="settings-select"
+                    :value="dsdRoute.device"
+                    aria-label="DSD 兼容层路由设备"
+                    @change="setDsdRouteDevice"
+                  >
+                    <option value="">跟随主输出设备</option>
+                    <option
+                      v-for="device in dsdRouteDeviceOptions"
+                      :key="device.id"
+                      :value="device.id"
+                    >
+                      {{ device.label }}{{ isDsdProxyDevice(device) ? '（DSD 代理）' : '' }}
+                    </option>
+                  </select>
+                </div>
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>PCM→DSD 上采样也走此路由</strong>
+                    <span>关闭则仅 DSD 源使用兼容层，上采样仍走主输出。</span>
+                  </div>
+                  <span
+                    class="toggle-switch"
+                    :class="{
+                      active: dsdRoute.applyToPcmToDsd,
+                      inactive: !dsdRoute.applyToPcmToDsd
+                    }"
+                    role="switch"
+                    :aria-checked="dsdRoute.applyToPcmToDsd"
+                    aria-label="PCM 转 DSD 上采样使用兼容层路由"
+                    @click="toggleDsdRoutePcmToDsd()"
+                  ></span>
+                </div>
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>严格直通模式</strong>
+                    <span>
+                      开启后无法建立 DSD 直通时报错停止，不静默降级为 PCM。默认关闭，保持自动回退。
+                    </span>
+                  </div>
+                  <span
+                    class="toggle-switch"
+                    :class="{
+                      active: dsdRoute.strictPassthrough,
+                      inactive: !dsdRoute.strictPassthrough
+                    }"
+                    role="switch"
+                    :aria-checked="dsdRoute.strictPassthrough"
+                    aria-label="DSD 严格直通模式"
+                    @click="toggleDsdRouteStrict()"
+                  ></span>
+                </div>
+                <div v-if="!dsdRouteActive" class="setting-item">
+                  <div class="setting-copy">
+                    <span class="setting-substatus">
+                      已启用但未指定后端或设备，当前等同于沿用主输出。
+                    </span>
+                  </div>
+                </div>
+              </template>
               <hr />
               <div class="setting-item">
                 <div class="setting-copy">
