@@ -122,6 +122,36 @@ inline void applyVolumeToRenderedFrames(
   }
 }
 
+/**
+ * Final output-boundary clamp for the float render path.
+ *
+ * The DSP chain deliberately works with +12 dB of internal headroom (EQ,
+ * convolver and router all clamp to +/-4.0) so intermediate stages do not clip
+ * before the chain ends. That headroom has to be given back at the output
+ * boundary, and none of the existing clamps cover every case:
+ *
+ * - applyVolumeToRenderedFrames clamps, but only runs when volume != 1.0.
+ * - applyOutputDither clamps, but returns early for non-integer PCM.
+ * - The integer pack/convert helpers clamp, but float32 output never reaches
+ *   them; both WASAPI and ASIO hand the callback buffer straight to the driver.
+ *
+ * So float32 output at exactly unity volume with an EQ boost used to deliver up
+ * to +12 dB to the device. Clamping unconditionally here is a no-op for values
+ * already in range, which is every sample on the integer paths.
+ */
+inline void clampRenderedFramesToFullScale(float* samples, size_t frames, int channels) {
+  if (!samples || frames == 0 || channels <= 0) return;
+  const size_t sampleCount = frames * static_cast<size_t>(channels);
+  for (size_t i = 0; i < sampleCount; ++i) {
+    const float value = samples[i];
+    // Also normalizes NaN to silence: a NaN reaching an exclusive-mode driver
+    // is far worse than a dropped sample.
+    if (!(value >= -1.0f && value <= 1.0f)) {
+      samples[i] = value > 0.0f ? 1.0f : (value < 0.0f ? -1.0f : 0.0f);
+    }
+  }
+}
+
 inline bool crossfadeSegmentFadeIsBounded(size_t frames, uint64_t framesProcessed, uint64_t totalFrames) {
   if (frames == 0 || totalFrames == 0 || framesProcessed > totalFrames) return false;
   const uint64_t lastFrameOffset = static_cast<uint64_t>(frames - 1);

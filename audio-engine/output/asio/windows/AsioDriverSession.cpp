@@ -23,6 +23,9 @@ namespace {
 constexpr uint32_t kEventReset = 1U << 0U;
 constexpr uint32_t kEventRestart = 1U << 1U;
 constexpr uint32_t kEventBufferFailure = 1U << 2U;
+// Transient load notifications. Kept separate from kEventBufferFailure so they
+// reach diagnostics without dragging the stream through a full rebuild.
+constexpr uint32_t kEventXrun = 1U << 3U;
 
 std::string hresultError(const char* stage, HRESULT value) {
   char buffer[96] = {};
@@ -342,9 +345,18 @@ struct AsioDriverSession::State final : AsioCallbackTarget {
         pendingEvents.fetch_or(kEventReset, std::memory_order_release);
         return asio_abi::kAsioTrue;
       case asio_abi::kSelectorBufferSizeChange:
+        // The buffer geometry changed underneath us; the current buffers are
+        // genuinely stale, so this one does require a rebuild.
+        pendingEvents.fetch_or(kEventBufferFailure, std::memory_order_release);
+        return asio_abi::kAsioTrue;
       case asio_abi::kSelectorLatenciesChanged:
       case asio_abi::kSelectorOverload:
-        pendingEvents.fetch_or(kEventBufferFailure, std::memory_order_release);
+        // Informational. Overload is the driver saying it missed a deadline
+        // (typically a transient CPU spike) and LatenciesChanged only means the
+        // reported latency figures moved. Neither invalidates the stream, and
+        // both used to force a stop/close/open/start cycle with a 500 ms+
+        // backoff - a self-inflicted dropout on top of a momentary glitch.
+        pendingEvents.fetch_or(kEventXrun, std::memory_order_release);
         return asio_abi::kAsioTrue;
       case asio_abi::kSelectorEngineVersion:
         return 2;
@@ -361,6 +373,7 @@ struct AsioDriverSession::State final : AsioCallbackTarget {
     if ((events & kEventReset) != 0) eventCallback(AsioHostEvent::DriverReset, "driver requested reset");
     if ((events & kEventRestart) != 0) eventCallback(AsioHostEvent::DriverRestart, "driver sample rate changed");
     if ((events & kEventBufferFailure) != 0) eventCallback(AsioHostEvent::BufferFailure, "driver requested buffer reconfiguration");
+    if ((events & kEventXrun) != 0) eventCallback(AsioHostEvent::Xrun, "driver reported a transient load event");
   }
 };
 

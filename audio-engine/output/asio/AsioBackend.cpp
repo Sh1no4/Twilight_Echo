@@ -179,6 +179,8 @@ std::string hostEventPrefix(AsioHostEvent event) {
       return "ASIO driver restart";
     case AsioHostEvent::DeviceLost:
       return "ASIO device lost";
+    case AsioHostEvent::Xrun:
+      return "ASIO driver load event";
     case AsioHostEvent::BufferFailure:
     default:
       return "ASIO buffer failure";
@@ -1507,6 +1509,19 @@ bool AsioBackend::recover(AsioHostEvent event, const std::string& message) {
   static constexpr int kBackoffMs[] = {500, 1000, 2000};
   static constexpr auto kRecoveryWindow = std::chrono::seconds(10);
   static constexpr auto kRecoveryCooldown = std::chrono::seconds(10);
+  // A transient load event leaves the stream valid. Count it, surface it, and
+  // return before touching the recovery machinery: no rebuild, no backoff, and
+  // crucially no entry in recoveryWindow_ - otherwise a burst of driver
+  // overloads would trip the 3-per-10s limiter into its 10 s cooldown and
+  // suppress recovery from a *real* fault arriving right after.
+  if (event == AsioHostEvent::Xrun) {
+    std::lock_guard lock(mutex_);
+    ++diagnostics_.driverXrunCount;
+    diagnostics_.lastError = hostEventReason(event, message);
+    outputInfo_.diagnostics = diagnostics_;
+    return false;
+  }
+
   OutputEventCallback eventCallback;
   {
     std::lock_guard lock(mutex_);

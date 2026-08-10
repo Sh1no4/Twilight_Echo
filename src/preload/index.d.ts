@@ -1193,6 +1193,7 @@ interface OutputDiagnostics {
   lifetimeRecoveryCount: number
   driverRestartCount: number
   deviceLostCount: number
+  driverXrunCount?: number
   lastError: string
 }
 

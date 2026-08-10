@@ -63,8 +63,10 @@ an accidental whole-file Track.
   refresh and preload promotion compare source plus CUE range, preventing one same-file track from
   overwriting another track's gain.
 - PCM pregap samples remain exact zero after ReplayGain, routing, volume and dither. DoP emits the
-  canonical `0x69` DSD idle payload with alternating `0x05`/`0xfa` markers and resets marker phase
-  after seek. Native DSD emits the corresponding idle byte in the backend's bit order.
+  canonical DSD idle pattern with alternating `0x05`/`0xfa` markers and resets marker phase after
+  seek. Because a DoP payload is always MSB-first, that pattern appears as `0x96` in both payload
+  bytes — `0x69` is the same pattern written LSB-first, which is what a native DSD path emits when
+  the backend's bit order is LSB-first.
 - DSD segment accounting uses byte-frame units on Native DSD and carrier frames on DoP, so a CUE
   boundary cannot overrun by the eight DSD samples packed into one byte.
 

@@ -1649,6 +1649,48 @@ void testRecoveryEventDiagnostics() {
   }
 }
 
+void testDriverXrunIsCountedWithoutRecovery() {
+  auto host = makeHost();
+  auto* rawHost = host.get();
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("asio:mock", sourceFormat(96000, 32), &error));
+  assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
+  const int openCalls = rawHost->openCalls;
+  const int createBuffersCalls = rawHost->createBuffersCalls;
+  const int startCalls = rawHost->startCalls;
+
+  // A burst larger than the 3-per-10s recovery budget. If Xrun shared the
+  // recovery path these would rebuild the stream and then trip the cooldown.
+  for (int i = 0; i < 5; ++i) rawHost->triggerEvent(AsioHostEvent::Xrun, "driver overload");
+  assert(waitUntil([&] { return backend.outputInfo().diagnostics.driverXrunCount == 5; }));
+
+  const auto afterXruns = backend.outputInfo();
+  assert(afterXruns.diagnostics.driverXrunCount == 5);
+  assert(afterXruns.recoveryCount == 0);
+  assert(afterXruns.diagnostics.sessionRecoveryCount == 0);
+  assert(afterXruns.diagnostics.lifetimeRecoveryCount == 0);
+  assert(afterXruns.diagnostics.sessionUnderrunCount == 0);
+  assert(afterXruns.diagnostics.driverRestartCount == 0);
+  assert(afterXruns.diagnostics.deviceLostCount == 0);
+  assert(!afterXruns.deviceRecovered);
+  assert(afterXruns.diagnostics.lastError.find("ASIO driver load event") != std::string::npos);
+  // The stream was never torn down, so the driver saw no new lifecycle calls.
+  assert(rawHost->openCalls == openCalls);
+  assert(rawHost->createBuffersCalls == createBuffersCalls);
+  assert(rawHost->startCalls == startCalls);
+
+  // The xrun burst must not have consumed the rate-limiter budget: a real fault
+  // arriving right after still recovers instead of landing in the cooldown.
+  rawHost->triggerEvent(AsioHostEvent::BufferFailure, "real fault after xrun burst");
+  assert(waitUntil([&] { return backend.outputInfo().recoveryCount == 1; }));
+  const auto afterFault = backend.outputInfo();
+  assert(afterFault.diagnostics.driverXrunCount == 5);
+  assert(afterFault.diagnostics.sessionRecoveryCount == 1);
+  assert(afterFault.diagnostics.lastError.find("ASIO buffer failure") != std::string::npos);
+  assert(afterFault.diagnostics.lastError.find("cooldown") == std::string::npos);
+}
+
 void testRecoveryCooldown() {
   auto host = makeHost();
   auto* rawHost = host.get();
@@ -1781,6 +1823,7 @@ int main() {
   testRecovery();
   testRecoveryBackoffIsCancelledByStop();
   testRecoveryEventDiagnostics();
+  testDriverXrunIsCountedWithoutRecovery();
   testRecoveryCooldown();
   testRealAsioSmokeOptIn();
   return 0;

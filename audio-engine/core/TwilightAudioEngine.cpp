@@ -69,6 +69,7 @@ void writeDiagnosticsJson(std::ostringstream& json, const OutputInfo::Diagnostic
        << "\"lifetimeRecoveryCount\":" << diagnostics.lifetimeRecoveryCount << ","
        << "\"driverRestartCount\":" << diagnostics.driverRestartCount << ","
        << "\"deviceLostCount\":" << diagnostics.deviceLostCount << ","
+       << "\"driverXrunCount\":" << diagnostics.driverXrunCount << ","
        << "\"dsdIdleFrameCount\":" << diagnostics.dsdIdleFrameCount << ","
        << "\"dsdShortReadCount\":" << diagnostics.dsdShortReadCount << ","
        << "\"dsdTransport\":\"" << json_utils::escape(diagnostics.dsdTransport) << "\","

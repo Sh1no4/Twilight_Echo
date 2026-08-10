@@ -159,6 +159,11 @@ struct OutputInfo {
     uint64_t lifetimeRecoveryCount = 0;
     uint64_t driverRestartCount = 0;
     uint64_t deviceLostCount = 0;
+    // Driver-reported transient load events (ASIO kAsioResetRequest's benign
+    // cousins: Overload / LatenciesChanged). Recorded but never acted on: they
+    // do not invalidate the stream, so rebuilding it would turn a momentary
+    // glitch into a guaranteed dropout.
+    uint64_t driverXrunCount = 0;
     uint64_t dsdIdleFrameCount = 0;
     uint64_t dsdShortReadCount = 0;
     std::string dsdTransport;

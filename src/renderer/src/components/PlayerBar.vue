@@ -881,7 +881,10 @@ const outputLatencyText = computed(() => {
 const outputDiagnosticsText = computed(() => {
   const diagnostics = outputInfo.value?.diagnostics ?? playbackInfo.value?.diagnostics
   if (!diagnostics) return 'Underrun 0 · Drop 0 · Restart 0 · Lost 0 · Recovery 0'
-  return `Underrun ${diagnostics.sessionUnderrunCount} · Drop ${diagnostics.sessionBufferDropCount} · Restart ${diagnostics.driverRestartCount} · Lost ${diagnostics.deviceLostCount} · Recovery ${diagnostics.sessionRecoveryCount}`
+  const base = `Underrun ${diagnostics.sessionUnderrunCount} · Drop ${diagnostics.sessionBufferDropCount} · Restart ${diagnostics.driverRestartCount} · Lost ${diagnostics.deviceLostCount} · Recovery ${diagnostics.sessionRecoveryCount}`
+  // 驱动瞬时负载事件不会重启流，只在真的发生过时才追加，避免给正常播放增加噪音字段。
+  const xrun = diagnostics.driverXrunCount ?? 0
+  return xrun > 0 ? `${base} · Xrun ${xrun}` : base
 })
 const nativeDsdRuntimeReasonText = computed(() => {
   const reason = outputInfo.value?.nativeDsdRuntimeReason?.trim()

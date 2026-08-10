@@ -1151,6 +1151,11 @@ export interface OutputDiagnostics {
   driverRestartCount: number
   deviceLostCount: number
   /**
+   * 驱动上报的瞬时负载事件（ASIO Overload / LatenciesChanged）。只计数、不触发恢复，
+   * 因为它们不会让流失效。可选，旧引擎不上报该字段。
+   */
+  driverXrunCount?: number
+  /**
    * DSD 兼容层路由的运行时事实：实际是否经覆写路由输出、走的哪条线，
    * 以及覆写失败回退时的原因。可选，旧引擎不上报这些字段。
    */
