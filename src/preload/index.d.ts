@@ -14,6 +14,7 @@ import type {
 import type { ImportedFrequencyResponse } from '../shared/frequencyResponse.ts'
 import type { SleepTimerSettings } from '../shared/sleepTimer.ts'
 import type { LyricsAppearanceSettings } from '../shared/lyricsAppearance.ts'
+import type { LiquidGlassSettings, SurfaceMaterial } from '../shared/liquidGlass.ts'
 import type {
   ThemeAssetReference,
   ThemeAssetType,
@@ -748,6 +749,9 @@ interface AppSettings {
   uiDensity: UiDensity
   appBackground: AppBackgroundSettings
   cardAppearance: CardAppearanceSettings
+  /** Switches cards and the playbar between the standard surface and liquid glass. */
+  surfaceMaterial: SurfaceMaterial
+  liquidGlass: LiquidGlassSettings
   nowPlayingBackground: NowPlayingBackground
   playbackResumeMode: PlaybackResumeMode
   sleepTimer: SleepTimerSettings

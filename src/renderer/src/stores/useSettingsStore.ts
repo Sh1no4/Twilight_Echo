@@ -11,6 +11,7 @@ import {
   normalizeLyricsAppearance
 } from '../../../shared/lyricsAppearance.ts'
 import { DEFAULT_GENRE_SEPARATORS } from '../../../shared/genreSeparators.ts'
+import { DEFAULT_LIQUID_GLASS, normalizeLiquidGlass } from '../../../shared/liquidGlass.ts'
 import type {
   AppSettings,
   AudioOutputId,
@@ -174,6 +175,8 @@ const fallbackSettings: AppSettings = {
       dark: { blur: 0, brightness: 100, dim: 0 }
     }
   },
+  surfaceMaterial: 'standard',
+  liquidGlass: DEFAULT_LIQUID_GLASS,
   nowPlayingBackground: 'blur',
   playbackResumeMode: 'off',
   sleepTimer: DEFAULT_SLEEP_TIMER_SETTINGS,
@@ -358,7 +361,8 @@ function applyWindowTransparencyEffect(): void {
     '--te-tp-card-blur',
     '--te-tp-base-alpha'
   ]
-  const active = settings.value.windowTransparency === true && windowTransparencySupported.value === true
+  const active =
+    settings.value.windowTransparency === true && windowTransparencySupported.value === true
   if (!active) {
     for (const v of tpVars) root.style.removeProperty(v)
     return
@@ -405,7 +409,8 @@ function applySnapshot(snapshot: SettingsSnapshot): void {
           ...(incoming.cardAppearance?.background?.dark ?? {})
         }
       }
-    }
+    },
+    liquidGlass: normalizeLiquidGlass(incoming.liquidGlass)
   }
   defaults.value = { ...snapshot.defaults }
   paths.value = { ...snapshot.paths }
@@ -515,6 +520,20 @@ export function useSettingsStore(): {
       settings.value = {
         ...settings.value,
         cardAppearance: patch.cardAppearance
+      }
+      applyDomSettings()
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'surfaceMaterial') && patch.surfaceMaterial) {
+      settings.value = {
+        ...settings.value,
+        surfaceMaterial: patch.surfaceMaterial
+      }
+      applyDomSettings()
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'liquidGlass') && patch.liquidGlass) {
+      settings.value = {
+        ...settings.value,
+        liquidGlass: normalizeLiquidGlass(patch.liquidGlass)
       }
       applyDomSettings()
     }
