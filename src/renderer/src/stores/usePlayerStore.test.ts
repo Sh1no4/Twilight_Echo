@@ -44,11 +44,17 @@ function extractInternalFunctionBody(source: string, functionName: string): stri
 
 test('native output-perfect facts stay canonical from store normalization to PlayerBar', () => {
   const storeSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
-  const playerBarSource = readFileSync(new URL('../components/PlayerBar.vue', import.meta.url), 'utf8')
+  const playerBarSource = readFileSync(
+    new URL('../components/PlayerBar.vue', import.meta.url),
+    'utf8'
+  )
   const normalize = extractInternalFunctionBody(storeSource, 'normalizeNativePlaybackInfo')
   const apply = extractInternalFunctionBody(storeSource, 'applyNativePlaybackInfo')
   const canonicalSourceExact = extractInternalFunctionBody(playerBarSource, 'canonicalSourceExact')
-  const canonicalOutputPerfect = extractInternalFunctionBody(playerBarSource, 'canonicalOutputPerfect')
+  const canonicalOutputPerfect = extractInternalFunctionBody(
+    playerBarSource,
+    'canonicalOutputPerfect'
+  )
 
   assert.match(normalize, /const canonicalOutput = info\.outputInfo/)
   assert.match(normalize, /const sourceExact = canonicalOutput\?\.sourceExact === true/)
@@ -57,7 +63,10 @@ test('native output-perfect facts stay canonical from store normalization to Pla
     normalize,
     /const pcmPassthrough = canonicalOutput\s*\? canonicalOutput\.pcmPassthrough === true\s*:\s*info\.pcmPassthrough === true/
   )
-  assert.match(normalize, /outputInfo:\s*\{[\s\S]*sourceExact,[\s\S]*outputPerfect,[\s\S]*pcmPassthrough/)
+  assert.match(
+    normalize,
+    /outputInfo:\s*\{[\s\S]*sourceExact,[\s\S]*outputPerfect,[\s\S]*pcmPassthrough/
+  )
   assert.match(normalize, /sourceExact,[\s\S]*outputPerfect,[\s\S]*pcmPassthrough/)
   assert.match(apply, /const normalizedInfo = normalizeNativePlaybackInfo\(info\)/)
   assert.match(apply, /playbackInfo\.value = normalizedInfo/)
@@ -106,7 +115,10 @@ test('empty automatic lyric content remains eligible for a later provider retry'
 
   assert.match(source, /function hasLyricContent\(value: string \| null \| undefined\): boolean/)
   assert.match(source, /const hasOriginal = hasLyricContent\(resolverTrack\.lyrics\)/)
-  assert.match(source, /resolverTranslationSource === 'automatic' &&\s*!hasLyricContent\(resolverTrack\.translatedLyrics\)/)
+  assert.match(
+    source,
+    /resolverTranslationSource === 'automatic' &&\s*!hasLyricContent\(resolverTrack\.translatedLyrics\)/
+  )
   assert.match(source, /if \(!hasLyricContent\(track\.lyrics\) \|\| loading\)/)
 })
 
@@ -464,6 +476,26 @@ test('renderer streaming resume seeks only after media metadata is available', (
   )
 })
 
+test('renderer HTMLAudio starts only after the native engine is stopped', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const playWithRendererAudio =
+    source.match(/async function playWithRendererAudio[\s\S]*?\n}/)?.[0] ?? ''
+  const togglePlayState = extractInternalFunctionBody(source, 'togglePlayState')
+  const watchdog = source.match(/function scheduleRendererPlaybackWatchdog[\s\S]*?\n}/)?.[0] ?? ''
+
+  // Every place that starts the shared-mode HTMLAudio element must first stop the
+  // native engine; otherwise WASAPI shared (Chromium) and WASAPI exclusive can
+  // both render the same track and the user hears two sounds.
+  assert.match(playWithRendererAudio, /await stopNativeAudio\(\)/)
+  assert.match(
+    togglePlayState,
+    /const audio = getPlaybackAudio\(\)[\s\S]*?if \(audio\.paused\) \{[\s\S]*?await stopNativeAudio\(\)[\s\S]*?await audio\.play\(\)/
+  )
+  assert.match(watchdog, /await stopNativeAudio\(\)[\s\S]*?await audio\.play\(\)/)
+  const audioPlayCalls = source.match(/await audio\.play\(\)/g) ?? []
+  assert.ok(audioPlayCalls.length >= 3, 'expected renderer audio play call sites to be covered')
+})
+
 test('streaming renderer playback is allowed after asynchronous provider URL resolution', () => {
   const mainSource = readFileSync(
     new URL('../../../main/app/lifecycle.ts', import.meta.url),
@@ -501,9 +533,15 @@ test('only the active streaming load commits its resolved target into shared tra
   assert.doesNotMatch(resolvePlayTarget, /track\.streamUrl\s*=/)
   assert.doesNotMatch(resolvePlayTarget, /track\.streamQuality\s*=(?!=)/)
   assert.ok(resolvedAt >= 0, 'stream URL resolution should remain in loadAndPlay')
-  assert.ok(activeCheckAt > resolvedAt, 'resolved streams require a post-resolution generation check')
+  assert.ok(
+    activeCheckAt > resolvedAt,
+    'resolved streams require a post-resolution generation check'
+  )
   assert.ok(commitAt > activeCheckAt, 'stale stream resolutions must not mutate the shared track')
-  assert.ok(patchAt > commitAt, 'queue snapshots should update only after the active target commits')
+  assert.ok(
+    patchAt > commitAt,
+    'queue snapshots should update only after the active target commits'
+  )
 })
 
 test('NetEase streams re-resolve after a quality preference change', () => {
@@ -692,7 +730,7 @@ test('togglePlayState and seek/volume fan out to cast when castTargetName is act
   )
   // Cast path must return before local engine toggle; avoid [\s\S]* spanning both branches.
   const castingBranch = togglePlayState.match(/if \(casting\) \{[\s\S]*?\n    \}/)?.[0]
-  assert.ok(castingBranch, "casting branch should return before nativePlaybackActive")
+  assert.ok(castingBranch, 'casting branch should return before nativePlaybackActive')
   assert.match(castingBranch, /return/)
   assert.doesNotMatch(castingBranch, /audioEngine\.togglePause/)
   assert.doesNotMatch(castingBranch, /getPlaybackAudio/)
@@ -815,7 +853,10 @@ test('native queue switching guards the target track before applying playback-in
   assert.match(refreshPlaybackAfterRendererResume, /getPlaybackInfo\(\)/)
   assert.match(refreshPlaybackAfterRendererResume, /retryCurrentTrackLyricsIfNeeded\(true\)/)
   assert.match(retryCurrentTrackLyricsIfNeeded, /lyricsLoadState\.value\.status === 'loading'/)
-  assert.match(retryCurrentTrackLyricsIfNeeded, /ensureCurrentTrackLyricsLoaded\(track, true, forceReload\)/)
+  assert.match(
+    retryCurrentTrackLyricsIfNeeded,
+    /ensureCurrentTrackLyricsLoaded\(track, true, forceReload\)/
+  )
   // time-pos is routed through the shared fallback-aware policy: native engine
   // and delegated queues drive progress, while HTMLAudio fallback ignores the
   // native ghost clock so a second time source cannot freeze the bar.
@@ -823,7 +864,10 @@ test('native queue switching guards the target track before applying playback-in
     setupAudioEngineListeners,
     /shouldApplyNativeTimePosition\(\{\s*nativePlaybackActive,\s*nativeQueueDelegated\s*\}\)/
   )
-  assert.match(source, /import \{[^}]*shouldApplyNativeTimePosition[^}]*\} from '\.\/playerProgressPolicy\.ts'/)
+  assert.match(
+    source,
+    /import \{[^}]*shouldApplyNativeTimePosition[^}]*\} from '\.\/playerProgressPolicy\.ts'/
+  )
   // onStartFile must apply playback-info but must not clear the switch intent —
   // clearing after an ignored previous-track snapshot re-opened the flash race.
   const onStartFile =
@@ -1353,7 +1397,10 @@ test('player bar visualization polling stays light and stops behind the full vis
 
 test('audio service recovery uses the global notice channel instead of the player bar', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
-  const playerBarSource = readFileSync(new URL('../components/PlayerBar.vue', import.meta.url), 'utf8')
+  const playerBarSource = readFileSync(
+    new URL('../components/PlayerBar.vue', import.meta.url),
+    'utf8'
+  )
 
   assert.match(source, /const audioEngineRecoveryNotice = ref/)
   assert.match(source, /function publishAudioEngineRecoveryNotice/)
@@ -1426,7 +1473,10 @@ test('renderer audio device normalization uses native names and omits stale sele
   )
 
   assert.equal(options.find((device) => device.id === canonicalAsioId)?.label, 'FiiO ASIO Driver')
-  assert.equal(options.some((device) => device.id === 'asio:{stale-device}'), false)
+  assert.equal(
+    options.some((device) => device.id === 'asio:{stale-device}'),
+    false
+  )
 })
 
 test('dominant cover color extraction ignores stale async results', () => {
@@ -1623,7 +1673,10 @@ test('heart mode is gated to the liked NCM playlist and drives smart-list playba
     cyclePlayMode,
     /heartModeAvailable\.value \? modes : modes\.filter\(\(mode\) => mode !== 'heart'\)/
   )
-  assert.match(setPlayModeInternal, /if \(mode === 'heart'\) \{[\s\S]*if \(!heartModeAvailable\.value\) return/)
+  assert.match(
+    setPlayModeInternal,
+    /if \(mode === 'heart'\) \{[\s\S]*if \(!heartModeAvailable\.value\) return/
+  )
   assert.match(playerSource, /let heartModeFetchRequest: Promise<number> \| null = null/)
   assert.match(playerSource, /function fetchHeartRecommendations[\s\S]*fetchIntelligenceList/)
   assert.match(playerSource, /function enterHeartMode[\s\S]*fetchHeartRecommendations/)
@@ -1635,10 +1688,16 @@ test('heart mode is gated to the liked NCM playlist and drives smart-list playba
     /if \(playMode\.value !== 'heart'\) \{[\s\S]*await advanceAfterPlaybackEnded\(\)/
   )
   assert.match(next, /if \(playMode\.value === 'heart'\) \{[\s\S]*advanceHeartPlayback\(\)/)
-  assert.match(advanceAfterPlaybackEnded, /if \(playMode\.value === 'heart'\) \{[\s\S]*advanceHeartPlayback\(\)/)
+  assert.match(
+    advanceAfterPlaybackEnded,
+    /if \(playMode\.value === 'heart'\) \{[\s\S]*advanceHeartPlayback\(\)/
+  )
   // 心动模式边界由渲染层处理：原生引擎只加载当前曲目且不代管队列。
   assert.match(syncNativeQueueState, /queue: heartModeActive \? \[current\] : snapshot\.queue/)
-  assert.match(syncNativeQueueState, /nativeQueueDelegated = heartModeActive \? false : preparedQueue\.delegated/)
+  assert.match(
+    syncNativeQueueState,
+    /nativeQueueDelegated = heartModeActive \? false : preparedQueue\.delegated/
+  )
 })
 
 test('playback end auto-advance stops at queue end without changing manual next wrap', () => {
@@ -1787,12 +1846,17 @@ test('single-song repeat replays the current track when playback ends in fallbac
   assert.match(getPlaybackAudio, /audio.addEventListener\('ended',[\s\S]*handlePlaybackEnded\(\)/)
   // Guard fields exist and are reset at the end of a successful load so the
   // next natural end can trigger another replay.
-  assert.match(handlePlaybackEnded, /autoAdvanceInFlight \|\| advancingFromEndedTrackId === trackId/)
+  assert.match(
+    handlePlaybackEnded,
+    /autoAdvanceInFlight \|\| advancingFromEndedTrackId === trackId/
+  )
   assert.match(handlePlaybackEnded, /advancingFromEndedTrackId = trackId/)
   assert.match(handlePlaybackEnded, /autoAdvanceInFlight = true/)
   // Repeat must restart the same track without consulting the queue.
-  const repeatBranch = handlePlaybackEnded.match(/if \(playMode\.value === 'repeat'\) \{[\s\S]*?\n  \}/)?.[0]
-  assert.ok(repeatBranch, "repeat branch should exist")
+  const repeatBranch = handlePlaybackEnded.match(
+    /if \(playMode\.value === 'repeat'\) \{[\s\S]*?\n  \}/
+  )?.[0]
+  assert.ok(repeatBranch, 'repeat branch should exist')
   assert.match(repeatBranch, /void loadAndPlay\(track\)/)
   assert.doesNotMatch(repeatBranch, /advanceAfterPlaybackEnded\(\)/)
   // loadAndPlay must clear the guards on success so the loop can repeat.
