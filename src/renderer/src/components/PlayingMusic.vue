@@ -28,6 +28,16 @@ import {
 } from '../../../shared/lyricsAppearance.ts'
 import { waitForAnimationFrameWithFallback } from '../utils/animationFrameFallback'
 import { createLyricViewportController } from '../utils/lyricViewportController'
+import { LYRIC_ALIGN_POSITION } from '../utils/lyricLineLayout'
+import {
+  advanceLyricPlayhead,
+  buildLyricTimeline,
+  createLyricPlayheadState,
+  findLyricInterlude,
+  isDisplayableInterlude,
+  isNonDynamicTimeline,
+  type LyricPlayheadState
+} from '../utils/lyricTimeline'
 
 const playbackStore = usePlayerStore()
 const visualizationStore = useVisualizationStore()
@@ -191,10 +201,29 @@ const coverIdentity = computed(
 )
 const lyricsEl = ref<HTMLElement | null>(null)
 let lyricResizeObserver: ResizeObserver | null = null
-const LYRIC_SCROLL_DURATION_MS = 420
-const LYRIC_RESIZE_SCROLL_DURATION_MS = 260
+let lyricMotionObserver: MutationObserver | null = null
 const LYRIC_SCROLL_FRAME_FALLBACK_MS = 120
-const LYRIC_ACTIVE_ANCHOR_RATIO = 0.5
+const LYRIC_ACTIVE_ANCHOR_RATIO = LYRIC_ALIGN_POSITION
+const INTERLUDE_DOTS_HEIGHT_PX = 24
+
+/**
+ * Motion preference gates the physics. `full` runs springs, blur and glow;
+ * `reduced` and `off` snap lines into place and drop the depth effects.
+ */
+const lyricMotionLevel = ref<'full' | 'reduced' | 'off'>('full')
+
+function readLyricMotionLevel(): void {
+  const level = document.documentElement.dataset.teMotion
+  lyricMotionLevel.value = level === 'reduced' || level === 'off' ? level : 'full'
+}
+
+const lyricMotionFull = computed(() => lyricMotionLevel.value === 'full')
+
+/** Presented lines, carrying Apple's hysteresis so brief gaps do not flicker. */
+let lyricPlayheadState: LyricPlayheadState = createLyricPlayheadState()
+const lyricBufferedIndices = ref<ReadonlySet<number>>(new Set<number>())
+const lyricInterludeAfterIndex = ref<number | null>(null)
+const lyricInterludeDotsTop = ref<number | null>(null)
 
 /**
  * The player bar floats over the bottom of the now-playing page, so the
@@ -263,6 +292,11 @@ const reserveLyricsColumn = computed(
 )
 const activeLyricIndex = ref(-1)
 const highlightedLyricIndex = ref(-1)
+/**
+ * One controller now owns lyric motion. Previously a second controller derived
+ * scale and blur from scroll position, which made those values slaves to the
+ * scroll and left no room for per-line physics. Depth is part of the layout.
+ */
 const lyricViewport = createLyricViewportController({
   afterLayout: async () => {
     await nextTick()
@@ -270,28 +304,35 @@ const lyricViewport = createLyricViewportController({
   },
   onManualBrowseChange: () => {},
   getActiveIndex: () => activeLyricIndex.value,
-  scrollDurationMs: LYRIC_SCROLL_DURATION_MS,
-  resizeScrollDurationMs: LYRIC_RESIZE_SCROLL_DURATION_MS,
-  anchorRatio: LYRIC_ACTIVE_ANCHOR_RATIO,
-  getBottomReservedPx: measurePlaybarReservedPx
+  getBufferedIndices: () => lyricBufferedIndices.value,
+  alignPosition: LYRIC_ACTIVE_ANCHOR_RATIO,
+  getBottomReservedPx: measurePlaybarReservedPx,
+  isSpringEnabled: () => lyricMotionFull.value && viewMode.value === 'cover',
+  isBlurEnabled: () => lyricMotionFull.value,
+  isScaleEnabled: () => lyricMotionFull.value,
+  isPlaying: () => isPlaying.value,
+  isNonDynamic: () => isNonDynamicTimeline(lyricLines.value),
+  getInterludeAfterIndex: () => lyricInterludeAfterIndex.value,
+  getInterludeDotsHeight: () => INTERLUDE_DOTS_HEIGHT_PX,
+  onInterludeDotsTop: (top) => {
+    lyricInterludeDotsTop.value = top
+  }
 })
 
+const lyricTimeline = computed(() => buildLyricTimeline(lyricLines.value))
+
 watch(
-  () =>
-    [
-      currentTrack.value?.id,
-      lyricLines.value
-    ] as const,
+  () => [currentTrack.value?.id, lyricLines.value] as const,
   async ([trackId], previous) => {
     const [previousTrackId, previousLines] = previous ?? []
     if (trackId !== previousTrackId) {
       lyricViewport.activate(trackId ?? '')
-      await lyricViewport.recenter(0)
+      await lyricViewport.recenter('snap')
       return
     }
 
     if (currentTrack.value && lyricLines.value !== previousLines) {
-      await lyricViewport.recenter(0)
+      await lyricViewport.recenter('snap')
     }
   }
 )
@@ -300,15 +341,41 @@ function lyricTime(position = playbackClockSnapshot.value.position): number {
   return position + currentLyricOffsetSeconds.value
 }
 
-function syncActiveLyricIndex(time = playbackClockSnapshot.value.position): void {
-  const nextIndex = findActiveLyricIndex(lyricLines.value, lyricTime(time))
+/**
+ * Advance the presented set rather than just picking "the line whose time has
+ * come". The held set is what stops the view flickering between two overlapping
+ * lines and what holds the anchor still through a short instrumental gap.
+ */
+function syncActiveLyricIndex(
+  time = playbackClockSnapshot.value.position,
+  isSeek = false
+): void {
+  const timeline = lyricTimeline.value
+  const adjusted = lyricTime(time)
+  const next = advanceLyricPlayhead(timeline, lyricPlayheadState, adjusted, isSeek)
+  lyricPlayheadState = { hot: next.hot, buffered: next.buffered, scrollToIndex: next.scrollToIndex }
+  lyricBufferedIndices.value = next.buffered
+
+  const interlude = findLyricInterlude(timeline, lyricPlayheadState, adjusted)
+  lyricInterludeAfterIndex.value = isDisplayableInterlude(interlude)
+    ? (interlude?.afterIndex ?? null)
+    : null
+
+  // Fall back to a direct lookup when nothing is presented, so an untimed or
+  // line-only source still highlights something.
+  const nextIndex =
+    next.buffered.size > 0
+      ? next.scrollToIndex
+      : findActiveLyricIndex(lyricLines.value, adjusted)
   if (nextIndex !== activeLyricIndex.value) activeLyricIndex.value = nextIndex
 }
 
 watch(
   [lyricLines, playbackClockSnapshot, currentLyricOffsetSeconds],
-  ([, snapshot]) => {
-    syncActiveLyricIndex(snapshot.position)
+  ([lines, snapshot], previous) => {
+    const linesChanged = previous != null && previous[0] !== lines
+    if (linesChanged) lyricPlayheadState = createLyricPlayheadState()
+    syncActiveLyricIndex(snapshot.position, linesChanged)
   },
   { immediate: true }
 )
@@ -333,18 +400,8 @@ const renderedLyricLines = computed(() =>
 )
 
 function setLyricLineRef(index: number, el: Element | ComponentPublicInstance | null): void {
-  lyricViewport.registerRow(index, el instanceof HTMLElement ? el : null)
-}
-
-function lyricTone(index: number): 'idle' | 'far' | 'mid' | 'near' | 'active' {
-  const active = highlightedLyricIndex.value
-  if (active < 0) return 'idle'
-
-  const distance = Math.abs(index - active)
-  if (distance === 0) return 'active'
-  if (distance === 1) return 'near'
-  if (distance === 2) return 'mid'
-  return 'far'
+  const element = el instanceof HTMLElement ? el : null
+  lyricViewport.registerRow(index, element)
 }
 
 function jumpToLyric(time: number | null): void {
@@ -353,12 +410,26 @@ function jumpToLyric(time: number | null): void {
   seek(Math.max(0, time - currentLyricOffsetSeconds.value))
 }
 
-function onLyricsManualScroll(): void {
+/**
+ * The stage is `overflow: hidden` and positions rows itself, so there is no
+ * native scroll to intercept. That is what lets these stay passive listeners:
+ * the wheel delta is read and fed to the controller, never prevented.
+ */
+function onLyricsManualScroll(event?: WheelEvent | TouchEvent): void {
+  if (event && 'deltaY' in event && Number.isFinite(event.deltaY)) {
+    const delta = event.deltaMode === 0 ? event.deltaY : event.deltaY * 50
+    lyricViewport.browseBy(delta)
+    return
+  }
   lyricViewport.beginManualBrowse()
 }
 
 function onLyricLayoutResize(): void {
   lyricViewport.onResize()
+}
+
+function onLyricVisibilityChange(): void {
+  void lyricViewport.recenter('snap')
 }
 
 watch(activeLyricIndex, (index) => {
@@ -375,9 +446,17 @@ watch(lyricsEl, (el, previousEl) => {
   if (el) {
     lyricViewport.attach(el)
     lyricResizeObserver?.observe(el)
-    void lyricViewport.recenter(0)
+    void lyricViewport.recenter('snap')
   }
 })
+
+watch(
+  [hasLyrics, viewMode, lyricMotionLevel, isPlaying],
+  () => {
+    void lyricViewport.recenter(lyricMotionFull.value ? 'resize' : 'snap')
+  },
+  { flush: 'post' }
+)
 
 onMounted(() => {
   void lyricsManagement.ensureLoaded()
@@ -389,17 +468,27 @@ onMounted(() => {
     lyricResizeObserver.observe(lyricsEl.value)
   }
   lyricViewport.activate(currentTrackId())
-  void lyricViewport.recenter(0)
+  readLyricMotionLevel()
+  void lyricViewport.recenter('snap')
+  lyricMotionObserver = new MutationObserver(readLyricMotionLevel)
+  lyricMotionObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['data-te-motion']
+  })
   window.addEventListener('resize', onLyricLayoutResize)
   window.addEventListener('pointerdown', closeAppearanceMenu)
+  document.addEventListener('visibilitychange', onLyricVisibilityChange)
 })
 
 onBeforeUnmount(() => {
   lyricViewport.dispose()
   lyricResizeObserver?.disconnect()
   lyricResizeObserver = null
+  lyricMotionObserver?.disconnect()
+  lyricMotionObserver = null
   window.removeEventListener('resize', onLyricLayoutResize)
   window.removeEventListener('pointerdown', closeAppearanceMenu)
+  document.removeEventListener('visibilitychange', onLyricVisibilityChange)
 })
 </script>
 
@@ -477,7 +566,7 @@ onBeforeUnmount(() => {
 
         <section
           v-if="reserveLyricsColumn"
-          class="lyrics-column"
+          class="lyrics-column lyrics-column--depth"
           :class="{
             'lyrics-column--pending': !hasLyrics,
             'lyrics-column--karaoke-disabled': !lyricsAppearance.karaokeEnabled
@@ -498,7 +587,15 @@ onBeforeUnmount(() => {
             <div v-if="!hasLyrics" class="lyrics-pending" aria-live="polite">
               {{ lyricsPendingLabel }}
             </div>
-            <div v-else class="lyrics-list">
+            <div
+              v-if="hasLyrics && lyricInterludeDotsTop != null"
+              class="lyric-interlude-dots"
+              :style="{ '--lyric-interlude-top': `${lyricInterludeDotsTop}px` }"
+              aria-hidden="true"
+            >
+              <span></span><span></span><span></span>
+            </div>
+            <div v-if="hasLyrics" class="lyrics-list">
               <button
                 v-for="item in renderedLyricLines"
                 :key="`${item.line.time}-${item.index}`"
@@ -506,14 +603,15 @@ onBeforeUnmount(() => {
                 type="button"
                 class="lyric-row"
                 :class="[
-                  lyricTone(item.index),
                   {
+                    active: item.index === highlightedLyricIndex,
                     'is-plain': !item.line.timed,
                     'lyric-row--custom-background':
                       lyricTextStyle[item.index === highlightedLyricIndex ? 'active' : 'normal']
                         .backgroundStyle !== 'none'
                   }
                 ]"
+                :aria-current="item.index === highlightedLyricIndex ? 'true' : undefined"
                 :style="lyricStyleVars(item.index === highlightedLyricIndex ? 'active' : 'normal')"
                 :disabled="!item.line.timed"
                 @pointerdown.stop
@@ -992,10 +1090,17 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * The stage no longer scrolls. Rows are absolutely positioned and moved by their
+ * own springs, which is what allows lines to arrive at different times and to
+ * overshoot; `scrollTop` clamps and quantises and could do neither. Keeping it
+ * `hidden` also means the wheel listener never has to call preventDefault.
+ */
 .lyrics-scroll {
+  position: relative;
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   padding-right: 8px;
   -ms-overflow-style: none;
   scrollbar-width: none !important;
@@ -1033,17 +1138,62 @@ onBeforeUnmount(() => {
 }
 
 .lyrics-list {
+  position: absolute;
+  inset: 0;
   max-width: 820px;
   margin: 0 auto;
-  padding: 16vh 0 22vh;
+}
+
+.lyric-interlude-dots {
+  position: absolute;
+  left: 50%;
+  top: var(--lyric-interlude-top, 0);
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
+  gap: 0.35em;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.lyric-interlude-dots span {
+  width: clamp(6px, 0.8vh, 12px);
+  height: clamp(6px, 0.8vh, 12px);
+  border-radius: 50%;
+  background: var(--te-playback-lyric-active-text, #fff);
+  opacity: 0.5;
+  animation: lyric-interlude-pulse 1.8s ease-in-out infinite;
+}
+
+.lyric-interlude-dots span:nth-child(2) {
+  animation-delay: 0.22s;
+}
+
+.lyric-interlude-dots span:nth-child(3) {
+  animation-delay: 0.44s;
+}
+
+@keyframes lyric-interlude-pulse {
+  0%,
+  100% {
+    opacity: 0.32;
+    transform: scale(0.86);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.08);
+  }
+}
+
+:global(html[data-te-motion='reduced'] .lyric-interlude-dots span),
+:global(html[data-te-motion='off'] .lyric-interlude-dots span) {
+  animation: none;
 }
 
 .lyric-row {
-  width: min(100%, 760px);
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1061,11 +1211,24 @@ onBeforeUnmount(() => {
   text-align: var(--lyric-style-align, center);
   cursor: pointer;
   color: var(--lyric-style-color, var(--te-playback-lyric-text, rgba(255, 255, 255, 0.42)));
+  opacity: calc(var(--lyric-line-opacity, 1) * var(--lyric-style-opacity, 1));
+  /*
+   * Driven entirely by the controller's springs. No transition on transform or
+   * filter: the spring already carries the timing, and a transition on top would
+   * fight it and smear the cascade.
+   */
+  transform: translate3d(0, var(--lyric-line-top, 0px), 0);
+  filter: blur(var(--lyric-line-blur, 0px));
+  backface-visibility: hidden;
+  contain: layout style;
   transition:
     color var(--te-motion-hover) ease,
-    background var(--te-motion-hover) ease,
-    opacity var(--te-motion-hover) ease,
-    transform var(--te-motion-hover) var(--te-ease-soft);
+    background var(--te-motion-hover) ease;
+}
+
+/* Culled rows keep their box for measurement but stop painting. */
+.lyric-row[style*='--lyric-line-in-sight: 0'] {
+  content-visibility: hidden;
 }
 
 .lyric-row-content {
@@ -1074,31 +1237,17 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   gap: 5px;
-  overflow: hidden;
+  overflow: visible;
+  transform: scale(var(--lyric-line-scale, 1));
+  transform-origin: center;
+  will-change: transform;
 }
 
 .lyric-row:hover {
   color: var(--te-playback-lyric-hover-text, rgba(255, 255, 255, 0.74));
 }
 
-.lyric-row.idle {
-  opacity: calc(var(--lyric-dim, 0.56) * var(--lyric-style-opacity, 1));
-}
-
-.lyric-row.far {
-  opacity: calc(var(--lyric-dim, 0.56) * var(--lyric-style-opacity, 1) * 0.54);
-}
-
-.lyric-row.mid {
-  opacity: calc(var(--lyric-dim, 0.56) * var(--lyric-style-opacity, 1) * 0.93);
-}
-
-.lyric-row.near {
-  opacity: min(1, calc(var(--lyric-dim, 0.56) * var(--lyric-style-opacity, 1) * 1.5));
-}
-
 .lyric-row.active {
-  opacity: var(--lyric-style-opacity, 1);
   color: var(--lyric-style-color, var(--te-playback-lyric-active-text, #fff));
   background: var(--lyric-style-background, transparent);
   border-color: var(--te-playback-lyric-active-border, transparent);
@@ -1121,25 +1270,9 @@ onBeforeUnmount(() => {
 }
 
 .lyric-row.active .lyric-text {
-  font-size: clamp(
-    12px,
-    var(--lyric-style-font-size, var(--te-lyric-font-size, 18px)),
-    48px
-  );
   font-weight: var(--lyric-style-font-weight, var(--te-lyric-font-weight, 600));
   letter-spacing: 0.012em;
   text-shadow: var(--lyric-style-highlight, none);
-}
-
-:global(html[data-te-motion='full'] .lyric-row.active .lyric-text) {
-  animation: te-lyric-focus var(--te-motion-panel) var(--te-ease-spring) both;
-}
-
-@keyframes te-lyric-focus {
-  from {
-    opacity: 0.62;
-    translate: 0 6px;
-  }
 }
 
 :global(html[data-te-motion='full'] .lyric-row--exiting) {
@@ -1158,43 +1291,87 @@ onBeforeUnmount(() => {
   display: inline;
 }
 
-:deep(.lyric-word) {
-  --lyric-word-progress: 0%;
-  position: relative;
+/*
+ * The karaoke sweep is now a mask on the word itself, animated by the Web
+ * Animations API. The old approach duplicated every word into an `::after`
+ * overlay and cross-faded it, which paid for a second text layer per word and
+ * still had to be driven from JavaScript each frame. One masked layer is cheaper
+ * and cannot tear away from the text it is revealing.
+ *
+ * `mask-image`, `mask-size` and friends are set inline by the component, because
+ * the gradient geometry depends on the measured width of each word.
+ */
+.lyric-space {
+  white-space: pre;
+}
+
+.lyric-word-group {
   display: inline-block;
-  contain: paint;
-  color: color-mix(in srgb, currentColor 62%, transparent);
+  white-space: pre-wrap;
+}
+
+:deep(.lyric-word) {
+  display: inline-block;
   white-space: pre;
+  /* Padding plus a matching negative margin gives the glow room to spill without
+     changing where the glyphs sit. */
+  padding: 0.35em;
+  margin: -0.35em;
+  backface-visibility: hidden;
 }
 
-:deep(.lyric-word[data-progressing='true'])::after {
-  will-change: clip-path;
+:deep(.lyric-char) {
+  display: inline-block;
+  padding: 0.35em;
+  margin: -0.35em;
+  will-change: transform;
+  backface-visibility: hidden;
 }
 
-/* The reference uses a restrained white-to-warm-white karaoke sweep rather
-   than a saturated neon color. A clipped highlight layer keeps the text
-   layout stable while the fill advances with the word timestamp. */
-:deep(.lyric-word)::after {
-  position: absolute;
-  inset: 0;
-  color: var(--te-playback-lyric-karaoke, #fff8df);
-  white-space: pre;
-  opacity: var(--lyric-word-highlight-opacity, 0);
-  pointer-events: none;
-  clip-path: inset(0 calc(100% - var(--lyric-word-progress)) 0 0);
-  content: attr(data-word-text);
+/*
+ * Contrast between sung and unsung text is driven by how focused the line is, so
+ * a receding line loses its karaoke definition instead of shouting from the back.
+ */
+.lyric-row {
+  --lyric-bright-mask-alpha: 1;
+  --lyric-dark-mask-alpha: 0.4;
 }
 
-.lyric-row.active :deep(.lyric-word) {
-  opacity: 0.76;
+.lyric-row.active {
+  --lyric-bright-mask-alpha: 1;
+  --lyric-dark-mask-alpha: 0.32;
+}
+
+:global(html[data-te-motion='reduced'] .lyric-row),
+:global(html[data-te-motion='off'] .lyric-row) {
+  transform: none !important;
+  filter: none !important;
+}
+
+:global(html[data-te-motion='reduced'] .lyric-row-content),
+:global(html[data-te-motion='off'] .lyric-row-content) {
+  transform: none !important;
+}
+
+:global(html[data-te-motion='reduced'] .lyric-word),
+:global(html[data-te-motion='off'] .lyric-word),
+:global(html[data-te-motion='reduced'] .lyric-char),
+:global(html[data-te-motion='off'] .lyric-char) {
+  transform: none !important;
+  text-shadow: none !important;
+}
+
+/* Reduced motion keeps the fill legible but stops it sweeping. */
+:global(html[data-te-motion='reduced'] .lyric-word),
+:global(html[data-te-motion='off'] .lyric-word) {
+  mask-image: none !important;
+  -webkit-mask-image: none !important;
 }
 
 .lyrics-column--karaoke-disabled :deep(.lyric-word) {
   color: inherit;
-}
-
-.lyrics-column--karaoke-disabled :deep(.lyric-word)::after {
-  display: none;
+  mask-image: none;
+  -webkit-mask-image: none;
 }
 
 .lyric-translation {
@@ -1203,11 +1380,7 @@ onBeforeUnmount(() => {
   padding: 3px 7px;
   border-radius: 9px;
   font-family: var(--lyric-style-font-family, var(--te-lyric-font-family, inherit));
-  font-size: clamp(
-    12px,
-    var(--lyric-style-font-size, var(--te-lyric-font-size, 18px)),
-    48px
-  );
+  font-size: clamp(12px, var(--lyric-style-font-size, var(--te-lyric-font-size, 18px)), 48px);
   font-weight: var(--lyric-style-font-weight, 500);
   line-height: var(--lyric-style-line-height, 1.45);
   text-align: var(--lyric-style-align, center);

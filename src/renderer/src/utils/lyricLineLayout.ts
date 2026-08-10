@@ -1,0 +1,240 @@
+import type { LyricTimelineEntry } from './lyricTimeline.ts'
+
+/**
+ * The cascade lives here. Apple Music does not move a block of lines; it gives
+ * every line its own spring target plus a *delay*, and the delay grows as the
+ * layout walks down the list. The result is a wave that travels down from the
+ * active line rather than a rigid translation.
+ *
+ * Two details matter and are easy to lose:
+ *
+ * - The delay only accumulates once a line has reached the visible area, so the
+ *   off-screen backlog above does not eat the whole delay budget.
+ * - The per-step increment *shrinks* below the anchor, so the wave tightens as it
+ *   travels instead of smearing out.
+ *
+ * This module is pure geometry. It takes measured heights and returns targets;
+ * the controller owns the springs and the DOM.
+ */
+
+/**
+ * Scale is carried as a percentage, matching the spring epsilon. Springs settle
+ * at 0.01, so a 100 -> 97 range resolves cleanly while a 1.0 -> 0.97 range would
+ * fall inside the settle threshold and never animate.
+ */
+export const LYRIC_SCALE_ACTIVE = 100
+export const LYRIC_SCALE_INACTIVE = 97
+export const LYRIC_SCALE_BACKGROUND = 75
+
+export const LYRIC_OPACITY_PRESENTED = 0.85
+export const LYRIC_OPACITY_NORMAL = 1
+export const LYRIC_OPACITY_NON_DYNAMIC = 0.2
+/** Not zero: a fully transparent line gets optimised out and pops on return. */
+export const LYRIC_OPACITY_HIDDEN = 0.00001
+
+export const LYRIC_BLUR_PER_INDEX = 1
+export const LYRIC_BLUR_MAX = 32
+export const LYRIC_NARROW_VIEWPORT_PX = 1024
+export const LYRIC_NARROW_BLUR_SCALE = 0.8
+
+export const LYRIC_CASCADE_BASE_DELAY = 0.05
+export const LYRIC_CASCADE_DECAY = 1.05
+
+export const LYRIC_ALIGN_POSITION = 0.35
+export const LYRIC_INTERLUDE_DOTS_GAP_PX = 40
+export const LYRIC_INTERLUDE_DOTS_OFFSET_PX = 10
+
+export type LyricAlignAnchor = 'top' | 'center' | 'bottom'
+
+export interface LyricLayoutLine {
+  index: number
+  height: number
+  /** Reserved for background voices; they collapse while playing. */
+  isBackground?: boolean
+}
+
+export interface LyricLayoutOptions {
+  lines: readonly LyricLayoutLine[]
+  timeline?: readonly LyricTimelineEntry[]
+  /** Index the view is anchored to. */
+  scrollToIndex: number
+  buffered: ReadonlySet<number>
+  viewportHeight: number
+  viewportWidth?: number
+  /** Fraction of the visible area the anchor sits at. */
+  alignPosition?: number
+  alignAnchor?: LyricAlignAnchor
+  /** Manual browse displacement, in pixels. */
+  scrollOffset?: number
+  /** Space covered by an overlay such as the player bar. */
+  bottomReservedPx?: number
+  isPlaying?: boolean
+  /** Suppresses the cascade so a scrub lands immediately. */
+  isSeeking?: boolean
+  enableScale?: boolean
+  enableBlur?: boolean
+  hidePassedLines?: boolean
+  isNonDynamic?: boolean
+  /** Present and at least the minimum duration. */
+  interludeAfterIndex?: number | null
+  interludeDotsHeight?: number
+}
+
+export interface LyricLineTarget {
+  index: number
+  top: number
+  /** Percentage. Divide by 100 for a CSS scale. */
+  scale: number
+  opacity: number
+  blur: number
+  /** Seconds. Feeds `LyricSpring.setTargetPosition(top, delay)`. */
+  delay: number
+  presented: boolean
+}
+
+export interface LyricLayoutResult {
+  lines: LyricLineTarget[]
+  /** Vertical position for the interlude dots, or `null` when not shown. */
+  interludeDotsTop: number | null
+  /** `[min, max]` manual browse range. */
+  scrollBoundary: [number, number]
+  /** Total content height, used for the bottom spacer. */
+  contentBottom: number
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+export function computeLyricLayout(options: LyricLayoutOptions): LyricLayoutResult {
+  const {
+    lines,
+    scrollToIndex: requestedScrollIndex,
+    buffered,
+    viewportHeight,
+    viewportWidth = Number.POSITIVE_INFINITY,
+    alignPosition = LYRIC_ALIGN_POSITION,
+    alignAnchor = 'center',
+    scrollOffset = 0,
+    bottomReservedPx = 0,
+    isPlaying = true,
+    isSeeking = false,
+    enableScale = true,
+    enableBlur = true,
+    hidePassedLines = false,
+    isNonDynamic = false,
+    interludeAfterIndex = null,
+    interludeDotsHeight = 0
+  } = options
+
+  const visibleHeight = Math.max(0, viewportHeight - Math.max(0, bottomReservedPx))
+
+  // `scrollToIndex` is a *line* index, but the caller may hand us a sparse or
+  // partial set of rows, so array position and line index are not interchangeable.
+  // Resolve the anchor by line index and keep the two apart from here on;
+  // conflating them makes a sparse set anchor to the wrong row and write targets
+  // to indices that do not exist.
+  let anchorPosition = lines.findIndex((line) => line.index === requestedScrollIndex)
+  if (anchorPosition < 0) {
+    anchorPosition = lines.findIndex((line) => line.index >= requestedScrollIndex)
+    if (anchorPosition < 0) anchorPosition = Math.max(0, lines.length - 1)
+  }
+  const scrollToIndex = lines[anchorPosition]?.index ?? requestedScrollIndex
+
+  // Height of everything above the anchor. Background voices collapse while
+  // playing, so they must not push the anchor down.
+  let stackedAbove = 0
+  for (let position = 0; position < anchorPosition; position += 1) {
+    const line = lines[position]
+    if (!line) continue
+    if (line.isBackground && isPlaying) continue
+    stackedAbove += line.height
+  }
+
+  let curPos = -scrollOffset - stackedAbove + visibleHeight * clamp(alignPosition, 0, 1)
+
+  const anchorLine = lines[anchorPosition]
+  if (anchorLine) {
+    if (alignAnchor === 'center') curPos -= anchorLine.height / 2
+    else if (alignAnchor === 'bottom') curPos -= anchorLine.height
+  }
+
+  const scrollBoundaryMin = -stackedAbove
+  const latestPresented = buffered.size > 0 ? Math.max(...buffered) : -1
+  const blurScale = viewportWidth <= LYRIC_NARROW_VIEWPORT_PX ? LYRIC_NARROW_BLUR_SCALE : 1
+  const inactiveScale = enableScale ? LYRIC_SCALE_INACTIVE : LYRIC_SCALE_ACTIVE
+
+  const results: LyricLineTarget[] = []
+  let interludeDotsTop: number | null = null
+  let dotsPlaced = false
+  let delay = 0
+  let baseDelay = LYRIC_CASCADE_BASE_DELAY
+
+  for (let position = 0; position < lines.length; position += 1) {
+    const line = lines[position]
+    const lineIndex = line.index
+    const presented = buffered.has(lineIndex)
+    const active = presented || (lineIndex >= scrollToIndex && lineIndex < latestPresented)
+
+    if (
+      !dotsPlaced &&
+      interludeAfterIndex != null &&
+      (lineIndex === scrollToIndex + 1 ||
+        (lineIndex === scrollToIndex && interludeAfterIndex < 0))
+    ) {
+      dotsPlaced = true
+      interludeDotsTop = curPos + LYRIC_INTERLUDE_DOTS_OFFSET_PX
+      curPos += interludeDotsHeight + LYRIC_INTERLUDE_DOTS_GAP_PX
+    }
+
+    let opacity: number
+    if (hidePassedLines && isPlaying && lineIndex < scrollToIndex) {
+      opacity = LYRIC_OPACITY_HIDDEN
+    } else if (presented) {
+      opacity = LYRIC_OPACITY_PRESENTED
+    } else {
+      opacity = isNonDynamic ? LYRIC_OPACITY_NON_DYNAMIC : LYRIC_OPACITY_NORMAL
+    }
+
+    let blur = 0
+    if (enableBlur && !active) {
+      const distance =
+        lineIndex < scrollToIndex
+          ? Math.abs(scrollToIndex - lineIndex) + 1
+          : Math.abs(lineIndex - Math.max(scrollToIndex, latestPresented))
+      blur = clamp((1 + distance) * LYRIC_BLUR_PER_INDEX * blurScale, 0, LYRIC_BLUR_MAX)
+    }
+
+    let scale = LYRIC_SCALE_ACTIVE
+    if (!active && isPlaying) {
+      scale = line.isBackground ? LYRIC_SCALE_BACKGROUND : inactiveScale
+    }
+
+    results.push({ index: lineIndex, top: curPos, scale, opacity, blur, delay, presented })
+
+    if (!line.isBackground || active || !isPlaying) curPos += line.height
+
+    // Only lines that have reached the visible area consume delay, and the step
+    // tightens below the anchor.
+    if (curPos >= 0 && !isSeeking) {
+      if (!line.isBackground) delay += baseDelay
+      if (lineIndex >= scrollToIndex) baseDelay /= LYRIC_CASCADE_DECAY
+    }
+  }
+
+  return {
+    lines: results,
+    interludeDotsTop,
+    scrollBoundary: [scrollBoundaryMin, Math.max(scrollBoundaryMin, curPos + scrollOffset - visibleHeight / 2)],
+    contentBottom: curPos
+  }
+}
+
+/** True when a line's box intersects the viewport, with one line of slack. */
+export function isLyricLineInSight(
+  top: number,
+  height: number,
+  viewportHeight: number
+): boolean {
+  return !(top > viewportHeight + height || top + height < -height)
+}

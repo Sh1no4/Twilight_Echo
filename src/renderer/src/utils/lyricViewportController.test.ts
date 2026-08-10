@@ -1,191 +1,503 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createLyricViewportController } from './lyricViewportController.ts'
+import type { AnimationFrameFallbackScheduler } from './animationFrameFallback.ts'
+import {
+  createLyricViewportController,
+  type LyricRowElement,
+  type LyricStageElement
+} from './lyricViewportController.ts'
 
-interface FakeViewport {
-  scrollTop: number
-  clientHeight: number
-  scrollHeight: number
+const ROW_HEIGHT = 72
+const STAGE_HEIGHT = 180
+
+interface FakeRow extends LyricRowElement {
+  properties: Map<string, string>
 }
 
-interface FakeRow {
-  offsetTop: number
-  offsetHeight: number
-  offsetParent: FakeViewport | null
+function createStage(height = STAGE_HEIGHT): LyricStageElement {
+  return { clientHeight: height, clientWidth: 1440 }
 }
 
-function createViewport(): FakeViewport {
-  return { scrollTop: 0, clientHeight: 180, scrollHeight: 1_200 }
+function createRow(height = ROW_HEIGHT): FakeRow {
+  const properties = new Map<string, string>()
+  return {
+    offsetHeight: height,
+    isConnected: true,
+    properties,
+    style: {
+      setProperty: (property, value) => properties.set(property, value),
+      removeProperty: (property) => properties.delete(property)
+    }
+  }
 }
 
-function createRow(viewport: FakeViewport, index: number): FakeRow {
-  return { offsetTop: index * 120, offsetHeight: 72, offsetParent: viewport }
+function createManualScheduler(): {
+  scheduler: AnimationFrameFallbackScheduler
+  runFrame: () => void
+  runFrames: (count: number) => void
+  pendingFrames: () => number
+  runTimeouts: () => void
+} {
+  const frames = new Map<number, FrameRequestCallback>()
+  const timeouts = new Map<number, () => void>()
+  let handle = 0
+  let now = 1000
+
+  return {
+    scheduler: {
+      request: (callback) => {
+        handle += 1
+        frames.set(handle, callback)
+        return handle
+      },
+      cancel: (target) => frames.delete(target),
+      scheduleTimeout: (callback) => {
+        handle += 1
+        timeouts.set(handle, callback)
+        return handle
+      },
+      clearTimeout: (target) => timeouts.delete(target),
+      now: () => now
+    },
+    runFrame: () => {
+      const next = frames.entries().next().value as [number, FrameRequestCallback] | undefined
+      if (!next) return
+      frames.delete(next[0])
+      now += 1000 / 60
+      next[1](now)
+    },
+    runFrames: (count) => {
+      for (let index = 0; index < count; index += 1) {
+        const next = frames.entries().next().value as [number, FrameRequestCallback] | undefined
+        if (!next) return
+        frames.delete(next[0])
+        now += 1000 / 60
+        next[1](now)
+      }
+    },
+    pendingFrames: () => frames.size,
+    runTimeouts: () => {
+      const pending = [...timeouts.values()]
+      timeouts.clear()
+      for (const callback of pending) callback()
+    }
+  }
 }
 
-test('centers a later YRC line after switching away and back to its track', async () => {
-  const viewport = createViewport()
+interface Harness {
+  controller: ReturnType<typeof createLyricViewportController>
+  rows: FakeRow[]
+  manual: ReturnType<typeof createManualScheduler>
+  manualBrowseStates: boolean[]
+  activeIndex: { value: number }
+}
+
+function harness(rowCount = 8, overrides: Record<string, unknown> = {}): Harness {
+  const manual = createManualScheduler()
   const manualBrowseStates: boolean[] = []
+  const activeIndex = { value: 0 }
+  const rows = Array.from({ length: rowCount }, () => createRow())
+
   const controller = createLyricViewportController({
     afterLayout: async () => {},
-    onManualBrowseChange: (active) => manualBrowseStates.push(active)
+    onManualBrowseChange: (active) => manualBrowseStates.push(active),
+    getActiveIndex: () => activeIndex.value,
+    alignPosition: 0.5,
+    frameScheduler: manual.scheduler,
+    ...overrides
   })
 
-  controller.attach(viewport)
-  controller.activate('yrc-a')
-  controller.registerRow(5, createRow(viewport, 5))
-  await controller.follow(5, { durationMs: 0 })
-  assert.ok(viewport.scrollTop > 0, 'later YRC line was not centered for track A')
+  controller.attach(createStage())
+  controller.activate('track-a')
+  rows.forEach((row, index) => controller.registerRow(index, row))
 
-  controller.activate('yrc-b')
-  controller.registerRow(0, createRow(viewport, 0))
-  await controller.follow(0, { durationMs: 0 })
-  assert.equal(viewport.scrollTop, 0, 'track B inherited track A scroll position')
+  return { controller, rows, manual, manualBrowseStates, activeIndex }
+}
 
-  controller.activate('yrc-a')
-  controller.registerRow(5, createRow(viewport, 5))
-  await controller.follow(5, { durationMs: 0 })
-  assert.ok(viewport.scrollTop > 0, 'returning to YRC track A did not center its later line')
-  assert.ok(manualBrowseStates.every((active) => !active), 'automatic scrolling entered manual mode')
+test('each line gets its own target, so lines are no longer one rigid block', async () => {
+  const { controller, activeIndex } = harness()
+  activeIndex.value = 3
+  await controller.follow(3, { mode: 'snap' })
+
+  const tops = [0, 1, 2, 3, 4].map((index) => controller.getRowTop(index) as number)
+  for (let index = 1; index < tops.length; index += 1) {
+    assert.ok(tops[index] > tops[index - 1], `line ${index} should sit below line ${index - 1}`)
+    assert.ok(
+      Math.abs(tops[index] - tops[index - 1] - ROW_HEIGHT) < 1e-6,
+      'consecutive lines are one row apart'
+    )
+  }
 })
 
-test('ignores a layout pass that belongs to a previous track activation', async () => {
-  const viewport = createViewport()
+test('the anchored line lands at the align position', async () => {
+  const { controller, activeIndex } = harness()
+  activeIndex.value = 3
+  await controller.follow(3, { mode: 'snap' })
+
+  // 0.5 of 180 = 90, minus half a row = 54.
+  assert.ok(Math.abs((controller.getRowTop(3) as number) - 54) < 1e-6)
+})
+
+test('reserved bottom space lifts the anchor above the overlay', async () => {
+  const { controller, activeIndex } = harness(8, { getBottomReservedPx: () => 48 })
+  activeIndex.value = 3
+  await controller.follow(3, { mode: 'snap' })
+
+  // Visible height 180 - 48 = 132; 0.5 of that is 66, minus half a row = 30.
+  assert.ok(Math.abs((controller.getRowTop(3) as number) - 30) < 1e-6)
+})
+
+test('lines depart in sequence rather than as one block, which is the cascade', async () => {
+  const { controller, manual, activeIndex } = harness(10)
+  activeIndex.value = 0
+  await controller.follow(0, { mode: 'snap' })
+
+  // Anchor 0 stacks rows at 54 + 72i.
+  const restingSeven = controller.getRowTop(7) as number
+  assert.ok(Math.abs(restingSeven - (54 + 72 * 7)) < 1e-6)
+
+  activeIndex.value = 5
+  await controller.follow(5)
+  manual.runFrames(3)
+
+  // A spring whose delay has not elapsed still reports its *previous* target, so
+  // comparing targets shows exactly which lines have been released so far. A
+  // rigid block would release every line on the same frame.
+  const releasedTarget = controller.getRowTargetTop(4) as number
+  const pendingTarget = controller.getRowTargetTop(7) as number
+
+  assert.ok(Math.abs(releasedTarget - -18) < 1e-6, 'the first visible line has already departed')
+  assert.ok(
+    Math.abs(pendingTarget - restingSeven) < 1e-6,
+    'a line further down is still waiting its turn'
+  )
+
+  manual.runFrames(400)
+  assert.ok(
+    Math.abs((controller.getRowTop(7) as number) - (-306 + 72 * 7)) < 1,
+    'every line still arrives at its place'
+  )
+})
+
+test('an underdamped line overshoots its target and settles back', async () => {
+  const { controller, manual, activeIndex } = harness(10)
+  activeIndex.value = 8
+  await controller.follow(8, { mode: 'snap' })
+
+  activeIndex.value = 0
+  await controller.follow(0)
+
+  const target = controller.getRowTargetTop(0) as number
+  let overshot = false
+  for (let frame = 0; frame < 200; frame += 1) {
+    manual.runFrame()
+    const top = controller.getRowTop(0) as number
+    if (top > target + 0.5) overshot = true
+  }
+
+  assert.ok(overshot, 'scrollTop could never do this; a per-line spring can')
+  assert.ok(Math.abs((controller.getRowTop(0) as number) - target) < 1, 'it still settles')
+})
+
+test('scale trails position, so the motion is not perfectly rigid', async () => {
+  const { controller, manual, activeIndex } = harness(10)
+  activeIndex.value = 0
+  await controller.follow(0, { mode: 'snap' })
+  const restingScale = controller.getRowScale(1) as number
+
+  activeIndex.value = 1
+  await controller.follow(1)
+  manual.runFrames(2)
+
+  const scale = controller.getRowScale(1) as number
+  assert.notEqual(scale, restingScale, 'the scale spring is moving')
+  assert.ok(scale < 100, 'and has not snapped straight to full size')
+})
+
+test('snap mode places lines without consuming a frame', async () => {
+  const { controller, manual, activeIndex } = harness()
+  activeIndex.value = 4
+  await controller.follow(4, { mode: 'snap' })
+
+  assert.equal(manual.pendingFrames(), 0, 'a snap must not schedule animation')
+  assert.equal(controller.getRowTop(4), controller.getRowTargetTop(4))
+})
+
+test('reduced motion snaps and drops blur entirely', async () => {
+  const { controller, rows, manual, activeIndex } = harness(8, {
+    isSpringEnabled: () => false,
+    isBlurEnabled: () => false
+  })
+  activeIndex.value = 3
+  await controller.follow(3)
+
+  assert.equal(manual.pendingFrames(), 0, 'no animation frames when springs are off')
+  assert.equal(controller.getRowTop(3), controller.getRowTargetTop(3))
+  assert.equal(rows[0].properties.get('--lyric-line-blur'), '0.000px')
+})
+
+test('a track switch drops stale rows and resets browsing', async () => {
+  const { controller, activeIndex } = harness()
+  activeIndex.value = 5
+  await controller.follow(5, { mode: 'snap' })
+  assert.ok((controller.getRowTop(5) as number) !== 0)
+
+  controller.activate('track-b')
+  assert.equal(controller.getRowTop(5), null, 'rows from the previous track are gone')
+  assert.equal(controller.trackId(), 'track-b')
+  assert.equal(controller.getScrollOffset(), 0)
+})
+
+test('a layout pass belonging to a previous track cannot move the new one', async () => {
+  const manual = createManualScheduler()
+  const activeIndex = { value: 5 }
   let releaseLayout: (() => void) | null = null
   const firstLayout = new Promise<void>((resolve) => {
     releaseLayout = resolve
   })
   let layoutCalls = 0
+
   const controller = createLyricViewportController({
     afterLayout: async () => {
       layoutCalls += 1
       if (layoutCalls === 1) await firstLayout
     },
-    onManualBrowseChange: () => {}
+    onManualBrowseChange: () => {},
+    getActiveIndex: () => activeIndex.value,
+    alignPosition: 0.5,
+    frameScheduler: manual.scheduler
   })
+  controller.attach(createStage())
+  controller.activate('track-a')
+  controller.registerRow(5, createRow())
+  const stale = controller.follow(5, { mode: 'snap' })
 
-  controller.attach(viewport)
-  controller.activate('yrc-a')
-  controller.registerRow(5, createRow(viewport, 5))
-  const staleFollow = controller.follow(5, { durationMs: 0 })
-
-  controller.activate('yrc-b')
-  controller.registerRow(3, createRow(viewport, 3))
-  const currentFollow = controller.follow(3, { durationMs: 0 })
+  controller.activate('track-b')
+  const rowB = createRow()
+  controller.registerRow(3, rowB)
+  activeIndex.value = 3
+  const current = controller.follow(3, { mode: 'snap' })
   releaseLayout?.()
-  await Promise.all([staleFollow, currentFollow])
+  await Promise.all([stale, current])
 
-  assert.ok(viewport.scrollTop > 0, 'current track did not center after the stale layout pass completed')
-  assert.equal(controller.trackId(), 'yrc-b')
+  assert.equal(controller.trackId(), 'track-b')
+  assert.ok(Math.abs((controller.getRowTop(3) as number) - 54) < 1e-6)
 })
 
-test('a newer active line cancels an older follow that is waiting for layout', async () => {
-  const viewport = createViewport()
-  let releaseFirstLayout: (() => void) | null = null
+test('a newer follow cancels an older one still awaiting layout', async () => {
+  const manual = createManualScheduler()
+  const activeIndex = { value: 0 }
+  let releaseFirst: (() => void) | null = null
   const firstLayout = new Promise<void>((resolve) => {
-    releaseFirstLayout = resolve
+    releaseFirst = resolve
   })
   let layoutCalls = 0
+
   const controller = createLyricViewportController({
     afterLayout: async () => {
       layoutCalls += 1
       if (layoutCalls === 1) await firstLayout
     },
-    onManualBrowseChange: () => {}
+    onManualBrowseChange: () => {},
+    getActiveIndex: () => activeIndex.value,
+    alignPosition: 0.5,
+    frameScheduler: manual.scheduler
   })
+  controller.attach(createStage())
+  controller.activate('track-a')
+  controller.registerRow(0, createRow())
+  controller.registerRow(5, createRow())
 
-  controller.attach(viewport)
-  controller.activate('yrc-a')
-  controller.registerRow(0, createRow(viewport, 0))
-  controller.registerRow(5, createRow(viewport, 5))
-  const staleFollow = controller.follow(0, { durationMs: 0 })
+  const stale = controller.follow(0, { mode: 'snap' })
+  activeIndex.value = 5
+  await controller.follow(5, { mode: 'snap' })
+  releaseFirst?.()
+  await stale
 
-  await controller.follow(5, { durationMs: 0 })
-  releaseFirstLayout?.()
-  await staleFollow
-
-  assert.ok(viewport.scrollTop > 0, 'a stale layout follow reset the newer active line to the top')
+  // Line 5 is the anchor, so it sits at the align position and line 0 above it.
+  assert.ok(Math.abs((controller.getRowTop(5) as number) - 54) < 1e-6)
+  assert.ok((controller.getRowTop(0) as number) < 0, 'the stale follow did not win')
 })
 
-test('retains the newly registered row when a reused Vue ref clears an older row', async () => {
-  const viewport = createViewport()
-  const currentRow = { ...createRow(viewport, 5), isConnected: true }
-  const controller = createLyricViewportController({
-    afterLayout: async () => {},
-    onManualBrowseChange: () => {}
-  })
-
-  controller.attach(viewport)
-  controller.activate('yrc-a')
-  controller.registerRow(5, currentRow)
-  // Vue may call the previous ref callback with null after the replacement row
-  // has already claimed the same index during A -> B -> A.
+test('a reused Vue ref clearing an older row keeps the live one', async () => {
+  const { controller, activeIndex } = harness()
+  const replacement = createRow()
+  controller.registerRow(5, replacement)
+  // Vue may invoke the previous ref callback with null afterwards.
   controller.registerRow(5, null)
-  await controller.follow(5, { durationMs: 0 })
 
-  assert.ok(viewport.scrollTop > 0, 'a stale ref cleanup removed the current active row')
+  activeIndex.value = 5
+  await controller.follow(5, { mode: 'snap' })
+  assert.ok(Math.abs((controller.getRowTop(5) as number) - 54) < 1e-6)
 })
 
-test('uses rendered geometry when a positioned ancestor owns the row offset parent', async () => {
-  const viewport = {
-    ...createViewport(),
-    getBoundingClientRect: () => ({ top: 100 })
-  }
-  const positionedAncestor = {
-    offsetTop: 0,
-    offsetHeight: 0,
-    offsetParent: null
-  }
-  const row = {
-    offsetTop: 960,
-    offsetHeight: 72,
-    offsetParent: positionedAncestor,
-    getBoundingClientRect: () => ({ top: 100 + 960 - viewport.scrollTop })
-  }
-  const controller = createLyricViewportController({
-    afterLayout: async () => {},
-    onManualBrowseChange: () => {}
-  })
+test('a disconnected row is dropped when its ref clears', () => {
+  const { controller } = harness()
+  const stale = createRow()
+  stale.isConnected = false
+  controller.registerRow(5, stale)
+  controller.registerRow(5, null)
 
-  controller.attach(viewport)
-  controller.activate('yrc-a')
-  controller.registerRow(8, row)
-  await controller.follow(8, { durationMs: 0 })
+  assert.equal(controller.getRowTop(5), null)
+})
 
-  assert.ok(
-    viewport.scrollTop > 0,
-    'a positioned ancestor outside the scroll viewport prevented lyric following'
+test('browsing moves the view without native scroll and reports manual mode', async () => {
+  const { controller, manualBrowseStates, activeIndex } = harness()
+  activeIndex.value = 4
+  await controller.follow(4, { mode: 'snap' })
+  const before = controller.getRowTop(4) as number
+
+  controller.browseBy(60)
+  assert.ok(controller.isManualBrowsing())
+  assert.deepEqual(manualBrowseStates, [true])
+  assert.equal(controller.getScrollOffset(), 60)
+  assert.ok((controller.getRowTargetTop(4) as number) < before, 'the lines moved up')
+})
+
+test('browsing is bounded by the content extent', async () => {
+  const { controller, activeIndex } = harness()
+  activeIndex.value = 4
+  await controller.follow(4, { mode: 'snap' })
+
+  controller.browseBy(-100_000)
+  const min = controller.getScrollOffset()
+  controller.browseBy(-100_000)
+  assert.equal(controller.getScrollOffset(), min, 'cannot browse past the top')
+
+  controller.browseBy(100_000)
+  const max = controller.getScrollOffset()
+  controller.browseBy(100_000)
+  assert.equal(controller.getScrollOffset(), max, 'cannot browse past the bottom')
+})
+
+test('following is suppressed while browsing and resumes on release', async () => {
+  const { controller, manual, manualBrowseStates, activeIndex } = harness()
+  activeIndex.value = 2
+  await controller.follow(2, { mode: 'snap' })
+
+  controller.beginManualBrowse()
+  activeIndex.value = 6
+  await controller.follow(6)
+  assert.notEqual(
+    controller.getRowTargetTop(6),
+    54,
+    'automatic follow must not fight the user'
   )
+
+  controller.releaseManualBrowse()
+  await Promise.resolve()
+  manual.runFrames(400)
+
+  assert.ok(!controller.isManualBrowsing())
+  assert.deepEqual(manualBrowseStates, [true, false])
+  assert.equal(controller.getScrollOffset(), 0, 'releasing returns to the followed position')
 })
 
-test('anchors the active line inside the area above a reserved bottom overlay', async () => {
-  const viewport = createViewport()
-  const reservedController = createLyricViewportController({
-    afterLayout: async () => {},
-    onManualBrowseChange: () => {},
-    anchorRatio: 0.5,
-    getBottomReservedPx: () => 48
+test('browsing releases itself after the idle timeout', async () => {
+  const { controller, manual, activeIndex } = harness()
+  activeIndex.value = 2
+  await controller.follow(2, { mode: 'snap' })
+
+  controller.browseBy(80)
+  assert.ok(controller.isManualBrowsing())
+
+  manual.runTimeouts()
+  assert.ok(!controller.isManualBrowsing(), 'the view should return to the song on its own')
+})
+
+test('automatic following never reports manual browsing', async () => {
+  const { controller, manualBrowseStates, activeIndex } = harness()
+  for (const index of [0, 2, 5, 7]) {
+    activeIndex.value = index
+    await controller.follow(index, { mode: 'snap' })
+  }
+  assert.deepEqual(manualBrowseStates, [])
+})
+
+test('resize recentres the anchor once per frame', async () => {
+  const { controller, manual, activeIndex } = harness()
+  activeIndex.value = 5
+  await controller.follow(5, { mode: 'snap' })
+
+  controller.attach(createStage(400))
+  controller.onResize()
+  controller.onResize()
+  manual.runFrames(1)
+  await Promise.resolve()
+  manual.runFrames(400)
+
+  // 0.5 of 400 = 200, minus half a row = 164.
+  assert.ok(Math.abs((controller.getRowTop(5) as number) - 164) < 1.5)
+})
+
+test('resize is ignored while the user is browsing', async () => {
+  const { controller, activeIndex } = harness()
+  activeIndex.value = 5
+  await controller.follow(5, { mode: 'snap' })
+  controller.beginManualBrowse()
+  const offset = controller.getScrollOffset()
+
+  controller.onResize()
+  assert.equal(controller.getScrollOffset(), offset)
+  assert.ok(controller.isManualBrowsing())
+})
+
+test('presented lines stay unblurred while distant ones recede', async () => {
+  const { controller, rows, activeIndex } = harness(8, {
+    getBufferedIndices: () => new Set([3])
   })
+  activeIndex.value = 3
+  await controller.follow(3, { mode: 'snap' })
 
-  reservedController.attach(viewport)
-  reservedController.activate('yrc-a')
-  reservedController.registerRow(5, createRow(viewport, 5))
-  await reservedController.follow(5, { durationMs: 0 })
+  assert.equal(rows[3].properties.get('--lyric-line-blur'), '0.000px')
+  const near = Number.parseFloat(rows[4].properties.get('--lyric-line-blur') as string)
+  const far = Number.parseFloat(rows[7].properties.get('--lyric-line-blur') as string)
+  assert.ok(near > 0)
+  assert.ok(far > near, 'depth grows with distance')
+})
 
-  // Row 5 top = 600, visible height = 180 - 48 = 132, row height = 72,
-  // anchor = (132 - 72) * 0.5 = 30 => scrollTop = 570. The raw viewport center
-  // would place it at 546, i.e. 24px lower and behind the overlay.
-  assert.equal(viewport.scrollTop, 570, 'reserved bottom space was not subtracted from the anchor')
+test('lines outside the viewport are marked so they can stop painting', async () => {
+  const { controller, rows, activeIndex } = harness(30)
+  activeIndex.value = 0
+  await controller.follow(0, { mode: 'snap' })
 
-  const unreservedViewport = createViewport()
-  const unreservedController = createLyricViewportController({
-    afterLayout: async () => {},
-    onManualBrowseChange: () => {},
-    anchorRatio: 0.5
+  assert.equal(rows[0].properties.get('--lyric-line-in-sight'), undefined, 'visible by default')
+  assert.equal(rows[29].properties.get('--lyric-line-in-sight'), '0', 'far lines are culled')
+})
+
+test('the interlude dots position is published for the view', async () => {
+  const { controller, activeIndex } = harness(8, {
+    getInterludeAfterIndex: () => 2,
+    getInterludeDotsHeight: () => 20,
+    getBufferedIndices: () => new Set<number>()
   })
-  unreservedController.attach(unreservedViewport)
-  unreservedController.activate('yrc-a')
-  unreservedController.registerRow(5, createRow(unreservedViewport, 5))
-  await unreservedController.follow(5, { durationMs: 0 })
+  activeIndex.value = 2
+  await controller.follow(2, { mode: 'snap' })
 
-  assert.equal(unreservedViewport.scrollTop, 546, 'baseline anchor without a reserved overlay moved')
+  assert.ok(typeof controller.getInterludeDotsTop() === 'number')
+})
+
+test('disposing releases rows, browsing and pending work', async () => {
+  const { controller, manual, activeIndex } = harness()
+  activeIndex.value = 3
+  await controller.follow(3)
+  controller.beginManualBrowse()
+
+  controller.dispose()
+  assert.equal(controller.trackId(), '')
+  assert.equal(controller.getRowTop(3), null)
+  assert.ok(!controller.isManualBrowsing())
+
+  manual.runFrames(5)
+  assert.equal(controller.getRowTop(3), null)
+})
+
+test('following a negative index is a no-op', async () => {
+  const { controller, manual } = harness()
+  await controller.follow(-1)
+
+  // Rows exist but were never laid out, so they sit at their initial position
+  // and nothing was scheduled.
+  assert.equal(controller.getRowTop(0), 0)
+  assert.equal(manual.pendingFrames(), 0)
 })
