@@ -48,6 +48,7 @@ import { registerWindowIpc } from './windowIpc.ts'
 import { registerShellIpc } from './shellIpc.ts'
 import { registerDiscordIpc } from './discordIpc.ts'
 import { registerAppIpc } from './appIpc.ts'
+import { registerFontsIpc } from './fonts.ts'
 import {
   resetLocalLibraryFileIndex,
   synchronizeLocalLibraryFileIndexRevision
@@ -181,6 +182,7 @@ export function setupDataIpc(): void {
   registerShellIpc(ipcMain)
   registerDiscordIpc(ipcMain)
   registerAppIpc(ipcMain)
+  registerFontsIpc(ipcMain)
 
   ipcMain.handle('dialog:openFolder', async (event) => {
     assertTrustedIpcSender(event, 'dialog IPC')
@@ -1292,11 +1294,17 @@ async function loadNcmCookie(filePath: string): Promise<string> {
   if (!existsSync(filePath)) return ''
   try {
     const fileInfo = statSync(filePath)
-    if (!fileInfo.isFile() || fileInfo.size <= 0 || fileInfo.size > MAX_NCM_COOKIE_FILE_BYTES) return ''
+    if (!fileInfo.isFile() || fileInfo.size <= 0 || fileInfo.size > MAX_NCM_COOKIE_FILE_BYTES)
+      return ''
     const raw = readFileSync(filePath, 'utf-8')
     if (Buffer.byteLength(raw, 'utf-8') > MAX_NCM_COOKIE_FILE_BYTES) return ''
     const parsed = tryParseJsonWithNestingLimit(raw)
-    if (!parsed.ok || !parsed.value || typeof parsed.value !== 'object' || Array.isArray(parsed.value)) {
+    if (
+      !parsed.ok ||
+      !parsed.value ||
+      typeof parsed.value !== 'object' ||
+      Array.isArray(parsed.value)
+    ) {
       return ''
     }
     const cookie = (parsed.value as Record<string, unknown>).cookie

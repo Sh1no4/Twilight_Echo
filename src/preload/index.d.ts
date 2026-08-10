@@ -1803,6 +1803,9 @@ interface WindowAPI {
     onChanged: (cb: (snapshot: SettingsSnapshot) => void) => () => void
     onPlayerShortcut: (cb: (action: PlayerShortcutAction) => void) => () => void
   }
+  fonts: {
+    listInstalled: () => Promise<string[]>
+  }
   themes: {
     getSystemTone: () => Promise<ThemeTone>
     getBootstrap: () => Promise<ThemeBootstrap>
