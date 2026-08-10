@@ -66,6 +66,8 @@ import type {
   AudioProcessingSettings,
   CardAppearanceSettings,
   CardAppearanceTheme,
+  LiquidGlassSettings,
+  LiquidGlassTheme,
   CardShadowStrength,
   CardHoverEffect,
   ChannelRoutingMode,
@@ -690,7 +692,8 @@ function setProxyPort(event: Event): void {
 
 function toggleSetting(key: BooleanSettingKey): void {
   if (key === 'windowTransparency' && !windowTransparencySupported.value) {
-    settingsNotice.value = '当前系统不支持窗口透明（Linux Wayland，或 Windows 未开启系统透明效果），已自动使用不透明窗口。'
+    settingsNotice.value =
+      '当前系统不支持窗口透明（Linux Wayland，或 Windows 未开启系统透明效果），已自动使用不透明窗口。'
     return
   }
   void updateSettings({ [key]: !settings.value[key] } as Partial<AppSettings>)
@@ -1445,6 +1448,39 @@ function setBgEffectField<K extends keyof typeof settings.value.cardAppearance.b
   void updateSettings({ cardAppearance })
 }
 
+const liquidGlassOpen = ref(false)
+const liquidGlassTab = ref<'light' | 'dark'>('light')
+
+function cloneLiquidGlass(): LiquidGlassSettings {
+  const lg = settings.value.liquidGlass
+  return {
+    followPointer: lg.followPointer,
+    light: { ...lg.light },
+    dark: { ...lg.dark }
+  }
+}
+
+function toggleLiquidGlass(): void {
+  void updateSettings({
+    surfaceMaterial: settings.value.surfaceMaterial === 'liquidGlass' ? 'standard' : 'liquidGlass'
+  })
+}
+
+function toggleLiquidGlassPointer(): void {
+  const liquidGlass = cloneLiquidGlass()
+  liquidGlass.followPointer = !liquidGlass.followPointer
+  void updateSettings({ liquidGlass })
+}
+
+function setLiquidGlassField<K extends keyof LiquidGlassTheme>(
+  field: K,
+  value: LiquidGlassTheme[K]
+): void {
+  const liquidGlass = cloneLiquidGlass()
+  liquidGlass[liquidGlassTab.value][field] = value
+  void updateSettings({ liquidGlass })
+}
+
 function pluginPanelStateKey(panel: UiContribution): string {
   return `${panel.pluginId}:${panel.id}`
 }
@@ -1486,10 +1522,13 @@ function normalizePluginSettingsForm(value: unknown): PluginSettingsForm | null 
         label,
         type: type as PluginSettingsFieldType,
         required: field.required === true,
-        placeholder:
-          typeof field.placeholder === 'string' ? field.placeholder.slice(0, 200) : '',
+        placeholder: typeof field.placeholder === 'string' ? field.placeholder.slice(0, 200) : '',
         value:
-          type === 'password' ? '' : typeof field.value === 'string' ? field.value.slice(0, 4096) : '',
+          type === 'password'
+            ? ''
+            : typeof field.value === 'string'
+              ? field.value.slice(0, 4096)
+              : '',
         options
       }
     ]
@@ -1577,13 +1616,18 @@ async function submitPluginSettingsForm(panel: UiContribution): Promise<void> {
       pluginSettingsForms.value = { ...pluginSettingsForms.value, [stateKey]: refreshedForm }
       pluginSettingsValues.value = {
         ...pluginSettingsValues.value,
-        [stateKey]: Object.fromEntries(refreshedForm.fields.map((field) => [field.key, field.value]))
+        [stateKey]: Object.fromEntries(
+          refreshedForm.fields.map((field) => [field.key, field.value])
+        )
       }
     } else {
       pluginSettingsValues.value = {
         ...pluginSettingsValues.value,
         [stateKey]: Object.fromEntries(
-          form.fields.map((field) => [field.key, field.type === 'password' ? '' : values[field.key] ?? ''])
+          form.fields.map((field) => [
+            field.key,
+            field.type === 'password' ? '' : (values[field.key] ?? '')
+          ])
         )
       }
     }
@@ -2041,10 +2085,7 @@ function scrollToSearchResult(entry: SettingsSearchEntry): void {
   })
 }
 
-function findSettingItem(
-  sectionEl: HTMLElement,
-  entry: SettingsSearchEntry
-): HTMLElement | null {
+function findSettingItem(sectionEl: HTMLElement, entry: SettingsSearchEntry): HTMLElement | null {
   const matchText = (entry.match ?? entry.title).trim().toLowerCase()
   // 优先匹配 .setting-item（常规设置项）
   const settingItems = sectionEl.querySelectorAll<HTMLElement>('.setting-item')
@@ -2196,70 +2237,68 @@ onBeforeUnmount(() => {
     />
     <div class="settings-preview-layout">
       <nav class="settings-preview-nav" aria-label="设置分区">
-          <div class="settings-nav-search-wrap">
-            <div class="settings-search-box settings-nav-search">
-              <i class="pi pi-search"></i>
-              <AnimatedInput
-                v-model="settingsSearchQuery"
-                type="text"
-                class="settings-search-input"
-                placeholder="搜索设置"
-                aria-label="搜索设置"
-                @focus="activeSearchIndex = filteredSearchResults.length > 0 ? 0 : -1"
-                @keydown.down.prevent="moveSearchSelection(1)"
-                @keydown.up.prevent="moveSearchSelection(-1)"
-                @keydown.enter.prevent="handleSettingsSearchEnter"
-                @keydown.esc.prevent="clearSettingsSearch"
-              />
-              <button
-                v-if="settingsSearchQuery"
-                type="button"
-                class="settings-search-clear"
-                @click="clearSettingsSearch"
-                aria-label="清除搜索"
-              >
-                <i class="pi pi-times"></i>
-              </button>
-            </div>
-            <div
-              v-if="hasSettingsSearchResults"
-              class="settings-nav-results"
-              role="listbox"
-              aria-label="搜索结果"
+        <div class="settings-nav-search-wrap">
+          <div class="settings-search-box settings-nav-search">
+            <i class="pi pi-search"></i>
+            <AnimatedInput
+              v-model="settingsSearchQuery"
+              type="text"
+              class="settings-search-input"
+              placeholder="搜索设置"
+              aria-label="搜索设置"
+              @focus="activeSearchIndex = filteredSearchResults.length > 0 ? 0 : -1"
+              @keydown.down.prevent="moveSearchSelection(1)"
+              @keydown.up.prevent="moveSearchSelection(-1)"
+              @keydown.enter.prevent="handleSettingsSearchEnter"
+              @keydown.esc.prevent="clearSettingsSearch"
+            />
+            <button
+              v-if="settingsSearchQuery"
+              type="button"
+              class="settings-search-clear"
+              @click="clearSettingsSearch"
+              aria-label="清除搜索"
             >
-              <button
-                v-for="(result, index) in filteredSearchResults"
-                :key="`${result.section}:${result.title}`"
-                type="button"
-                role="option"
-                :aria-selected="activeSearchIndex === index"
-                :class="{ active: activeSearchIndex === index }"
-                @mouseenter="activeSearchIndex = index"
-                @click="scrollToSearchResult(result)"
-              >
-                <i :class="sections.find((section) => section.key === result.section)?.icon"></i>
-                <span class="settings-nav-result-title">{{ result.title }}</span>
-                <small>{{
-                  sections.find((section) => section.key === result.section)?.label
-                }}</small>
-              </button>
-            </div>
-            <div v-else-if="hasSettingsSearchNoResults" class="settings-nav-empty">
-              没有找到匹配的设置
-            </div>
+              <i class="pi pi-times"></i>
+            </button>
           </div>
-          <button
-            v-for="section in sections"
-            :key="section.key"
-            type="button"
-            class="preview-nav-item"
-            :class="{ active: activeSection === section.key }"
-            @click="scrollToSection(section.key)"
+          <div
+            v-if="hasSettingsSearchResults"
+            class="settings-nav-results"
+            role="listbox"
+            aria-label="搜索结果"
           >
-            <i :class="section.icon"></i>
-            <span>{{ section.label }}</span>
-          </button>
-        </nav>
+            <button
+              v-for="(result, index) in filteredSearchResults"
+              :key="`${result.section}:${result.title}`"
+              type="button"
+              role="option"
+              :aria-selected="activeSearchIndex === index"
+              :class="{ active: activeSearchIndex === index }"
+              @mouseenter="activeSearchIndex = index"
+              @click="scrollToSearchResult(result)"
+            >
+              <i :class="sections.find((section) => section.key === result.section)?.icon"></i>
+              <span class="settings-nav-result-title">{{ result.title }}</span>
+              <small>{{ sections.find((section) => section.key === result.section)?.label }}</small>
+            </button>
+          </div>
+          <div v-else-if="hasSettingsSearchNoResults" class="settings-nav-empty">
+            没有找到匹配的设置
+          </div>
+        </div>
+        <button
+          v-for="section in sections"
+          :key="section.key"
+          type="button"
+          class="preview-nav-item"
+          :class="{ active: activeSection === section.key }"
+          @click="scrollToSection(section.key)"
+        >
+          <i :class="section.icon"></i>
+          <span>{{ section.label }}</span>
+        </button>
+      </nav>
 
       <div class="settings-preview-stack">
         <header class="settings-page-header">
@@ -4231,8 +4270,9 @@ onBeforeUnmount(() => {
               <div class="setting-copy">
                 <strong>窗口透明</strong>
                 <span
-                  >让窗口底层透明，显示系统模糊效果（Windows 11 22H2+ 使用原生亚克力模糊；Linux
-                  X11 需合成器支持，如 KWin / picom；Linux Wayland、以及 Windows 未开启系统透明效果时暂不支持）。更改后需重启。</span
+                  >让窗口底层透明，显示系统模糊效果（Windows 11 22H2+ 使用原生亚克力模糊；Linux X11
+                  需合成器支持，如 KWin / picom；Linux Wayland、以及 Windows
+                  未开启系统透明效果时暂不支持）。更改后需重启。</span
                 >
               </div>
               <span
@@ -4249,7 +4289,8 @@ onBeforeUnmount(() => {
               ></span>
             </div>
             <div v-if="transparencyUnsupported" class="settings-inline-warning" role="status">
-              当前系统不支持透明窗口（Linux Wayland，或 Windows 未开启系统透明效果），已自动回退为不透明窗口，应用仍可正常使用。
+              当前系统不支持透明窗口（Linux Wayland，或 Windows
+              未开启系统透明效果），已自动回退为不透明窗口，应用仍可正常使用。
             </div>
             <template v-if="settings.windowTransparency && transparencySupported">
               <hr />
@@ -5052,6 +5093,264 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <MiniPlayerSettingsSection />
+            <hr />
+            <button
+              type="button"
+              class="settings-accordion-trigger"
+              :class="{ open: liquidGlassOpen }"
+              :aria-expanded="liquidGlassOpen"
+              @click="liquidGlassOpen = !liquidGlassOpen"
+            >
+              <span class="setting-copy">
+                <strong>液态玻璃材质</strong>
+                <span>为卡片与播放栏启用折射玻璃质感，可与现有材质随时切换。</span>
+              </span>
+              <i class="pi pi-chevron-down"></i>
+            </button>
+            <div v-if="liquidGlassOpen" class="settings-accordion-body">
+              <hr />
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>启用液态玻璃</strong>
+                  <span>
+                    开启后卡片与播放栏改用折射玻璃材质。大型媒体库滚动时会有额外 GPU 开销。
+                  </span>
+                </div>
+                <span
+                  class="toggle-switch"
+                  :class="{ active: settings.surfaceMaterial === 'liquidGlass' }"
+                  role="switch"
+                  :aria-checked="settings.surfaceMaterial === 'liquidGlass'"
+                  @click="toggleLiquidGlass"
+                ></span>
+              </div>
+              <div v-if="settings.surfaceMaterial === 'liquidGlass'">
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>高光跟随指针</strong>
+                    <span>镜面高光角度随鼠标移动变化；关闭后使用固定光源。</span>
+                  </div>
+                  <span
+                    class="toggle-switch"
+                    :class="{ active: settings.liquidGlass.followPointer }"
+                    role="switch"
+                    :aria-checked="settings.liquidGlass.followPointer"
+                    @click="toggleLiquidGlassPointer"
+                  ></span>
+                </div>
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>编辑主题</strong>
+                    <span>分别设置浅色与深色模式下的玻璃参数。</span>
+                  </div>
+                  <div class="theme-segment">
+                    <button
+                      type="button"
+                      :class="{ active: liquidGlassTab === 'light' }"
+                      @click="liquidGlassTab = 'light'"
+                    >
+                      <i class="pi pi-sun"></i>
+                      浅色
+                    </button>
+                    <button
+                      type="button"
+                      :class="{ active: liquidGlassTab === 'dark' }"
+                      @click="liquidGlassTab = 'dark'"
+                    >
+                      <i class="pi pi-moon"></i>
+                      深色
+                    </button>
+                  </div>
+                </div>
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>折射强度</strong>
+                    <span>边缘弯曲背景的位移量，越高玻璃感越强。</span>
+                  </div>
+                  <div class="range-pill">
+                    <span>折射</span>
+                    <input
+                      class="range-input"
+                      type="range"
+                      min="0"
+                      max="140"
+                      :value="settings.liquidGlass[liquidGlassTab].displacementScale"
+                      @input="
+                        setLiquidGlassField(
+                          'displacementScale',
+                          Number(($event.target as HTMLInputElement).value)
+                        )
+                      "
+                    />
+                    <EditableRangeValue
+                      :value="settings.liquidGlass[liquidGlassTab].displacementScale"
+                      :min="0"
+                      :max="140"
+                      aria-label="编辑折射强度"
+                      @change="setLiquidGlassField('displacementScale', $event)"
+                    />
+                  </div>
+                </div>
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>色散强度</strong>
+                    <span>边缘彩色分离的程度，模拟玻璃的色散。</span>
+                  </div>
+                  <div class="range-pill">
+                    <span>色散</span>
+                    <input
+                      class="range-input"
+                      type="range"
+                      min="0"
+                      max="8"
+                      step="0.5"
+                      :value="settings.liquidGlass[liquidGlassTab].aberrationIntensity"
+                      @input="
+                        setLiquidGlassField(
+                          'aberrationIntensity',
+                          Number(($event.target as HTMLInputElement).value)
+                        )
+                      "
+                    />
+                    <EditableRangeValue
+                      :value="settings.liquidGlass[liquidGlassTab].aberrationIntensity"
+                      :min="0"
+                      :max="8"
+                      aria-label="编辑色散强度"
+                      @change="setLiquidGlassField('aberrationIntensity', $event)"
+                    />
+                  </div>
+                </div>
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>玻璃模糊</strong>
+                    <span>玻璃后方背景的模糊半径。</span>
+                  </div>
+                  <div class="range-pill">
+                    <span>模糊</span>
+                    <input
+                      class="range-input"
+                      type="range"
+                      min="0"
+                      max="40"
+                      :value="settings.liquidGlass[liquidGlassTab].blurAmount"
+                      @input="
+                        setLiquidGlassField(
+                          'blurAmount',
+                          Number(($event.target as HTMLInputElement).value)
+                        )
+                      "
+                    />
+                    <EditableRangeValue
+                      :value="settings.liquidGlass[liquidGlassTab].blurAmount"
+                      :min="0"
+                      :max="40"
+                      suffix="px"
+                      aria-label="编辑玻璃模糊"
+                      @change="setLiquidGlassField('blurAmount', $event)"
+                    />
+                  </div>
+                </div>
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>玻璃饱和度</strong>
+                    <span>透过玻璃的色彩饱和感。</span>
+                  </div>
+                  <div class="range-pill">
+                    <span>饱和度</span>
+                    <input
+                      class="range-input"
+                      type="range"
+                      min="80"
+                      max="200"
+                      :value="settings.liquidGlass[liquidGlassTab].saturation"
+                      @input="
+                        setLiquidGlassField(
+                          'saturation',
+                          Number(($event.target as HTMLInputElement).value)
+                        )
+                      "
+                    />
+                    <EditableRangeValue
+                      :value="settings.liquidGlass[liquidGlassTab].saturation"
+                      :min="80"
+                      :max="200"
+                      suffix="%"
+                      aria-label="编辑玻璃饱和度"
+                      @change="setLiquidGlassField('saturation', $event)"
+                    />
+                  </div>
+                </div>
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>镜面高光</strong>
+                    <span>描边与高光的亮度。</span>
+                  </div>
+                  <div class="range-pill">
+                    <span>高光</span>
+                    <input
+                      class="range-input"
+                      type="range"
+                      min="0"
+                      max="100"
+                      :value="settings.liquidGlass[liquidGlassTab].specularOpacity"
+                      @input="
+                        setLiquidGlassField(
+                          'specularOpacity',
+                          Number(($event.target as HTMLInputElement).value)
+                        )
+                      "
+                    />
+                    <EditableRangeValue
+                      :value="settings.liquidGlass[liquidGlassTab].specularOpacity"
+                      :min="0"
+                      :max="100"
+                      suffix="%"
+                      aria-label="编辑镜面高光"
+                      @change="setLiquidGlassField('specularOpacity', $event)"
+                    />
+                  </div>
+                </div>
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>表面着色</strong>
+                    <span>玻璃自身的底色浓度，越低越通透。</span>
+                  </div>
+                  <div class="range-pill">
+                    <span>着色</span>
+                    <input
+                      class="range-input"
+                      type="range"
+                      min="0"
+                      max="100"
+                      :value="settings.liquidGlass[liquidGlassTab].tintOpacity"
+                      @input="
+                        setLiquidGlassField(
+                          'tintOpacity',
+                          Number(($event.target as HTMLInputElement).value)
+                        )
+                      "
+                    />
+                    <EditableRangeValue
+                      :value="settings.liquidGlass[liquidGlassTab].tintOpacity"
+                      :min="0"
+                      :max="100"
+                      suffix="%"
+                      aria-label="编辑表面着色"
+                      @change="setLiquidGlassField('tintOpacity', $event)"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
             <hr />
             <button
               type="button"
