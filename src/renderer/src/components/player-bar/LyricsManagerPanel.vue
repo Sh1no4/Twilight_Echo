@@ -10,9 +10,10 @@ import type {
 } from '../../../../shared/lyricsManagement.ts'
 import type { LyricSource } from '../../types/music'
 import {
-  syncLegacyLyricsAppearance,
+  LYRICS_RANGES,
   type LyricsAppearanceSettings
 } from '../../../../shared/lyricsAppearance.ts'
+import { useLyricsAppearanceEditor } from '../../composables/useLyricsAppearanceEditor.ts'
 
 type LayerKey = 'original' | 'translation' | 'romanization'
 type LayerSelectionKey = 'originalSelection' | 'translationSelection' | 'romanizationSelection'
@@ -44,7 +45,9 @@ const playbackStore = usePlayerStore()
 const { currentTrack, lyricsLoadState } = playbackStore
 const { refreshCurrentLyrics } = playbackStore
 const lyricsManagement = useLyricsManagement()
-const { settings, updateSettings } = useSettingsStore()
+const { settings } = useSettingsStore()
+const lyricsEditor = useLyricsAppearanceEditor()
+const lyricsRanges = LYRICS_RANGES
 const lyricFocusLineCounts = [
   { value: 'all', label: '全部' },
   { value: 1, label: '1 行' },
@@ -406,23 +409,9 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
   key: K,
   value: LyricsAppearanceSettings[K]
 ): void {
-  const legacyKeys = new Set<keyof LyricsAppearanceSettings>([
-    'fontFamily',
-    'fontSize',
-    'fontWeight',
-    'lineHeight',
-    'align',
-    'colorMode',
-    'textColor',
-    'activeColor',
-    'karaokeColor'
-  ])
-  const lyricsAppearance = legacyKeys.has(key)
-    ? syncLegacyLyricsAppearance(settings.value.lyricsAppearance, {
-        [key]: value
-      } as Partial<LyricsAppearanceSettings>)
-    : { ...settings.value.lyricsAppearance, [key]: value }
-  void updateSettings({ lyricsAppearance })
+  // The shared editor owns the legacy fan-out and the published bounds, so these
+  // quick controls cannot drift from the full editor in the drawer.
+  lyricsEditor.setGlobal(key, value)
 }
 </script>
 
@@ -460,9 +449,9 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
           >
           <input
             type="range"
-            min="14"
-            max="32"
-            step="1"
+            :min="lyricsRanges.fontSize.min"
+            :max="lyricsRanges.fontSize.max"
+            :step="lyricsRanges.fontSize.step"
             :value="settings.lyricsAppearance.fontSize"
             @change="
               updateLyricsAppearance('fontSize', Number(($event.target as HTMLInputElement).value))
@@ -475,9 +464,9 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
           >
           <input
             type="range"
-            min="1.2"
-            max="2.6"
-            step="0.05"
+            :min="lyricsRanges.lineHeight.min"
+            :max="lyricsRanges.lineHeight.max"
+            :step="lyricsRanges.lineHeight.step"
             :value="settings.lyricsAppearance.lineHeight"
             @change="
               updateLyricsAppearance(
@@ -493,9 +482,9 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
           >
           <input
             type="range"
-            min="10"
-            max="100"
-            step="5"
+            :min="lyricsRanges.inactiveOpacity.min"
+            :max="lyricsRanges.inactiveOpacity.max"
+            :step="lyricsRanges.inactiveOpacity.step"
             :value="settings.lyricsAppearance.inactiveOpacity"
             @change="
               updateLyricsAppearance(
@@ -539,6 +528,13 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
               @click="updateLyricsAppearance('align', 'center')"
             >
               居中
+            </button>
+            <button
+              type="button"
+              :aria-pressed="settings.lyricsAppearance.align === 'right'"
+              @click="updateLyricsAppearance('align', 'right')"
+            >
+              右对齐
             </button>
           </div>
         </div>

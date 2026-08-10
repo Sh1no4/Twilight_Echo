@@ -92,6 +92,10 @@ test('now playing exposes independent lyric customization with live persisted pr
     new URL('./LyricsAppearanceCustomizer.vue', import.meta.url),
     'utf8'
   )
+  const editor = readFileSync(
+    new URL('../composables/useLyricsAppearanceEditor.ts', import.meta.url),
+    'utf8'
+  )
   const appearance = readFileSync(
     new URL('../../../shared/lyricsAppearance.ts', import.meta.url),
     'utf8'
@@ -104,21 +108,44 @@ test('now playing exposes independent lyric customization with live persisted pr
     /:style="lyricStyleVars\(item\.index === highlightedLyricIndex \? 'active' : 'normal'\)"/
   )
   assert.match(source, /:style="lyricStyleVars\('translation'\)"/)
+  assert.match(source, /:style="lyricStyleVars\('romanization'\)"/)
   assert.match(customizer, /普通歌词/)
   assert.match(customizer, /当前歌词/)
   assert.match(customizer, /翻译歌词/)
+  assert.match(customizer, /罗马音/)
   assert.match(customizer, /实时预览/)
   assert.match(customizer, /恢复全部默认/)
-  assert.match(customizer, /function scheduleSave\(delay = 180\)/)
-  assert.match(
-    customizer,
-    /if \(key === 'fontSize'\) \{[\s\S]*syncLegacyLyricsAppearance\(draft\.value, \{ fontSize: value as number \}\)/
-  )
-  assert.match(customizer, /updateSettings\(\{ lyricsAppearance:/)
+  // The editing surface is shared so the drawer, settings page and playbar panel
+  // cannot drift apart again; the debounce and the persist call live there.
+  assert.match(customizer, /useLyricsAppearanceEditor\(\)/)
+  assert.match(editor, /const SAVE_DEBOUNCE_MS = 180/)
+  assert.match(editor, /updateSettings\(\{[\s\S]*lyricsAppearance: cloneLyricsAppearance/)
   assert.match(customizer, /@media \(max-width: 620px\)/)
   assert.match(appearance, /styles: Record<LyricsStyleTarget, LyricsTextStyle>/)
   assert.match(appearance, /backgroundStyle: LyricsBackgroundStyle/)
   assert.match(appearance, /highlightEffect: LyricsHighlightEffect/)
+})
+
+test('font size is per layer, with an explicit action to unify it', () => {
+  const editor = readFileSync(
+    new URL('../composables/useLyricsAppearanceEditor.ts', import.meta.url),
+    'utf8'
+  )
+  const appearance = readFileSync(
+    new URL('../../../shared/lyricsAppearance.ts', import.meta.url),
+    'utf8'
+  )
+  const normalize = appearance.match(/export function normalizeLyricsAppearance[\s\S]*?\n\}/)?.[0]
+
+  assert.ok(normalize)
+  // Schema 2 overwrote every layer's size on every save. Unifying is now a
+  // deliberate action, so normalization must not silently flatten them again.
+  assert.doesNotMatch(normalize, /normal: \{ \.\.\.normalStyle, fontSize \}/)
+  assert.match(editor, /function syncFontSizeToAll\(\): void/)
+  assert.match(
+    editor,
+    /syncLegacyLyricsAppearance\(draft\.value, \{ fontSize: style\.value\.fontSize \}\)/
+  )
 })
 
 test('lyrics keep the full timeline mounted while the viewport follows the active row', () => {
@@ -130,7 +157,10 @@ test('lyrics keep the full timeline mounted while the viewport follows the activ
     /import \{ createLyricViewportController \} from '\.\.\/utils\/lyricViewportController'/
   )
   assert.match(renderedLines, /displayLyricLines\.value\.map/)
-  assert.doesNotMatch(source, /getLyricFocusLineIndices/)
+  // Focus mode is a layout concern: the window collapses rows, it never unmounts
+  // them, so springs and measured heights survive a line leaving the window.
+  assert.doesNotMatch(renderedLines, /getLyricFocusLineIndices|lyricFocusWindow/)
+  assert.match(source, /getFocusWindow: \(\) => lyricFocusWindow\.value/)
   assert.doesNotMatch(source, /lyricLeavingIndex|lyricEnteringIndex/)
   assert.match(source, /class="lyric-row-content"/)
   assert.match(source, /@wheel\.passive="onLyricsManualScroll"/)
