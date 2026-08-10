@@ -2,6 +2,7 @@ import {
   DSD_OUTPUT_MODE_OPTIONS,
   VOLUME_NORMALIZATION_OPTIONS
 } from '../../../../shared/audioProcessingOptions.ts'
+import type { PlayerBarMode, PlayerBarPageMode } from '../../../../shared/playerBar.ts'
 import type {
   AppTheme,
   AppBackgroundPage,
@@ -202,6 +203,17 @@ export const streamingAudioCachePolicyOptions: {
   { value: 'off', label: '不缓存流媒体音频' }
 ]
 
+export const playerBarModeOptions: { value: PlayerBarMode; label: string; icon: string }[] = [
+  { value: 'standard', label: '标准', icon: 'pi pi-window-maximize' },
+  { value: 'mini', label: '迷你', icon: 'pi pi-window-minimize' }
+]
+
+export const playerBarPageModeOptions: { value: PlayerBarPageMode; label: string }[] = [
+  { value: 'inherit', label: '跟随全局形态' },
+  { value: 'standard', label: '标准' },
+  { value: 'mini', label: '迷你（可自动隐藏）' }
+]
+
 export { GITHUB_URL, HOMEPAGE_URL, RELEASES_URL } from '../../../../shared/projectUrls.ts'
 
 export interface SettingsSearchEntry {
@@ -228,140 +240,357 @@ const sectionTerms: Record<SectionKey, string> = {
 }
 
 /** 设置项级细粒度搜索索引：每个设置项一条，保证任意设置项都能被搜到 */
-export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = ([
-  // ── 常规 ──────────────────────────────────────────────
-  { section: 'general', title: '扫描文件夹', terms: '媒体库 文件夹 目录 扫描 添加 本地 音乐 库' },
-  { section: 'general', title: '流派分隔符', terms: 'genre separator 标签 分隔 元数据' },
-  { section: 'general', title: '实时监控文件夹变动', terms: 'watch 监控 文件夹 自动 同步 媒体库 监听' },
-  { section: 'general', title: '在线歌词回退 (LRCLIB)', terms: '歌词 lyric 回退 provider LRCLIB 在线 搜索' },
-  { section: 'general', title: '媒体库监控状态', terms: 'watcher 状态 监控 监听 文件夹 降级' },
-  { section: 'general', title: '完整重扫', terms: 'rescan 重扫 扫描 元数据 封面 刷新 媒体库' },
-  { section: 'general', title: '启动时检查网易云登录', terms: '网易云 ncm 登录 检查 启动 账号' },
-  { section: 'general', title: '原生媒体控制 (SMTC)', terms: 'smtc 媒体控制 系统 媒体键 集成 windows' },
-  { section: 'general', title: 'Discord Rich Presence', terms: 'discord 状态 展示 集成 社交 游戏' },
-  { section: 'general', title: '局域网远程控制', terms: '远程 遥控 局域网 手机 控制 投送 DLNA' },
-  { section: 'general', title: '配对 PIN / 访问地址', terms: 'pin 配对 访问 地址 远程 安全' },
-  { section: 'general', title: '歌曲列表播放方式', terms: '单击 双击 播放 列表 操作 习惯 激活' },
-  { section: 'general', title: '启动后进入', terms: 'startup 主页 首页 启动 进入 本地 流媒体' },
-  { section: 'general', title: '开机自动启动', terms: '开机 启动 自启 登录 自动启动 launch at login' },
-  { section: 'general', title: '关闭主窗口时', terms: '关闭 主窗口 最小化 托盘 退出 行为 窗口' },
-  { section: 'general', title: '欢迎向导', terms: '向导 欢迎 onboarding 首次 引导' },
-  { section: 'general', title: '设置备份', terms: '备份 backup 导出 导入 恢复 设置' },
-  { section: 'general', title: '按分组恢复默认', terms: '恢复 默认 重置 reset 分组' },
-  { section: 'general', title: '插件设置', match: '插件设置', terms: '插件 plugin 面板 设置 扩展' },
-  { section: 'general', title: '代理模式', terms: '代理 proxy 模式 网络 系统 关闭' },
-  { section: 'general', title: '代理地址', terms: '代理 proxy 地址 host 服务器' },
-  { section: 'general', title: '代理端口', terms: '代理 proxy 端口 port' },
-  { section: 'general', title: '代理失败时允许直连', terms: '代理 proxy 直连 fallback 失败 回退' },
+export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = (
+  [
+    // ── 常规 ──────────────────────────────────────────────
+    { section: 'general', title: '扫描文件夹', terms: '媒体库 文件夹 目录 扫描 添加 本地 音乐 库' },
+    { section: 'general', title: '流派分隔符', terms: 'genre separator 标签 分隔 元数据' },
+    {
+      section: 'general',
+      title: '实时监控文件夹变动',
+      terms: 'watch 监控 文件夹 自动 同步 媒体库 监听'
+    },
+    {
+      section: 'general',
+      title: '在线歌词回退 (LRCLIB)',
+      terms: '歌词 lyric 回退 provider LRCLIB 在线 搜索'
+    },
+    { section: 'general', title: '媒体库监控状态', terms: 'watcher 状态 监控 监听 文件夹 降级' },
+    { section: 'general', title: '完整重扫', terms: 'rescan 重扫 扫描 元数据 封面 刷新 媒体库' },
+    { section: 'general', title: '启动时检查网易云登录', terms: '网易云 ncm 登录 检查 启动 账号' },
+    {
+      section: 'general',
+      title: '原生媒体控制 (SMTC)',
+      terms: 'smtc 媒体控制 系统 媒体键 集成 windows'
+    },
+    {
+      section: 'general',
+      title: 'Discord Rich Presence',
+      terms: 'discord 状态 展示 集成 社交 游戏'
+    },
+    { section: 'general', title: '局域网远程控制', terms: '远程 遥控 局域网 手机 控制 投送 DLNA' },
+    { section: 'general', title: '配对 PIN / 访问地址', terms: 'pin 配对 访问 地址 远程 安全' },
+    { section: 'general', title: '歌曲列表播放方式', terms: '单击 双击 播放 列表 操作 习惯 激活' },
+    { section: 'general', title: '启动后进入', terms: 'startup 主页 首页 启动 进入 本地 流媒体' },
+    {
+      section: 'general',
+      title: '开机自动启动',
+      terms: '开机 启动 自启 登录 自动启动 launch at login'
+    },
+    { section: 'general', title: '关闭主窗口时', terms: '关闭 主窗口 最小化 托盘 退出 行为 窗口' },
+    { section: 'general', title: '欢迎向导', terms: '向导 欢迎 onboarding 首次 引导' },
+    { section: 'general', title: '设置备份', terms: '备份 backup 导出 导入 恢复 设置' },
+    { section: 'general', title: '按分组恢复默认', terms: '恢复 默认 重置 reset 分组' },
+    {
+      section: 'general',
+      title: '插件设置',
+      match: '插件设置',
+      terms: '插件 plugin 面板 设置 扩展'
+    },
+    { section: 'general', title: '代理模式', terms: '代理 proxy 模式 网络 系统 关闭' },
+    { section: 'general', title: '代理地址', terms: '代理 proxy 地址 host 服务器' },
+    { section: 'general', title: '代理端口', terms: '代理 proxy 端口 port' },
+    {
+      section: 'general',
+      title: '代理失败时允许直连',
+      terms: '代理 proxy 直连 fallback 失败 回退'
+    },
 
-  // ── 播放 ──────────────────────────────────────────────
-  { section: 'playback', title: '输出模式', terms: '输出 output 设备 音频 模式 声卡' },
-  { section: 'playback', title: 'DSD 直通路由', terms: 'dsd 直通 路由 sacd 采样 原始' },
-  { section: 'playback', title: '独占模式 (Exclusive)', terms: '独占 exclusive 输出 设备 绕过 混音' },
-  { section: 'playback', title: '音量与削波保护', terms: '音量 削波 clip 保护 响度 安全' },
-  { section: 'playback', title: '无缝播放 (Gapless Playback)', terms: '无缝 播放 gapless 间隙 连续 歌曲' },
-  { section: 'playback', title: '启动时恢复播放', terms: '恢复 播放 resume 上次 曲目 位置 启动' },
-  { section: 'playback', title: '睡眠定时器', terms: '睡眠 定时 sleep timer 停止 播放 计时' },
-  { section: 'playback', title: '网易云播放音质', terms: '网易云 ncm 音质 无损 hi-res lossless 标准' },
-  { section: 'playback', title: '高级引擎参数 (Advanced Engine)', terms: '引擎 engine buffer 缓冲 采样率 位深 高级' },
-  { section: 'playback', title: 'WASAPI 独占推送模式', terms: 'wasapi 独占 推送 模式 windows 输出' },
+    // ── 播放 ──────────────────────────────────────────────
+    { section: 'playback', title: '输出模式', terms: '输出 output 设备 音频 模式 声卡' },
+    { section: 'playback', title: 'DSD 直通路由', terms: 'dsd 直通 路由 sacd 采样 原始' },
+    {
+      section: 'playback',
+      title: '独占模式 (Exclusive)',
+      terms: '独占 exclusive 输出 设备 绕过 混音'
+    },
+    { section: 'playback', title: '音量与削波保护', terms: '音量 削波 clip 保护 响度 安全' },
+    {
+      section: 'playback',
+      title: '无缝播放 (Gapless Playback)',
+      terms: '无缝 播放 gapless 间隙 连续 歌曲'
+    },
+    { section: 'playback', title: '启动时恢复播放', terms: '恢复 播放 resume 上次 曲目 位置 启动' },
+    { section: 'playback', title: '睡眠定时器', terms: '睡眠 定时 sleep timer 停止 播放 计时' },
+    {
+      section: 'playback',
+      title: '网易云播放音质',
+      terms: '网易云 ncm 音质 无损 hi-res lossless 标准'
+    },
+    {
+      section: 'playback',
+      title: '高级引擎参数 (Advanced Engine)',
+      terms: '引擎 engine buffer 缓冲 采样率 位深 高级'
+    },
+    {
+      section: 'playback',
+      title: 'WASAPI 独占推送模式',
+      terms: 'wasapi 独占 推送 模式 windows 输出'
+    },
 
-  // ── DSP ───────────────────────────────────────────────
-  { section: 'dsp', title: '防破音保护 (Clip Guard)', terms: '防破音 clip guard 保护 削波 响度' },
-  { section: 'dsp', title: '音量标准化 (ReplayGain / Loudnorm)', terms: 'replaygain loudnorm 音量 标准化 响度 增益' },
-  { section: 'dsp', title: 'Preamp', terms: 'preamp 增益 前置 音量 标准化' },
-  { section: 'dsp', title: 'Fallback Gain', terms: 'fallback gain 增益 回退 音量' },
-  { section: 'dsp', title: 'ReplayGain Clip', terms: 'replaygain clip 削波 限制 增益' },
-  { section: 'dsp', title: 'Parametric EQ', terms: 'eq 均衡 均衡器 parametric 频率 增益' },
-  { section: 'dsp', title: '耳机交叉馈电 (Crossfeed)', terms: 'crossfeed 交叉 馈电 耳机 声场 空间' },
-  { section: 'dsp', title: 'Crossfeed Delay', terms: 'crossfeed delay 延迟 交叉 馈电' },
-  { section: 'dsp', title: 'Crossfeed Cutoff', terms: 'crossfeed cutoff 截止 频率 交叉 馈电' },
-  { section: 'dsp', title: '启用 VST3 宿主', terms: 'vst3 宿主 插件 启用 效果器 host' },
-  { section: 'dsp', title: 'VST3 搜索目录', match: '搜索目录', terms: 'vst3 搜索 目录 插件 扫描 路径' },
-  { section: 'dsp', title: '插件目录状态', terms: '插件 目录 状态 vst3 扫描 检测' },
+    // ── DSP ───────────────────────────────────────────────
+    { section: 'dsp', title: '防破音保护 (Clip Guard)', terms: '防破音 clip guard 保护 削波 响度' },
+    {
+      section: 'dsp',
+      title: '音量标准化 (ReplayGain / Loudnorm)',
+      terms: 'replaygain loudnorm 音量 标准化 响度 增益'
+    },
+    { section: 'dsp', title: 'Preamp', terms: 'preamp 增益 前置 音量 标准化' },
+    { section: 'dsp', title: 'Fallback Gain', terms: 'fallback gain 增益 回退 音量' },
+    { section: 'dsp', title: 'ReplayGain Clip', terms: 'replaygain clip 削波 限制 增益' },
+    { section: 'dsp', title: 'Parametric EQ', terms: 'eq 均衡 均衡器 parametric 频率 增益' },
+    {
+      section: 'dsp',
+      title: '耳机交叉馈电 (Crossfeed)',
+      terms: 'crossfeed 交叉 馈电 耳机 声场 空间'
+    },
+    { section: 'dsp', title: 'Crossfeed Delay', terms: 'crossfeed delay 延迟 交叉 馈电' },
+    { section: 'dsp', title: 'Crossfeed Cutoff', terms: 'crossfeed cutoff 截止 频率 交叉 馈电' },
+    { section: 'dsp', title: '启用 VST3 宿主', terms: 'vst3 宿主 插件 启用 效果器 host' },
+    {
+      section: 'dsp',
+      title: 'VST3 搜索目录',
+      match: '搜索目录',
+      terms: 'vst3 搜索 目录 插件 扫描 路径'
+    },
+    { section: 'dsp', title: '插件目录状态', terms: '插件 目录 状态 vst3 扫描 检测' },
 
-  // ── 缓存 ──────────────────────────────────────────────
-  { section: 'cache', title: '缓存目录', terms: '缓存 目录 cache 路径 存储 位置' },
-  { section: 'cache', title: '封面缓存', terms: '封面 cover 缓存 图片 清除' },
-  { section: 'cache', title: '歌词缓存', terms: '歌词 lyric 缓存 清除' },
-  { section: 'cache', title: '元数据缓存', terms: '元数据 metadata 缓存 清除' },
-  { section: 'cache', title: '流媒体音频缓存', terms: '流媒体 音频 缓存 streaming 缓存策略 网络' },
-  { section: 'cache', title: 'BPM 自动分析', terms: 'bpm 分析 自动 节奏 扫描' },
-  { section: 'cache', title: 'BPM 分析缓存', terms: 'bpm 分析 缓存 清除' },
-  { section: 'cache', title: 'Loudnorm / 响度分析缓存', terms: 'loudnorm 响度 分析 缓存 清除' },
-  { section: 'cache', title: '缓存占用', terms: '缓存 占用 大小 清理 清空 释放 空间' },
+    // ── 缓存 ──────────────────────────────────────────────
+    { section: 'cache', title: '缓存目录', terms: '缓存 目录 cache 路径 存储 位置' },
+    { section: 'cache', title: '封面缓存', terms: '封面 cover 缓存 图片 清除' },
+    { section: 'cache', title: '歌词缓存', terms: '歌词 lyric 缓存 清除' },
+    { section: 'cache', title: '元数据缓存', terms: '元数据 metadata 缓存 清除' },
+    {
+      section: 'cache',
+      title: '流媒体音频缓存',
+      terms: '流媒体 音频 缓存 streaming 缓存策略 网络'
+    },
+    { section: 'cache', title: 'BPM 自动分析', terms: 'bpm 分析 自动 节奏 扫描' },
+    { section: 'cache', title: 'BPM 分析缓存', terms: 'bpm 分析 缓存 清除' },
+    { section: 'cache', title: 'Loudnorm / 响度分析缓存', terms: 'loudnorm 响度 分析 缓存 清除' },
+    { section: 'cache', title: '缓存占用', terms: '缓存 占用 大小 清理 清空 释放 空间' },
 
-  // ── 性能 ──────────────────────────────────────────────
-  { section: 'performance', title: '硬件加速', terms: '硬件 加速 gpu 渲染 显卡 性能' },
-  { section: 'performance', title: '窗口透明', terms: '窗口 透明 透明度 毛玻璃 玻璃 背景' },
-  { section: 'performance', title: '表面不透明度 (Surface Opacity)', terms: '表面 不透明度 opacity 透明度 窗口' },
-  { section: 'performance', title: '表面模糊度 (Surface Blur)', terms: '表面 模糊 blur 毛玻璃 窗口' },
-  { section: 'performance', title: '卡片不透明度 (Card Opacity)', terms: '卡片 不透明度 opacity 透明度' },
-  { section: 'performance', title: '卡片模糊度 (Card Blur)', terms: '卡片 模糊 blur 毛玻璃' },
+    // ── 性能 ──────────────────────────────────────────────
+    { section: 'performance', title: '硬件加速', terms: '硬件 加速 gpu 渲染 显卡 性能' },
+    { section: 'performance', title: '窗口透明', terms: '窗口 透明 透明度 毛玻璃 玻璃 背景' },
+    {
+      section: 'performance',
+      title: '表面不透明度 (Surface Opacity)',
+      terms: '表面 不透明度 opacity 透明度 窗口'
+    },
+    {
+      section: 'performance',
+      title: '表面模糊度 (Surface Blur)',
+      terms: '表面 模糊 blur 毛玻璃 窗口'
+    },
+    {
+      section: 'performance',
+      title: '卡片不透明度 (Card Opacity)',
+      terms: '卡片 不透明度 opacity 透明度'
+    },
+    { section: 'performance', title: '卡片模糊度 (Card Blur)', terms: '卡片 模糊 blur 毛玻璃' },
 
-  // ── 外观 ──────────────────────────────────────────────
-  { section: 'appearance', title: '主题工作室 · Beta', terms: '主题 工作室 theme 编辑器 自定义 皮肤' },
-  { section: 'appearance', title: '主题模式', terms: '主题 模式 浅色 深色 系统 亮色 暗色' },
-  { section: 'appearance', title: '界面动效', terms: '动效 动画 减少动画 motion 特效 过渡' },
-  { section: 'appearance', title: '插件主题', terms: '插件 主题 plugin theme 扩展' },
-  { section: 'appearance', title: '浅色强调色', terms: '强调色 accent 浅色 颜色 主题' },
-  { section: 'appearance', title: '深色强调色', terms: '强调色 accent 深色 颜色 主题' },
-  { section: 'appearance', title: '自定义背景', terms: '背景 自定义 壁纸 图片 封面' },
-  { section: 'appearance', title: '统一背景', terms: '背景 统一 所有 页面 壁纸' },
-  { section: 'appearance', title: '页面背景覆盖', terms: '背景 页面 覆盖 独立 壁纸 图片' },
-  { section: 'appearance', title: '封面主题色', terms: '封面 主题色 cover 颜色 专辑' },
-  { section: 'appearance', title: '全局字体 (Typography)', terms: '字体 font typography 排版 全局' },
-  { section: 'appearance', title: '界面排版密度 (UI Density)', terms: '密度 ui density 排版 紧凑 宽松' },
-  { section: 'appearance', title: '歌词显示样式 (Lyrics Style)', terms: '歌词 lyric 样式 高亮 逐字 显示' },
-  { section: 'appearance', title: '逐字高亮', terms: '逐字 高亮 歌词 卡拉 ok 同步' },
-  { section: 'appearance', title: '卡片与背景自定义', terms: '卡片 背景 自定义 外观' },
-  { section: 'appearance', title: '启用自定义外观', terms: '外观 自定义 启用 卡片 开关' },
-  { section: 'appearance', title: '卡片模糊强度', terms: '卡片 模糊 强度 blur 毛玻璃' },
-  { section: 'appearance', title: '卡片模糊饱和度', terms: '卡片 模糊 饱和度 saturation blur' },
-  { section: 'appearance', title: '卡片背景颜色', terms: '卡片 背景 颜色 color' },
-  { section: 'appearance', title: '卡片边框', terms: '卡片 边框 border 描边' },
-  { section: 'appearance', title: '卡片圆角半径', terms: '卡片 圆角 radius 圆角 弧度' },
-  { section: 'appearance', title: '卡片阴影强度', terms: '卡片 阴影 强度 shadow 投影' },
-  { section: 'appearance', title: '卡片悬浮效果', terms: '卡片 悬浮 hover 效果 悬停' },
-  { section: 'appearance', title: '玻璃高光', terms: '玻璃 高光 glass highlight 光泽' },
-  { section: 'appearance', title: '背景模糊与暗化', terms: '背景 模糊 暗化 遮罩 blur darken' },
-  { section: 'appearance', title: '背景模糊', terms: '背景 模糊 blur 毛玻璃' },
-  { section: 'appearance', title: '背景亮度', terms: '背景 亮度 brightness 明暗' },
-  { section: 'appearance', title: '背景暗化遮罩', terms: '背景 暗化 遮罩 蒙版 overlay darken' },
+    // ── 外观 ──────────────────────────────────────────────
+    {
+      section: 'appearance',
+      title: '主题工作室 · Beta',
+      terms: '主题 工作室 theme 编辑器 自定义 皮肤'
+    },
+    { section: 'appearance', title: '主题模式', terms: '主题 模式 浅色 深色 系统 亮色 暗色' },
+    { section: 'appearance', title: '界面动效', terms: '动效 动画 减少动画 motion 特效 过渡' },
+    { section: 'appearance', title: '插件主题', terms: '插件 主题 plugin theme 扩展' },
+    { section: 'appearance', title: '浅色强调色', terms: '强调色 accent 浅色 颜色 主题' },
+    { section: 'appearance', title: '深色强调色', terms: '强调色 accent 深色 颜色 主题' },
+    { section: 'appearance', title: '自定义背景', terms: '背景 自定义 壁纸 图片 封面' },
+    { section: 'appearance', title: '统一背景', terms: '背景 统一 所有 页面 壁纸' },
+    { section: 'appearance', title: '页面背景覆盖', terms: '背景 页面 覆盖 独立 壁纸 图片' },
+    { section: 'appearance', title: '封面主题色', terms: '封面 主题色 cover 颜色 专辑' },
+    {
+      section: 'appearance',
+      title: '全局字体 (Typography)',
+      terms: '字体 font typography 排版 全局'
+    },
+    {
+      section: 'appearance',
+      title: '界面排版密度 (UI Density)',
+      terms: '密度 ui density 排版 紧凑 宽松'
+    },
+    {
+      section: 'appearance',
+      title: '歌词显示样式 (Lyrics Style)',
+      terms: '歌词 lyric 样式 高亮 逐字 显示'
+    },
+    { section: 'appearance', title: '逐字高亮', terms: '逐字 高亮 歌词 卡拉 ok 同步' },
+    { section: 'appearance', title: '卡片与背景自定义', terms: '卡片 背景 自定义 外观' },
+    { section: 'appearance', title: '启用自定义外观', terms: '外观 自定义 启用 卡片 开关' },
+    { section: 'appearance', title: '卡片模糊强度', terms: '卡片 模糊 强度 blur 毛玻璃' },
+    { section: 'appearance', title: '卡片模糊饱和度', terms: '卡片 模糊 饱和度 saturation blur' },
+    { section: 'appearance', title: '卡片背景颜色', terms: '卡片 背景 颜色 color' },
+    { section: 'appearance', title: '卡片边框', terms: '卡片 边框 border 描边' },
+    { section: 'appearance', title: '卡片圆角半径', terms: '卡片 圆角 radius 圆角 弧度' },
+    { section: 'appearance', title: '卡片阴影强度', terms: '卡片 阴影 强度 shadow 投影' },
+    { section: 'appearance', title: '卡片悬浮效果', terms: '卡片 悬浮 hover 效果 悬停' },
+    { section: 'appearance', title: '玻璃高光', terms: '玻璃 高光 glass highlight 光泽' },
+    { section: 'appearance', title: '背景模糊与暗化', terms: '背景 模糊 暗化 遮罩 blur darken' },
+    { section: 'appearance', title: '背景模糊', terms: '背景 模糊 blur 毛玻璃' },
+    { section: 'appearance', title: '背景亮度', terms: '背景 亮度 brightness 明暗' },
+    { section: 'appearance', title: '背景暗化遮罩', terms: '背景 暗化 遮罩 蒙版 overlay darken' },
+    {
+      section: 'appearance',
+      title: '播放条形态',
+      terms: '播放条 播放栏 playbar 迷你 mini 标准 形态 大小'
+    },
+    {
+      section: 'appearance',
+      title: '播放页形态',
+      terms: '播放页 播放条 playbar 迷你 mini 形态 now playing'
+    },
+    {
+      section: 'appearance',
+      title: '播放页自动隐藏',
+      terms: '自动隐藏 播放条 playbar 隐藏 auto hide 播放页'
+    },
+    {
+      section: 'appearance',
+      title: '触发距离',
+      terms: '触发 距离 阈值 threshold 鼠标 底边 播放条 自动隐藏'
+    },
+    { section: 'appearance', title: '收起延迟', terms: '收起 延迟 delay 播放条 自动隐藏 隐藏' },
 
-  // ── 桌面歌词 ──────────────────────────────────────────
-  { section: 'desktopLyrics', title: '启用桌面歌词', terms: '桌面歌词 启用 开关 显示 歌词' },
-  { section: 'desktopLyrics', title: '字体大小 (Font Size)', terms: '字体 大小 font size 字号 歌词' },
-  { section: 'desktopLyrics', title: '字体粗细 (Font Weight)', terms: '字体 粗细 font weight 加粗' },
-  { section: 'desktopLyrics', title: '行间距 (Line Spacing)', terms: '行距 间距 line spacing 歌词' },
-  { section: 'desktopLyrics', title: '最大显示行数 (Max Lines)', terms: '行数 max lines 显示 歌词' },
-  { section: 'desktopLyrics', title: '行水平偏移 (Line Offset)', terms: '偏移 offset 行 水平 错位' },
-  { section: 'desktopLyrics', title: '默认文字颜色 (Text Color)', terms: '文字 颜色 color 默认 歌词' },
-  { section: 'desktopLyrics', title: '高亮文字颜色 (Highlight Color)', terms: '高亮 颜色 highlight 歌词 当前' },
-  { section: 'desktopLyrics', title: '背景颜色 (Background Color)', terms: '背景 颜色 color 歌词' },
-  { section: 'desktopLyrics', title: '背景透明度 (Background Opacity)', terms: '背景 透明度 opacity 歌词 半透明' },
-  { section: 'desktopLyrics', title: '文字阴影 (Text Shadow)', terms: '文字 阴影 shadow 投影 歌词' },
-  { section: 'desktopLyrics', title: '阴影模糊度 (Shadow Blur)', terms: '阴影 模糊 blur 投影 歌词' },
-  { section: 'desktopLyrics', title: '阴影颜色 (Shadow Color)', terms: '阴影 颜色 shadow color 投影' },
-  { section: 'desktopLyrics', title: '对齐方式 (Alignment)', terms: '对齐 align 居左 居中 居右 歌词' },
-  { section: 'desktopLyrics', title: '窗口宽度 (Window Width)', terms: '窗口 宽度 width 桌面歌词' },
-  { section: 'desktopLyrics', title: '窗口高度 (Window Height)', terms: '窗口 高度 height 桌面歌词' },
-  { section: 'desktopLyrics', title: '始终置顶 (Always on Top)', terms: '置顶 always on top 窗口 顶层 钉住' },
-  { section: 'desktopLyrics', title: '鼠标穿透 (Click Through)', terms: '鼠标 穿透 click through 点击 穿透 窗口' },
-  { section: 'desktopLyrics', title: '布局模式 (Layout)', terms: '布局 layout 多行 双语 原文 翻译' },
-  { section: 'desktopLyrics', title: '显示翻译 (Show Translation)', terms: '翻译 translation 显示 双语 原文' },
+    // ── 桌面歌词 ──────────────────────────────────────────
+    { section: 'desktopLyrics', title: '启用桌面歌词', terms: '桌面歌词 启用 开关 显示 歌词' },
+    {
+      section: 'desktopLyrics',
+      title: '字体大小 (Font Size)',
+      terms: '字体 大小 font size 字号 歌词'
+    },
+    {
+      section: 'desktopLyrics',
+      title: '字体粗细 (Font Weight)',
+      terms: '字体 粗细 font weight 加粗'
+    },
+    {
+      section: 'desktopLyrics',
+      title: '行间距 (Line Spacing)',
+      terms: '行距 间距 line spacing 歌词'
+    },
+    {
+      section: 'desktopLyrics',
+      title: '最大显示行数 (Max Lines)',
+      terms: '行数 max lines 显示 歌词'
+    },
+    {
+      section: 'desktopLyrics',
+      title: '行水平偏移 (Line Offset)',
+      terms: '偏移 offset 行 水平 错位'
+    },
+    {
+      section: 'desktopLyrics',
+      title: '默认文字颜色 (Text Color)',
+      terms: '文字 颜色 color 默认 歌词'
+    },
+    {
+      section: 'desktopLyrics',
+      title: '高亮文字颜色 (Highlight Color)',
+      terms: '高亮 颜色 highlight 歌词 当前'
+    },
+    {
+      section: 'desktopLyrics',
+      title: '背景颜色 (Background Color)',
+      terms: '背景 颜色 color 歌词'
+    },
+    {
+      section: 'desktopLyrics',
+      title: '背景透明度 (Background Opacity)',
+      terms: '背景 透明度 opacity 歌词 半透明'
+    },
+    {
+      section: 'desktopLyrics',
+      title: '文字阴影 (Text Shadow)',
+      terms: '文字 阴影 shadow 投影 歌词'
+    },
+    {
+      section: 'desktopLyrics',
+      title: '阴影模糊度 (Shadow Blur)',
+      terms: '阴影 模糊 blur 投影 歌词'
+    },
+    {
+      section: 'desktopLyrics',
+      title: '阴影颜色 (Shadow Color)',
+      terms: '阴影 颜色 shadow color 投影'
+    },
+    {
+      section: 'desktopLyrics',
+      title: '对齐方式 (Alignment)',
+      terms: '对齐 align 居左 居中 居右 歌词'
+    },
+    {
+      section: 'desktopLyrics',
+      title: '窗口宽度 (Window Width)',
+      terms: '窗口 宽度 width 桌面歌词'
+    },
+    {
+      section: 'desktopLyrics',
+      title: '窗口高度 (Window Height)',
+      terms: '窗口 高度 height 桌面歌词'
+    },
+    {
+      section: 'desktopLyrics',
+      title: '始终置顶 (Always on Top)',
+      terms: '置顶 always on top 窗口 顶层 钉住'
+    },
+    {
+      section: 'desktopLyrics',
+      title: '鼠标穿透 (Click Through)',
+      terms: '鼠标 穿透 click through 点击 穿透 窗口'
+    },
+    {
+      section: 'desktopLyrics',
+      title: '布局模式 (Layout)',
+      terms: '布局 layout 多行 双语 原文 翻译'
+    },
+    {
+      section: 'desktopLyrics',
+      title: '显示翻译 (Show Translation)',
+      terms: '翻译 translation 显示 双语 原文'
+    },
 
-  // ── 快捷键 ────────────────────────────────────────────
-  { section: 'shortcuts', title: '全局快捷键 (Global Shortcuts)', terms: '全局 快捷键 系统 媒体键 后台 注册' },
-  { section: 'shortcuts', title: '快捷键状态', terms: '快捷键 状态 注册 冲突 检测 失败' },
+    // ── 快捷键 ────────────────────────────────────────────
+    {
+      section: 'shortcuts',
+      title: '全局快捷键 (Global Shortcuts)',
+      terms: '全局 快捷键 系统 媒体键 后台 注册'
+    },
+    { section: 'shortcuts', title: '快捷键状态', terms: '快捷键 状态 注册 冲突 检测 失败' },
 
-  // ── 关于 ──────────────────────────────────────────────
-  { section: 'about', title: '版本信息', match: 'Version', terms: '版本 version 关于 twilight echo 名称' },
-  { section: 'about', title: '检查更新', match: '检查更新', terms: '更新 update 检查 版本 下载 安装 发布' },
-  { section: 'about', title: '下载 / 安装更新', match: '更新', terms: '更新 下载 安装 版本 发布 github releases' },
-  { section: 'about', title: '支持项目发展', terms: '赞助 支持 捐赠 项目 开源 爱发电' },
-  { section: 'about', title: '开源致谢与交流群', match: '开源致谢', terms: '开源 致谢 交流 群 社区 感谢 license' }
-] satisfies SettingsSearchEntry[]).map((entry) => ({
+    // ── 关于 ──────────────────────────────────────────────
+    {
+      section: 'about',
+      title: '版本信息',
+      match: 'Version',
+      terms: '版本 version 关于 twilight echo 名称'
+    },
+    {
+      section: 'about',
+      title: '检查更新',
+      match: '检查更新',
+      terms: '更新 update 检查 版本 下载 安装 发布'
+    },
+    {
+      section: 'about',
+      title: '下载 / 安装更新',
+      match: '更新',
+      terms: '更新 下载 安装 版本 发布 github releases'
+    },
+    { section: 'about', title: '支持项目发展', terms: '赞助 支持 捐赠 项目 开源 爱发电' },
+    {
+      section: 'about',
+      title: '开源致谢与交流群',
+      match: '开源致谢',
+      terms: '开源 致谢 交流 群 社区 感谢 license'
+    }
+  ] satisfies SettingsSearchEntry[]
+).map((entry) => ({
   ...entry,
   terms: `${sectionTerms[entry.section]} ${entry.terms}`
 }))

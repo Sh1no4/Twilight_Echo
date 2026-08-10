@@ -53,6 +53,7 @@ import {
 } from './utils/streamingArtistResolution'
 import AppNoticeHost from './components/AppNoticeHost.vue'
 import LiquidGlassDefs from './components/LiquidGlassDefs.vue'
+import { resolvePlayerBarPresentation } from '../../shared/playerBar.ts'
 
 type TitleSurface = 'default' | 'settings' | 'streaming'
 type StreamingInitialTab = 'home' | 'library' | 'recent'
@@ -368,6 +369,13 @@ const hasPlayerBar = computed(
     !activePluginPage.value &&
     !visualizerActive.value &&
     !!currentTrack.value
+)
+/* Shape resolution lives in shared/playerBar.ts so main and renderer agree and the
+   truth table stays unit-testable; App.vue only forwards the result. */
+const playerBarPresentation = computed(() =>
+  resolvePlayerBarPresentation(settings.value.playerBar, {
+    onPlayingPage: showPlayingPage.value
+  })
 )
 const showLocalSidebar = computed(
   () =>
@@ -807,6 +815,8 @@ const titleSurface = computed<TitleSurface>(() => {
       <PlayerBar
         v-if="hasPlayerBar"
         :glass="showPlayingPage"
+        :mode="playerBarPresentation.mode"
+        :auto-hide="playerBarPresentation.autoHide"
         @click-cover="handleCoverClick"
         @open-settings="openPlaybackSettings"
         @open-dsp="openDspSettings"

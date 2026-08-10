@@ -1,0 +1,118 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import test from 'node:test'
+import { ref } from 'vue'
+
+/**
+ * Both bottom-edge geometry consumers measure `.player-bar-shell`. An auto-hidden
+ * mini bar is only translated away, so its layout box is unchanged and measuring
+ * it would reserve space around nothing — the sidebar would stay pushed up and the
+ * lyric centre line would stay offset. Both must read the shell's hidden flag.
+ */
+
+interface FakeRect {
+  top: number
+  bottom: number
+  left: number
+  right: number
+  height: number
+}
+
+function installDom(options: {
+  playerBarHidden?: 'true' | 'false'
+  playerBarRect?: FakeRect
+  sideMenuRect?: FakeRect
+  playerBarMissing?: boolean
+}): void {
+  const playerBarRect = options.playerBarRect ?? {
+    top: 700,
+    bottom: 780,
+    left: 0,
+    right: 1200,
+    height: 80
+  }
+  const sideMenuRect = options.sideMenuRect ?? {
+    top: 100,
+    bottom: 760,
+    left: 0,
+    right: 240,
+    height: 660
+  }
+  const playerBar = {
+    dataset: { tePlaybarHidden: options.playerBarHidden ?? 'false' },
+    getBoundingClientRect: () => playerBarRect
+  }
+  const sideMenu = { getBoundingClientRect: () => sideMenuRect }
+  const g = globalThis as Record<string, unknown>
+  g.window = { innerHeight: 800 }
+  g.document = {
+    hidden: false,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    querySelector: (selector: string) => {
+      if (selector === '.side-menu') return sideMenu
+      if (selector === '.player-bar-shell') return options.playerBarMissing ? null : playerBar
+      return null
+    }
+  }
+  g.requestAnimationFrame = (): number => 1
+  g.cancelAnimationFrame = (): void => {}
+}
+
+const { useSideMenuClearance } = (await import(
+  new URL('../app/useSideMenuClearance.ts', import.meta.url).href
+)) as typeof import('../app/useSideMenuClearance')
+
+function measure(options: Parameters<typeof installDom>[0]): number {
+  installDom(options)
+  const clearance = useSideMenuClearance({
+    showLocalSidebar: ref(true),
+    hasPlayerBar: ref(true),
+    menuOpen: ref(true)
+  })
+  clearance.measureSideMenuClearance()
+  const offset = clearance.sideMenuBottomOffset.value
+  clearance.dispose()
+  return offset
+}
+
+test('sidebar clearance reserves room for a visible overlapping playbar', () => {
+  // 800 viewport - 700 top + 10 gap.
+  assert.equal(measure({ playerBarHidden: 'false' }), 110)
+})
+
+test('sidebar clearance drops to zero once the mini bar is tucked away', () => {
+  assert.equal(measure({ playerBarHidden: 'true' }), 0)
+})
+
+test('sidebar clearance still handles a missing playbar and a non-overlapping one', () => {
+  assert.equal(measure({ playerBarMissing: true }), 0)
+  assert.equal(
+    measure({
+      // Bar sits to the right of the sidebar: no horizontal overlap.
+      playerBarRect: { top: 700, bottom: 780, left: 400, right: 1200, height: 80 }
+    }),
+    0
+  )
+})
+
+test('the now-playing lyric centring reads the same hidden flag', () => {
+  const playingMusic = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+  const helper = playingMusic.match(/function measurePlaybarReservedPx\(\)[\s\S]*?\n\}/)
+  assert.ok(helper, 'PlayingMusic must resolve the reserved bottom space in one helper')
+  assert.match(helper[0], /querySelector<HTMLElement>\('\.player-bar-shell'\)/)
+  assert.match(helper[0], /dataset\.tePlaybarHidden === 'true'\) return 0/)
+  // The flag check must precede measurement, or the hidden bar's box still counts.
+  assert.ok(
+    helper[0].indexOf('tePlaybarHidden') < helper[0].indexOf('getBoundingClientRect'),
+    'the hidden check must short-circuit before measuring'
+  )
+  assert.match(playingMusic, /getBottomReservedPx:\s*measurePlaybarReservedPx/)
+})
+
+test('the shell is what publishes the flag both consumers query', () => {
+  const playerBar = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
+  // dataset.tePlaybarHidden is the camelCase view of data-te-playbar-hidden.
+  assert.match(playerBar, /'data-te-playbar-hidden':/)
+  assert.match(playerBar, /class="player-bar-shell"[\s\S]{0,200}v-bind="shellDataAttrs"/)
+})

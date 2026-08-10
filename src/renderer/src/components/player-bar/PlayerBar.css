@@ -3555,8 +3555,15 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 }
 
 /* Dark tone only needs to move the bases: the sheen stays light because it is a
-   specular highlight, while the surface tint goes cool and the drop shadow deepens. */
-:global(html[data-theme='dark']) .player-bar-liquid {
+   specular highlight, while the surface tint goes cool and the drop shadow deepens.
+
+   These four rules must NOT wrap the ancestor in `:global()`. Vue's scoped
+   transform rewrites only the last compound of a selector, so `:global(A) B C`
+   compiles to bare `A` — the declarations land on <html>/<body> and never reach
+   `.player-bar-warp`. Both `.player-bar-liquid` and `.player-bar-warp` belong to
+   this component, so a plain descendant selector is already correct: scoping
+   appends the id to the subject and leaves the document-level ancestor alone. */
+html[data-theme='dark'] .player-bar-liquid {
   --te-lg-surface-rgb: 126, 134, 152;
   --te-lg-drop-rgb: var(--te-lg-shade-rgb);
   --te-lg-rim-strength: 0.35;
@@ -3566,20 +3573,225 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 
 /* Degradation mirrors the card contracts: refraction without its blurred backdrop
    reads as a smear, so the filter goes with the blur. */
-:global(body.te-no-blur) .player-bar-liquid .player-bar-warp {
+body.te-no-blur .player-bar-liquid .player-bar-warp {
   filter: none !important;
 }
 
-:global(html[data-te-effects-mode='reduced']) .player-bar-liquid .player-bar-warp {
+html[data-te-effects-mode='reduced'] .player-bar-liquid .player-bar-warp {
   filter: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
 
-:global(html[data-window-transparent='on'][data-platform='linux'])
-  .player-bar-liquid
-  .player-bar-warp {
+html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .player-bar-warp {
   filter: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+}
+
+/* ===== Mini shape =====
+
+   Geometry is keyed off the shell's data attribute so it can out-specify preset
+   theme layouts. `theme-layouts/aurora-reference.css` rewrites the playbar with
+   `html[…] body .player-bar-shell.menu-open .player-bar.player-bar` — (0,5,2) —
+   and sets exactly the properties mini needs (height, max-width, padding,
+   grid-template-columns). Repeating `.player-bar-mini` lands these rules at
+   (0,6,0), which wins on class count without `!important`; going the
+   `!important` route would force every mini rule below to match it.
+
+   Motion tiers need no variants here: base.css already collapses transition
+   durations under html[data-te-motion='reduced'|'off'] for every element. */
+.player-bar-shell[data-te-playbar-mode='mini']
+  .player-bar.player-bar-mini.player-bar-mini.player-bar-mini {
+  height: 52px;
+  max-width: min(560px, 100%);
+  margin: 0 auto;
+  /* Track info takes the slack; controls and icons size to content. */
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  column-gap: 14px;
+  /* Bottom padding reserves the rail's hit area so controls never sit on it. */
+  padding: 0 16px 6px;
+  border-radius: 18px;
+  transition:
+    background 0.3s,
+    border-color 0.3s,
+    box-shadow 0.3s,
+    transform var(--te-motion-panel) var(--te-ease-soft),
+    opacity var(--te-motion-panel) ease;
+}
+
+/* Auto-hide tucks the bar below the viewport. Layout height is unchanged by a
+   transform, so `useSideMenuClearance` / `measurePlaybarReservedPx` read the
+   shell's data-te-playbar-hidden flag instead of measuring. pointer-events must
+   go too, or the tucked bar keeps swallowing clicks along the bottom edge. */
+.player-bar-shell[data-te-playbar-hidden='true']
+  .player-bar.player-bar-mini.player-bar-mini.player-bar-mini {
+  transform: translateY(calc(100% + 24px));
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ===== Mini edge progress rail =====
+
+   The rail replaces the inline progress area by riding the bar's bottom border.
+   It is absolute so it stays out of the three-column grid; the compound
+   `.player-bar.player-bar-mini >` prefix is needed to out-specify the liquid
+   glass rule `.player-bar-liquid > *:not(.player-bar-warp)`, which would
+   otherwise force `position: relative` on it. */
+.player-bar.player-bar-mini > .mini-progress-rail {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 0;
+  height: 14px;
+  z-index: 3;
+  display: flex;
+  align-items: flex-end;
+  pointer-events: auto;
+}
+
+/* Real DOM track/fill for the same reason as .progress-track: Chromium does not
+   reliably repaint ::-webkit-slider-runnable-track on a custom-property change. */
+.mini-progress-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 5px;
+  height: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-color, #1a73e8) 22%, transparent);
+  overflow: hidden;
+  pointer-events: none;
+  transition:
+    height var(--te-motion-hover) ease,
+    bottom var(--te-motion-hover) ease;
+}
+
+.mini-progress-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-color, #2563eb), #0d9488);
+  will-change: width;
+  transform: translateZ(0);
+  transition: none;
+}
+
+/* Thickens on approach so the 14px hit area is discoverable without a visible
+   14px band; the centre line stays at 6.5px so it does not appear to jump. */
+.player-bar-mini:hover .mini-progress-track,
+.mini-progress-rail:focus-within .mini-progress-track {
+  height: 6px;
+  bottom: 3.5px;
+}
+
+.mini-progress-slider {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 14px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.mini-progress-slider:disabled {
+  cursor: default;
+}
+
+.mini-progress-slider::-webkit-slider-runnable-track {
+  height: 14px;
+  background: transparent;
+}
+
+.mini-progress-slider::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 0;
+  height: 0;
+}
+
+.mini-progress-slider::-moz-range-track {
+  height: 14px;
+  background: transparent;
+}
+
+.mini-progress-slider::-moz-range-progress {
+  height: 14px;
+  background: transparent;
+}
+
+.mini-progress-slider::-moz-range-thumb {
+  width: 0;
+  height: 0;
+  border: 0;
+}
+
+.mini-progress-slider:focus-visible {
+  outline: 2px solid var(--accent-color, var(--te-primary-500));
+  outline-offset: 2px;
+  border-radius: 999px;
+}
+
+/* Mini keeps the title block but tightens it — there is no cover to balance
+   against, and 52px leaves no room for the standard 16px title.
+
+   These inner overrides carry the same shell-attribute + repeated-class prefix as
+   the geometry rule above, for the same reason: preset layouts restyle exactly
+   these elements, and the strongest of them (`studio-split`'s
+   `html[…] body .player-bar-shell .player-bar .player-controls .btn-play`) reaches
+   (0,5,2). A plain `.player-bar-mini .btn-play` — (0,2,0) — would silently lose,
+   leaving a 58px play button on a 52px bar. The prefix lands each rule at (0,6,0). */
+.player-bar-shell[data-te-playbar-mode='mini']
+  .player-bar-mini.player-bar-mini.player-bar-mini
+  .player-title {
+  font-size: 14px;
+  line-height: 1.24;
+}
+
+.player-bar-shell[data-te-playbar-mode='mini']
+  .player-bar-mini.player-bar-mini.player-bar-mini
+  .player-artist {
+  font-size: 11px;
+}
+
+.player-bar-shell[data-te-playbar-mode='mini']
+  .player-bar-mini.player-bar-mini.player-bar-mini
+  .player-center {
+  width: auto;
+  transform: none;
+}
+
+.player-bar-shell[data-te-playbar-mode='mini']
+  .player-bar-mini.player-bar-mini.player-bar-mini
+  .player-controls {
+  gap: 8px;
+}
+
+.player-bar-shell[data-te-playbar-mode='mini']
+  .player-bar-mini.player-bar-mini.player-bar-mini
+  .btn-play {
+  width: 36px;
+  height: 36px;
+  padding: 8px;
+}
+
+.player-bar-shell[data-te-playbar-mode='mini']
+  .player-bar-mini.player-bar-mini.player-bar-mini
+  .ctrl-btn
+  img {
+  width: 16px;
+  height: 16px;
+}
+
+.player-bar-shell[data-te-playbar-mode='mini']
+  .player-bar-mini.player-bar-mini.player-bar-mini
+  .player-right {
+  gap: 2px;
+}
+
+html[data-theme='dark'] .player-bar-mini .mini-progress-track {
+  background: color-mix(in srgb, var(--accent-color, #60a5fa) 30%, rgba(255, 255, 255, 0.14));
 }

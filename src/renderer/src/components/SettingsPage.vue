@@ -3,6 +3,7 @@ import { storeToRefs } from 'pinia'
 import QRCode from 'qrcode'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import MiniPlayerSettingsSection from './settings-page/MiniPlayerSettingsSection.vue'
+import LyricsAppearanceCustomizer from './LyricsAppearanceCustomizer.vue'
 import AboutSettingsSection from './settings-page/AboutSettingsSection.vue'
 import ShortcutsSettingsSection from './settings-page/ShortcutsSettingsSection.vue'
 import EditableRangeValue from './EditableRangeValue.vue'
@@ -33,6 +34,8 @@ import {
   appBackgroundPageOptions,
   lyricAlignOptions,
   streamingAudioCachePolicyOptions,
+  playerBarModeOptions,
+  playerBarPageModeOptions,
   SETTINGS_SEARCH_INDEX,
   RESET_DESKTOP_LYRICS
 } from './settings-page/types.ts'
@@ -96,9 +99,17 @@ import type { LibraryWatcherStatusSnapshot } from '../../../shared/localLibraryS
 import type { Vst3CatalogState } from '../../../shared/dspGraph.ts'
 import {
   DEFAULT_LYRICS_APPEARANCE,
-  cloneLyricsAppearance,
-  syncLegacyLyricsAppearance
+  LYRICS_RANGES,
+  cloneLyricsAppearance
 } from '../../../shared/lyricsAppearance.ts'
+import { useLyricsAppearanceEditor } from '../composables/useLyricsAppearanceEditor.ts'
+import {
+  DEFAULT_PLAYER_BAR_SETTINGS,
+  PLAYER_BAR_BOUNDS,
+  clonePlayerBarSettings,
+  type PlayerBarMode,
+  type PlayerBarPageMode
+} from '../../../shared/playerBar.ts'
 
 const props = defineProps<{
   initialSection?: SectionKey
@@ -210,6 +221,10 @@ const {
   addLibraryFolder,
   removeLibraryFolder
 } = useSettingsStore()
+
+const lyricsEditor = useLyricsAppearanceEditor()
+const lyricsRanges = LYRICS_RANGES
+const lyricsCustomizerOpen = ref(false)
 
 const transparencyUnsupported = computed(
   () => settings.value.windowTransparency === true && windowTransparencySupported.value === false
@@ -883,6 +898,7 @@ function resetSettingsGroup(group: 'appearance' | 'playback' | 'desktopLyrics'):
         blurEffect: true,
         useCoverTheme: true,
         lyricsAppearance: cloneLyricsAppearance(DEFAULT_LYRICS_APPEARANCE),
+        playerBar: clonePlayerBarSettings(DEFAULT_PLAYER_BAR_SETTINGS),
         fontFamily: 'system',
         uiDensity: 'standard'
       })
@@ -1367,23 +1383,9 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
   key: K,
   value: LyricsAppearanceSettings[K]
 ): void {
-  const legacyKeys = new Set<keyof LyricsAppearanceSettings>([
-    'fontFamily',
-    'fontSize',
-    'fontWeight',
-    'lineHeight',
-    'align',
-    'colorMode',
-    'textColor',
-    'activeColor',
-    'karaokeColor'
-  ])
-  const lyricsAppearance = legacyKeys.has(key)
-    ? syncLegacyLyricsAppearance(settings.value.lyricsAppearance, {
-        [key]: value
-      } as Partial<LyricsAppearanceSettings>)
-    : { ...settings.value.lyricsAppearance, [key]: value }
-  void updateSettings({ lyricsAppearance })
+  // The shared editor owns the legacy fan-out and the published bounds, so the
+  // quick controls here cannot drift from the full editor in the drawer.
+  lyricsEditor.setGlobal(key, value)
 }
 
 const cardAppearanceTab = ref<'light' | 'dark'>('light')
@@ -1480,6 +1482,40 @@ function setLiquidGlassField<K extends keyof LiquidGlassTheme>(
   liquidGlass[liquidGlassTab.value][field] = value
   void updateSettings({ liquidGlass })
 }
+
+const playerBarOpen = ref(false)
+
+function setPlayerBarMode(mode: PlayerBarMode): void {
+  if (settings.value.playerBar.mode === mode) return
+  void updateSettings({ playerBar: { ...settings.value.playerBar, mode } })
+}
+
+function setPlayerBarPlayingPageMode(value: string): void {
+  const playingPageMode: PlayerBarPageMode =
+    value === 'mini' || value === 'standard' ? value : 'inherit'
+  if (settings.value.playerBar.playingPageMode === playingPageMode) return
+  void updateSettings({ playerBar: { ...settings.value.playerBar, playingPageMode } })
+}
+
+function togglePlayerBarAutoHide(): void {
+  void updateSettings({
+    playerBar: {
+      ...settings.value.playerBar,
+      autoHideOnPlayingPage: !settings.value.playerBar.autoHideOnPlayingPage
+    }
+  })
+}
+
+function setPlayerBarNumber(field: 'revealThresholdPx' | 'hideDelayMs', value: number): void {
+  if (!Number.isFinite(value)) return
+  void updateSettings({ playerBar: { ...settings.value.playerBar, [field]: value } })
+}
+
+/** Auto-hide only has meaning once the playing page actually resolves to mini. */
+const playingPageResolvesMini = computed(() => {
+  const bar = settings.value.playerBar
+  return bar.playingPageMode === 'inherit' ? bar.mode === 'mini' : bar.playingPageMode === 'mini'
+})
 
 function pluginPanelStateKey(panel: UiContribution): string {
   return `${panel.pluginId}:${panel.id}`
@@ -4903,8 +4939,8 @@ onBeforeUnmount(() => {
                   <input
                     class="range-input"
                     type="range"
-                    min="14"
-                    max="32"
+                    :min="lyricsRanges.fontSize.min"
+                    :max="lyricsRanges.fontSize.max"
                     :value="settings.lyricsAppearance.fontSize"
                     @input="
                       updateLyricsAppearance(
@@ -4915,8 +4951,8 @@ onBeforeUnmount(() => {
                   />
                   <EditableRangeValue
                     :value="settings.lyricsAppearance.fontSize"
-                    :min="14"
-                    :max="32"
+                    :min="lyricsRanges.fontSize.min"
+                    :max="lyricsRanges.fontSize.max"
                     suffix="px"
                     aria-label="编辑歌词字号"
                     @change="updateLyricsAppearance('fontSize', $event)"
@@ -4952,9 +4988,9 @@ onBeforeUnmount(() => {
                   <input
                     class="range-input"
                     type="range"
-                    min="1.2"
-                    max="2.6"
-                    step="0.05"
+                    :min="lyricsRanges.lineHeight.min"
+                    :max="lyricsRanges.lineHeight.max"
+                    :step="lyricsRanges.lineHeight.step"
                     :value="settings.lyricsAppearance.lineHeight"
                     @input="
                       updateLyricsAppearance(
@@ -4965,9 +5001,9 @@ onBeforeUnmount(() => {
                   />
                   <EditableRangeValue
                     :value="settings.lyricsAppearance.lineHeight"
-                    :min="1.2"
-                    :max="2.6"
-                    :step="0.05"
+                    :min="lyricsRanges.lineHeight.min"
+                    :max="lyricsRanges.lineHeight.max"
+                    :step="lyricsRanges.lineHeight.step"
                     aria-label="编辑歌词行距"
                     @change="updateLyricsAppearance('lineHeight', $event)"
                   />
@@ -4977,8 +5013,9 @@ onBeforeUnmount(() => {
                   <input
                     class="range-input"
                     type="range"
-                    min="10"
-                    max="100"
+                    :min="lyricsRanges.inactiveOpacity.min"
+                    :max="lyricsRanges.inactiveOpacity.max"
+                    :step="lyricsRanges.inactiveOpacity.step"
                     :value="settings.lyricsAppearance.inactiveOpacity"
                     @input="
                       updateLyricsAppearance(
@@ -4989,8 +5026,8 @@ onBeforeUnmount(() => {
                   />
                   <EditableRangeValue
                     :value="settings.lyricsAppearance.inactiveOpacity"
-                    :min="10"
-                    :max="100"
+                    :min="lyricsRanges.inactiveOpacity.min"
+                    :max="lyricsRanges.inactiveOpacity.max"
                     suffix="%"
                     aria-label="编辑未播放歌词暗度"
                     @change="updateLyricsAppearance('inactiveOpacity', $event)"
@@ -5091,8 +5128,162 @@ onBeforeUnmount(() => {
                   </label>
                 </template>
               </div>
+              <div class="inline-controls">
+                <div class="setting-copy">
+                  <strong>逐层个性化</strong>
+                  <span>
+                    分别设置普通、当前、翻译、罗马音四层的字体与字号，以及封面间距、聚焦范围和动效强度。
+                  </span>
+                </div>
+                <button type="button" class="soft-button" @click="lyricsCustomizerOpen = true">
+                  打开歌词个性化
+                </button>
+              </div>
             </div>
             <MiniPlayerSettingsSection />
+            <hr />
+            <button
+              type="button"
+              class="settings-accordion-trigger"
+              :class="{ open: playerBarOpen }"
+              :aria-expanded="playerBarOpen"
+              @click="playerBarOpen = !playerBarOpen"
+            >
+              <span class="setting-copy">
+                <strong>播放条形态</strong>
+                <span
+                  >标准播放条或迷你播放条；迷你形态把进度调节移到底边框，并可在播放页自动隐藏。</span
+                >
+              </span>
+              <i class="pi pi-chevron-down"></i>
+            </button>
+            <div v-if="playerBarOpen" class="settings-accordion-body">
+              <hr />
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>播放条形态</strong>
+                  <span>迷你形态不显示封面与内联进度条，进度改在底边框上拖动。</span>
+                </div>
+                <div class="segmented-control">
+                  <button
+                    v-for="option in playerBarModeOptions"
+                    :key="option.value"
+                    type="button"
+                    :class="{ active: settings.playerBar.mode === option.value }"
+                    @click="setPlayerBarMode(option.value)"
+                  >
+                    <i :class="option.icon"></i>
+                    {{ option.label }}
+                  </button>
+                </div>
+              </div>
+              <hr />
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>播放页形态</strong>
+                  <span>可以只在播放页使用迷你播放条，其余界面保持标准形态。</span>
+                </div>
+                <select
+                  class="preview-select"
+                  :value="settings.playerBar.playingPageMode"
+                  @change="setPlayerBarPlayingPageMode(($event.target as HTMLSelectElement).value)"
+                >
+                  <option
+                    v-for="option in playerBarPageModeOptions"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </option>
+                </select>
+              </div>
+              <hr />
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>播放页自动隐藏</strong>
+                  <span>
+                    播放页的迷你播放条平时收起；鼠标靠近窗口底边时滑出。需要播放页形态为迷你。
+                  </span>
+                </div>
+                <span
+                  class="toggle-switch"
+                  :class="{
+                    active: settings.playerBar.autoHideOnPlayingPage,
+                    disabled: !playingPageResolvesMini
+                  }"
+                  role="switch"
+                  :aria-checked="settings.playerBar.autoHideOnPlayingPage"
+                  :aria-disabled="!playingPageResolvesMini"
+                  @click="playingPageResolvesMini && togglePlayerBarAutoHide()"
+                ></span>
+              </div>
+              <template v-if="settings.playerBar.autoHideOnPlayingPage">
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>触发距离</strong>
+                    <span>鼠标距窗口底边多少像素内触发滑出。</span>
+                  </div>
+                  <div class="range-pill">
+                    <span>距离</span>
+                    <input
+                      class="range-input"
+                      type="range"
+                      :min="PLAYER_BAR_BOUNDS.revealThresholdPx.min"
+                      :max="PLAYER_BAR_BOUNDS.revealThresholdPx.max"
+                      :value="settings.playerBar.revealThresholdPx"
+                      @input="
+                        setPlayerBarNumber(
+                          'revealThresholdPx',
+                          Number(($event.target as HTMLInputElement).value)
+                        )
+                      "
+                    />
+                    <EditableRangeValue
+                      :value="settings.playerBar.revealThresholdPx"
+                      :min="PLAYER_BAR_BOUNDS.revealThresholdPx.min"
+                      :max="PLAYER_BAR_BOUNDS.revealThresholdPx.max"
+                      suffix="px"
+                      aria-label="编辑触发距离"
+                      @change="setPlayerBarNumber('revealThresholdPx', $event)"
+                    />
+                  </div>
+                </div>
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>收起延迟</strong>
+                    <span>鼠标离开触发区后延迟多久收起播放条。</span>
+                  </div>
+                  <div class="range-pill">
+                    <span>延迟</span>
+                    <input
+                      class="range-input"
+                      type="range"
+                      :min="PLAYER_BAR_BOUNDS.hideDelayMs.min"
+                      :max="PLAYER_BAR_BOUNDS.hideDelayMs.max"
+                      step="50"
+                      :value="settings.playerBar.hideDelayMs"
+                      @input="
+                        setPlayerBarNumber(
+                          'hideDelayMs',
+                          Number(($event.target as HTMLInputElement).value)
+                        )
+                      "
+                    />
+                    <EditableRangeValue
+                      :value="settings.playerBar.hideDelayMs"
+                      :min="PLAYER_BAR_BOUNDS.hideDelayMs.min"
+                      :max="PLAYER_BAR_BOUNDS.hideDelayMs.max"
+                      :step="50"
+                      suffix="ms"
+                      aria-label="编辑收起延迟"
+                      @change="setPlayerBarNumber('hideDelayMs', $event)"
+                    />
+                  </div>
+                </div>
+              </template>
+            </div>
             <hr />
             <button
               type="button"
@@ -6222,6 +6413,12 @@ onBeforeUnmount(() => {
         />
       </div>
     </div>
+    <Teleport to="body">
+      <LyricsAppearanceCustomizer
+        :open="lyricsCustomizerOpen"
+        @close="lyricsCustomizerOpen = false"
+      />
+    </Teleport>
   </main>
 </template>
 
