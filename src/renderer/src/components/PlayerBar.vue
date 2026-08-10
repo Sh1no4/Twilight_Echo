@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, type ComponentPublicInstance } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, type ComponentPublicInstance } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useMusicStore } from '../stores/useMusicStore'
@@ -7,6 +7,12 @@ import { usePlaybackBookmarks } from '../stores/playbackBookmarks'
 import { useLyricsManagement } from '../stores/lyricsManagement'
 import type { PlaybackBookmark } from '../../../shared/playbackBookmarks.ts'
 import { useExtensionRegistry } from '../extensions/registry'
+import {
+  createFrameCoalescer,
+  pointerCssVariables,
+  resolvePointerOffset,
+  staticPointerCssVariables
+} from '../utils/liquidGlassPointer.ts'
 import { useMediaProviders } from '../providers'
 import { normalizeAccentColor } from '../utils/colorExtractor'
 import { useSmoothedValue } from '../utils/useSmoothedValue'
@@ -147,6 +153,7 @@ const playerBarButtons = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'playerBarButton')
 )
 const { settings, updateSettings } = useSettingsStore()
+const liquidGlassActive = computed(() => settings.value.surfaceMaterial === 'liquidGlass')
 const lyricsManagement = useLyricsManagement()
 const desktopLyricsOn = ref(settings.value.desktopLyrics.enabled)
 const miniPlayerOpening = ref(false)
@@ -1040,8 +1047,81 @@ async function toggleLyricHighlight(): Promise<void> {
   }
 }
 
+/**
+ * The playbar is a single surface, so it can afford an element-relative light source
+ * rather than the shared viewport one the cards use. Writes are rAF-coalesced and the
+ * variables are scoped to this element.
+ */
+const playerBarRef = ref<HTMLElement | null>(null)
+const glassPointerFrames = createFrameCoalescer<{ x: number; y: number }>((point) => {
+  const element = playerBarRef.value
+  if (!element) return
+  const rect = element.getBoundingClientRect()
+  const variables = pointerCssVariables(
+    resolvePointerOffset(point.x, point.y, {
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height
+    })
+  )
+  for (const [name, value] of Object.entries(variables)) {
+    element.style.setProperty(name, value)
+  }
+})
+
+function onGlassPointerMove(event: PointerEvent): void {
+  glassPointerFrames.schedule({ x: event.clientX, y: event.clientY })
+}
+
+let glassPointerAttached = false
+
+function detachGlassPointer(): void {
+  if (!glassPointerAttached) return
+  window.removeEventListener('pointermove', onGlassPointerMove)
+  glassPointerFrames.cancel()
+  glassPointerAttached = false
+}
+
+function motionAllowsPointer(): boolean {
+  const mode = document.documentElement.dataset.teMotion ?? 'full'
+  return mode !== 'reduced' && mode !== 'off'
+}
+
+function syncGlassPointer(): void {
+  const shouldTrack =
+    liquidGlassActive.value &&
+    settings.value.liquidGlass.followPointer &&
+    !props.preview &&
+    motionAllowsPointer()
+
+  if (shouldTrack === glassPointerAttached) return
+  if (shouldTrack) {
+    window.addEventListener('pointermove', onGlassPointerMove, { passive: true })
+    glassPointerAttached = true
+    return
+  }
+  detachGlassPointer()
+  const element = playerBarRef.value
+  if (!element) return
+  for (const [name, value] of Object.entries(staticPointerCssVariables())) {
+    element.style.setProperty(name, value)
+  }
+}
+
+watch(
+  () => [liquidGlassActive.value, settings.value.liquidGlass.followPointer],
+  () => syncGlassPointer(),
+  { flush: 'post' }
+)
+
 onMounted(() => {
   if (!props.preview) void syncExtensions()
+  syncGlassPointer()
+})
+
+onBeforeUnmount(() => {
+  detachGlassPointer()
 })
 </script>
 
@@ -1203,13 +1283,17 @@ onMounted(() => {
 
     <!-- PlayerBar 主体 -->
     <div
+      ref="playerBarRef"
       class="player-bar"
-      :class="{ 'player-bar-glass': glass }"
+      :class="{ 'player-bar-glass': glass, 'player-bar-liquid': liquidGlassActive }"
       :style="{
         '--accent-color': dominantColor,
         '--play-button-color': playButtonColor
       }"
     >
+      <!-- Refracting layer. Absolute so it stays out of the grid flow, and behind
+           content so controls and text are never displaced by the filter. -->
+      <span v-if="liquidGlassActive" class="player-bar-warp" aria-hidden="true"></span>
       <!-- 左侧：整块按曲目 identity remount，避免 cover:// 解码粘住上一首 -->
       <div :key="playerLeftKey" class="player-left">
         <div
