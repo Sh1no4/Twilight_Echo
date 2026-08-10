@@ -96,31 +96,101 @@ AsioHostDiagnostics MockAsioHost::diagnostics() const {
   return result;
 }
 
+bool MockAsioHost::probeDevice(const std::string& deviceId, AsioDeviceInfo* info, std::string* error) {
+  ++probeCalls;
+  if (!info) {
+    if (error) *error = "ASIO capability probe requires an output record";
+    return false;
+  }
+  if (failProbeCount > 0) {
+    --failProbeCount;
+    if (error) *error = "mock ASIO capability probe failed";
+    return false;
+  }
+  const auto probed = std::find_if(probeResults.begin(), probeResults.end(), [&](const AsioDeviceInfo& entry) {
+    return entry.id == deviceId;
+  });
+  if (probed != probeResults.end()) {
+    AsioDeviceInfo merged = *probed;
+    merged.id = info->id;
+    merged.name = info->name;
+    merged.isDefault = info->isDefault;
+    *info = merged;
+    return true;
+  }
+  const auto known = std::find_if(devices.begin(), devices.end(), [&](const AsioDeviceInfo& entry) {
+    return entry.id == deviceId;
+  });
+  if (known == devices.end()) {
+    if (error) *error = "mock ASIO device was not found";
+    return false;
+  }
+  *info = *known;
+  return true;
+}
+
 bool MockAsioHost::open(const AsioOpenConfig& config, AsioOpenResult* result, std::string* error) {
   ++openCalls;
   lastOpenConfig = config;
+  // failOpenCount models a per-format refusal, so the backend may try the next
+  // candidate. failDriverInitCount / failDriverOpenCount model driver-wide
+  // faults, which must stop the attempt sequence immediately.
   if (failOpenCount > 0) {
     --failOpenCount;
+    if (result) {
+      result->failureKind = openFailure == OpenFailure::FormatRefused ? AsioOpenFailureKind::Format
+                                                                     : AsioOpenFailureKind::Driver;
+    }
     if (error) {
-      *error = openFailure == OpenFailure::DriverInit ? "mock driver init failure" : "mock open failure";
+      switch (openFailure) {
+        case OpenFailure::DriverInit:
+          *error = "mock driver init failure";
+          break;
+        case OpenFailure::FormatRefused:
+          *error = "mock format refused";
+          break;
+        case OpenFailure::DriverOpen:
+        default:
+          *error = "mock open failure";
+          break;
+      }
     }
     return false;
   }
   if (failDriverInitCount > 0) {
     --failDriverInitCount;
+    if (result) result->failureKind = AsioOpenFailureKind::Driver;
     if (error) *error = "mock driver init failure";
     return false;
   }
   if (failDriverOpenCount > 0) {
     --failDriverOpenCount;
+    if (result) result->failureKind = AsioOpenFailureKind::Driver;
     if (error) *error = "mock open failure";
     return false;
+  }
+  // Model the driver's own verdict on a raw DSD rate. The backend is expected
+  // to attempt the request and read the refusal here, rather than deciding on
+  // its own that a cached capability list makes the attempt pointless.
+  if (enforceDeclaredNativeDsdRates && isDsdSampleFormat(config.format.sampleFormat)) {
+    const auto device = std::find_if(devices.begin(), devices.end(), [&](const AsioDeviceInfo& entry) {
+      return entry.id == config.deviceId;
+    });
+    if (device != devices.end() && !device->nativeDsdSampleRates.empty()) {
+      const auto& rates = device->nativeDsdSampleRates;
+      if (std::find(rates.begin(), rates.end(), config.format.sampleRate) == rates.end()) {
+        if (result) result->failureKind = AsioOpenFailureKind::Format;
+        if (error) *error = "mock driver refused the requested Native DSD sample rate";
+        return false;
+      }
+    }
   }
   openResult.actualFormat = actualFormatOverride.value_or(config.format);
   openResult.bufferSizeFrames = config.bufferSizeFrames > 0 ? config.bufferSizeFrames : 128;
   openResult.latencyFrames = openResult.bufferSizeFrames * 2;
   if (openResult.driverName.empty()) openResult.driverName = "Mock ASIO";
   if (openResult.driverVersion == 0) openResult.driverVersion = 1;
+  openResult.failureKind = AsioOpenFailureKind::None;
   if (result) *result = openResult;
   return true;
 }

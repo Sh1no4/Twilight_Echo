@@ -1,10 +1,18 @@
 import type { Rectangle } from 'electron'
-import type { MiniPlayerSettings } from '../../shared/miniPlayer'
+import {
+  MINI_PLAYER_MAX_HEIGHT,
+  MINI_PLAYER_MAX_WIDTH,
+  MINI_PLAYER_MIN_HEIGHT,
+  MINI_PLAYER_MIN_WIDTH,
+  type MiniPlayerSettings
+} from '../../shared/miniPlayer.ts'
 
-export const MINI_PLAYER_MIN_WIDTH = 360
-export const MINI_PLAYER_MIN_HEIGHT = 140
-export const MINI_PLAYER_MAX_WIDTH = 900
-export const MINI_PLAYER_MAX_HEIGHT = 520
+export {
+  MINI_PLAYER_MAX_HEIGHT,
+  MINI_PLAYER_MAX_WIDTH,
+  MINI_PLAYER_MIN_HEIGHT,
+  MINI_PLAYER_MIN_WIDTH
+}
 
 export function clampMiniPlayerBoundsToWorkArea(bounds: Rectangle, workArea: Rectangle): Rectangle {
   const maxWidth = Math.max(1, Math.min(MINI_PLAYER_MAX_WIDTH, Math.round(workArea.width)))

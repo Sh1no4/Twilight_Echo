@@ -4,6 +4,7 @@
  *
  * Security: only used on LAN; media URLs are already app-issued token URLs.
  */
+import { parseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 
 import { createSocket, type Socket } from 'node:dgram'
 import { connect as tlsConnect, type TLSSocket } from 'node:tls'
@@ -504,7 +505,7 @@ function handleCastFrame(session: ActiveCastSession, frame: Buffer): void {
   try {
     const msg = decodeCastMessage(frame)
     if (!msg.payloadUtf8) return
-    const payload = JSON.parse(msg.payloadUtf8) as Record<string, unknown>
+    const payload = parseJsonWithNestingLimit(msg.payloadUtf8) as Record<string, unknown>
     if (payload.type === 'PONG') return
     if (payload.type === 'RECEIVER_STATUS') {
       const status = payload.status as { applications?: Array<{ transportId?: string }> } | undefined

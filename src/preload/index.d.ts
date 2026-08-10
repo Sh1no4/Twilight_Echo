@@ -14,6 +14,7 @@ import type {
 import type { ImportedFrequencyResponse } from '../shared/frequencyResponse.ts'
 import type { SleepTimerSettings } from '../shared/sleepTimer.ts'
 import type { LyricsAppearanceSettings } from '../shared/lyricsAppearance.ts'
+import type { LiquidGlassSettings, SurfaceMaterial } from '../shared/liquidGlass.ts'
 import type {
   ThemeAssetReference,
   ThemeAssetType,
@@ -352,6 +353,15 @@ type ChannelRoutingMode =
   | 'mono-to-multichannel'
 type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native'
 type SacdProgramMode = 'auto' | 'stereo' | 'multichannel'
+
+/** DSD 兼容层路由；与 dsdOutputMode 正交。 */
+interface DsdRouteSettings {
+  enabled: boolean
+  backend: string
+  device: string
+  applyToPcmToDsd: boolean
+  strictPassthrough: boolean
+}
 type EqualizerFilterType =
   | 'peak'
   | 'lowShelf'
@@ -402,6 +412,7 @@ interface AudioProcessingSettings {
   highResolution: boolean
   dsdToPcm: boolean
   dsdOutputMode: DsdOutputMode
+  dsdRoute: DsdRouteSettings
   sacdProgramMode: SacdProgramMode
   eqEnabled: boolean
   eqMode: EqMode
@@ -587,12 +598,22 @@ interface MiniPlayerTrackSnapshot {
   artist: string
   album: string
   cover: string | null
+  format: string | null
+  sampleRate: number | null
+  bitDepth: number | null
   coverSource: string | null
+}
+
+interface MiniPlayerLyricLineSnapshot {
+  time: number | null
+  original: string
+  translation: string | null
 }
 
 interface MiniPlayerStateSnapshot {
   track: MiniPlayerTrackSnapshot | null
   currentLyric: { original: string; translation: string | null } | null
+  lyrics: MiniPlayerLyricLineSnapshot[]
   isPlaying: boolean
   isLoading: boolean
   currentTime: number
@@ -738,6 +759,9 @@ interface AppSettings {
   uiDensity: UiDensity
   appBackground: AppBackgroundSettings
   cardAppearance: CardAppearanceSettings
+  /** Switches cards and the playbar between the standard surface and liquid glass. */
+  surfaceMaterial: SurfaceMaterial
+  liquidGlass: LiquidGlassSettings
   nowPlayingBackground: NowPlayingBackground
   playbackResumeMode: PlaybackResumeMode
   sleepTimer: SleepTimerSettings

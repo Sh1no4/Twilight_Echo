@@ -4,6 +4,13 @@ export interface LyricWord {
   text: string
 }
 
+export type LyricVoiceRole = 'main' | 'background' | 'duet-left' | 'duet-right'
+
+export interface LyricVoiceLayer {
+  role: LyricVoiceRole
+  words: LyricWord[]
+}
+
 export interface ParsedTimedLyricLine {
   time: number
   text: string
@@ -17,6 +24,7 @@ export interface LyricLine {
   romanization: string | null
   timed: boolean
   words?: LyricWord[]
+  voices?: LyricVoiceLayer[]
 }
 
 const LINE_TIMESTAMP_RE = /\[(\d{1,3}):(\d{2})(?:[.:](\d{2,3}))?\]/g

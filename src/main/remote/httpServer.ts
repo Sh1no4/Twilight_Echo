@@ -14,6 +14,7 @@ import {
   type RemotePlaybackSnapshot
 } from '../../shared/remoteControl.ts'
 import { REMOTE_SSE_HEARTBEAT_MS } from '../../shared/remoteControl.ts'
+import { parseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 
 export type RemoteServerMode = 'full' | 'mediaOnly'
 
@@ -648,7 +649,7 @@ function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | n
       }
       try {
         const text = Buffer.concat(chunks).toString('utf8')
-        const parsed = JSON.parse(text) as unknown
+        const parsed = parseJsonWithNestingLimit(text) as unknown
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
           resolve(null)
           return

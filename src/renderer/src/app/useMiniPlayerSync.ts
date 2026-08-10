@@ -1,5 +1,9 @@
 import { onBeforeUnmount, watch, type Ref } from 'vue'
-import type { MiniPlayerCommand, MiniPlayerStateSnapshot } from '../../../shared/miniPlayer'
+import type {
+  MiniPlayerCommand,
+  MiniPlayerLyricLineSnapshot,
+  MiniPlayerStateSnapshot
+} from '../../../shared/miniPlayer'
 import type { Track } from '../types/music'
 import type { PlayMode } from '../types/settings'
 import { buildLyricLines, findActiveLyricIndex } from '../utils/lyrics.ts'
@@ -48,6 +52,7 @@ export function buildMiniPlayerStateSnapshot(
   source: MiniPlayerStateSource
 ): MiniPlayerStateSnapshot {
   const track = source.track
+  const lyrics = buildMiniPlayerLyricLines(track)
   return {
     track: track
       ? {
@@ -56,10 +61,14 @@ export function buildMiniPlayerStateSnapshot(
           artist: track.artist,
           album: track.album,
           cover: track.cover,
+          format: track.format ?? null,
+          sampleRate: typeof track.sampleRate === 'number' ? track.sampleRate : null,
+          bitDepth: typeof track.bitDepth === 'number' ? track.bitDepth : null,
           coverSource: track.coverSource ?? null
         }
       : null,
     currentLyric: resolveCurrentLyricForMiniPlayer(track, source.currentTime),
+    lyrics,
     isPlaying: source.isPlaying,
     isLoading: source.isLoading,
     currentTime: source.currentTime,
@@ -73,6 +82,53 @@ export function buildMiniPlayerStateSnapshot(
     queueIndex: source.queueIndex,
     queueLength: source.queueLength
   }
+}
+
+/**
+ * Timed lyric lines for the mini player's multi-line view. Plain untimed
+ * lyrics are excluded because the mini player switches lines by timestamp.
+ */
+export function buildMiniPlayerLyricLines(
+  track: Track | null
+): MiniPlayerLyricLineSnapshot[] {
+  if (!track) return []
+  return buildLyricLines(track.lyrics, track.translatedLyrics)
+    .filter((line) => line.time != null && line.text.trim().length > 0)
+    .map((line) => ({
+      time: line.time,
+      original: line.text,
+      translation: line.translation
+    }))
+}
+
+/**
+ * Binary search for the line whose timestamp is the latest one <= currentTime
+ * (lines are sorted by time). Mirrors findActiveLyricIndex for the snapshot
+ * shape so the mini player can highlight the current line on its own clock.
+ */
+export function findActiveMiniPlayerLyricIndex(
+  lines: readonly MiniPlayerLyricLineSnapshot[],
+  currentTime: number
+): number {
+  if (lines.length === 0 || !Number.isFinite(currentTime)) return -1
+  let low = 0
+  let high = lines.length - 1
+  let activeIndex = -1
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2)
+    const lineTime = lines[mid].time
+    if (lineTime == null) {
+      high = mid - 1
+      continue
+    }
+    if (lineTime <= currentTime) {
+      activeIndex = mid
+      low = mid + 1
+    } else {
+      high = mid - 1
+    }
+  }
+  return activeIndex
 }
 
 /**

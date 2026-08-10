@@ -8,6 +8,7 @@ const {
   prepareMingwBuildLayout,
   resolveMingwEnvironment,
   validateMingwCTestRegistration,
+  validateMingwNativeDependencyConfiguration,
   validateMingwBuildCommands
 } = require('./audio-engine-toolchain.cjs')
 
@@ -52,6 +53,23 @@ function cleanCmakeConfigureState() {
   console.warn('MinGW CTest 目标缺失，已清理 CMake 配置缓存并重试 configure。')
 }
 
+function cleanInvalidNativeDependencyConfiguration() {
+  const cache = join(buildDir, 'CMakeCache.txt')
+  if (!existsSync(cache)) return false
+  const validation = validateMingwNativeDependencyConfiguration({ buildDir })
+  if (validation.ok) return false
+  console.warn(`${validation.message}\nResetting stale MinGW CMake configuration before configure.`)
+  cleanCmakeConfigureState()
+  return true
+}
+
+function verifyNativeDependencies() {
+  const validation = validateMingwNativeDependencyConfiguration({ buildDir })
+  if (validation.ok) return true
+  console.error(validation.message)
+  return false
+}
+
 function cleanStaleCTestRegistration() {
   const ctestFile = join(buildDir, 'CTestTestfile.cmake')
   if (!existsSync(ctestFile)) return false
@@ -79,6 +97,8 @@ function verifyCTestTargets() {
 }
 
 cleanStaleCTestRegistration()
+cleanInvalidNativeDependencyConfiguration()
 const status = runCmake()
 if (status !== 0) process.exit(status)
+if (!verifyNativeDependencies()) process.exit(1)
 verifyCTestTargets()

@@ -282,6 +282,13 @@ const defaultAudioProcessing: AudioProcessingSettings = {
   highResolution: true,
   dsdToPcm: false,
   dsdOutputMode: 'auto',
+  dsdRoute: {
+    enabled: false,
+    backend: '',
+    device: '',
+    applyToPcmToDsd: true,
+    strictPassthrough: false
+  },
   sacdProgramMode: 'auto',
   eqEnabled: false,
   eqMode: 'graphic',

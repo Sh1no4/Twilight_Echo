@@ -22,6 +22,9 @@ test('global scrollbar styling is hidden by default and uses neutral reveal toke
   assert.match(baseStyles, /background: var\(--te-scrollbar-thumb\) !important/)
   assert.doesNotMatch(baseStyles, /--te-scrollbar-thumb:\s*rgba\(var\(--te-primary-rgb\)/)
 
+  assert.match(baseStyles, /-webkit-user-drag: none/)
+  assert.match(baseStyles, /user-drag: none/)
+
   const scrollbarSources = [
     baseStyles,
     '../components/RadioPodcastPage.vue',

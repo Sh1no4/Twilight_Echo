@@ -17,6 +17,17 @@ import type {
 import type { BpmAnalysisResult } from './bpm/bpmCache'
 import type { DspGraphStatus } from '../shared/dspGraph.ts'
 import { getNativeAddonCandidates } from './audio/nativeBinding.ts'
+import { tryParseJsonWithNestingLimit } from './security/jsonSafety.ts'
+import {
+  asUtilityProcessMessageRecord,
+  inspectUtilityProcessMessage,
+  inspectUtilityProcessPayload,
+  isBoundedUtf8String,
+  parseUtilityProcessResponse,
+  UtilityProcessLogBudget,
+  MAX_UTILITY_PROCESS_CONTROL_MESSAGE_BYTES,
+  MAX_UTILITY_PROCESS_ERROR_TEXT_BYTES
+} from './security/utilityProcessSafety.ts'
 import {
   mergeDspStatePayload,
   validateAudioServiceCapabilities,
@@ -32,7 +43,7 @@ type UtilityProcessLike = {
   on: (
     event: 'message' | 'exit' | 'error',
     listener:
-      | ((message: AudioServiceResponse | AudioServiceEvent) => void)
+      | ((message: unknown) => void)
       | ((code: number | null) => void)
       | ((error: unknown, location?: string) => void)
   ) => void
@@ -57,27 +68,19 @@ type AudioServiceRequest = {
   args: unknown[]
 }
 
-type AudioServiceResponse = {
-  kind: 'response'
-  requestId: string
-  ok: boolean
-  value?: unknown
-  error?: string
-}
-
-type AudioServiceEvent = {
-  kind: 'ready' | 'fatal'
-  error?: string
-  capabilities?: AudioServiceCapabilities
-}
-
 const MAX_VISUALIZATION_CACHE_KEYS = 8
 const DEFAULT_MAX_IN_FLIGHT_REQUESTS = 128
 const DEFAULT_TOPOLOGY_REQUEST_TIMEOUT_MS = 20_000
 const AUDIO_SERVICE_BUSY_CODE = 'ERR_AUDIO_SERVICE_BUSY'
 const AUDIO_SERVICE_TIMEOUT_CODE = 'ERR_AUDIO_SERVICE_TIMEOUT'
+const MAX_AUDIO_SERVICE_DEFAULT_RESPONSE_BYTES = 1024 * 1024
+const MAX_AUDIO_SERVICE_VISUALIZATION_RESPONSE_BYTES = 8 * 1024 * 1024
+const MAX_AUDIO_SERVICE_MESSAGE_BYTES =
+  MAX_AUDIO_SERVICE_VISUALIZATION_RESPONSE_BYTES + MAX_UTILITY_PROCESS_CONTROL_MESSAGE_BYTES
+const AUDIO_SERVICE_INVALID_MESSAGE = 'audio service returned an invalid or oversized message'
 
 type PendingRequest = {
+  method: keyof NativeAudioBinding
   resolve: (value: unknown) => void
   reject: (error: Error) => void
   timer: NodeJS.Timeout
@@ -143,6 +146,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   private queuedDspState: QueuedDspState | null = null
   private dspStateInFlight = false
   private dspStateFlushScheduled = false
+  private readonly processLogBudget = new UtilityProcessLogBudget()
 
   constructor(options: AudioEngineServiceBindingOptions) {
     super()
@@ -466,6 +470,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
         env: audioServiceEnv()
       })
       this.child = child
+      this.processLogBudget.reset()
       child.on('message', (message) => {
         if (this.child !== child) return
         this.handleMessage(message)
@@ -480,8 +485,14 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
           `音频服务进程错误：${location ?? ''} ${error instanceof Error ? error.message : String(error)}`
         )
       })
-      child.stdout?.on('data', (chunk) => this.emit('log', chunk.toString()))
-      child.stderr?.on('data', (chunk) => this.emit('error-log', chunk.toString()))
+      child.stdout?.on('data', (chunk) => {
+        if (this.child !== child) return
+        this.emitProcessLog('log', chunk)
+      })
+      child.stderr?.on('data', (chunk) => {
+        if (this.child !== child) return
+        this.emitProcessLog('error-log', chunk)
+      })
     } catch (error) {
       this.recordFailure(error instanceof Error ? error.message : String(error))
     }
@@ -507,7 +518,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
           if (event === 'message') {
             child.on(
               'message',
-              listener as (message: AudioServiceResponse | AudioServiceEvent) => void
+              listener as (message: unknown) => void
             )
           } else if (event === 'exit') {
             child.on('exit', listener as (code: number | null) => void)
@@ -519,6 +530,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
         stderr: child.stderr ?? undefined
       }
       this.child = wrappedChild
+      this.processLogBudget.reset()
       wrappedChild.on('message', (message) => {
         if (this.child !== wrappedChild) return
         this.handleMessage(message)
@@ -533,35 +545,122 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
           `音频服务进程错误：${error instanceof Error ? error.message : String(error)}`
         )
       })
-      wrappedChild.stdout?.on('data', (chunk) => this.emit('log', chunk.toString()))
-      wrappedChild.stderr?.on('data', (chunk) => this.emit('error-log', chunk.toString()))
+      wrappedChild.stdout?.on('data', (chunk) => {
+        if (this.child !== wrappedChild) return
+        this.emitProcessLog('log', chunk)
+      })
+      wrappedChild.stderr?.on('data', (chunk) => {
+        if (this.child !== wrappedChild) return
+        this.emitProcessLog('error-log', chunk)
+      })
     } catch (error) {
       this.recordFailure(error instanceof Error ? error.message : String(error))
     }
   }
 
-  private handleMessage(message: AudioServiceResponse | AudioServiceEvent): void {
-    if (message.kind === 'ready') {
-      const capabilityError = validateAudioServiceCapabilities(message.capabilities)
-      if (capabilityError) {
-        this.handleFatal(capabilityError)
+  private emitProcessLog(event: 'log' | 'error-log', chunk: Buffer): void {
+    const capture = this.processLogBudget.capture(chunk)
+    if (capture.text) this.emit(event, capture.text)
+    if (capture.notice) this.emit(event, capture.notice)
+  }
+
+  private handleMessage(message: unknown): void {
+    const record = asUtilityProcessMessageRecord(message)
+    if (!record) {
+      this.handleProtocolViolation(AUDIO_SERVICE_INVALID_MESSAGE)
+      return
+    }
+
+    let kind: unknown
+    try {
+      kind = record.kind
+    } catch {
+      this.handleProtocolViolation(AUDIO_SERVICE_INVALID_MESSAGE)
+      return
+    }
+
+    if (kind === 'ready') {
+      if (!inspectUtilityProcessMessage(record, MAX_UTILITY_PROCESS_CONTROL_MESSAGE_BYTES).ok) {
+        this.handleProtocolViolation(AUDIO_SERVICE_INVALID_MESSAGE)
         return
       }
-      this.serviceCapabilities = message.capabilities ?? null
-      this.emit('ready', this.serviceCapabilities)
+      try {
+        const capabilityError = validateAudioServiceCapabilities(record.capabilities)
+        if (capabilityError) {
+          this.handleFatal(capabilityError)
+          return
+        }
+        this.serviceCapabilities = (record.capabilities as AudioServiceCapabilities | undefined) ?? null
+        this.emit('ready', this.serviceCapabilities)
+      } catch {
+        this.handleProtocolViolation(AUDIO_SERVICE_INVALID_MESSAGE)
+      }
       return
     }
-    if (message.kind === 'fatal') {
-      this.handleFatal(message.error ?? '音频服务启动失败')
+
+    if (kind === 'fatal') {
+      if (!inspectUtilityProcessMessage(record, MAX_UTILITY_PROCESS_CONTROL_MESSAGE_BYTES).ok) {
+        this.handleProtocolViolation(AUDIO_SERVICE_INVALID_MESSAGE)
+        return
+      }
+      try {
+        if (
+          record.error !== undefined &&
+          !isBoundedUtf8String(record.error, MAX_UTILITY_PROCESS_ERROR_TEXT_BYTES)
+        ) {
+          this.handleProtocolViolation(AUDIO_SERVICE_INVALID_MESSAGE)
+          return
+        }
+        this.handleFatal(
+          typeof record.error === 'string' && record.error.trim()
+            ? record.error
+            : '音频服务启动失败'
+        )
+      } catch {
+        this.handleProtocolViolation(AUDIO_SERVICE_INVALID_MESSAGE)
+      }
       return
     }
-    if (message.kind !== 'response') return
-    const pending = this.pending.get(message.requestId)
+
+    if (kind !== 'response') {
+      this.handleProtocolViolation(AUDIO_SERVICE_INVALID_MESSAGE)
+      return
+    }
+    if (!inspectUtilityProcessMessage(record, MAX_AUDIO_SERVICE_MESSAGE_BYTES).ok) {
+      this.handleProtocolViolation(AUDIO_SERVICE_INVALID_MESSAGE)
+      return
+    }
+
+    const parsed = parseUtilityProcessResponse(record)
+    if (!parsed.ok) {
+      this.handleProtocolViolation(AUDIO_SERVICE_INVALID_MESSAGE)
+      return
+    }
+
+    const { response } = parsed
+    const pending = this.pending.get(response.requestId)
     if (!pending) return
+    if (!inspectUtilityProcessPayload(response.value, this.responseByteLimitForMethod(pending.method)).ok) {
+      this.handleProtocolViolation(AUDIO_SERVICE_INVALID_MESSAGE)
+      return
+    }
+
     clearTimeout(pending.timer)
-    this.pending.delete(message.requestId)
-    if (message.ok) pending.resolve(message.value)
-    else pending.reject(new Error(message.error ?? '音频服务调用失败'))
+    this.pending.delete(response.requestId)
+    if (response.ok) pending.resolve(response.value)
+    else pending.reject(new Error(response.error ?? '音频服务调用失败'))
+  }
+
+  private handleProtocolViolation(reason: string): void {
+    const child = this.child
+    if (!child || this.stopped) return
+    this.child = null
+    try {
+      child.kill()
+    } catch {
+      // The child was detached before termination, so a late exit cannot race recovery.
+    }
+    this.handleExit(reason)
   }
 
   private handleFatal(reason: string): void {
@@ -820,6 +919,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
         this.restartUnresponsiveService(child, generation, error.message)
       }, this.requestTimeoutForMethod(method))
       this.pending.set(requestId, {
+        method,
         resolve: (value) => {
           if (generation !== this.generation) return
           resolve(value)
@@ -863,6 +963,12 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
       pending.reject(new Error(message))
       this.pending.delete(requestId)
     }
+  }
+
+  private responseByteLimitForMethod(method: keyof NativeAudioBinding): number {
+    return method === 'GetVisualizationData'
+      ? MAX_AUDIO_SERVICE_VISUALIZATION_RESPONSE_BYTES
+      : MAX_AUDIO_SERVICE_DEFAULT_RESPONSE_BYTES
   }
 
   private requestTimeoutForMethod(method: keyof NativeAudioBinding): number {
@@ -941,16 +1047,12 @@ function parseRequestedDspGraphRevision(json: string): number {
 }
 
 function parseJsonObject(json: string, label: string): Record<string, unknown> {
-  let value: unknown
-  try {
-    value = JSON.parse(json)
-  } catch {
-    throw new Error(`${label} must be valid JSON`)
-  }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+  const parsed = tryParseJsonWithNestingLimit(json)
+  if (!parsed.ok) throw new Error(`${label} must be valid JSON`)
+  if (!parsed.value || typeof parsed.value !== 'object' || Array.isArray(parsed.value)) {
     throw new Error(`${label} must be an object`)
   }
-  return value as Record<string, unknown>
+  return parsed.value as Record<string, unknown>
 }
 
 function assertPositiveDspRevision(revision: number): void {
@@ -996,11 +1098,11 @@ function normalizeDspStatePayload(
 function parseDspGraphStatus(value: unknown): DspGraphStatus {
   let parsed = value
   if (typeof parsed === 'string') {
-    try {
-      parsed = JSON.parse(parsed)
-    } catch {
+    const parsedJson = tryParseJsonWithNestingLimit(parsed)
+    if (!parsedJson.ok) {
       throw new Error('audio service returned invalid DSP graph status JSON')
     }
+    parsed = parsedJson.value
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('audio service returned an invalid DSP graph status')

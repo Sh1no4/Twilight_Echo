@@ -188,8 +188,8 @@ function handleImportClick(): void {
   transform-origin: left center;
   will-change: transform;
   transition:
-    transform var(--te-motion-page) var(--te-ease-soft),
-    box-shadow var(--te-motion-panel) var(--te-ease-soft);
+    transform 0.32s var(--te-ease-soft),
+    box-shadow 0.32s;
   font-family: var(--te-font-sans);
 }
 
@@ -248,60 +248,8 @@ function handleImportClick(): void {
 }
 
 .side-menu .menu-items {
-  transform: translate3d(-8px, 0, 0);
-  opacity: 0;
-  transform-origin: left center;
-  transition:
-    transform var(--te-motion-panel) var(--te-ease-soft),
-    opacity var(--te-motion-hover) ease;
-}
-
-.side-menu.open .menu-items {
-  transform: translate3d(0, 0, 0);
+  transform: none;
   opacity: 1;
-}
-
-.side-menu.open .menu-nav .menu-item {
-  animation: side-menu-item-in var(--te-motion-panel) var(--te-ease-soft) both;
-}
-
-.side-menu.open .menu-nav .menu-item:nth-child(2) {
-  animation-delay: 28ms;
-}
-
-.side-menu.open .menu-nav .menu-item:nth-child(3) {
-  animation-delay: 56ms;
-}
-
-.side-menu.open .menu-nav .menu-item:nth-child(4) {
-  animation-delay: 84ms;
-}
-
-.side-menu.open .menu-nav .menu-item:nth-child(5) {
-  animation-delay: 112ms;
-}
-
-.side-menu.open .menu-nav .menu-item:nth-child(6) {
-  animation-delay: 140ms;
-}
-
-.side-menu.open .menu-nav .menu-item:nth-child(7) {
-  animation-delay: 168ms;
-}
-
-.side-menu.open .menu-nav .menu-item:nth-child(8) {
-  animation-delay: 196ms;
-}
-
-@keyframes side-menu-item-in {
-  from {
-    opacity: 0;
-    transform: translate3d(-8px, 0, 0);
-  }
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0);
-  }
 }
 
 .menu-items {

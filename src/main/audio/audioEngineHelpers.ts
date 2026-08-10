@@ -24,6 +24,12 @@ import type {
   SacdProgramMode
 } from './audioEngineTypes.ts'
 import type { DspGraphStatus, Vst3ScanDescriptor } from '../../shared/dspGraph.ts'
+import {
+  DEFAULT_DSD_ROUTE,
+  dsdRouteSettingsEqual,
+  normalizeDsdRouteSettings
+} from '../../shared/audioProcessingOptions.ts'
+import { tryParseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 
 export const AUDIO_OUTPUT_OPTIONS: AudioOutputOption[] = [
   {
@@ -86,6 +92,7 @@ export const DEFAULT_AUDIO_PROCESSING: AudioProcessingSettings = {
   highResolution: true,
   dsdToPcm: false,
   dsdOutputMode: 'auto',
+  dsdRoute: DEFAULT_DSD_ROUTE,
   sacdProgramMode: 'auto',
   eqEnabled: false,
   eqMode: 'graphic',
@@ -174,7 +181,9 @@ export function fanoutArray(values: unknown[] | undefined): string {
   return values.map(fanoutValue).join(',')
 }
 
-export function nativeDspPluginFanoutSignature(nativeDsp: OutputInfo['nativeDsp'] | undefined): string {
+export function nativeDspPluginFanoutSignature(
+  nativeDsp: OutputInfo['nativeDsp'] | undefined
+): string {
   const plugins = nativeDsp?.plugins
   if (!Array.isArray(plugins) || plugins.length === 0) return '0'
   return plugins
@@ -515,6 +524,7 @@ export function audioProcessingSettingsEqual(
     left.highResolution === right.highResolution &&
     left.dsdToPcm === right.dsdToPcm &&
     left.dsdOutputMode === right.dsdOutputMode &&
+    dsdRouteSettingsEqual(left.dsdRoute, right.dsdRoute) &&
     left.sacdProgramMode === right.sacdProgramMode &&
     left.eqEnabled === right.eqEnabled &&
     left.eqMode === right.eqMode &&
@@ -576,7 +586,9 @@ export function formatAudioDeviceLabel(device: string): string {
   return device === DEFAULT_AUDIO_DEVICE_OPTION.id ? DEFAULT_AUDIO_DEVICE_OPTION.label : device
 }
 
-export function normalizeAudioCapabilitySupportState(value: unknown): AudioCapabilitySupportState | null {
+export function normalizeAudioCapabilitySupportState(
+  value: unknown
+): AudioCapabilitySupportState | null {
   return value === 'verified' ||
     value === 'runtime-probed' ||
     value === 'unsupported' ||
@@ -598,7 +610,9 @@ export function getDevicePathKind(option: Partial<AudioDeviceOption>): string {
   return String(option.pathKind || '').toLowerCase()
 }
 
-export function deriveDopSupportState(option: Partial<AudioDeviceOption>): AudioCapabilitySupportState {
+export function deriveDopSupportState(
+  option: Partial<AudioDeviceOption>
+): AudioCapabilitySupportState {
   const explicit = normalizeAudioCapabilitySupportState(option.dopSupportState)
   if (explicit) return explicit
   if (
@@ -722,7 +736,10 @@ export function clampNumber(value: unknown, min: number, max: number, fallback: 
   return Math.min(max, Math.max(min, value))
 }
 
-export function clampQueueItemPosition(item: AudioEngineQueueItem | undefined, value: number): number {
+export function clampQueueItemPosition(
+  item: AudioEngineQueueItem | undefined,
+  value: number
+): number {
   const position = Math.max(0, Number.isFinite(value) ? value : 0)
   const range = item?.cueRange
   if (!range) return position
@@ -827,6 +844,7 @@ export function normalizeAudioProcessingSettings(
     highResolution: settings?.highResolution !== false,
     dsdToPcm: dsdOutputMode === 'pcm',
     dsdOutputMode,
+    dsdRoute: normalizeDsdRouteSettings(settings?.dsdRoute),
     sacdProgramMode,
     eqEnabled: settings?.eqEnabled === true,
     eqMode,
@@ -849,21 +867,18 @@ export function normalizeAudioProcessingSettings(
 
 export function parseNativeJson<T>(value: string | T | undefined, fallback: T): T {
   if (typeof value !== 'string') return value ?? fallback
-  try {
-    return JSON.parse(value) as T
-  } catch {
-    return fallback
-  }
+  const parsed = tryParseJsonWithNestingLimit(value)
+  return parsed.ok ? (parsed.value as T) : fallback
 }
 
 export function parseDspGraphStatusOrThrow(value: string | DspGraphStatus): DspGraphStatus {
   let parsed: unknown = value
   if (typeof parsed === 'string') {
-    try {
-      parsed = JSON.parse(parsed)
-    } catch {
+    const parsedJson = tryParseJsonWithNestingLimit(parsed)
+    if (!parsedJson.ok) {
       throw new Error('native audio engine returned invalid DSP graph status JSON')
     }
+    parsed = parsedJson.value
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('native audio engine returned an invalid DSP graph status')
@@ -1017,7 +1032,10 @@ export function createInactiveVisualizationData(
   }
 }
 
-export function normalizeVisualizationTapStatus(value: unknown, active: boolean): VisualizationTapStatus {
+export function normalizeVisualizationTapStatus(
+  value: unknown,
+  active: boolean
+): VisualizationTapStatus {
   if (
     value === 'active' ||
     value === 'stopped' ||

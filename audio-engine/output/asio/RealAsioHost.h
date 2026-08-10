@@ -13,6 +13,7 @@ class RealAsioHost final : public IAsioHost {
 
   std::vector<AsioDeviceInfo> enumerateDevices() override;
   AsioHostDiagnostics diagnostics() const override;
+  bool probeDevice(const std::string& deviceId, AsioDeviceInfo* info, std::string* error) override;
   bool open(const AsioOpenConfig& config, AsioOpenResult* result, std::string* error) override;
   bool createBuffers(
       AsioBufferSwitchCallback bufferSwitch,

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -53,6 +53,39 @@ test('playbar lyrics manager panel manages provider tracks and projects into Pla
     assert.ok(
       bundleName,
       'Vite should bundle the real PlayingMusic + LyricsManagerPanel components'
+    )
+    const styleName = (await readdir(bundleDirectory)).find((name) => name.endsWith('.css'))
+    assert.ok(styleName, 'Vite lib build should emit the component stylesheet')
+    const styleCss = await readFile(join(bundleDirectory, styleName), 'utf8')
+    assert.match(
+      styleCss,
+      /mask-image:\s*linear-gradient\(/,
+      'the lyric stage should fade its top and bottom edges with a gradient mask'
+    )
+    // The per-word sweep gradient is generated from measured glyph widths, so it
+    // is set inline by the component. What the stylesheet must own is the
+    // contrast the sweep reads and the escape hatches that switch it off.
+    assert.match(
+      styleCss,
+      /--lyric-bright-mask-alpha/,
+      'karaoke contrast variables should be owned by the stylesheet'
+    )
+    assert.match(
+      styleCss,
+      /lyrics-column--karaoke-disabled[\s\S]{0,200}mask-image:\s*none/,
+      'disabling karaoke should clear the word mask from CSS'
+    )
+    assert.match(
+      styleCss,
+      /--lyric-line-top/,
+      'absolute line positioning variable should be in the stylesheet'
+    )
+    assert.match(styleCss, /--lyric-line-scale/, 'line scale variable should be in the stylesheet')
+    assert.doesNotMatch(styleCss, /te-lyric-focus/, 'replaced focus animation should be removed')
+    assert.doesNotMatch(
+      styleCss,
+      /--lyric-word-progress|--lyric-depth-scale/,
+      'the retired scroll-driven progress and depth variables should be gone'
     )
     await writeFile(htmlPath, runtimeHtml(bundleName), 'utf8')
     await writeFile(runnerPath, electronRunnerSource(), 'utf8')
@@ -133,6 +166,16 @@ function expect(condition, message) {
   if (!condition) throw new Error(message)
 }
 
+/*
+ * The sweep gradient is built from measured glyph widths, and .lyric-word gets
+ * its box from PlayingMusic.vue's :deep() block, which a bare mount of this
+ * component does not carry. Supply just enough of it for measurement to be real.
+ */
+const measurementStyle = document.createElement('style')
+measurementStyle.textContent =
+  '.lyric-word, .lyric-char { display: inline-block; font-size: 24px; } .lyric-space { white-space: pre; }'
+document.head.appendChild(measurementStyle)
+
 window.runPlayingLyricWordsRuntime = async () => {
   const snapshot = ref({ epoch: 1, revision: 0, position: 1 })
   const isPlaying = ref(false)
@@ -153,58 +196,107 @@ window.runPlayingLyricWordsRuntime = async () => {
       offsetSeconds: 0,
       clock,
       words: [
-        { time: 1, endTime: 2, text: 'Null.' },
+        { time: 1, endTime: 2, text: 'Null. ' },
         { time: 2, endTime: 3, text: 'No light' }
       ]
     })
   }).mount('#app')
   await nextTick()
+  // The build measures glyphs, so it waits a frame. Poll rather than assume.
+  const settle = async (predicate, message) => {
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      await nextTick()
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+      if (predicate()) return
+    }
+    throw new Error(message)
+  }
+
   const lyricWords = document.querySelectorAll('.lyric-word')
   const firstWord = lyricWords[0]
   const secondWord = lyricWords[1]
-  expect(firstWord && secondWord, 'karaoke words were not rendered')
+  expect(firstWord && secondWord, 'karaoke words were not rendered; got ' + lyricWords.length)
   expect(!document.querySelector('.lyric-word--active'), 'karaoke sweep retained a singled-out word')
+
+  await settle(
+    () => firstWord.getAnimations().length > 0,
+    'karaoke sweep never handed keyframes to the compositor'
+  )
+
+  // The sweep is a mask whose position is animated; nothing is recomputed in JS.
   expect(
-    firstWord.style.getPropertyValue('--lyric-word-progress') === '0%',
-    'karaoke word did not start fully clipped'
+    /linear-gradient/.test(firstWord.style.getPropertyValue('mask-image')),
+    'karaoke word did not receive its inline sweep gradient'
   )
   expect(
-    firstWord.style.getPropertyValue('--lyric-word-highlight-opacity') === '0',
-    'zero-progress karaoke highlight retained an antialiased edge'
+    firstWord.style.getPropertyValue('--lyric-word-progress') === '',
+    'the retired per-frame progress variable is still being written'
   )
+
+  const maskAnimation = (element) =>
+    element.getAnimations().find((animation) => {
+      const frames = animation.effect?.getKeyframes?.() ?? []
+      return frames.some((frame) => frame.maskPosition !== undefined)
+    })
+
+  const firstMask = maskAnimation(firstWord)
+  expect(firstMask, 'the karaoke word has no mask animation')
+
+  // One time origin for the whole line (its start), so a single currentTime
+  // keeps fill, lift and glow coherent. Line starts at 1s; position is 1s.
+  expect(
+    Math.abs(Number(firstMask.currentTime)) < 60,
+    'karaoke timeline did not start at the line origin; currentTime=' + firstMask.currentTime
+  )
+  expect(
+    firstMask.playState === 'paused',
+    'karaoke sweep ran while playback was paused; state=' + firstMask.playState
+  )
+
+  // A seek is one currentTime assignment, not a frame-by-frame chase.
   setPosition(1.5)
-  await nextTick()
-  expect(
-    firstWord.style.getPropertyValue('--lyric-word-progress') === '50%',
-    'karaoke fill did not react to the shared playback clock'
+  await settle(
+    () => Math.abs(Number(firstMask.currentTime) - 500) < 60,
+    'karaoke timeline did not seek with the shared playback clock; currentTime=' +
+      firstMask.currentTime
   )
-  expect(
-    firstWord.style.getPropertyValue('--lyric-word-highlight-opacity') === '1',
-    'positive karaoke progress did not reveal the highlight layer'
-  )
+
   isPlaying.value = true
-  await nextTick()
-  await new Promise((resolve) => setTimeout(resolve, 90))
-  const predictedProgress = Number.parseFloat(
-    firstWord.style.getPropertyValue('--lyric-word-progress')
+  await settle(
+    () => firstMask.playState === 'running',
+    'karaoke sweep did not resume with playback; state=' + firstMask.playState
   )
+  const beforeAdvance = Number(firstMask.currentTime)
+  await new Promise((resolve) => setTimeout(resolve, 120))
   expect(
-    predictedProgress > 54 && predictedProgress < 75,
-    'karaoke fill did not advance between playback clock samples; progress=' + predictedProgress
+    Number(firstMask.currentTime) > beforeAdvance,
+    'karaoke sweep did not advance on the compositor while playing'
   )
+
   isPlaying.value = false
-  await nextTick()
+  await settle(
+    () => firstMask.playState === 'paused',
+    'karaoke sweep kept running after playback stopped'
+  )
+
+  // Words share the line timeline, so the second word's sweep is the same
+  // animation advanced further rather than a separately triggered one.
+  const secondMask = maskAnimation(secondWord)
+  expect(secondMask, 'the following karaoke word has no mask animation')
   setPosition(2)
-  await nextTick()
-  expect(
-    firstWord.style.getPropertyValue('--lyric-word-progress') === '100%',
-    'karaoke word did not finish its fill'
+  await settle(
+    () => Math.abs(Number(secondMask.currentTime) - 1000) < 60,
+    'the following word did not share the line timeline; currentTime=' + secondMask.currentTime
   )
+
+  // A held word also emphasises per character.
+  const chars = firstWord.querySelectorAll('.lyric-char')
+  expect(chars.length > 1, 'a held word was not split per character for emphasis')
   expect(
-    secondWord.style.getPropertyValue('--lyric-word-progress') === '0%',
-    'karaoke sweep skipped ahead of playback order'
+    chars[0].getAnimations().length >= 2,
+    'emphasised characters did not receive both a glow and a float animation'
   )
-  expect(!document.querySelector('.lyric-word--active'), 'karaoke sweep singled out a completed word')
+
   const disabledRoot = document.createElement('div')
   document.body.appendChild(disabledRoot)
   createApp({
@@ -214,7 +306,7 @@ window.runPlayingLyricWordsRuntime = async () => {
       offsetSeconds: 0,
       clock,
       words: [
-        { time: 1, endTime: 2, text: 'Null.' },
+        { time: 1, endTime: 2, text: 'Null. ' },
         { time: 2, endTime: 3, text: 'No light' }
       ]
     })
@@ -222,9 +314,14 @@ window.runPlayingLyricWordsRuntime = async () => {
   await nextTick()
   const disabledWord = disabledRoot.querySelector('.lyric-word')
   expect(disabledWord, 'disabled karaoke words were not rendered')
+  await new Promise((resolve) => requestAnimationFrame(resolve))
   expect(
-    disabledWord.style.getPropertyValue('--lyric-word-progress') === '',
-    'disabled karaoke still updated word progress'
+    disabledWord.style.getPropertyValue('mask-image') === '',
+    'disabled karaoke still installed a sweep mask'
+  )
+  expect(
+    !maskAnimation(disabledWord),
+    'disabled karaoke still animated a mask position'
   )
   console.log('PLAYING_LYRIC_WORDS_RUNTIME_OK')
 }
@@ -571,7 +668,10 @@ window.runPlayingMusicLyricsRuntime = async () => {
       document.querySelectorAll('.lyric-row').length
     )
   }, 8)
-  await new Promise((resolve) => setTimeout(resolve, 300))
+  // Brief line spans 20.10-20.42 (320ms) while the store clock publishes every
+  // 250ms, so a 900ms window guarantees at least one sample inside the line
+  // regardless of tick phase.
+  await new Promise((resolve) => setTimeout(resolve, 900))
   window.clearInterval(activeLineProbe)
   expect(
     [...observedActiveLines].some((line) => line.includes('Brief line')),
@@ -627,6 +727,11 @@ window.runPlayingMusicLyricsRuntime = async () => {
     'full lyric focus did not persist before the scroll regression probe'
   )
 
+  document.documentElement.dataset.teMotion = 'full'
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true,
+    get: () => 'visible'
+  })
   const yrcTrackA = {
     ...playbackTrack,
     id: 'fixture-provider:yrc-scroll-a',
@@ -639,50 +744,91 @@ window.runPlayingMusicLyricsRuntime = async () => {
     id: 'fixture-provider:yrc-scroll-b',
     title: 'YRC scroll B'
   }
-  const installScrollGeometry = () => {
-    const scroll = document.querySelector('.lyrics-scroll')
-    expect(scroll, 'lyrics scroll viewport was not mounted for the YRC regression probe')
-    let scrollTop = 0
-    Object.defineProperties(scroll, {
+  /*
+   * The stage is overflow:hidden and every row is absolutely positioned, so the
+   * controller only needs the stage box and each row's height. It never reads or
+   * writes scrollTop.
+   */
+  const installStageGeometry = () => {
+    const stage = document.querySelector('.lyrics-scroll')
+    expect(stage, 'lyric stage was not mounted for the YRC regression probe')
+    Object.defineProperties(stage, {
       clientHeight: { configurable: true, value: 180 },
-      scrollHeight: { configurable: true, value: 1200 },
-      scrollTop: {
-        configurable: true,
-        get: () => scrollTop,
-        set: (value) => {
-          scrollTop = Number(value)
-        }
-      }
+      clientWidth: { configurable: true, value: 640 }
     })
-    scroll.scrollTo = ({ top }) => {
-      scroll.scrollTop = top
-    }
-    document.querySelectorAll('.lyric-row').forEach((row, index) => {
+    document.querySelectorAll('.lyric-row').forEach((row) => {
       Object.defineProperties(row, {
-        offsetTop: { configurable: true, value: index * 120 },
-        offsetHeight: { configurable: true, value: 72 },
-        offsetParent: { configurable: true, value: scroll }
+        offsetHeight: { configurable: true, value: 72 }
       })
     })
-    return scroll
+    return stage
   }
+
+  const rowTop = (row) => Number.parseFloat(row.style.getPropertyValue('--lyric-line-top'))
+  const rowScale = (row) => Number.parseFloat(row.style.getPropertyValue('--lyric-line-scale'))
 
   player.currentTrack.value = structuredClone(yrcTrackA)
   player.queue.value = [structuredClone(yrcTrackA)]
   player.currentTime.value = 5
   player.seek(5)
   await tick()
-  const scrollA = installScrollGeometry()
+  installStageGeometry()
   window.dispatchEvent(new Event('resize'))
   await new Promise((resolve) => setTimeout(resolve, 520))
+
+  const activeRow = document.querySelector('.lyric-row.active')
+  const rows = [...document.querySelectorAll('.lyric-row')]
+  expect(activeRow, 'no lyric row became active at 5s')
+  const activeIndex = rows.indexOf(activeRow)
+  expect(activeIndex > 0, 'the probe needs a later active line; index=' + activeIndex)
+
   expect(
-    scrollA.scrollTop > 0,
-    'active YRC line below the viewport was not centered; active=' +
-      document.querySelector('.lyric-row.active')?.textContent +
-      '; rows=' +
-      document.querySelectorAll('.lyric-row').length +
-      '; scrollTop=' +
-      scrollA.scrollTop
+    activeRow.style.getPropertyValue('--lyric-line-top') !== '',
+    'the layout loop did not position the active row'
+  )
+
+  // Anchoring replaces scrolling: the active line sits near the align position
+  // (0.35 of the stage) rather than being scrolled to.
+  const activeTop = rowTop(activeRow)
+  expect(
+    activeTop < 180 * 0.6,
+    'active line was not anchored into the upper region of the stage; top=' + activeTop
+  )
+
+  // Rows outside the stage deliberately stop receiving position writes, and are
+  // flagged instead. Compare only the rows actually on screen.
+  const positioned = rows.filter((row) => row.style.getPropertyValue('--lyric-line-top') !== '')
+  expect(
+    positioned.length >= 2 && positioned.length < rows.length,
+    'expected some rows positioned and some culled; positioned=' +
+      positioned.length +
+      ' of ' +
+      rows.length
+  )
+  const tops = positioned.map(rowTop)
+  expect(
+    tops.every((top, index) => index === 0 || top > tops[index - 1]),
+    'positioned rows were not stacked in reading order; tops=' + tops.join(',')
+  )
+  const culled = rows.find((row) => row.style.getPropertyValue('--lyric-line-in-sight') === '0')
+  expect(culled, 'no row was flagged out of sight despite the stage being shorter than the timeline')
+
+  // Depth now comes from per-line scale and blur, not from a scroll position.
+  const receding = positioned.find((row) => row !== activeRow)
+  expect(
+    rowScale(activeRow) > rowScale(receding),
+    'the active line did not scale above a receding one; active=' +
+      rowScale(activeRow) +
+      '; receding=' +
+      rowScale(receding)
+  )
+  const activeBlur = Number.parseFloat(activeRow.style.getPropertyValue('--lyric-line-blur'))
+  expect(activeBlur === 0, 'active row retained blur instead of staying sharp; blur=' + activeBlur)
+  const recedingBlur = Number.parseFloat(receding.style.getPropertyValue('--lyric-line-blur'))
+  expect(recedingBlur > 0, 'receding rows did not blur; blur=' + recedingBlur)
+  expect(
+    document.querySelector('.lyric-row[style*="--lyric-depth-scale"]') === null,
+    'the retired depth variable is still being written'
   )
 
   player.currentTrack.value = structuredClone(yrcTrackB)
@@ -690,18 +836,26 @@ window.runPlayingMusicLyricsRuntime = async () => {
   player.currentTime.value = 0
   player.seek(0)
   await tick()
-  installScrollGeometry()
+  installStageGeometry()
 
   player.currentTrack.value = structuredClone(yrcTrackA)
   player.queue.value = [structuredClone(yrcTrackA)]
   player.currentTime.value = 5
   player.seek(5)
   await tick()
-  const restoredScrollA = installScrollGeometry()
+  installStageGeometry()
   await new Promise((resolve) => setTimeout(resolve, 520))
+  const restoredRows = [...document.querySelectorAll('.lyric-row')]
+  const restoredActive = document.querySelector('.lyric-row.active')
+  expect(restoredActive, 'switching back to a YRC track left no active line')
+  const restoredIndex = restoredRows.indexOf(restoredActive)
+  expect(restoredIndex > 0, 'switching back did not restore the later active line')
+  // A later line being anchored means earlier lines were pushed off the top,
+  // which is what leaving it stuck at the top of the stage would not do.
   expect(
-    restoredScrollA.scrollTop > 0,
-    'switching back to a YRC track left its later active line at the top of the viewport'
+    restoredRows.slice(0, restoredIndex).some((row) => rowTop(row) < 0),
+    'switching back left the later active line at the top of the stage; tops=' +
+      restoredRows.map(rowTop).join(',')
   )
   console.log('PLAYING_MUSIC_LYRICS_RUNTIME_OK')
 }

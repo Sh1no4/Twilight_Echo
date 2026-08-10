@@ -1,5 +1,6 @@
 import { createHash, createPublicKey, verify, type KeyObject } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
+import { tryParseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 import { canonicalizePluginManifestPaths } from './manifest.ts'
 import type {
   TwilightPluginIndexLoadedFrom,
@@ -12,6 +13,7 @@ export const OFFICIAL_PLUGIN_INDEX_URL =
   'https://raw.githubusercontent.com/asenyarzc-cpu/Twilight-Echo-plugins/main/plugins.json'
 
 const TRUST_REGISTRY_SCHEMA_VERSION = 1
+const MAX_TRUSTED_PUBLISHER_REGISTRY_BYTES = 512 * 1024
 const SIGNATURE_SCHEMA_VERSION = 1
 const KEY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
@@ -61,9 +63,19 @@ export function loadTrustedPluginPublisherRegistry(
     return failedRegistry(`Trusted publisher registry is missing: ${registryPath}`)
   }
   try {
-    return createTrustedPluginPublisherRegistry(
-      JSON.parse(readFileSync(registryPath, 'utf-8')) as unknown
-    )
+    const contents = readFileSync(registryPath)
+    if (contents.byteLength > MAX_TRUSTED_PUBLISHER_REGISTRY_BYTES) {
+      throw new Error('Trusted publisher registry is too large')
+    }
+    const parsed = tryParseJsonWithNestingLimit(contents.toString('utf-8'))
+    if (!parsed.ok) {
+      throw new Error(
+        parsed.reason === 'too-deep'
+          ? 'Trusted publisher registry is too deeply nested'
+          : 'Trusted publisher registry contains invalid JSON'
+      )
+    }
+    return createTrustedPluginPublisherRegistry(parsed.value)
   } catch (error) {
     return failedRegistry(error instanceof Error ? error.message : String(error))
   }

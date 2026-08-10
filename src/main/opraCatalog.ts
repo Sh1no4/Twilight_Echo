@@ -2,6 +2,7 @@ import { existsSync } from 'fs'
 import { mkdir, readFile, writeFile } from 'fs/promises'
 import { dirname } from 'path'
 import type { EqualizerBand } from './audioEngineManager.ts'
+import { parseJsonWithNestingLimit } from './security/jsonSafety.ts'
 
 export const OPRA_DATABASE_URL = 'https://opra.roonlabs.net/database_v1.jsonl'
 const OPRA_ATTRIBUTION_URL = 'https://github.com/opra-project/OPRA'
@@ -136,7 +137,7 @@ function parseCatalogText(text: string): ParsedCatalog {
 
     let record: OpraLine
     try {
-      record = JSON.parse(trimmed) as OpraLine
+      record = parseJsonWithNestingLimit(trimmed) as OpraLine
     } catch {
       continue
     }

@@ -2,6 +2,7 @@ import { existsSync } from 'fs'
 import { mkdir, readFile, rm, stat, writeFile } from 'fs/promises'
 import { dirname } from 'path'
 import { isDeepStrictEqual } from 'util'
+import { tryParseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 
 export const BPM_ANALYSIS_ALGORITHM_VERSION = 1
 
@@ -98,11 +99,11 @@ export class BpmAnalysisCache {
   private async read(): Promise<BpmAnalysisCacheFile> {
     if (!existsSync(this.cachePath)) return { version: 1, entries: {} }
     try {
-      const parsed = JSON.parse(await readFile(this.cachePath, 'utf-8')) as Partial<BpmAnalysisCacheFile>
-      if (parsed.version !== 1 || !parsed.entries || typeof parsed.entries !== 'object') {
+      const parsed = tryParseJsonWithNestingLimit(await readFile(this.cachePath, 'utf-8'))
+      if (!parsed.ok || !isBpmAnalysisCacheFile(parsed.value)) {
         return { version: 1, entries: {} }
       }
-      return { version: 1, entries: parsed.entries as Record<string, BpmAnalysisResult> }
+      return parsed.value
     } catch {
       return { version: 1, entries: {} }
     }
@@ -121,6 +122,17 @@ export class BpmAnalysisCache {
     )
     return result
   }
+}
+
+function isBpmAnalysisCacheFile(value: unknown): value is BpmAnalysisCacheFile {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const file = value as Partial<BpmAnalysisCacheFile>
+  return (
+    file.version === 1 &&
+    !!file.entries &&
+    typeof file.entries === 'object' &&
+    !Array.isArray(file.entries)
+  )
 }
 
 export function isBpmAnalysisResult(value: unknown): value is BpmAnalysisResult {

@@ -51,6 +51,11 @@ import {
 import { DEFAULT_SOFTWARE_VOLUME } from '../../shared/audioProcessingOptions'
 import { normalizeThemeSelection, normalizeThemeWindowInheritance } from '../../shared/theme.ts'
 import { normalizeMotionPreference } from '../../shared/motion.ts'
+import {
+  DEFAULT_LIQUID_GLASS,
+  normalizeLiquidGlass,
+  normalizeSurfaceMaterial
+} from '../../shared/liquidGlass.ts'
 import { DEFAULT_SLEEP_TIMER_SETTINGS, type SleepTimerSettings } from '../../shared/sleepTimer.ts'
 import {
   DEFAULT_LYRICS_APPEARANCE,
@@ -188,6 +193,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
       dark: { blur: 0, brightness: 100, dim: 0 }
     }
   },
+  surfaceMaterial: 'standard',
+  liquidGlass: DEFAULT_LIQUID_GLASS,
   nowPlayingBackground: 'blur',
   playbackResumeMode: 'off',
   sleepTimer: DEFAULT_SLEEP_TIMER_SETTINGS,
@@ -695,6 +702,8 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     uiDensity: normalizeUiDensity(settings.uiDensity),
     appBackground: normalizeAppBackground(settings.appBackground),
     cardAppearance: normalizeCardAppearance(settings.cardAppearance),
+    surfaceMaterial: normalizeSurfaceMaterial(settings.surfaceMaterial),
+    liquidGlass: normalizeLiquidGlass(settings.liquidGlass),
     nowPlayingBackground: normalizeNowPlayingBackground(settings.nowPlayingBackground),
     playbackResumeMode: normalizePlaybackResumeMode(settings.playbackResumeMode),
     sleepTimer: normalizeSleepTimerSettings(settings.sleepTimer),

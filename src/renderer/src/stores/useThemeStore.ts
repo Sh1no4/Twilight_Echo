@@ -36,6 +36,13 @@ import {
   type ThemePerformanceSnapshot
 } from '../utils/themePerformance'
 import type { AppBackgroundColorPair, AppBackgroundPage, AppSettings } from '../types/settings'
+import {
+  DEFAULT_LIQUID_GLASS,
+  liquidGlassCssVariables,
+  normalizeSurfaceMaterial,
+  type LiquidGlassSettings,
+  type SurfaceMaterial
+} from '../../../shared/liquidGlass.ts'
 
 const STYLE_ID = 'twilight-theme-runtime'
 const EPOCH_ISO = new Date(0).toISOString()
@@ -81,6 +88,8 @@ let lightAccentColor = 'blue'
 let darkAccentColor = 'blue'
 let themePreference: AppSettings['theme'] = 'system'
 let appBackground: AppSettings['appBackground'] | null = null
+let surfaceMaterial: SurfaceMaterial = 'standard'
+let liquidGlass: LiquidGlassSettings = DEFAULT_LIQUID_GLASS
 
 function resolveTone(): ThemeTone {
   return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'pureWhite'
@@ -100,24 +109,27 @@ function applySettingsThemeMode(theme: AppSettings['theme']): void {
   themePreference = theme
 }
 
-function cacheSettingsAppearance(
-  settings: Pick<
-    AppSettings,
-    'accentColor' | 'lightAccentColor' | 'darkAccentColor' | 'uiDensity' | 'appBackground'
-  >
-): void {
+type SettingsAppearanceInput = Pick<
+  AppSettings,
+  | 'accentColor'
+  | 'lightAccentColor'
+  | 'darkAccentColor'
+  | 'uiDensity'
+  | 'appBackground'
+  | 'surfaceMaterial'
+  | 'liquidGlass'
+>
+
+function cacheSettingsAppearance(settings: SettingsAppearanceInput): void {
   lightAccentColor = settings.lightAccentColor || settings.accentColor || 'blue'
   darkAccentColor = settings.darkAccentColor || settings.accentColor || 'blue'
   appBackground = settings.appBackground
+  surfaceMaterial = normalizeSurfaceMaterial(settings.surfaceMaterial)
+  liquidGlass = settings.liquidGlass ?? DEFAULT_LIQUID_GLASS
   document.documentElement.dataset.density = settings.uiDensity
 }
 
-export function syncThemeSettingsAppearance(
-  settings: Pick<
-    AppSettings,
-    'accentColor' | 'lightAccentColor' | 'darkAccentColor' | 'uiDensity' | 'appBackground'
-  >
-): void {
+export function syncThemeSettingsAppearance(settings: SettingsAppearanceInput): void {
   cacheSettingsAppearance(settings)
   if (loaded.value) queueMicrotask(() => void applyActiveTheme(false))
 }
@@ -291,7 +303,10 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
         if (previewSelection.value) throw new Error('当前插件主题不可用')
         return {
           css: '',
-          dataAttributes: themeModesToDataAttributes(resolveThemeProfileModes(null)),
+          dataAttributes: {
+            ...themeModesToDataAttributes(resolveThemeProfileModes(null)),
+            'data-te-surface-material': surfaceMaterial
+          },
           activeTheme: TWILIGHT_DEFAULT_THEME_ID,
           presetLayout: presetLayoutKey(TWILIGHT_DEFAULT_THEME_ID),
           shellLayout: undefined,
@@ -323,6 +338,7 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
   }
   applyAppBackgroundVariables(tone, variables)
   applySettingsAccentColor(tone, variables)
+  applyLiquidGlassVariables(tone, variables)
   const root = Object.entries({ ...themeShellLayoutToCssVariables(shellLayout), ...variables })
     .map(([name, value]) => `  ${name}: ${value} !important;`)
     .join('\n')
@@ -332,7 +348,9 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
       .join('\n\n'),
     dataAttributes: {
       ...themeModesToDataAttributes(modes),
-      ...themeShellLayoutToDataAttributes(shellLayout)
+      ...themeShellLayoutToDataAttributes(shellLayout),
+      // Settings-owned, so it wins over anything a theme profile declares.
+      'data-te-surface-material': surfaceMaterial
     },
     activeTheme: activeThemeKey(selection),
     presetLayout: resolvePresetLayout(selection, selectedProfile),
@@ -340,6 +358,17 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
     tone,
     resourceUrls
   }
+}
+
+/**
+ * Emits the `--te-lg-*` tuning variables when liquid glass is the active material.
+ * The stylesheet keys its rules on `data-te-surface-material`, so the variables are
+ * only meaningful in that state; skipping them otherwise keeps the payload small.
+ */
+function applyLiquidGlassVariables(tone: ThemeTone, variables: Record<string, string>): void {
+  if (surfaceMaterial !== 'liquidGlass') return
+  const theme = tone === 'dark' ? liquidGlass.dark : liquidGlass.light
+  Object.assign(variables, liquidGlassCssVariables(theme))
 }
 
 function applyAppBackgroundVariables(tone: ThemeTone, variables: Record<string, string>): void {

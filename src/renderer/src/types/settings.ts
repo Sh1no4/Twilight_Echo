@@ -3,10 +3,16 @@ import type { DspScene } from '../../../shared/dspGraph.ts'
 import type { SleepTimerSettings } from '../../../shared/sleepTimer.ts'
 import type { ThemeSelection, ThemeWindowInheritance } from '../../../shared/theme.ts'
 import type { MotionPreference } from '../../../shared/motion.ts'
+import type { LiquidGlassSettings, SurfaceMaterial } from '../../../shared/liquidGlass.ts'
 import type { LyricsAppearanceSettings } from '../../../shared/lyricsAppearance.ts'
 
 export type { MiniPlayerSettings } from '../../../shared/miniPlayer.ts'
 export type { MotionPreference } from '../../../shared/motion.ts'
+export type {
+  LiquidGlassSettings,
+  LiquidGlassTheme,
+  SurfaceMaterial
+} from '../../../shared/liquidGlass.ts'
 export type {
   LyricsAppearanceAlign,
   LyricsAppearanceColorMode,
@@ -43,6 +49,7 @@ export type ChannelRoutingMode =
   | 'mono-to-multichannel'
 export type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native'
 export type SacdProgramMode = 'auto' | 'stereo' | 'multichannel'
+export type { DsdRouteSettings } from '../../../shared/audioProcessingOptions.ts'
 export type UiDensity = 'compact' | 'standard' | 'comfortable'
 export type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 export type LyricAlign = 'center' | 'left'
@@ -175,6 +182,7 @@ export interface AudioProcessingSettings {
   highResolution: boolean
   dsdToPcm: boolean
   dsdOutputMode: DsdOutputMode
+  dsdRoute: import('../../../shared/audioProcessingOptions.ts').DsdRouteSettings
   sacdProgramMode: SacdProgramMode
   eqEnabled: boolean
   eqMode: EqMode
@@ -322,6 +330,9 @@ export interface AppSettings {
   uiDensity: UiDensity
   appBackground: AppBackgroundSettings
   cardAppearance: CardAppearanceSettings
+  /** Switches cards and the playbar between the standard surface and liquid glass. */
+  surfaceMaterial: SurfaceMaterial
+  liquidGlass: LiquidGlassSettings
   nowPlayingBackground: NowPlayingBackground
   playbackResumeMode: PlaybackResumeMode
   sleepTimer: SleepTimerSettings

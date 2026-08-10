@@ -12,6 +12,7 @@ import type {
   OutputConfig,
   PlaybackInfo
 } from './audioEngineTypes.ts'
+import { parseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 
 const DEFAULT_MAX_LOG_BYTES = 4 * 1024 * 1024
 const MAX_EVENT_TEXT_LENGTH = 16 * 1024
@@ -187,7 +188,7 @@ export class AudioDiagnosticRecorder {
       for (const line of contents.split(/\r?\n/)) {
         if (!line.trim()) continue
         try {
-          const event = JSON.parse(line) as AudioDiagnosticEvent
+          const event = parseJsonWithNestingLimit(line) as AudioDiagnosticEvent
           if (event && typeof event.event === 'string') events.push(event)
         } catch {
           void 0

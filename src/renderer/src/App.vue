@@ -16,9 +16,7 @@ const SongList = defineAsyncComponent(() => import('./components/SongList.vue'))
 const PlayingMusic = defineAsyncComponent(() => import('./components/PlayingMusic.vue'))
 const StreamingPage = defineAsyncComponent(() => import('./components/StreamingPage.vue'))
 const RadioPodcastPage = defineAsyncComponent(() => import('./components/RadioPodcastPage.vue'))
-const NetworkSourcesPage = defineAsyncComponent(() =>
-  import('./components/NetworkSourcesPage.vue')
-)
+const NetworkSourcesPage = defineAsyncComponent(() => import('./components/NetworkSourcesPage.vue'))
 const LoginPage = defineAsyncComponent(() => import('./components/LoginPage.vue'))
 const SettingsPage = defineAsyncComponent(() => import('./components/SettingsPage.vue'))
 const ThemeStudioPage = defineAsyncComponent(() => import('./components/ThemeStudioPage.vue'))
@@ -54,6 +52,7 @@ import {
   type StreamingArtistNavigationRequest
 } from './utils/streamingArtistResolution'
 import AppNoticeHost from './components/AppNoticeHost.vue'
+import LiquidGlassDefs from './components/LiquidGlassDefs.vue'
 
 type TitleSurface = 'default' | 'settings' | 'streaming'
 type StreamingInitialTab = 'home' | 'library' | 'recent'
@@ -374,7 +373,6 @@ const showLocalSidebar = computed(
   () =>
     !showPlayingPage.value &&
     !showStreamingPage.value &&
-    !showRadioPodcastPage.value &&
     !showLoginPage.value &&
     !showSettingsPage.value &&
     !showThemeStudioPage.value &&
@@ -675,6 +673,10 @@ const titleSurface = computed<TitleSurface>(() => {
 
 <template>
   <div class="app-shell">
+    <LiquidGlassDefs
+      :active="settings.surfaceMaterial === 'liquidGlass'"
+      :follow-pointer="settings.liquidGlass.followPointer"
+    />
     <div class="app-shell-title">
       <TitleBar
         :glass="showPlayingPage"
@@ -798,7 +800,8 @@ const titleSurface = computed<TitleSurface>(() => {
             :page="activePluginPage"
             @back="closePluginPage"
           />
-        </Transition>      </div>
+        </Transition>
+      </div>
     </div>
     <div class="app-shell-player">
       <PlayerBar
@@ -931,6 +934,8 @@ html[data-te-shell-layout='custom'] .app-shell-player .player-bar-shell.menu-ope
   min-height: 100vh;
   padding-left: 0;
   transform: translateZ(0);
+  will-change: padding-left;
+  transition: padding-left 0.32s var(--te-ease-soft);
   overflow: hidden;
   position: relative;
   z-index: 1;
@@ -988,7 +993,7 @@ body.te-no-blur .login-page-leave-to {
   min-height: 0;
 }
 
-/* Local home ↔ list page transitions (must beat scoped component roots). */
+/* Local left-menu view transitions mirror the streaming sidebar. */
 .main-content > .page-down-enter-active,
 .main-content > .page-down-leave-active,
 .main-content > .page-up-enter-active,
@@ -997,48 +1002,83 @@ body.te-no-blur .login-page-leave-to {
 .page-down-leave-active,
 .page-up-enter-active,
 .page-up-leave-active {
-  transition:
-    transform var(--te-motion-page) var(--te-ease-soft),
-    opacity var(--te-motion-hover) ease !important;
-  will-change: transform, opacity;
+  will-change: transform, opacity, filter;
 }
 .main-content > .page-down-enter-active,
 .main-content > .page-up-enter-active,
 .page-down-enter-active,
 .page-up-enter-active {
   z-index: 1;
-  transition-timing-function: var(--te-ease-out-quint), ease !important;
+  transition:
+    opacity 0.34s ease,
+    transform 0.48s cubic-bezier(0.16, 1, 0.3, 1),
+    filter 0.42s cubic-bezier(0.16, 1, 0.3, 1) !important;
 }
 .main-content > .page-down-leave-active,
 .main-content > .page-up-leave-active,
 .page-down-leave-active,
 .page-up-leave-active {
   z-index: 0;
-  transition-timing-function: var(--te-ease-enter), ease !important;
+  pointer-events: none;
+  transition:
+    opacity 0.22s ease,
+    transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    filter 0.28s cubic-bezier(0.4, 0, 0.2, 1) !important;
 }
 
 /* page-down: selected page is lower in the sidebar, new view rises from below */
-.main-content > .page-down-leave-to,
-.page-down-leave-to {
-  transform: translateY(-34px) scale(0.992);
-  opacity: 0;
-}
 .main-content > .page-down-enter-from,
 .page-down-enter-from {
-  transform: translateY(46px) scale(0.982);
   opacity: 0;
+  transform: translate3d(0, 40px, 0) scale(0.99);
+  filter: blur(8px);
+}
+.main-content > .page-down-leave-to,
+.page-down-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -28px, 0) scale(0.992);
+  filter: blur(8px);
 }
 
 /* page-up: selected page is higher in the sidebar, new view drops from above */
-.main-content > .page-up-leave-to,
-.page-up-leave-to {
-  transform: translateY(34px) scale(0.992);
-  opacity: 0;
-}
 .main-content > .page-up-enter-from,
 .page-up-enter-from {
-  transform: translateY(-46px) scale(0.982);
   opacity: 0;
+  transform: translate3d(0, -40px, 0) scale(0.99);
+  filter: blur(8px);
+}
+.main-content > .page-up-leave-to,
+.page-up-leave-to {
+  opacity: 0;
+  transform: translate3d(0, 28px, 0) scale(0.992);
+  filter: blur(8px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main-content > .page-down-enter-active,
+  .main-content > .page-down-leave-active,
+  .main-content > .page-up-enter-active,
+  .main-content > .page-up-leave-active,
+  .page-down-enter-active,
+  .page-down-leave-active,
+  .page-up-enter-active,
+  .page-up-leave-active {
+    transition:
+      opacity 0.12s ease,
+      transform 0.12s ease !important;
+  }
+
+  .main-content > .page-down-enter-from,
+  .main-content > .page-down-leave-to,
+  .main-content > .page-up-enter-from,
+  .main-content > .page-up-leave-to,
+  .page-down-enter-from,
+  .page-down-leave-to,
+  .page-up-enter-from,
+  .page-up-leave-to {
+    transform: none !important;
+    filter: none !important;
+  }
 }
 
 /* PlayingMusic open/close — expands from / shrinks to cover position */

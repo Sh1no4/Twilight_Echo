@@ -57,6 +57,7 @@ import type {
   TwilightPluginStateRecord,
   TwilightPluginUninstallOptions
 } from './types'
+import { parseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 
 export interface TwilightPluginManagerOptions {
   appVersion: string
@@ -1818,7 +1819,7 @@ export class TwilightPluginManager extends EventEmitter {
 
   private async readManifest(root: string): Promise<TwilightPluginManifest> {
     const raw = await readFile(join(root, 'plugin.json'), 'utf-8')
-    return validatePluginManifest(JSON.parse(raw))
+    return validatePluginManifest(parseJsonWithNestingLimit(raw))
   }
 
   private async findDescriptor(id: string): Promise<TwilightPluginDescriptor> {

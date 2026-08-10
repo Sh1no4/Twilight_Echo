@@ -44,6 +44,7 @@ test('active and translated lyrics preserve the configured font size without a g
   const mainStyle = readFileSync(new URL('../assets/main.css', import.meta.url), 'utf8')
   const activeRow = source.match(/\.lyric-row\.active \{[\s\S]*?\n\}/)?.[0] ?? ''
   const activeText = source.match(/\.lyric-row\.active \.lyric-text \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const lyricText = source.match(/\.lyric-text \{[\s\S]*?\n\}/)?.[0] ?? ''
   const translationText = source.match(/\.lyric-translation \{[\s\S]*?\n\}/)?.[0] ?? ''
   const themeInvariant =
     mainStyle.match(
@@ -56,9 +57,10 @@ test('active and translated lyrics preserve the configured font size without a g
   assert.match(activeRow, /box-shadow: var\(--te-playback-lyric-active-shadow, none\)/)
   assert.doesNotMatch(activeRow, /linear-gradient/)
   assert.match(
-    activeText,
+    lyricText,
     /font-size:\s*clamp\(\s*12px,\s*var\(--lyric-style-font-size, var\(--te-lyric-font-size, 18px\)\),\s*48px\s*\)/
   )
+  assert.doesNotMatch(activeText, /font-size:/)
   assert.match(
     translationText,
     /font-size:\s*clamp\(\s*12px,\s*var\(--lyric-style-font-size, var\(--te-lyric-font-size, 18px\)\),\s*48px\s*\)/
@@ -69,10 +71,13 @@ test('active and translated lyrics preserve the configured font size without a g
   )
   assert.match(activeText, /text-shadow:/)
   assert.match(source, /:deep\(\.lyric-word\) \{[\s\S]*display: inline-block/)
-  assert.match(source, /opacity: var\(--lyric-word-highlight-opacity, 0\)/)
-  assert.match(source, /clip-path: inset\(0 calc\(100% - var\(--lyric-word-progress\)\) 0 0\)/)
+  // The sweep masks the word itself now. The old duplicated `::after` text layer
+  // is gone, so the fill cannot drift out of register with the glyphs it reveals.
+  assert.doesNotMatch(source, /:deep\(\.lyric-word\)::after/)
+  assert.doesNotMatch(source, /--lyric-word-highlight-opacity|--lyric-word-progress/)
+  assert.match(source, /--lyric-bright-mask-alpha/)
+  assert.match(source, /--lyric-dark-mask-alpha/)
   assert.doesNotMatch(source, /transition: clip-path 250ms linear/)
-  assert.doesNotMatch(source, /width: var\(--lyric-word-progress\)/)
   assert.match(themeInvariant, /background: transparent !important/)
   assert.match(themeInvariant, /background-image: none !important/)
   assert.match(themeInvariant, /border-color: transparent !important/)
@@ -120,7 +125,10 @@ test('lyrics keep the full timeline mounted while the viewport follows the activ
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
   const renderedLines = source.match(/const renderedLyricLines = computed\([\s\S]*?\n\)/)?.[0] ?? ''
 
-  assert.match(source, /import \{ createLyricViewportController \} from '\.\.\/utils\/lyricViewportController'/)
+  assert.match(
+    source,
+    /import \{ createLyricViewportController \} from '\.\.\/utils\/lyricViewportController'/
+  )
   assert.match(renderedLines, /displayLyricLines\.value\.map/)
   assert.doesNotMatch(source, /getLyricFocusLineIndices/)
   assert.doesNotMatch(source, /lyricLeavingIndex|lyricEnteringIndex/)
@@ -148,7 +156,10 @@ test('now playing isolates high-frequency playhead updates from the full lyrics 
   const timeChip = readFileSync(new URL('./PlayingMusicTimeChip.vue', import.meta.url), 'utf8')
 
   assert.match(source, /lyricsLoadState\.value\.status === 'loading'/)
-  assert.match(source, /watch\(\s*\[lyricLines, playbackClockSnapshot, currentLyricOffsetSeconds\],/)
+  assert.match(
+    source,
+    /watch\(\s*\[lyricLines, playbackClockSnapshot, currentLyricOffsetSeconds\],/
+  )
   assert.doesNotMatch(source, /predictedLyricTime|scheduleLyricIndexBoundary|lyricIndexTimer/)
   assert.match(source, /snapshot: playbackClockSnapshot/)
   assert.match(source, /<PlayingLyricWords[\s\S]*:clock="lyricWordClock"/)
@@ -163,14 +174,14 @@ test('now playing isolates high-frequency playhead updates from the full lyrics 
   assert.match(words, /karaokeEnabled: boolean/)
   assert.doesNotMatch(words, /nextLineTime|reachNextLine|clockAnchorPosition|bindPlaybackClock/)
   assert.match(words, /requestAnimationFrameWithFallback/)
-  assert.match(words, /if \(nextIndex >= 0\) setWordProgress\(nextIndex/)
-  assert.match(words, /dataset\.progressing = 'true'/)
-  assert.match(
-    source,
-    /lyric-word\[data-progressing='true'\]\)::after[\s\S]*will-change: clip-path/
-  )
-  assert.match(words, /getLyricWordProgress\(/)
-  assert.match(words, /--lyric-word-highlight-opacity', progress > 0 \? '1' : '0'/)
+  // Karaoke fill and emphasis are precomputed keyframes handed to the compositor,
+  // not CSS variables rewritten every frame. Assert the property that matters:
+  // no per-frame main-thread work, and a seek is a single currentTime assignment.
+  assert.match(words, /\.animate\(/)
+  assert.doesNotMatch(words, /setWordProgress|--lyric-word-progress|dataset\.progressing/)
+  assert.match(words, /animation\.currentTime = target/)
+  assert.match(words, /buildKaraokeMaskPlan\(/)
+  assert.match(words, /buildEmphasisAnimation\(/)
   assert.match(words, /data-word-text/)
   assert.doesNotMatch(words, /findActiveWordIndex|activeWordIndex|lyric-word--active/)
   assert.doesNotMatch(source, /lyric-word--active|te-lyric-word-pulse/)
@@ -281,6 +292,7 @@ test('visualizer toggle sits top-left with the frosted time-chip style', () => {
     /\.visualizer-toggle-button \{[\s\S]*border: 1px solid var\(--te-playback-control-border, rgba\(255, 255, 255, 0\.1\)\)/
   )
   assert.match(source, /\.visualizer-toggle-button--close \{[\s\S]*z-index: 10000/)
+  assert.doesNotMatch(source, /\.visualizer-toggle-button--close\s*\{[^}]*\b(?:top|left|right)\s*:/)
   assert.match(
     source,
     /\.visualizer-toggle-button--close:hover \{[\s\S]*background: var\(--te-playback-control-hover-surface, rgba\(255, 255, 255, 0\.14\)\)/

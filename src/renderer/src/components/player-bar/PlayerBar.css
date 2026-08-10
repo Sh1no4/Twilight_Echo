@@ -6,6 +6,8 @@
   right: 18px;
   z-index: 1002;
   pointer-events: none;
+  will-change: left;
+  transition: left 0.32s var(--te-ease-soft);
 }
 
 .player-bar-shell.menu-open {
@@ -3487,4 +3489,97 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   :global(html[data-te-artwork-transition] .player-bar .player-cover) {
     transition: none;
   }
+}
+
+/* ===== Liquid glass material =====
+   The playbar gets a real warp element rather than a pseudo-element: it is one
+   surface, so it can carry its own element-relative light source and the wide-strip
+   displacement map (te-lg-playbar) instead of the near-square card map.
+
+   The layer is absolute so it stays out of the grid flow, and sits behind content so
+   the filter never displaces controls or text. --te-lg-angle is written onto this
+   element by the component's pointer tracker; cards read the shared root value.
+
+   Colour bases are hoisted into RGB triplets so each tone declares them once and the
+   layers below stay parameterised rather than repeating literals. */
+
+.player-bar-liquid {
+  --te-lg-sheen-rgb: 255, 255, 255;
+  --te-lg-surface-rgb: 255, 255, 255;
+  --te-lg-shade-rgb: 0, 0, 0;
+  --te-lg-drop-rgb: 15, 23, 42;
+  --te-lg-rim-strength: 0.55;
+  --te-lg-shade-alpha: 0.06;
+  --te-lg-drop-alpha: 0.16;
+  background: transparent !important;
+  border-color: transparent !important;
+  /* Rim stays outside the filter so it reads crisp instead of smeared. */
+  box-shadow:
+    inset 0 0 0 0.5px
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.9)),
+    inset 0 1px 1px
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.5)),
+    inset 0 -1px 1px rgba(var(--te-lg-shade-rgb), var(--te-lg-shade-alpha)),
+    0 24px 70px rgba(var(--te-lg-drop-rgb), var(--te-lg-drop-alpha)) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.player-bar-liquid .player-bar-warp {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background:
+    linear-gradient(
+      var(--te-lg-angle, 135deg),
+      rgba(var(--te-lg-sheen-rgb), 0) 0%,
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.24))
+        38%,
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.07))
+        62%,
+      rgba(var(--te-lg-sheen-rgb), 0) 100%
+    ),
+    rgba(var(--te-lg-surface-rgb), var(--te-lg-tint, 0.12));
+  backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
+  -webkit-backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
+  filter: url(#te-lg-playbar);
+}
+
+/* Grid children are not positioned by default, so they would paint below a z-index 0
+   sibling. Lifting them keeps every control above the warp layer. */
+.player-bar-liquid > *:not(.player-bar-warp) {
+  position: relative;
+  z-index: 1;
+}
+
+/* Dark tone only needs to move the bases: the sheen stays light because it is a
+   specular highlight, while the surface tint goes cool and the drop shadow deepens. */
+:global(html[data-theme='dark']) .player-bar-liquid {
+  --te-lg-surface-rgb: 126, 134, 152;
+  --te-lg-drop-rgb: var(--te-lg-shade-rgb);
+  --te-lg-rim-strength: 0.35;
+  --te-lg-shade-alpha: 0.24;
+  --te-lg-drop-alpha: 0.44;
+}
+
+/* Degradation mirrors the card contracts: refraction without its blurred backdrop
+   reads as a smear, so the filter goes with the blur. */
+:global(body.te-no-blur) .player-bar-liquid .player-bar-warp {
+  filter: none !important;
+}
+
+:global(html[data-te-effects-mode='reduced']) .player-bar-liquid .player-bar-warp {
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+:global(html[data-window-transparent='on'][data-platform='linux'])
+  .player-bar-liquid
+  .player-bar-warp {
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }

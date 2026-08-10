@@ -4,6 +4,7 @@ export type AudioEngineEndFileCallback = (reason: string) => void
 import type { DspGraphStatus, DspScene } from '../shared/dspGraph.ts'
 import type { SleepTimerSettings } from '../shared/sleepTimer.ts'
 import type { MotionPreference } from '../shared/motion.ts'
+import type { LiquidGlassSettings, SurfaceMaterial } from '../shared/liquidGlass.ts'
 import type { LyricsAppearanceSettings } from '../shared/lyricsAppearance.ts'
 import type {
   StructuredPluginTheme,
@@ -40,6 +41,11 @@ export type {
   TargetRelativeFrequencyResponse
 } from '../shared/frequencyResponse.ts'
 export type { MotionPreference } from '../shared/motion.ts'
+export type {
+  LiquidGlassSettings,
+  LiquidGlassTheme,
+  SurfaceMaterial
+} from '../shared/liquidGlass.ts'
 export type {
   LyricsAppearanceAlign,
   LyricsAppearanceColorMode,
@@ -490,6 +496,16 @@ export type ChannelRoutingMode =
   | 'mono-to-multichannel'
 export type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native'
 export type SacdProgramMode = 'auto' | 'stereo' | 'multichannel'
+
+/** DSD 兼容层路由；与 dsdOutputMode 正交。见 shared/audioProcessingOptions.ts。 */
+export interface DsdRouteSettings {
+  enabled: boolean
+  backend: string
+  device: string
+  applyToPcmToDsd: boolean
+  strictPassthrough: boolean
+}
+
 export type EqualizerFilterType =
   | 'peak'
   | 'lowShelf'
@@ -518,6 +534,7 @@ export interface AudioProcessingSettings {
   highResolution: boolean
   dsdToPcm: boolean
   dsdOutputMode: DsdOutputMode
+  dsdRoute: DsdRouteSettings
   sacdProgramMode: SacdProgramMode
   eqEnabled: boolean
   eqMode: EqMode
@@ -815,6 +832,9 @@ export interface AppSettings {
   uiDensity: UiDensity
   appBackground: AppBackgroundSettings
   cardAppearance: CardAppearanceSettings
+  /** Switches cards and the playbar between the standard surface and liquid glass. */
+  surfaceMaterial: SurfaceMaterial
+  liquidGlass: LiquidGlassSettings
   nowPlayingBackground: NowPlayingBackground
   playbackResumeMode: PlaybackResumeMode
   sleepTimer: SleepTimerSettings
@@ -1130,6 +1150,14 @@ export interface OutputDiagnostics {
   lifetimeRecoveryCount: number
   driverRestartCount: number
   deviceLostCount: number
+  /**
+   * DSD 兼容层路由的运行时事实：实际是否经覆写路由输出、走的哪条线，
+   * 以及覆写失败回退时的原因。可选，旧引擎不上报这些字段。
+   */
+  dsdRouteOverrideActive?: boolean
+  dsdRouteBackend?: string
+  dsdRouteDevice?: string
+  dsdRouteFallbackReason?: string
   lastError: string
 }
 

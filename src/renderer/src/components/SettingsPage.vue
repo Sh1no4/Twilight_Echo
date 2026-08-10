@@ -48,8 +48,12 @@ import {
   HIFI_STATUS_COPY,
   LOUDNORM_TARGET_LUFS,
   LOUDNORM_TRUE_PEAK_CEILING_DB,
-  loudnormStatusCopy
+  dsdRouteTargetsDistinctRoute,
+  loudnormStatusCopy,
+  withDsdRoutePatch,
+  type DsdRouteSettings
 } from '../../../shared/audioProcessingOptions.ts'
+import { isDsdProxyDevice } from '../../../shared/dsdProxyDrivers.ts'
 import type {
   AppSettings,
   AppTheme,
@@ -62,6 +66,8 @@ import type {
   AudioProcessingSettings,
   CardAppearanceSettings,
   CardAppearanceTheme,
+  LiquidGlassSettings,
+  LiquidGlassTheme,
   CardShadowStrength,
   CardHoverEffect,
   ChannelRoutingMode,
@@ -686,7 +692,8 @@ function setProxyPort(event: Event): void {
 
 function toggleSetting(key: BooleanSettingKey): void {
   if (key === 'windowTransparency' && !windowTransparencySupported.value) {
-    settingsNotice.value = '当前系统不支持窗口透明（Linux Wayland，或 Windows 未开启系统透明效果），已自动使用不透明窗口。'
+    settingsNotice.value =
+      '当前系统不支持窗口透明（Linux Wayland，或 Windows 未开启系统透明效果），已自动使用不透明窗口。'
     return
   }
   void updateSettings({ [key]: !settings.value[key] } as Partial<AppSettings>)
@@ -1087,6 +1094,75 @@ async function selectDsdOutputMode(value: DsdOutputMode): Promise<void> {
   await setAudioProcessing({ dsdOutputMode: value, dsdToPcm: value === 'pcm' })
 }
 
+// ---- DSD 兼容层路由 ----------------------------------------------------------
+// 路由与 dsdOutputMode 正交：这里只决定 DSD 从哪条 backend/device 出去。
+// 代理识别仅用于给设备打标签，不参与路由决策。
+
+const dsdRoute = computed<DsdRouteSettings>(() => audioProcessing.value.dsdRoute)
+const dsdRouteActive = computed(() => dsdRouteTargetsDistinctRoute(dsdRoute.value))
+
+/** 兼容层可选后端：只列出能承载 DSD 直通的后端。 */
+const dsdRouteBackendOptions = computed(() =>
+  audioOutputOptions.value.filter((option) => option.id === 'asio' || option.id === 'alsa')
+)
+
+/** 兼容层设备候选：跟随所选后端（未选则跟随主输出后端）。 */
+const dsdRouteDeviceOptions = computed(() => {
+  const backend = dsdRoute.value.backend || audioOutput.value
+  return audioDeviceOptions.value.filter((device) => {
+    const id = (device.id ?? '').toLowerCase()
+    const deviceBackend = device.backend ?? (id.startsWith('asio:') ? 'asio' : '')
+    return deviceBackend === backend || id.startsWith(`${backend}:`)
+  })
+})
+
+const dsdRouteProxyDevices = computed(() =>
+  dsdRouteDeviceOptions.value.filter((device) => isDsdProxyDevice(device))
+)
+
+/** 运行时实际路由回报（来自引擎 diagnostics，不是配置意图）。 */
+const dsdRouteRuntimeText = computed(() => {
+  const diagnostics = outputInfo.value?.diagnostics
+  if (!diagnostics) return ''
+  if (diagnostics.dsdRouteOverrideActive) {
+    const target = [diagnostics.dsdRouteBackend, diagnostics.dsdRouteDevice]
+      .filter((part) => typeof part === 'string' && part.length > 0)
+      .join(' / ')
+    return target ? `DSD 正经由兼容层路由输出：${target}` : 'DSD 正经由兼容层路由输出'
+  }
+  if (diagnostics.dsdRouteFallbackReason) {
+    return `兼容层路由未生效，已回退主输出：${diagnostics.dsdRouteFallbackReason}`
+  }
+  return ''
+})
+
+function patchDsdRoute(patch: Partial<DsdRouteSettings>): void {
+  // 必须传完整路由：setAudioProcessing 的合并是浅展开。
+  updateAudioProcessing({ dsdRoute: withDsdRoutePatch(dsdRoute.value, patch) })
+}
+
+function toggleDsdRouteEnabled(): void {
+  patchDsdRoute({ enabled: !dsdRoute.value.enabled })
+}
+
+function setDsdRouteBackend(event: Event): void {
+  const backend = (event.target as HTMLSelectElement).value
+  // 换后端后旧设备 id 不再有效，一并清掉避免指向不存在的设备。
+  patchDsdRoute({ backend, device: '' })
+}
+
+function setDsdRouteDevice(event: Event): void {
+  patchDsdRoute({ device: (event.target as HTMLSelectElement).value })
+}
+
+function toggleDsdRoutePcmToDsd(): void {
+  patchDsdRoute({ applyToPcmToDsd: !dsdRoute.value.applyToPcmToDsd })
+}
+
+function toggleDsdRouteStrict(): void {
+  patchDsdRoute({ strictPassthrough: !dsdRoute.value.strictPassthrough })
+}
+
 function setDsdOutputMode(event: Event): void {
   void selectDsdOutputMode((event.target as HTMLSelectElement).value as DsdOutputMode)
 }
@@ -1372,6 +1448,39 @@ function setBgEffectField<K extends keyof typeof settings.value.cardAppearance.b
   void updateSettings({ cardAppearance })
 }
 
+const liquidGlassOpen = ref(false)
+const liquidGlassTab = ref<'light' | 'dark'>('light')
+
+function cloneLiquidGlass(): LiquidGlassSettings {
+  const lg = settings.value.liquidGlass
+  return {
+    followPointer: lg.followPointer,
+    light: { ...lg.light },
+    dark: { ...lg.dark }
+  }
+}
+
+function toggleLiquidGlass(): void {
+  void updateSettings({
+    surfaceMaterial: settings.value.surfaceMaterial === 'liquidGlass' ? 'standard' : 'liquidGlass'
+  })
+}
+
+function toggleLiquidGlassPointer(): void {
+  const liquidGlass = cloneLiquidGlass()
+  liquidGlass.followPointer = !liquidGlass.followPointer
+  void updateSettings({ liquidGlass })
+}
+
+function setLiquidGlassField<K extends keyof LiquidGlassTheme>(
+  field: K,
+  value: LiquidGlassTheme[K]
+): void {
+  const liquidGlass = cloneLiquidGlass()
+  liquidGlass[liquidGlassTab.value][field] = value
+  void updateSettings({ liquidGlass })
+}
+
 function pluginPanelStateKey(panel: UiContribution): string {
   return `${panel.pluginId}:${panel.id}`
 }
@@ -1413,10 +1522,13 @@ function normalizePluginSettingsForm(value: unknown): PluginSettingsForm | null 
         label,
         type: type as PluginSettingsFieldType,
         required: field.required === true,
-        placeholder:
-          typeof field.placeholder === 'string' ? field.placeholder.slice(0, 200) : '',
+        placeholder: typeof field.placeholder === 'string' ? field.placeholder.slice(0, 200) : '',
         value:
-          type === 'password' ? '' : typeof field.value === 'string' ? field.value.slice(0, 4096) : '',
+          type === 'password'
+            ? ''
+            : typeof field.value === 'string'
+              ? field.value.slice(0, 4096)
+              : '',
         options
       }
     ]
@@ -1504,13 +1616,18 @@ async function submitPluginSettingsForm(panel: UiContribution): Promise<void> {
       pluginSettingsForms.value = { ...pluginSettingsForms.value, [stateKey]: refreshedForm }
       pluginSettingsValues.value = {
         ...pluginSettingsValues.value,
-        [stateKey]: Object.fromEntries(refreshedForm.fields.map((field) => [field.key, field.value]))
+        [stateKey]: Object.fromEntries(
+          refreshedForm.fields.map((field) => [field.key, field.value])
+        )
       }
     } else {
       pluginSettingsValues.value = {
         ...pluginSettingsValues.value,
         [stateKey]: Object.fromEntries(
-          form.fields.map((field) => [field.key, field.type === 'password' ? '' : values[field.key] ?? ''])
+          form.fields.map((field) => [
+            field.key,
+            field.type === 'password' ? '' : (values[field.key] ?? '')
+          ])
         )
       }
     }
@@ -1968,10 +2085,7 @@ function scrollToSearchResult(entry: SettingsSearchEntry): void {
   })
 }
 
-function findSettingItem(
-  sectionEl: HTMLElement,
-  entry: SettingsSearchEntry
-): HTMLElement | null {
+function findSettingItem(sectionEl: HTMLElement, entry: SettingsSearchEntry): HTMLElement | null {
   const matchText = (entry.match ?? entry.title).trim().toLowerCase()
   // 优先匹配 .setting-item（常规设置项）
   const settingItems = sectionEl.querySelectorAll<HTMLElement>('.setting-item')
@@ -2123,70 +2237,68 @@ onBeforeUnmount(() => {
     />
     <div class="settings-preview-layout">
       <nav class="settings-preview-nav" aria-label="设置分区">
-          <div class="settings-nav-search-wrap">
-            <div class="settings-search-box settings-nav-search">
-              <i class="pi pi-search"></i>
-              <AnimatedInput
-                v-model="settingsSearchQuery"
-                type="text"
-                class="settings-search-input"
-                placeholder="搜索设置"
-                aria-label="搜索设置"
-                @focus="activeSearchIndex = filteredSearchResults.length > 0 ? 0 : -1"
-                @keydown.down.prevent="moveSearchSelection(1)"
-                @keydown.up.prevent="moveSearchSelection(-1)"
-                @keydown.enter.prevent="handleSettingsSearchEnter"
-                @keydown.esc.prevent="clearSettingsSearch"
-              />
-              <button
-                v-if="settingsSearchQuery"
-                type="button"
-                class="settings-search-clear"
-                @click="clearSettingsSearch"
-                aria-label="清除搜索"
-              >
-                <i class="pi pi-times"></i>
-              </button>
-            </div>
-            <div
-              v-if="hasSettingsSearchResults"
-              class="settings-nav-results"
-              role="listbox"
-              aria-label="搜索结果"
+        <div class="settings-nav-search-wrap">
+          <div class="settings-search-box settings-nav-search">
+            <i class="pi pi-search"></i>
+            <AnimatedInput
+              v-model="settingsSearchQuery"
+              type="text"
+              class="settings-search-input"
+              placeholder="搜索设置"
+              aria-label="搜索设置"
+              @focus="activeSearchIndex = filteredSearchResults.length > 0 ? 0 : -1"
+              @keydown.down.prevent="moveSearchSelection(1)"
+              @keydown.up.prevent="moveSearchSelection(-1)"
+              @keydown.enter.prevent="handleSettingsSearchEnter"
+              @keydown.esc.prevent="clearSettingsSearch"
+            />
+            <button
+              v-if="settingsSearchQuery"
+              type="button"
+              class="settings-search-clear"
+              @click="clearSettingsSearch"
+              aria-label="清除搜索"
             >
-              <button
-                v-for="(result, index) in filteredSearchResults"
-                :key="`${result.section}:${result.title}`"
-                type="button"
-                role="option"
-                :aria-selected="activeSearchIndex === index"
-                :class="{ active: activeSearchIndex === index }"
-                @mouseenter="activeSearchIndex = index"
-                @click="scrollToSearchResult(result)"
-              >
-                <i :class="sections.find((section) => section.key === result.section)?.icon"></i>
-                <span class="settings-nav-result-title">{{ result.title }}</span>
-                <small>{{
-                  sections.find((section) => section.key === result.section)?.label
-                }}</small>
-              </button>
-            </div>
-            <div v-else-if="hasSettingsSearchNoResults" class="settings-nav-empty">
-              没有找到匹配的设置
-            </div>
+              <i class="pi pi-times"></i>
+            </button>
           </div>
-          <button
-            v-for="section in sections"
-            :key="section.key"
-            type="button"
-            class="preview-nav-item"
-            :class="{ active: activeSection === section.key }"
-            @click="scrollToSection(section.key)"
+          <div
+            v-if="hasSettingsSearchResults"
+            class="settings-nav-results"
+            role="listbox"
+            aria-label="搜索结果"
           >
-            <i :class="section.icon"></i>
-            <span>{{ section.label }}</span>
-          </button>
-        </nav>
+            <button
+              v-for="(result, index) in filteredSearchResults"
+              :key="`${result.section}:${result.title}`"
+              type="button"
+              role="option"
+              :aria-selected="activeSearchIndex === index"
+              :class="{ active: activeSearchIndex === index }"
+              @mouseenter="activeSearchIndex = index"
+              @click="scrollToSearchResult(result)"
+            >
+              <i :class="sections.find((section) => section.key === result.section)?.icon"></i>
+              <span class="settings-nav-result-title">{{ result.title }}</span>
+              <small>{{ sections.find((section) => section.key === result.section)?.label }}</small>
+            </button>
+          </div>
+          <div v-else-if="hasSettingsSearchNoResults" class="settings-nav-empty">
+            没有找到匹配的设置
+          </div>
+        </div>
+        <button
+          v-for="section in sections"
+          :key="section.key"
+          type="button"
+          class="preview-nav-item"
+          :class="{ active: activeSection === section.key }"
+          @click="scrollToSection(section.key)"
+        >
+          <i :class="section.icon"></i>
+          <span>{{ section.label }}</span>
+        </button>
+      </nav>
 
       <div class="settings-preview-stack">
         <header class="settings-page-header">
@@ -3001,6 +3113,126 @@ onBeforeUnmount(() => {
                   </button>
                 </div>
               </div>
+              <hr />
+              <div class="setting-item top-align dsd-compat-route">
+                <div class="setting-copy">
+                  <strong>DSD 兼容层路由</strong>
+                  <span>
+                    DAC 自带 ASIO 驱动不接受 DSD 采样类型（或只有 WASAPI）时，DSD 会被迫降级为 DoP /
+                    PCM。把 DSD 单独路由到已注册的 DSD 代理 ASIO 驱动可以恢复直通，PCM
+                    仍走主输出、不受影响。
+                  </span>
+                  <small>
+                    代理驱动（如 foo_dsd_asio）是独立的系统级 ASIO 驱动，与是否安装 foobar2000
+                    无关；本软件不加载任何第三方组件，只按你选定的 后端与设备协商。
+                  </small>
+                  <span
+                    v-if="dsdRouteRuntimeText"
+                    class="setting-substatus"
+                    :class="{ available: outputInfo?.diagnostics?.dsdRouteOverrideActive }"
+                  >
+                    {{ dsdRouteRuntimeText }}
+                  </span>
+                </div>
+                <span
+                  class="toggle-switch"
+                  :class="{ active: dsdRoute.enabled, inactive: !dsdRoute.enabled }"
+                  role="switch"
+                  :aria-checked="dsdRoute.enabled"
+                  aria-label="启用 DSD 兼容层路由"
+                  @click="toggleDsdRouteEnabled()"
+                ></span>
+              </div>
+              <template v-if="dsdRoute.enabled">
+                <div class="setting-item compact-row">
+                  <div class="setting-copy">
+                    <strong>路由后端</strong>
+                    <span>留空则沿用主输出后端。</span>
+                  </div>
+                  <select
+                    class="settings-select"
+                    :value="dsdRoute.backend"
+                    aria-label="DSD 兼容层路由后端"
+                    @change="setDsdRouteBackend"
+                  >
+                    <option value="">跟随主输出（{{ audioOutput }}）</option>
+                    <option
+                      v-for="option in dsdRouteBackendOptions"
+                      :key="option.id"
+                      :value="option.id"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select>
+                </div>
+                <div class="setting-item compact-row">
+                  <div class="setting-copy">
+                    <strong>路由设备</strong>
+                    <span v-if="dsdRouteProxyDevices.length > 0">
+                      检测到 {{ dsdRouteProxyDevices.length }} 个疑似 DSD 代理驱动。
+                    </span>
+                    <span v-else> 未检测到疑似代理驱动；若已安装仍可手动选择对应设备。 </span>
+                  </div>
+                  <select
+                    class="settings-select"
+                    :value="dsdRoute.device"
+                    aria-label="DSD 兼容层路由设备"
+                    @change="setDsdRouteDevice"
+                  >
+                    <option value="">跟随主输出设备</option>
+                    <option
+                      v-for="device in dsdRouteDeviceOptions"
+                      :key="device.id"
+                      :value="device.id"
+                    >
+                      {{ device.label }}{{ isDsdProxyDevice(device) ? '（DSD 代理）' : '' }}
+                    </option>
+                  </select>
+                </div>
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>PCM→DSD 上采样也走此路由</strong>
+                    <span>关闭则仅 DSD 源使用兼容层，上采样仍走主输出。</span>
+                  </div>
+                  <span
+                    class="toggle-switch"
+                    :class="{
+                      active: dsdRoute.applyToPcmToDsd,
+                      inactive: !dsdRoute.applyToPcmToDsd
+                    }"
+                    role="switch"
+                    :aria-checked="dsdRoute.applyToPcmToDsd"
+                    aria-label="PCM 转 DSD 上采样使用兼容层路由"
+                    @click="toggleDsdRoutePcmToDsd()"
+                  ></span>
+                </div>
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>严格直通模式</strong>
+                    <span>
+                      开启后无法建立 DSD 直通时报错停止，不静默降级为 PCM。默认关闭，保持自动回退。
+                    </span>
+                  </div>
+                  <span
+                    class="toggle-switch"
+                    :class="{
+                      active: dsdRoute.strictPassthrough,
+                      inactive: !dsdRoute.strictPassthrough
+                    }"
+                    role="switch"
+                    :aria-checked="dsdRoute.strictPassthrough"
+                    aria-label="DSD 严格直通模式"
+                    @click="toggleDsdRouteStrict()"
+                  ></span>
+                </div>
+                <div v-if="!dsdRouteActive" class="setting-item">
+                  <div class="setting-copy">
+                    <span class="setting-substatus">
+                      已启用但未指定后端或设备，当前等同于沿用主输出。
+                    </span>
+                  </div>
+                </div>
+              </template>
               <hr />
               <div class="setting-item">
                 <div class="setting-copy">
@@ -4038,8 +4270,9 @@ onBeforeUnmount(() => {
               <div class="setting-copy">
                 <strong>窗口透明</strong>
                 <span
-                  >让窗口底层透明，显示系统模糊效果（Windows 11 22H2+ 使用原生亚克力模糊；Linux
-                  X11 需合成器支持，如 KWin / picom；Linux Wayland、以及 Windows 未开启系统透明效果时暂不支持）。更改后需重启。</span
+                  >让窗口底层透明，显示系统模糊效果（Windows 11 22H2+ 使用原生亚克力模糊；Linux X11
+                  需合成器支持，如 KWin / picom；Linux Wayland、以及 Windows
+                  未开启系统透明效果时暂不支持）。更改后需重启。</span
                 >
               </div>
               <span
@@ -4056,7 +4289,8 @@ onBeforeUnmount(() => {
               ></span>
             </div>
             <div v-if="transparencyUnsupported" class="settings-inline-warning" role="status">
-              当前系统不支持透明窗口（Linux Wayland，或 Windows 未开启系统透明效果），已自动回退为不透明窗口，应用仍可正常使用。
+              当前系统不支持透明窗口（Linux Wayland，或 Windows
+              未开启系统透明效果），已自动回退为不透明窗口，应用仍可正常使用。
             </div>
             <template v-if="settings.windowTransparency && transparencySupported">
               <hr />
@@ -4859,6 +5093,264 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <MiniPlayerSettingsSection />
+            <hr />
+            <button
+              type="button"
+              class="settings-accordion-trigger"
+              :class="{ open: liquidGlassOpen }"
+              :aria-expanded="liquidGlassOpen"
+              @click="liquidGlassOpen = !liquidGlassOpen"
+            >
+              <span class="setting-copy">
+                <strong>液态玻璃材质</strong>
+                <span>为卡片与播放栏启用折射玻璃质感，可与现有材质随时切换。</span>
+              </span>
+              <i class="pi pi-chevron-down"></i>
+            </button>
+            <div v-if="liquidGlassOpen" class="settings-accordion-body">
+              <hr />
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>启用液态玻璃</strong>
+                  <span>
+                    开启后卡片与播放栏改用折射玻璃材质。大型媒体库滚动时会有额外 GPU 开销。
+                  </span>
+                </div>
+                <span
+                  class="toggle-switch"
+                  :class="{ active: settings.surfaceMaterial === 'liquidGlass' }"
+                  role="switch"
+                  :aria-checked="settings.surfaceMaterial === 'liquidGlass'"
+                  @click="toggleLiquidGlass"
+                ></span>
+              </div>
+              <div v-if="settings.surfaceMaterial === 'liquidGlass'">
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>高光跟随指针</strong>
+                    <span>镜面高光角度随鼠标移动变化；关闭后使用固定光源。</span>
+                  </div>
+                  <span
+                    class="toggle-switch"
+                    :class="{ active: settings.liquidGlass.followPointer }"
+                    role="switch"
+                    :aria-checked="settings.liquidGlass.followPointer"
+                    @click="toggleLiquidGlassPointer"
+                  ></span>
+                </div>
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>编辑主题</strong>
+                    <span>分别设置浅色与深色模式下的玻璃参数。</span>
+                  </div>
+                  <div class="theme-segment">
+                    <button
+                      type="button"
+                      :class="{ active: liquidGlassTab === 'light' }"
+                      @click="liquidGlassTab = 'light'"
+                    >
+                      <i class="pi pi-sun"></i>
+                      浅色
+                    </button>
+                    <button
+                      type="button"
+                      :class="{ active: liquidGlassTab === 'dark' }"
+                      @click="liquidGlassTab = 'dark'"
+                    >
+                      <i class="pi pi-moon"></i>
+                      深色
+                    </button>
+                  </div>
+                </div>
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>折射强度</strong>
+                    <span>边缘弯曲背景的位移量，越高玻璃感越强。</span>
+                  </div>
+                  <div class="range-pill">
+                    <span>折射</span>
+                    <input
+                      class="range-input"
+                      type="range"
+                      min="0"
+                      max="140"
+                      :value="settings.liquidGlass[liquidGlassTab].displacementScale"
+                      @input="
+                        setLiquidGlassField(
+                          'displacementScale',
+                          Number(($event.target as HTMLInputElement).value)
+                        )
+                      "
+                    />
+                    <EditableRangeValue
+                      :value="settings.liquidGlass[liquidGlassTab].displacementScale"
+                      :min="0"
+                      :max="140"
+                      aria-label="编辑折射强度"
+                      @change="setLiquidGlassField('displacementScale', $event)"
+                    />
+                  </div>
+                </div>
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>色散强度</strong>
+                    <span>边缘彩色分离的程度，模拟玻璃的色散。</span>
+                  </div>
+                  <div class="range-pill">
+                    <span>色散</span>
+                    <input
+                      class="range-input"
+                      type="range"
+                      min="0"
+                      max="8"
+                      step="0.5"
+                      :value="settings.liquidGlass[liquidGlassTab].aberrationIntensity"
+                      @input="
+                        setLiquidGlassField(
+                          'aberrationIntensity',
+                          Number(($event.target as HTMLInputElement).value)
+                        )
+                      "
+                    />
+                    <EditableRangeValue
+                      :value="settings.liquidGlass[liquidGlassTab].aberrationIntensity"
+                      :min="0"
+                      :max="8"
+                      aria-label="编辑色散强度"
+                      @change="setLiquidGlassField('aberrationIntensity', $event)"
+                    />
+                  </div>
+                </div>
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>玻璃模糊</strong>
+                    <span>玻璃后方背景的模糊半径。</span>
+                  </div>
+                  <div class="range-pill">
+                    <span>模糊</span>
+                    <input
+                      class="range-input"
+                      type="range"
+                      min="0"
+                      max="40"
+                      :value="settings.liquidGlass[liquidGlassTab].blurAmount"
+                      @input="
+                        setLiquidGlassField(
+                          'blurAmount',
+                          Number(($event.target as HTMLInputElement).value)
+                        )
+                      "
+                    />
+                    <EditableRangeValue
+                      :value="settings.liquidGlass[liquidGlassTab].blurAmount"
+                      :min="0"
+                      :max="40"
+                      suffix="px"
+                      aria-label="编辑玻璃模糊"
+                      @change="setLiquidGlassField('blurAmount', $event)"
+                    />
+                  </div>
+                </div>
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>玻璃饱和度</strong>
+                    <span>透过玻璃的色彩饱和感。</span>
+                  </div>
+                  <div class="range-pill">
+                    <span>饱和度</span>
+                    <input
+                      class="range-input"
+                      type="range"
+                      min="80"
+                      max="200"
+                      :value="settings.liquidGlass[liquidGlassTab].saturation"
+                      @input="
+                        setLiquidGlassField(
+                          'saturation',
+                          Number(($event.target as HTMLInputElement).value)
+                        )
+                      "
+                    />
+                    <EditableRangeValue
+                      :value="settings.liquidGlass[liquidGlassTab].saturation"
+                      :min="80"
+                      :max="200"
+                      suffix="%"
+                      aria-label="编辑玻璃饱和度"
+                      @change="setLiquidGlassField('saturation', $event)"
+                    />
+                  </div>
+                </div>
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>镜面高光</strong>
+                    <span>描边与高光的亮度。</span>
+                  </div>
+                  <div class="range-pill">
+                    <span>高光</span>
+                    <input
+                      class="range-input"
+                      type="range"
+                      min="0"
+                      max="100"
+                      :value="settings.liquidGlass[liquidGlassTab].specularOpacity"
+                      @input="
+                        setLiquidGlassField(
+                          'specularOpacity',
+                          Number(($event.target as HTMLInputElement).value)
+                        )
+                      "
+                    />
+                    <EditableRangeValue
+                      :value="settings.liquidGlass[liquidGlassTab].specularOpacity"
+                      :min="0"
+                      :max="100"
+                      suffix="%"
+                      aria-label="编辑镜面高光"
+                      @change="setLiquidGlassField('specularOpacity', $event)"
+                    />
+                  </div>
+                </div>
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>表面着色</strong>
+                    <span>玻璃自身的底色浓度，越低越通透。</span>
+                  </div>
+                  <div class="range-pill">
+                    <span>着色</span>
+                    <input
+                      class="range-input"
+                      type="range"
+                      min="0"
+                      max="100"
+                      :value="settings.liquidGlass[liquidGlassTab].tintOpacity"
+                      @input="
+                        setLiquidGlassField(
+                          'tintOpacity',
+                          Number(($event.target as HTMLInputElement).value)
+                        )
+                      "
+                    />
+                    <EditableRangeValue
+                      :value="settings.liquidGlass[liquidGlassTab].tintOpacity"
+                      :min="0"
+                      :max="100"
+                      suffix="%"
+                      aria-label="编辑表面着色"
+                      @change="setLiquidGlassField('tintOpacity', $event)"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
             <hr />
             <button
               type="button"

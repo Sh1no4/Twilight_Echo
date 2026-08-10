@@ -87,6 +87,9 @@ export interface PlaybackControllerHost {
     command: (native: NativeAudioBinding) => void,
     logFailure?: boolean
   ): boolean
+  isNativeVolumeSynced(): boolean
+  markNativeVolumeSynced(value: boolean): void
+  canVerifyNativeVolume(): boolean
   callNativeMaybeAsync(
     context: string,
     method: keyof NativeAudioBinding,
@@ -416,6 +419,10 @@ export class PlaybackController {
       // Native play() does not receive rate as an argument; reassert the app-layer rate
       // so a default 1.0 from GetPlaybackInfo cannot clobber a non-unity rate.
       playbackRate: preservedPlaybackRate,
+      // Same for volume: native GetPlaybackInfo may report unity if a startup
+      // SetVolume was dropped before the service engine existed. Keep the
+      // app-layer volume authoritative and reassert it below.
+      volume: this.playbackInfo.volume,
       outputInfo: nativeInfo?.outputInfo
         ? {
             ...nativeInfo.outputInfo,
@@ -427,6 +434,12 @@ export class PlaybackController {
     }
     if (nativeStarted && Math.abs(preservedPlaybackRate - 1) > 0.001) {
       this.tryNative('播放后同步倍速', (native) => native.SetPlaybackRate(preservedPlaybackRate))
+    }
+    if (nativeStarted) {
+      // Native play carries info_.volume into the pipeline, but reassert it
+      // after a successful start so a restored engine can never stay at unity
+      // loudness if a startup SetVolume was lost before the pipeline existed.
+      this.tryNative('播放后应用音量', (native) => native.SetVolume(this.playbackInfo.volume))
     }
     await this.applyNativeDspGraph('播放源格式变更后解析 DSP 场景')
     this.lastTick = this.scheduler.now()
@@ -518,9 +531,21 @@ export class PlaybackController {
 
   async setVolume(volume: number): Promise<void> {
     const normalized = clampNumber(volume, 0, 1, 1)
-    if (Object.is(normalized, this.playbackInfo.volume)) return
-    this.tryNative('设置音量', (native) => native.SetVolume(normalized))
+    const alreadyReported = Object.is(normalized, this.playbackInfo.volume)
+    // The native side starts at unity and only becomes "synced" after the
+    // awaited restore path confirms a SetVolume. Without this guard split, a
+    // failed startup restore would leave playbackInfo at the saved volume while
+    // the native engine stays loud, and every renderer push would be dropped
+    // as a no-op here.
+    if (alreadyReported && this.host.isNativeVolumeSynced()) return
+    const applied = this.tryNative('设置音量', (native) => native.SetVolume(normalized))
     this.playbackInfo.volume = normalized
+    if (applied && this.host.canVerifyNativeVolume()) {
+      // In-process binding: SetVolume succeeded synchronously. The audio service
+      // binding is fire-and-forget, so only the awaited restore step may mark
+      // the native volume as synced there.
+      this.host.markNativeVolumeSynced(true)
+    }
     this.updateOutputPerfect()
     this.publishPlaybackInfo()
   }

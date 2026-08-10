@@ -1,5 +1,11 @@
 import type { MotionPreference } from './motion.ts'
 
+// Keep the full transport layout usable at every supported display scale.
+export const MINI_PLAYER_MIN_WIDTH = 420
+export const MINI_PLAYER_MIN_HEIGHT = 220
+export const MINI_PLAYER_MAX_WIDTH = 900
+export const MINI_PLAYER_MAX_HEIGHT = 520
+
 export const DEFAULT_MINI_PLAYER_STYLE_ID = 'aurora-glass'
 export const PORCELAIN_MINI_PLAYER_STYLE_ID = 'porcelain'
 
@@ -83,6 +89,12 @@ export interface MiniPlayerTrackSnapshot {
   artist: string
   album: string
   cover: string | null
+  /** Source codec label (FLAC / MP3 / DSD...), when the track carries it. */
+  format: string | null
+  /** Sample rate in Hz (44100 / 192000...), when known. */
+  sampleRate: number | null
+  /** Bit depth (16 / 24 / 32...), when known. */
+  bitDepth: number | null
   /**
    * Durable remote cover origin (http/https). Session-scoped twilight-media
    * grants in `cover` die with the main process; the mini player re-grants
@@ -93,6 +105,17 @@ export interface MiniPlayerTrackSnapshot {
 
 export type MiniPlayerPlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle' | 'heart'
 
+/**
+ * One timed lyric line pushed to the mini player. The mini player uses the
+ * per-line timestamps to switch the highlighted line itself, so it can show
+ * several surrounding lines without relying on a slow marquee.
+ */
+export interface MiniPlayerLyricLineSnapshot {
+  time: number | null
+  original: string
+  translation: string | null
+}
+
 export interface MiniPlayerStateSnapshot {
   track: MiniPlayerTrackSnapshot | null
   /**
@@ -101,6 +124,8 @@ export interface MiniPlayerStateSnapshot {
    * shows it when the cursor leaves the window; hovering returns to metadata.
    */
   currentLyric: { original: string; translation: string | null } | null
+  /** Timed lyric lines (sorted by time) for the mini player's multi-line view. */
+  lyrics: MiniPlayerLyricLineSnapshot[]
   isPlaying: boolean
   isLoading: boolean
   currentTime: number
@@ -174,11 +199,11 @@ export const DEFAULT_MINI_PLAYER_THEME_PROFILES: Readonly<Record<string, MiniPla
         primaryTextColor: '#ffffff',
         mutedTextColor: '#b8b7c2',
         fontFamily: "'Inter', 'MiSans Full', 'MiSans', 'Microsoft YaHei UI', system-ui, sans-serif",
-        surfaceOpacity: 94,
-        glassBlur: 18,
-        cornerRadius: 25,
+        surfaceOpacity: 75,
+        glassBlur: 30,
+        cornerRadius: 20,
         borderWidth: 1,
-        borderColor: '#353542',
+        borderColor: 'rgba(255, 255, 255, 0.10)',
         shadowStrength: 80,
         shadowColor: '#000000'
       },
@@ -209,9 +234,9 @@ export const DEFAULT_MINI_PLAYER_THEME_PROFILES: Readonly<Record<string, MiniPla
         primaryTextColor: '#1b2034',
         mutedTextColor: '#656a7b',
         fontFamily: "'Inter', 'MiSans Full', 'MiSans', 'Microsoft YaHei UI', system-ui, sans-serif",
-        surfaceOpacity: 97,
-        glassBlur: 14,
-        cornerRadius: 25,
+        surfaceOpacity: 90,
+        glassBlur: 20,
+        cornerRadius: 20,
         borderWidth: 1,
         borderColor: '#d7d9e5',
         shadowStrength: 35,
@@ -245,8 +270,8 @@ export function createDefaultMiniPlayerThemeProfile(styleId: string): MiniPlayer
 export const DEFAULT_MINI_PLAYER_SETTINGS: Readonly<MiniPlayerSettings> = Object.freeze({
   windowX: -1,
   windowY: -1,
-  windowWidth: 500,
-  windowHeight: 190,
+  windowWidth: 480,
+  windowHeight: 300,
   alwaysOnTop: false,
   positionLocked: false,
   activeStyleId: DEFAULT_MINI_PLAYER_STYLE_ID,
@@ -275,6 +300,7 @@ export function cloneMiniPlayerSettings(settings: MiniPlayerSettings): MiniPlaye
 export const EMPTY_MINI_PLAYER_STATE: Readonly<MiniPlayerStateSnapshot> = Object.freeze({
   track: null,
   currentLyric: null,
+  lyrics: [],
   isPlaying: false,
   isLoading: false,
   currentTime: 0,
@@ -290,6 +316,7 @@ export const EMPTY_MINI_PLAYER_STATE: Readonly<MiniPlayerStateSnapshot> = Object
 })
 
 const MAX_TRACK_TEXT_LENGTH = 512
+const MAX_MINI_PLAYER_LYRIC_LINES = 500
 const MAX_COVER_URL_LENGTH = 16_384
 // Legacy embedded library covers are full data: URLs and routinely exceed the
 // generic URL cap; a sliced data: URL is corrupt, so they get their own bound.
@@ -299,6 +326,7 @@ const MAX_BACKGROUND_IMAGE_URL_LENGTH = 512
 const MAX_THEME_PROFILE_COUNT = 32
 const MAX_PLAYBACK_SECONDS = 60 * 60 * 24 * 7
 const MAX_QUEUE_LENGTH = 100_000
+const MAX_SAMPLE_RATE_HZ = 768_000
 
 export function normalizeMiniPlayerSettings(raw: unknown): MiniPlayerSettings {
   const value = asRecord(raw)
@@ -352,15 +380,15 @@ export function normalizeMiniPlayerSettings(raw: unknown): MiniPlayerSettings {
     windowY: normalizeCoordinate(value.windowY, DEFAULT_MINI_PLAYER_SETTINGS.windowY),
     windowWidth: clampFiniteNumber(
       value.windowWidth,
-      360,
-      900,
+      MINI_PLAYER_MIN_WIDTH,
+      MINI_PLAYER_MAX_WIDTH,
       DEFAULT_MINI_PLAYER_SETTINGS.windowWidth,
       true
     ),
     windowHeight: clampFiniteNumber(
       value.windowHeight,
-      140,
-      520,
+      MINI_PLAYER_MIN_HEIGHT,
+      MINI_PLAYER_MAX_HEIGHT,
       DEFAULT_MINI_PLAYER_SETTINGS.windowHeight,
       true
     ),
@@ -536,6 +564,7 @@ export function normalizeMiniPlayerStateSnapshot(raw: unknown): MiniPlayerStateS
   return {
     track: normalizeTrack(value.track),
     currentLyric: normalizeMiniPlayerLyric(value.currentLyric),
+    lyrics: normalizeMiniPlayerLyrics(value.lyrics),
     isPlaying: value.isPlaying === true,
     isLoading: value.isLoading === true,
     currentTime,
@@ -560,6 +589,25 @@ function normalizeMiniPlayerLyric(
   if (!original) return null
   const translation = normalizeText(value.translation, MAX_TRACK_TEXT_LENGTH)
   return { original, translation: translation || null }
+}
+
+function normalizeMiniPlayerLyrics(raw: unknown): MiniPlayerLyricLineSnapshot[] {
+  if (!Array.isArray(raw)) return []
+  const lines: MiniPlayerLyricLineSnapshot[] = []
+  for (const entry of raw) {
+    if (lines.length >= MAX_MINI_PLAYER_LYRIC_LINES) break
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
+    const value = entry as Record<string, unknown>
+    const original = normalizeText(value.original, MAX_TRACK_TEXT_LENGTH)
+    if (!original) continue
+    const time =
+      typeof value.time === 'number' && Number.isFinite(value.time)
+        ? Math.max(0, Math.min(MAX_PLAYBACK_SECONDS, value.time))
+        : null
+    const translation = normalizeText(value.translation, MAX_TRACK_TEXT_LENGTH)
+    lines.push({ time, original, translation: translation || null })
+  }
+  return lines
 }
 
 export function normalizeMiniPlayerCommand(raw: unknown): MiniPlayerCommand | null {
@@ -598,12 +646,24 @@ function normalizeTrack(raw: unknown): MiniPlayerTrackSnapshot | null {
 
   const cover = normalizeCoverHandle(value.cover)
   const coverSource = normalizeText(value.coverSource, MAX_COVER_URL_LENGTH)
+  const format = normalizeText(value.format, MAX_TRACK_TEXT_LENGTH)
+  const sampleRate =
+    typeof value.sampleRate === 'number' && Number.isFinite(value.sampleRate)
+      ? Math.min(MAX_SAMPLE_RATE_HZ, Math.max(1, Math.round(value.sampleRate)))
+      : null
+  const bitDepth =
+    typeof value.bitDepth === 'number' && Number.isFinite(value.bitDepth)
+      ? Math.min(64, Math.max(1, Math.round(value.bitDepth)))
+      : null
   return {
     id: id || title,
     title: title || '未知曲目',
     artist: normalizeText(value.artist, MAX_TRACK_TEXT_LENGTH) || '未知艺术家',
     album: normalizeText(value.album, MAX_TRACK_TEXT_LENGTH),
     cover: cover || null,
+    format: format || null,
+    sampleRate,
+    bitDepth,
     coverSource: /^https?:\/\//i.test(coverSource) ? coverSource : null
   }
 }

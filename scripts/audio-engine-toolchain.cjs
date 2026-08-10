@@ -289,6 +289,85 @@ function findStaleCTestRegistrations(ctestText, buildDir) {
     .filter((entry) => !normalizePath(entry).startsWith(`${normalizedBuildDir}/`))
 }
 
+function parseCmakeCache(content) {
+  const values = new Map()
+  for (const line of String(content).split(/\r?\n/)) {
+    if (!line || line.startsWith('#') || line.startsWith('//')) continue
+    const match = /^([^:=]+):[^=]*=(.*)$/.exec(line)
+    if (match) values.set(match[1], match[2])
+  }
+  return values
+}
+
+function validateMingwNativeDependencyConfiguration({
+  buildDir,
+  existsSync = fileExistsSync,
+  readFileSync = fileReadFileSync
+} = {}) {
+  if (!buildDir) {
+    return {
+      ok: false,
+      message: 'MinGW native dependency validation requires a build directory',
+      issues: ['build directory is missing']
+    }
+  }
+
+  const resolvedBuildDir = resolve(buildDir)
+  const cache = join(resolvedBuildDir, 'CMakeCache.txt')
+  if (!existsSync(cache)) {
+    return {
+      ok: false,
+      message: `MinGW native dependency validation requires ${cache}`,
+      issues: ['CMakeCache.txt is missing']
+    }
+  }
+
+  const values = parseCmakeCache(readFileSync(cache, 'utf8'))
+  const installRoot = join(resolvedBuildDir, 'vcpkg_installed')
+  const tripletRoot = join(installRoot, 'x64-mingw-static')
+  const expected = {
+    VCPKG_INSTALLED_DIR: installRoot,
+    VCPKG_TARGET_TRIPLET: 'x64-mingw-static',
+    TAE_BUILD_NAPI: 'ON',
+    FFMPEG_FOUND: 'TRUE'
+  }
+  const issues = []
+
+  for (const [name, expectedValue] of Object.entries(expected)) {
+    const value = values.get(name)
+    const matches =
+      name === 'VCPKG_INSTALLED_DIR'
+        ? typeof value === 'string' && normalizePath(value) === normalizePath(expectedValue)
+        : value === expectedValue
+    if (!matches) {
+      issues.push(`${name} must be ${expectedValue}; found ${value || '<missing>'}`)
+    }
+  }
+
+  const requiredArtifacts = [
+    ['EBUR128_INCLUDE_DIR', join(tripletRoot, 'include'), 'ebur128.h'],
+    ['EBUR128_LIBRARY', join(tripletRoot, 'lib', 'libebur128.a')],
+    ['FFMPEG_INCLUDE_DIRS', join(tripletRoot, 'include'), 'libavformat', 'avformat.h']
+  ]
+  for (const [name, expectedPath, ...requiredChildren] of requiredArtifacts) {
+    const value = values.get(name)
+    const containsExpectedPath =
+      typeof value === 'string' && normalizePath(value).includes(normalizePath(expectedPath))
+    const artifact = join(expectedPath, ...requiredChildren)
+    if (!containsExpectedPath || !existsSync(artifact)) {
+      issues.push(`${name} must resolve from ${expectedPath}`)
+    }
+  }
+
+  return issues.length === 0
+    ? { ok: true, message: '', issues: [] }
+    : {
+        ok: false,
+        message: `MinGW native dependency configuration is incomplete:\n- ${issues.join('\n- ')}`,
+        issues
+      }
+}
+
 function validateMingwCTestRegistration({
   buildDir,
   expectedTests = MINGW_EXPECTED_CTESTS,
@@ -388,6 +467,7 @@ module.exports = {
   resolveMingwEnvironment,
   resolveMingwBuildLayout,
   validateMingwCTestRegistration,
+  validateMingwNativeDependencyConfiguration,
   validateMingwBuildCommands,
   validateMingwToolchain
 }

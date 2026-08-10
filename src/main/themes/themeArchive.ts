@@ -25,6 +25,7 @@ import {
   type ThemeProfileV2
 } from '../../shared/theme.ts'
 import { validateThemeArchiveBuffer as preflightThemeArchive } from './themeArchiveValidation.ts'
+import { tryParseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 
 const MAX_THEME_ARCHIVE_BYTES = 20 * 1024 * 1024
 const MAX_THEME_EXTRACTED_BYTES = 40 * 1024 * 1024
@@ -77,7 +78,11 @@ export async function importThemeArchive(source: string): Promise<ThemeProfileV2
     if (!themeEntry) throw new Error('主题包根目录缺少 theme.json')
     const themeStat = await stat(themeEntry.absolute)
     if (themeStat.size > MAX_THEME_JSON_BYTES) throw new Error('theme.json 过大')
-    const parsed = JSON.parse(await readFile(themeEntry.absolute, 'utf8')) as unknown
+    const parsedResult = tryParseJsonWithNestingLimit(await readFile(themeEntry.absolute, 'utf8'))
+    if (!parsedResult.ok) {
+      throw new Error(parsedResult.reason === 'too-deep' ? 'theme.json ????' : 'theme.json ????')
+    }
+    const parsed = parsedResult.value
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       throw new Error('theme.json 必须是对象')
     }
