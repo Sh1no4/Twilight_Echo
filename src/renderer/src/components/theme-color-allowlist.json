@@ -17,7 +17,7 @@
   "src/renderer/src/components/onboarding/OnboardingWizard.css": 105,
   "src/renderer/src/components/player-bar/HiFiSidebar.vue": 50,
   "src/renderer/src/components/player-bar/LyricsManagerPanel.vue": 26,
-  "src/renderer/src/components/player-bar/PlayerBar.css": 319,
+  "src/renderer/src/components/player-bar/PlayerBar.css": 324,
   "src/renderer/src/components/PlayingMusic.vue": 76,
   "src/renderer/src/components/PluginExtensionPage.vue": 15,
   "src/renderer/src/components/PluginPage.vue": 79,
