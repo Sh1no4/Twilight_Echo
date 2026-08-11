@@ -12,6 +12,7 @@ import {
 } from '../core/settings'
 import { installAudioDeviceHotplugWatcher } from '../audio/deviceHotplug'
 import { destroyDesktopLyrics } from '../integrations/desktopLyrics'
+import { createSmtcButtons, destroySmtcButtons } from '../integrations/smtc.ts'
 import { ClosePersistenceAttemptGate } from './closePersistence.ts'
 import { isSafeExternalUrl } from '../security/externalUrl.ts'
 import type { RendererClosePersistenceOutcome } from '../../shared/closePersistence.ts'
@@ -192,10 +193,19 @@ export function createWindow(): void {
   })
 
   runtime.mainWindow.on('closed', () => {
+    destroySmtcButtons()
     runtime.mainWindow = null
   })
 
   installAudioDeviceHotplugWatcher(runtime.mainWindow)
+
+  if (process.platform === 'win32') {
+    try {
+      createSmtcButtons()
+    } catch (error) {
+      console.warn('[smtc] unable to initialize taskbar buttons:', error)
+    }
+  }
 
   runtime.mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isSafeExternalUrl(url)) {

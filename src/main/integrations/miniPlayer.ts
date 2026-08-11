@@ -404,6 +404,7 @@ export function setupMiniPlayerIpc(): void {
     runtime.latestMiniPlayerState = state
     sendMiniPlayerState(state)
     runtime.refreshTrayMenu?.()
+    runtime.refreshSmtcButtons?.()
     const trayPlayerWindow = runtime.trayPlayerWindow
     if (
       trayPlayerWindow &&

@@ -34,6 +34,10 @@ extraResources:
     to: icon.ico
   - from: build/icon.png
     to: icon.png
+  - from: build/smtc
+    to: smtc
+    filter:
+      - '**/*.ico'
   - from: resources/audio-engine
     to: audio-engine
     filter:
