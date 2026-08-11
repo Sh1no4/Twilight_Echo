@@ -29,12 +29,20 @@ size_t normalizeResolution(size_t value) {
 
 float webAudioNormalizedMagnitude(double magnitude, size_t resolution) {
   if (resolution == 0) return 0.0f;
-  // Approximate WebAudio AnalyserNode.getByteFrequencyData() for a display
-  // analyzer. The renderer owns the final visual headroom and anti-flattening
-  // curve, so this native layer only normalizes captured FFT magnitudes.
+  // Approximate WebAudio AnalyserNode.getByteFrequencyData() for a display analyzer.
+  //
+  // The divisor is the reference level: a Hann window sums to resolution/2, so a
+  // full-scale sine sitting on an exact bin centre produces |X| = resolution/4. Dividing
+  // by that puts 0 dB exactly at "full-scale sine".
+  //
+  // The dB window used to be [-92, -18], which put full scale at +1.24 before the clamp.
+  // Everything from quarter-scale upward therefore pinned to 1.0 and the spectrum
+  // flat-topped on any normally-mastered material. The renderer draws these values
+  // directly, so there was nothing downstream to recover the lost headroom. Keep the
+  // ceiling above 0 dB: a single sine is not the loudest thing a bin can hold.
   const double amplitude = magnitude / std::max(1.0, static_cast<double>(resolution) * 0.25);
-  constexpr double minDb = -92.0;
-  constexpr double maxDb = -18.0;
+  constexpr double minDb = -90.0;
+  constexpr double maxDb = 10.0;
   const double db = 20.0 * std::log10(std::max(amplitude, 1.0e-6));
   return static_cast<float>(std::clamp((db - minDb) / (maxDb - minDb), 0.0, 1.0));
 }

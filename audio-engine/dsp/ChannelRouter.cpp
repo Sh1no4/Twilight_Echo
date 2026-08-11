@@ -8,13 +8,19 @@
 
 namespace twilight::audio {
 
+ChannelRouter::ChannelRouter() {
+  recomputeCoefficients();
+}
+
 void ChannelRouter::setUpmixConfig(const UpmixConfig& config) {
   config_ = config;
   recomputeCoefficients();
 }
 
 void ChannelRouter::setSampleRate(int sampleRate) {
-  if (sampleRate_ == sampleRate || sampleRate <= 0) return;
+  if (sampleRate <= 0) return;
+  // No early-out on an unchanged rate: recomputing is a handful of float ops, and the
+  // guard used to make setSampleRate(48000) -- the default -- a silent no-op.
   sampleRate_ = sampleRate;
   recomputeCoefficients();
 }

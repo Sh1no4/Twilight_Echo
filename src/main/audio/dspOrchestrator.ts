@@ -973,6 +973,7 @@ export class DspOrchestrator {
       partitionSize: 0,
       latencyFrames: 0,
       overrunCount: 0,
+      bypassCount: 0,
       lastProcessMs: 0,
       maxProcessMs: 0,
       channelMappingMode: '',

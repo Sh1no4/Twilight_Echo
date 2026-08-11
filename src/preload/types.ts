@@ -599,6 +599,8 @@ export interface ConvolverInfo {
   partitionSize: number
   latencyFrames: number
   overrunCount: number
+  /** 实时线程因超预算而旁通卷积的累计次数 */
+  bypassCount: number
   lastProcessMs: number
   maxProcessMs: number
   channelMappingMode: string

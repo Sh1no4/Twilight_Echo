@@ -178,7 +178,12 @@ void assertDecoderOpensUtf8Path() {
 void assertDecoderResamplesWithQualityTier(
     FFmpegDecoder::ResamplerQuality quality,
     const char* fixtureName) {
-  const auto fixture = writePcmWavFixture({fixtureName, 44100, 2, 16, 32, false});
+  // The fixture has to outrun the widest filter we configure: Ultra uses filter_size 64,
+  // and swr cannot centre a 64-tap filter on an input shorter than its half-length, so a
+  // 32-frame fixture legitimately decodes to nothing on that tier.
+  constexpr size_t kInputFrames = 1024;
+  const auto fixture =
+      writePcmWavFixture({fixtureName, 44100, 2, 16, static_cast<int>(kInputFrames), false});
   FFmpegDecoder decoder;
   decoder.setResamplerQuality(quality);
   std::string error;
@@ -192,8 +197,8 @@ void assertDecoderResamplesWithQualityTier(
   // must initialize a working resampler (graceful fallback, never a failure).
   assert(decoder.setOutputFormat(target, &error));
 
-  std::vector<float> frames(1024 * 2, 0.0f);
-  const size_t decoded = decoder.readFrames(frames.data(), 1024, &error);
+  std::vector<float> frames(4096 * 2, 0.0f);
+  const size_t decoded = decoder.readFrames(frames.data(), 4096, &error);
   assert(decoded > 0);
   bool nonZero = false;
   for (size_t i = 0; i < decoded * 2; ++i) {
@@ -203,6 +208,20 @@ void assertDecoderResamplesWithQualityTier(
     }
   }
   assert(nonZero);
+
+  // Drain to EOF and check we got the whole stream, not the stream minus the resampler's
+  // buffered tail. 1024 frames at 44100 -> 96000 is ~2229 frames; swr holds back roughly
+  // a filter length, so skipping the flush lands near 2160 and trips the lower bound.
+  size_t total = decoded;
+  while (true) {
+    std::vector<float> more(4096 * 2, 0.0f);
+    const size_t got = decoder.readFrames(more.data(), 4096, &error);
+    if (got == 0) break;
+    total += got;
+  }
+  const size_t expected = kInputFrames * 96000 / 44100;
+  assert(total > expected - 32);
+  assert(total < expected + 64);
   decoder.close();
 }
 

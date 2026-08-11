@@ -3,6 +3,7 @@ const { resolve } = require('node:path')
 const {
   prepareMingwCmakeEnvironment,
   prepareMingwBuildLayout,
+  resolveMingwBuildJobs,
   resolveMingwEnvironment,
   validateMingwCTestRegistration,
   validateMingwBuildCommands
@@ -23,12 +24,16 @@ if (!preflight.ok) {
 }
 
 const action = process.argv[2]
+const buildJobs = resolveMingwBuildJobs({ env: toolchainEnvironment })
 const command =
   action === 'build'
-    ? ['cmake', ['--build', layout.buildDir]]
+    ? ['cmake', ['--build', layout.buildDir, '--parallel', String(buildJobs)]]
     : action === 'test'
       ? ['ctest', ['--test-dir', layout.buildDir, '--output-on-failure']]
       : null
+if (action === 'build') {
+  console.log(`Building with ${buildJobs} parallel compile job(s) (override with TAE_MINGW_BUILD_JOBS)`)
+}
 if (!command) {
   console.error('Usage: node scripts/run-audio-engine-mingw.cjs <build|test>')
   process.exit(1)

@@ -1,6 +1,7 @@
 #include "DsdReader.h"
 
 #include "SacdIsoProbe.h"
+#include "../core/DsdRate.h"
 
 #include <algorithm>
 #include <array>
@@ -73,14 +74,6 @@ uint64_t tell(std::ifstream& file) {
 void skipTo(std::ifstream& file, uint64_t position) {
   file.clear();
   file.seekg(static_cast<std::streamoff>(position), std::ios::beg);
-}
-
-int dsdRateFromSampleRate(int sampleRate) {
-  if (sampleRate >= 22000000) return 512;
-  if (sampleRate >= 10000000) return 256;
-  if (sampleRate >= 5000000) return 128;
-  if (sampleRate >= 2500000) return 64;
-  return 0;
 }
 
 }  // namespace

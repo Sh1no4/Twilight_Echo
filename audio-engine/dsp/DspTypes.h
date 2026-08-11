@@ -308,6 +308,25 @@ struct DspStatus {
   uint64_t clipCount = 0;
 };
 
+// Realtime-visible convolver state, shared between the control-side ConvolverProcessor and
+// the render clones published into AudioPipeline::renderDspGraphs_.
+//
+// The render thread processes a *different* ConvolverProcessor instance than the one
+// DspChain::convolverInfo() reads (AudioPipeline builds render graphs from scratch rather
+// than copying), so a realtime bypass used to be invisible to the UI and had no way back:
+// one scheduler hiccup muted convolution for the rest of that graph generation. Routing the
+// realtime signals through shared atomics makes the bypass observable and re-armable.
+struct ConvolverRealtimeState {
+  // Set by the render thread when the process budget is missed repeatedly.
+  std::atomic<bool> bypassed{false};
+  std::atomic<uint64_t> overrunCount{0};
+  std::atomic<uint64_t> bypassCount{0};
+  // steady_clock ticks; 0 means "never bypassed".
+  std::atomic<int64_t> lastBypassTicks{0};
+  std::atomic<double> lastProcessMs{0.0};
+  std::atomic<double> maxProcessMs{0.0};
+};
+
 struct ConvolverInfo {
   bool loaded = false;
   bool active = false;
@@ -324,6 +343,7 @@ struct ConvolverInfo {
   uint64_t memoryBytes = 0;
   bool loading = false;
   uint64_t overrunCount = 0;
+  uint64_t bypassCount = 0;
   double lastProcessMs = 0.0;
   double maxProcessMs = 0.0;
   std::string channelMappingMode;

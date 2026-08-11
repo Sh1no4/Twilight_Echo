@@ -1,7 +1,9 @@
 #include "FFmpegDecoder.h"
 
 #include "FFmpegDecoderUtils.h"
+#include "FFmpegDsdRate.h"
 #include "SacdIsoProbe.h"
+#include "../core/DsdRate.h"
 #include "../dsp/DspTypes.h"
 
 #include <algorithm>
@@ -201,18 +203,6 @@ std::string buildHttpOpenHeaders(const std::string& source) {
   return headers;
 }
 
-int inferDsdRate(int sampleRate, bool dopCarrier = false) {
-  if (dopCarrier) {
-    if (sampleRate >= 650000) return 256;
-    if (sampleRate >= 320000) return 128;
-    if (sampleRate >= 160000) return 64;
-  }
-  if (sampleRate >= 10000000) return 256;
-  if (sampleRate >= 5000000) return 128;
-  if (sampleRate >= 2500000) return 64;
-  return 0;
-}
-
 AVSampleFormat swrSampleFormatFor(AudioSampleFormat format) {
   switch (format) {
     case AudioSampleFormat::Int16Interleaved:
@@ -252,6 +242,7 @@ struct FFmpegDecoder::Impl {
   SwrContext* swr = nullptr;
   int audioStreamIndex = -1;
   bool inputEof = false;
+  bool resamplerFlushed = false;
   bool icyEnabled = false;
   std::vector<uint8_t> pending;
   std::vector<uint8_t> convertedScratch;
@@ -329,6 +320,7 @@ struct FFmpegDecoder::Impl {
     }
     audioStreamIndex = -1;
     inputEof = false;
+    resamplerFlushed = false;
     icyEnabled = false;
     eof = false;
     resetPending();
@@ -340,20 +332,36 @@ struct FFmpegDecoder::Impl {
     }
   }
 
+  // Drains whatever the resampler still holds once the decoder has run dry. swr keeps up
+  // to a filter-length of history buffered, so without this the tail of every resampled
+  // track is silently dropped -- and an input shorter than the filter (Ultra uses
+  // filter_size 64) decodes to nothing at all.
+  bool flushResampler(std::string* error) {
+    if (!swr || !codecContext) return true;
+    const int pendingOut = swr_get_out_samples(swr, 0);
+    if (pendingOut <= 0) return true;
+    return convertSamples(nullptr, 0, pendingOut, error);
+  }
+
   bool convertFrame(std::string* error) {
     if (!swr) {
       if (error) *error = "解码重采样器尚未初始化";
       return false;
     }
 
-    const int channels = std::max(1, outputFormat.channelCount);
     const int outSamples = static_cast<int>(av_rescale_rnd(
         swr_get_delay(swr, codecContext->sample_rate) + frame->nb_samples,
         outputFormat.sampleRate,
         codecContext->sample_rate,
         AV_ROUND_UP));
     if (outSamples <= 0) return true;
+    return convertSamples(
+        const_cast<const uint8_t**>(frame->extended_data), frame->nb_samples, outSamples, error);
+  }
 
+  // inputData == nullptr / inputSamples == 0 flushes the resampler instead of feeding it.
+  bool convertSamples(const uint8_t** inputData, int inputSamples, int outSamples, std::string* error) {
+    const int channels = std::max(1, outputFormat.channelCount);
     const AVSampleFormat swrOutputFormat = swrSampleFormatFor(outputFormat.sampleFormat);
     const size_t swrBytesPerSample = static_cast<size_t>(std::max(1, av_get_bytes_per_sample(swrOutputFormat)));
     const size_t outputSamples = static_cast<size_t>(outSamples) * static_cast<size_t>(channels);
@@ -366,12 +374,7 @@ struct FFmpegDecoder::Impl {
       convertedScratch.resize(outputSamples * swrBytesPerSample);
     }
     uint8_t* outData[] = {directPendingWrite ? directOutput : convertedScratch.data()};
-    const int actualSamples = swr_convert(
-        swr,
-        outData,
-        outSamples,
-        const_cast<const uint8_t**>(frame->extended_data),
-        frame->nb_samples);
+    const int actualSamples = swr_convert(swr, outData, outSamples, inputData, inputSamples);
     if (actualSamples < 0) {
       if (directPendingWrite) pending.resize(pendingStart);
       if (error) *error = "解码重采样失败，错误码：" + std::to_string(actualSamples);
@@ -391,6 +394,14 @@ struct FFmpegDecoder::Impl {
     return true;
   }
 
+  // Runs the resampler drain exactly once per stream, so the EOF exits below cannot loop
+  // on a flush that keeps reporting leftovers.
+  bool drainResamplerOnce(std::string* error) {
+    if (resamplerFlushed) return true;
+    resamplerFlushed = true;
+    return flushResampler(error);
+  }
+
   bool decodeOneFrame(std::string* error) {
     resetPending();
 
@@ -406,6 +417,8 @@ struct FFmpegDecoder::Impl {
         return true;
       }
       if (ret == AVERROR_EOF) {
+        if (!drainResamplerOnce(error)) return false;
+        if (!pending.empty()) return true;
         eof = true;
         return false;
       }
@@ -418,6 +431,8 @@ struct FFmpegDecoder::Impl {
       if (inputEof) {
         ret = avcodec_send_packet(codecContext, nullptr);
         if (ret == AVERROR_EOF) {
+          if (!drainResamplerOnce(error)) return false;
+          if (!pending.empty()) return true;
           eof = true;
           return false;
         }
@@ -590,7 +605,10 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
           : "";
   const bool sourceDsd = codecLooksDsd(params->codec_id, codecName, containerName, extensionOf(source));
   const bool dopCarrier = sourceDsd && (textMentions(codecName, "dop") || textMentions(containerName, "dop"));
-  const int sourceSampleRate = params->sample_rate > 0 ? params->sample_rate : impl_->codecContext->sample_rate;
+  const int reportedSampleRate = params->sample_rate > 0 ? params->sample_rate : impl_->codecContext->sample_rate;
+  // Raw-DSD demuxers report the post-decimation PCM rate; the engine wants the DSD bit
+  // rate here. See FFmpegDsdRate.h.
+  const int sourceSampleRate = ffmpeg::dsdSampleRateFromCodecRate(params->codec_id, reportedSampleRate);
 
   impl_->streamInfo.source = source;
   impl_->streamInfo.codec = codecName;
@@ -748,6 +766,8 @@ bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* erro
     impl_->outputFormat.bitDepth = effectivePcmBitDepth(impl_->outputFormat);
   }
   impl_->streamInfo.decodedFormat = impl_->outputFormat;
+  // A brand new swr context has nothing buffered yet, so the drain has to be re-armed.
+  impl_->resamplerFlushed = false;
   impl_->resetPending();
   return true;
 #else
@@ -840,6 +860,7 @@ bool FFmpegDecoder::seek(double seconds, std::string* error) {
   }
   avcodec_flush_buffers(impl_->codecContext);
   impl_->inputEof = false;
+  impl_->resamplerFlushed = false;
   impl_->eof = false;
   impl_->resetPending();
   return true;

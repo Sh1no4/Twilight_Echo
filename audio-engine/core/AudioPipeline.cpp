@@ -1204,6 +1204,10 @@ bool sameQueueSegment(const QueueItem& left, const QueueItem& right) {
 struct AudioPipeline::DecodeStreamReaper {
   DecodeStreamReaper() : worker([this] { run(); }) {}
 
+  // Only safe while every thread in the process is still alive. decodeStreamReaper()
+  // intentionally leaks its instance so this never runs during DLL unload, where
+  // joining an already-killed worker deadlocks in pthread_cond_destroy. Do not turn
+  // that singleton back into a plain static.
   ~DecodeStreamReaper() {
     {
       std::lock_guard lock(mutex);
@@ -1268,6 +1272,11 @@ AudioPipeline::AudioPipeline()
   // succeeds. Keeping this fixed-capacity retirement window reserved makes
   // the ownership hand-off deterministic.
   renderDspGraphs_.reserve(kMaxRenderDspGraphGenerations);
+  // activeDspChainLocked() can return either chain, so both have to observe the same
+  // realtime convolver telemetry.
+  if (dspChain_ && preloadDspChain_) {
+    preloadDspChain_->setConvolverRealtimeState(dspChain_->convolverRealtimeState());
+  }
 }
 
 void AudioPipeline::LatestControlCommandSlot::publish(const ControlCommand& command) noexcept {
@@ -1374,8 +1383,15 @@ std::shared_ptr<AudioPipeline::DecodeStream> AudioPipeline::makeDecodeStream() {
 }
 
 AudioPipeline::DecodeStreamReaper& AudioPipeline::decodeStreamReaper() {
-  static DecodeStreamReaper reaper;
-  return reaper;
+  // Deliberately never destroyed. On Windows the loader kills every thread except
+  // the one calling ExitProcess before it runs DLL_PROCESS_DETACH, so a static
+  // destructor here would try to reap a thread that is already gone: worker.join()
+  // returns immediately, but the worker died inside cv.wait() without releasing its
+  // waiter slot, and pthread_cond_destroy then blocks on that semaphore forever.
+  // Reaping decode streams at process exit buys nothing -- the OS reclaims the file
+  // handles and decoder contexts either way -- so leaking the reaper is the fix.
+  static DecodeStreamReaper* const reaper = new DecodeStreamReaper();
+  return *reaper;
 }
 
 bool AudioPipeline::retireDecodeStreamLocked(std::shared_ptr<DecodeStream> stream) {
@@ -3755,6 +3771,10 @@ std::unique_ptr<DspChain> AudioPipeline::makeDspGraphCandidateLocked(
     const DspTrackContext& context,
     std::string* error) {
   auto graph = std::make_unique<DspChain>();
+  // Render graphs are built from the config rather than copied, so the convolver they get
+  // is a different object from the one convolverInfo() reads. Hand it the control chain's
+  // realtime telemetry, otherwise a bypass raised on the audio thread is invisible.
+  if (dspChain_) graph->setConvolverRealtimeState(dspChain_->convolverRealtimeState());
   graph->configure(config);
   if (decodeFormat_.sampleRate > 0 && decodeFormat_.channelCount > 0) {
     graph->prepare(decodeFormat_);

@@ -33,6 +33,13 @@ class DspChain {
   bool loadImpulseResponse(const std::string& path, std::string* error);
   void unloadImpulseResponse();
   ConvolverInfo convolverInfo() const;
+
+  // Shares the convolver's realtime telemetry between this chain and the render clone
+  // AudioPipeline builds for the same configuration. Without it, a bypass raised on the
+  // audio thread never reaches convolverInfo() -- the two chains hold distinct processors.
+  void setConvolverRealtimeState(std::shared_ptr<ConvolverRealtimeState> state);
+  std::shared_ptr<ConvolverRealtimeState> convolverRealtimeState() const;
+
   void setEqBands(const std::vector<DspEqBand>& bands, EqMode mode, double preampDb, bool enabled);
   bool setEqBandsFromJson(const std::string& json, std::string* error);
   bool setEqPresetFromJson(const std::string& json, std::string* error);

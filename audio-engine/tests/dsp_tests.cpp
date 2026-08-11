@@ -399,6 +399,53 @@ void testConvolverBypassesAfterRepeatedBudgetMisses() {
   require(body.find("kConvolverRealtimeBypassOverrunThreshold") != std::string::npos);
   require(body.find("bypassRealtime(") != std::string::npos);
   require(bypassBody.find("channels_.clear()") == std::string::npos);
+
+  // bypassRealtime() runs on the audio thread. Assigning to info_.lastError there allocates
+  // (the reason string is well past the SSO limit), so the reason has to come from info().
+  require(bypassBody.find("info_.lastError =") == std::string::npos);
+
+  // The bypass must be recoverable: process() re-arms once the backoff elapses instead of
+  // muting convolution for the rest of the graph generation.
+  require(body.find("shouldRearmAfterBypass()") != std::string::npos);
+  const std::string rearmBody = extractFunctionBody(source, "bool ConvolverProcessor::shouldRearmAfterBypass(");
+  require(rearmBody.find("kConvolverRearmBaseCooldown") != std::string::npos);
+  require(rearmBody.find("kConvolverMaxBypassGenerations") != std::string::npos);
+  // Re-arm happens on the audio thread, so it may only touch allocation-free resets.
+  require(rearmBody.find("channels_.clear()") == std::string::npos);
+  require(rearmBody.find(".assign(") == std::string::npos);
+  require(rearmBody.find("prepareRuntimeIr") == std::string::npos);
+}
+
+// The render thread runs a *clone* of the convolver, not the instance convolverInfo() reads,
+// so the realtime bypass only reaches the UI through the shared state. Verify the handshake
+// directly rather than trusting a timing-dependent overrun.
+void testConvolverRealtimeStateIsSharedWithRenderClone() {
+  ConvolverProcessor control;
+  ConvolverProcessor renderClone;
+
+  auto shared = control.realtimeState();
+  require(shared != nullptr);
+  renderClone.setRealtimeState(shared);
+  require(renderClone.realtimeState() == shared);
+
+  require(!control.info().bypassed);
+
+  // Stand in for what bypassRealtime() publishes from the audio thread.
+  shared->bypassed.store(true, std::memory_order_release);
+  shared->bypassCount.fetch_add(1, std::memory_order_relaxed);
+  shared->overrunCount.store(7, std::memory_order_relaxed);
+  shared->maxProcessMs.store(12.5, std::memory_order_relaxed);
+
+  const ConvolverInfo info = control.info();
+  require(info.bypassed);
+  require(!info.active);
+  require(info.overrunCount == 7);
+  require(info.bypassCount == 1);
+  require(info.maxProcessMs >= 12.5);
+  require(!info.lastError.empty());
+
+  shared->bypassed.store(false, std::memory_order_release);
+  require(!control.info().bypassed);
 }
 
 void writeImpulseWav(const std::filesystem::path& path, int sampleRate, int channels) {
@@ -532,6 +579,7 @@ int main() {
   testDspConfigJsonParserReadsOnlyCurrentObjectFields();
   testConvolverWaveExtensibleParsingUsesSubFormatGuid();
   testConvolverBypassesAfterRepeatedBudgetMisses();
+  testConvolverRealtimeStateIsSharedWithRenderClone();
   {
     CountingProcessor inactive(false);
     CountingProcessor active(true);

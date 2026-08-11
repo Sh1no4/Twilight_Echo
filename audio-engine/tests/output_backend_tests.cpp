@@ -11,8 +11,10 @@
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <chrono>
 #include <memory>
 #include <string>
+#include <thread>
 
 using namespace twilight::audio;
 
@@ -25,6 +27,19 @@ AudioFormat sourceFormat(int channels = 2) {
   format.bitDepth = 32;
   format.sampleFormat = AudioSampleFormat::Float32Interleaved;
   return format;
+}
+
+// Host events are handled off the driver callback thread (see
+// AsioBackend::queueRecoveryFromHostCallback), so triggerEvent() returns before the
+// diagnostics it produces are visible. Poll instead of reading straight after the trigger.
+template <typename Predicate>
+bool waitUntil(Predicate predicate, std::chrono::milliseconds timeout = std::chrono::milliseconds(8000)) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (predicate()) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return predicate();
 }
 
 std::unique_ptr<MockAsioHost> makeHost(int channels = 8) {
@@ -474,6 +489,7 @@ void testDiagnostics() {
   assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
   rawHost->failOpenCount = 1;
   rawHost->triggerEvent(AsioHostEvent::DriverRestart, "restart");
+  assert(waitUntil([&] { return backend.outputInfo().deviceRecovered; }));
   const auto info = backend.outputInfo();
   assert(info.diagnostics.driverRestartCount == 1);
   assert(info.diagnostics.sessionRecoveryCount == 1);
@@ -490,6 +506,9 @@ void testDeviceLostAndBufferFailureDiagnostics() {
     assert(backend.open("asio:phase5b", sourceFormat(), &error));
     assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
     rawHost->triggerEvent(AsioHostEvent::DeviceLost, "device lost");
+    // deviceRecovered flips in the same critical section that bumps the recovery
+    // counters, so it is the only signal that means "recovery finished".
+    assert(waitUntil([&] { return backend.outputInfo().deviceRecovered; }));
     const auto info = backend.outputInfo();
     assert(info.diagnostics.deviceLostCount == 1);
     assert(info.diagnostics.sessionRecoveryCount == 1);
@@ -503,6 +522,7 @@ void testDeviceLostAndBufferFailureDiagnostics() {
     assert(backend.open("asio:phase5b", sourceFormat(), &error));
     assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
     rawHost->triggerEvent(AsioHostEvent::BufferFailure, "buffer failed");
+    assert(waitUntil([&] { return backend.outputInfo().deviceRecovered; }));
     const auto info = backend.outputInfo();
     assert(info.diagnostics.sessionUnderrunCount == 1);
     assert(info.diagnostics.lifetimeUnderrunCount == 1);

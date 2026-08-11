@@ -115,17 +115,23 @@ int main() {
     assert(p075 < p1 * 1.25);
   }
 
-  // 4) Reset clears state without crash.
+  // 4) Reset clears state, and the resampler still produces output afterwards.
   {
+    // A non-unity rate cannot emit anything until a full grain is available: the 32 ms
+    // window is 1536 frames at 48 kHz, and processImpl needs windowFrames_ + 2 before it
+    // will build one. The old 1000-frame budget was below that floor, so this only ever
+    // measured "returns 0 on starvation".
+    constexpr size_t kSourceFrames = 8192;
     resampler.reset();
     resampler.setRate(2.0);
-    std::pair<double, size_t> state{0.0, 1000};
+    std::pair<double, size_t> state{0.0, kSourceFrames};
     std::vector<float> out(256 * 2);
-    (void)resampler.processFn(out.data(), 256, sinePull, &state);
+    const size_t beforeReset = resampler.processFn(out.data(), 256, sinePull, &state);
+    assert(beforeReset == 256);
     resampler.reset();
-    state = {0.0, 1000};
+    state = {0.0, kSourceFrames};
     const size_t got = resampler.processFn(out.data(), 256, sinePull, &state);
-    assert(got > 0);
+    assert(got == 256);
   }
 
   std::puts("wsola_tests: ok");

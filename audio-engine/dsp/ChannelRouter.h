@@ -29,6 +29,11 @@ struct UpmixConfig {
 /// 支持 LFE 低通滤波和环绕延迟线，实现真正的 5.1/7.1 上混。
 class ChannelRouter {
  public:
+  /// 计算默认采样率/截止频率下的滤波器系数，使对象一构造即可用。
+  /// 缺了这一步，只调用 setSampleRate(48000)（正好等于默认值）的调用方会拿到
+  /// lfeAlpha_ = 0 的惰性低通，LFE 恒为静音。
+  ChannelRouter();
+
   /// 配置上混参数（可在播放中实时调整）
   void setUpmixConfig(const UpmixConfig& config);
   UpmixConfig upmixConfig() const { return config_; }

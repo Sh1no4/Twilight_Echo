@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "../core/DsdRate.h"
+#include "../decoder/FFmpegDsdRate.h"
 #include "../decoder/SacdIsoDemuxer.h"
 #include "../decoder/SacdIsoProbe.h"
 
@@ -118,18 +120,6 @@ bool containerLooksDsd(const std::string& container, const std::string& extensio
 
 bool looksDop(const std::string& codec, const std::string& container, const std::string& extension) {
   return extension == "dop" || textMentions(codec, "dop") || textMentions(container, "dop");
-}
-
-int inferDsdRate(int sampleRate, bool dopCarrier = false) {
-  if (dopCarrier) {
-    if (sampleRate >= 650000) return 256;
-    if (sampleRate >= 320000) return 128;
-    if (sampleRate >= 160000) return 64;
-  }
-  if (sampleRate >= 10000000) return 256;
-  if (sampleRate >= 5000000) return 128;
-  if (sampleRate >= 2500000) return 64;
-  return 0;
 }
 
 bool sourceLooksSacdIso(const std::string& source) {
@@ -340,7 +330,10 @@ std::string readMetadataJson(const std::string& source) {
     if (stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO && metadata.sampleRate == 0) {
       const AVCodecDescriptor* descriptor = avcodec_descriptor_get(stream->codecpar->codec_id);
       metadata.codec = descriptor && descriptor->name ? descriptor->name : "";
-      metadata.sampleRate = stream->codecpar->sample_rate;
+      // Raw-DSD demuxers report the post-decimation PCM rate; publish the DSD bit rate
+      // so it matches every other DSD source. See FFmpegDsdRate.h.
+      metadata.sampleRate =
+          ffmpeg::dsdSampleRateFromCodecRate(stream->codecpar->codec_id, stream->codecpar->sample_rate);
       metadata.channelCount = stream->codecpar->ch_layout.nb_channels;
       char layout[128] = {};
       if (av_channel_layout_describe(&stream->codecpar->ch_layout, layout, sizeof(layout)) >= 0) {
@@ -352,7 +345,10 @@ std::string readMetadataJson(const std::string& source) {
       if (stream->codecpar->bit_rate > 0) metadata.bitrate = stream->codecpar->bit_rate;
       const bool dopCarrier = looksDop(metadata.codec, metadata.container, sourceExtension);
       metadata.isDsd = codecLooksDsd(metadata.codec) || containerLooksDsd(metadata.container, sourceExtension);
-      if (metadata.isDsd && metadata.bitDepth <= 0) metadata.bitDepth = 1;
+      // DSD is 1 bit per sample by definition. FFmpeg reports bits_per_coded_sample = 8
+      // for raw DSD, which describes the byte packing, not the audio bit depth, so the
+      // old `<= 0` guard never fired and DSD files were published as 8-bit.
+      if (metadata.isDsd) metadata.bitDepth = 1;
       metadata.dsdRate = metadata.isDsd ? inferDsdRate(metadata.sampleRate, dopCarrier) : 0;
       metadata.dsdMode = metadata.isDsd ? dsdModeToString(DsdMode::Unsupported) : dsdModeToString(DsdMode::Pcm);
     }

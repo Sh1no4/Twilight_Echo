@@ -7,6 +7,15 @@ const {
 } = require('node:fs')
 const { delimiter, dirname, join, resolve } = require('node:path')
 const { spawnSync: childProcessSpawnSync } = require('node:child_process')
+const { cpus: osCpus, totalmem: osTotalmem } = require('node:os')
+
+function osTotalMemory() {
+  return osTotalmem()
+}
+
+function osCpuCount() {
+  return osCpus().length
+}
 
 const PERSISTED_MINGW_VARIABLES = [
   'VCPKG_ROOT',
@@ -35,6 +44,7 @@ const MINGW_EXPECTED_CTESTS = Object.freeze([
   'twilight_asio_abi_checks',
   'twilight_asio_abi_manifest',
   'twilight_asio_abi_cross_dll',
+  'twilight_asio_control_thread_unit',
   'twilight_output_backend_unit',
   'twilight_runtime_queue_reroute_unit',
   'twilight_audio_performance_gate',
@@ -459,11 +469,35 @@ function validateMingwCTestRegistration({
   return { ok: true, status: 0, message: '', output, missing: [] }
 }
 
+// Ninja defaults to (cores + 2) parallel jobs. A -O3 cc1plus process on this
+// codebase's heavier translation units peaks around 1 GiB, so a high-core /
+// low-memory host exhausts RAM and cc1plus dies with "out of memory allocating
+// N bytes" -- an OOM that reads like a toolchain fault. Cap concurrency by
+// available memory instead of core count. TAE_MINGW_BUILD_JOBS overrides.
+const MINGW_BYTES_PER_COMPILE_JOB = 1024 * 1024 * 1024
+
+function resolveMingwBuildJobs({
+  env = process.env,
+  totalMemoryBytes = osTotalMemory(),
+  cpuCount = osCpuCount()
+} = {}) {
+  const override = Number.parseInt(environmentValue(env, 'TAE_MINGW_BUILD_JOBS') ?? '', 10)
+  if (Number.isFinite(override) && override > 0) return override
+
+  const cores = Number.isFinite(cpuCount) && cpuCount > 0 ? cpuCount : 1
+  if (!Number.isFinite(totalMemoryBytes) || totalMemoryBytes <= 0) return cores
+
+  // Reserve one job's worth of headroom for the OS and the linker.
+  const memoryBudget = Math.floor(totalMemoryBytes / MINGW_BYTES_PER_COMPILE_JOB) - 1
+  return Math.max(1, Math.min(cores, memoryBudget))
+}
+
 module.exports = {
   MINGW_EXPECTED_CTESTS,
   findStaleCTestRegistrations,
   prepareMingwCmakeEnvironment,
   prepareMingwBuildLayout,
+  resolveMingwBuildJobs,
   resolveMingwEnvironment,
   resolveMingwBuildLayout,
   validateMingwCTestRegistration,

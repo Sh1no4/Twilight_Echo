@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <functional>
 #include <future>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <queue>
@@ -32,7 +33,8 @@ class AsioControlThread final {
   auto call(Function&& function, std::string* error)
       -> std::optional<std::invoke_result_t<std::decay_t<Function>>> {
     using Result = std::invoke_result_t<std::decay_t<Function>>;
-    if (std::this_thread::get_id() == threadId_) return std::optional<Result>(std::forward<Function>(function)());
+    if (std::this_thread::get_id() == workerThreadId())
+      return std::optional<Result>(std::forward<Function>(function)());
     if (!healthy()) {
       if (error) *error = "ASIO control thread is unavailable";
       return std::nullopt;
@@ -51,7 +53,7 @@ class AsioControlThread final {
       return std::nullopt;
     }
     if (future.wait_for(std::chrono::seconds(10)) != std::future_status::ready) {
-      unhealthy_ = true;
+      markUnhealthy();
       if (error) *error = "ASIO control thread timed out";
       return std::nullopt;
     }
@@ -64,21 +66,42 @@ class AsioControlThread final {
   }
 
  private:
-  bool submit(std::function<void()> command);
-  void worker();
+  // Everything the worker touches outlives this object. stop() has to be able to
+  // walk away from a driver call that never returns, and the thread it abandons
+  // keeps using the mutex, the queue and the window until it finally unwinds.
+  // Co-owning that state through a shared_ptr turns what would be a
+  // use-after-free into a bounded leak.
+  struct State {
+    std::mutex mutex;
+    std::condition_variable condition;
+    std::queue<std::function<void()>> commands;
+    std::function<void()> maintenance;
+    std::thread::id threadId;
+    HWND window = nullptr;
+    bool ready = false;
+    bool running = false;
+    bool stopping = false;
+    bool exited = false;
+    bool initializationSucceeded = false;
+    std::atomic<bool> unhealthy = false;
+  };
 
-  mutable std::mutex mutex_;
-  std::condition_variable condition_;
-  std::queue<std::function<void()>> commands_;
-  std::function<void()> maintenance_;
+  bool submit(std::function<void()> command);
+  void markUnhealthy();
+  std::thread::id workerThreadId() const;
+  std::shared_ptr<State> sharedState() const;
+  static void worker(std::shared_ptr<State> state);
+
+  // start() swaps state_ when it abandons a wedged worker, and call() reaches
+  // healthy()/workerThreadId() from arbitrary threads, so the pointer itself needs
+  // a guard. stateMutex_ only ever covers reading or replacing the pointer -- never
+  // a wait -- so a stuck worker calling back in cannot deadlock on it.
+  // lifecycleMutex_ serializes start() against stop(), which are the only places
+  // thread_ is touched. Lock order is lifecycleMutex_ -> stateMutex_ -> State::mutex.
+  mutable std::mutex stateMutex_;
+  std::mutex lifecycleMutex_;
+  std::shared_ptr<State> state_ = std::make_shared<State>();
   std::thread thread_;
-  std::thread::id threadId_;
-  HWND window_ = nullptr;
-  bool ready_ = false;
-  bool running_ = false;
-  bool stopping_ = false;
-  bool initializationSucceeded_ = false;
-  std::atomic<bool> unhealthy_ = false;
 };
 
 }  // namespace twilight::audio::asio_windows
