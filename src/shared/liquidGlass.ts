@@ -116,23 +116,25 @@ export const LIQUID_GLASS_BOUNDS: Readonly<Record<keyof LiquidGlassTheme, Bound>
 }
 
 export const DEFAULT_LIQUID_GLASS_LIGHT: LiquidGlassTheme = {
-  displacementScale: 90,
-  blurAmount: 0,
-  saturation: 100,
-  aberrationIntensity: 1.5,
-  elasticity: 0,
-  specularOpacity: 41,
-  tintOpacity: 10
+  // Blur and refraction remain interaction-only in CSS, so these values improve
+  // hover fidelity without making a full scrolling card grid expensive at rest.
+  displacementScale: 58,
+  blurAmount: 14,
+  saturation: 132,
+  aberrationIntensity: 1.1,
+  elasticity: 8,
+  specularOpacity: 56,
+  tintOpacity: 6
 }
 
 export const DEFAULT_LIQUID_GLASS_DARK: LiquidGlassTheme = {
-  displacementScale: 90,
-  blurAmount: 0,
-  saturation: 100,
-  aberrationIntensity: 2,
-  elasticity: 0,
-  specularOpacity: 35,
-  tintOpacity: 16
+  displacementScale: 62,
+  blurAmount: 18,
+  saturation: 136,
+  aberrationIntensity: 1.35,
+  elasticity: 7,
+  specularOpacity: 48,
+  tintOpacity: 17
 }
 
 export const DEFAULT_LIQUID_GLASS: LiquidGlassSettings = {

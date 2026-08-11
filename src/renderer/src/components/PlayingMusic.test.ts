@@ -20,17 +20,12 @@ test('now playing keeps lyric source controls in the player bar sidebar', () => 
   assert.doesNotMatch(source, /class="lyric-translation-toggle"/)
 })
 
-test('now playing lyrics never reveal the global auto-hide scrollbar', () => {
+test('now playing lyrics use a clipped AMLL stage rather than exposing a scrollbar', () => {
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
   const lyricsScroll = source.match(/\.lyrics-scroll \{[\s\S]*?\n\}/)?.[0] ?? ''
-  const webkitScrollbar =
-    source.match(/\.lyrics-scroll::-webkit-scrollbar \{[\s\S]*?\n\}/)?.[0] ?? ''
-  const webkitThumb =
-    source.match(/\.lyrics-scroll::-webkit-scrollbar-thumb \{[\s\S]*?\n\}/)?.[0] ?? ''
 
-  assert.match(lyricsScroll, /scrollbar-width: none !important/)
-  assert.match(webkitScrollbar, /display: none !important/)
-  assert.match(webkitThumb, /background: transparent !important/)
+  assert.match(lyricsScroll, /overflow: hidden/)
+  assert.doesNotMatch(source, /lyrics-scroll::\-webkit-scrollbar|scrollbar-width: none/)
 })
 
 test('visualizer mode does not keep the heavy blurred backdrop mounted', () => {
@@ -39,55 +34,40 @@ test('visualizer mode does not keep the heavy blurred backdrop mounted', () => {
   assert.match(source, /<div v-if="viewMode !== 'visualizer'" class="backdrop"/)
 })
 
-test('active and translated lyrics preserve the configured font size without a glass surface', () => {
+test('lyrics use the official AMLL focus-stage renderer and typography', () => {
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
-  const mainStyle = readFileSync(new URL('../assets/main.css', import.meta.url), 'utf8')
-  const activeRow = source.match(/\.lyric-row\.active \{[\s\S]*?\n\}/)?.[0] ?? ''
-  const activeText = source.match(/\.lyric-row\.active \.lyric-text \{[\s\S]*?\n\}/)?.[0] ?? ''
-  const lyricText = source.match(/\.lyric-text \{[\s\S]*?\n\}/)?.[0] ?? ''
-  const translationText = source.match(/\.lyric-translation \{[\s\S]*?\n\}/)?.[0] ?? ''
-  const themeInvariant =
-    mainStyle.match(
-      /html body \.playing-music button\.lyric-row\.active:not\(\.lyric-row--custom-background\) \{[\s\S]*?\n\}/
-    )?.[0] ?? ''
+  const stage = readFileSync(new URL('./AmlLyricsStage.vue', import.meta.url), 'utf8')
 
-  assert.doesNotMatch(activeRow, /transform: scale/)
-  assert.match(activeRow, /background:\s*var\(--lyric-style-background, transparent\)/)
-  assert.match(activeRow, /border-color: var\(--te-playback-lyric-active-border, transparent\)/)
-  assert.match(activeRow, /box-shadow: var\(--te-playback-lyric-active-shadow, none\)/)
-  assert.doesNotMatch(activeRow, /linear-gradient/)
+  assert.match(source, /import AmlLyricsStage/)
+  assert.match(source, /<AmlLyricsStage/)
   assert.match(
-    lyricText,
-    /font-size:\s*clamp\(\s*12px,\s*var\(--lyric-style-font-size, var\(--te-lyric-font-size, 18px\)\),\s*48px\s*\)/
+    stage,
+    /import \{ LyricPlayer(?:, type LyricPlayerRef)? \} from '@applemusic-like-lyrics\/vue'/
   )
-  assert.doesNotMatch(activeText, /font-size:/)
-  assert.match(
-    translationText,
-    /font-size:\s*clamp\(\s*12px,\s*var\(--lyric-style-font-size, var\(--te-lyric-font-size, 18px\)\),\s*48px\s*\)/
-  )
-  assert.match(
-    activeText,
-    /font-weight: var\(--lyric-style-font-weight, var\(--te-lyric-font-weight, 600\)\)/
-  )
-  assert.match(activeText, /text-shadow:/)
-  assert.match(source, /:deep\(\.lyric-word\) \{[\s\S]*display: inline-block/)
-  // The sweep masks the word itself now. The old duplicated `::after` text layer
-  // is gone, so the fill cannot drift out of register with the glyphs it reveals.
-  assert.doesNotMatch(source, /:deep\(\.lyric-word\)::after/)
-  assert.doesNotMatch(source, /--lyric-word-highlight-opacity|--lyric-word-progress/)
-  assert.match(source, /--lyric-bright-mask-alpha/)
-  assert.match(source, /--lyric-dark-mask-alpha/)
-  assert.doesNotMatch(source, /transition: clip-path 250ms linear/)
-  assert.match(themeInvariant, /background: transparent !important/)
-  assert.match(themeInvariant, /background-image: none !important/)
-  assert.match(themeInvariant, /border-color: transparent !important/)
-  assert.match(themeInvariant, /box-shadow: none !important/)
-  assert.match(themeInvariant, /backdrop-filter: none !important/)
-  assert.match(themeInvariant, /-webkit-backdrop-filter: none !important/)
+  assert.match(stage, /import '@applemusic-like-lyrics\/core\/style\.css'/)
+  // Let the installed AMLL renderer retain ownership of its own movement,
+  // scale and alignment defaults. Local spring values easily drift from the
+  // library and were the source of the non-reference scrolling feel.
+  assert.doesNotMatch(stage, /line-pos-y-spring-params/)
+  assert.doesNotMatch(stage, /line-scale-spring-params/)
+  assert.doesNotMatch(stage, /AMLL_(?:VERTICAL|SCALE)_SPRING/)
+  assert.doesNotMatch(stage, /align-anchor=/)
+  assert.doesNotMatch(stage, /align-position=/)
+  assert.doesNotMatch(stage, /enable-spring=/)
+  assert.doesNotMatch(stage, /enable-blur=/)
+  assert.doesNotMatch(stage, /enable-scale=/)
+  assert.doesNotMatch(stage, /--amll-lp-line-width-aspect/)
+  assert.doesNotMatch(stage, /--amll-lp-line-padding-x/)
+  assert.match(stage, /--amll-lp-font-size/)
+  assert.match(stage, /font-weight: 780/)
+  assert.match(stage, /FmKaba_interludeDots/)
+  assert.doesNotMatch(source, /function advanceLyricScrollSpring/)
+  assert.doesNotMatch(source, /scrollTo\(\{ behavior: 'smooth' \}\)/)
 })
 
 test('now playing exposes independent lyric customization with live persisted preview', () => {
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+  const stage = readFileSync(new URL('./AmlLyricsStage.vue', import.meta.url), 'utf8')
   const customizer = readFileSync(
     new URL('./LyricsAppearanceCustomizer.vue', import.meta.url),
     'utf8'
@@ -99,93 +79,64 @@ test('now playing exposes independent lyric customization with live persisted pr
 
   assert.match(source, /import LyricsAppearanceCustomizer/)
   assert.match(source, /个性化歌词/)
-  assert.match(
-    source,
-    /:style="lyricStyleVars\(item\.index === highlightedLyricIndex \? 'active' : 'normal'\)"/
-  )
-  assert.match(source, /:style="lyricStyleVars\('translation'\)"/)
+  assert.match(source, /:style="lyricStageStyle"/)
+  assert.match(source, /\.\.\.lyricStyleVars\('active'\)/)
+  assert.match(stage, /--lyric-style-font-family/)
   assert.match(customizer, /普通歌词/)
   assert.match(customizer, /当前歌词/)
   assert.match(customizer, /翻译歌词/)
   assert.match(customizer, /实时预览/)
   assert.match(customizer, /恢复全部默认/)
   assert.match(customizer, /function scheduleSave\(delay = 180\)/)
-  assert.match(
-    customizer,
-    /if \(key === 'fontSize'\) \{[\s\S]*syncLegacyLyricsAppearance\(draft\.value, \{ fontSize: value as number \}\)/
-  )
-  assert.match(customizer, /updateSettings\(\{ lyricsAppearance:/)
-  assert.match(customizer, /@media \(max-width: 620px\)/)
   assert.match(appearance, /styles: Record<LyricsStyleTarget, LyricsTextStyle>/)
-  assert.match(appearance, /backgroundStyle: LyricsBackgroundStyle/)
-  assert.match(appearance, /highlightEffect: LyricsHighlightEffect/)
 })
 
-test('lyrics keep the full timeline mounted while the viewport follows the active row', () => {
+test('lyrics delegate virtual layout and scrolling to AMLL rather than native scrolling', () => {
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
-  const renderedLines = source.match(/const renderedLyricLines = computed\([\s\S]*?\n\)/)?.[0] ?? ''
+  const stage = readFileSync(new URL('./AmlLyricsStage.vue', import.meta.url), 'utf8')
+  const lyricsScroll = source.match(/\.lyrics-scroll \{[^}]*\}/)?.[0] ?? ''
 
+  assert.match(lyricsScroll, /overflow: hidden/)
+  assert.match(stage, /<LyricPlayer/)
+  assert.match(stage, /:lyric-lines="amllLines"/)
+  assert.match(stage, /:current-time="currentTimeMs"/)
+  assert.doesNotMatch(stage, /align-position=/)
+  assert.doesNotMatch(stage, /line-(?:pos-y|scale)-spring-params/)
+  assert.doesNotMatch(stage, /--amll-lp-line-width-aspect/)
+  assert.doesNotMatch(stage, /--amll-lp-line-padding-x/)
+  assert.match(stage, /requestAnimationFrameWithFallback/)
+  assert.doesNotMatch(source, /scroll\.scrollTo|scroll\.scrollTop|function followLyricIntoView/)
+  assert.doesNotMatch(source, /createLyricViewportController|--lyric-list-offset/)
+})
+
+test('clicking a timed lyric seeks directly through AMLL line events', () => {
+  const stage = readFileSync(new URL('./AmlLyricsStage.vue', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+
+  assert.match(stage, /function onLineClick\(event: LyricLineMouseEvent\)/)
   assert.match(
-    source,
-    /import \{ createLyricViewportController \} from '\.\.\/utils\/lyricViewportController'/
+    stage,
+    /emit\('seek', Math\.max\(0, line\.startTime \/ 1000 - props\.offsetSeconds\)\)/
   )
-  assert.match(renderedLines, /displayLyricLines\.value\.map/)
-  assert.doesNotMatch(source, /getLyricFocusLineIndices/)
-  assert.doesNotMatch(source, /lyricLeavingIndex|lyricEnteringIndex/)
-  assert.match(source, /class="lyric-row-content"/)
-  assert.match(source, /@wheel\.passive="onLyricsManualScroll"/)
-  assert.match(source, /@touchmove\.passive="onLyricsManualScroll"/)
-  assert.doesNotMatch(source, /@pointerdown="onLyricsManualScroll"/)
+  assert.match(source, /@seek="seek"/)
+  assert.doesNotMatch(stage, /scrollTo\(/)
 })
 
-test('clicking a timed lyric releases manual scroll lock before seeking', () => {
+test('now playing isolates high-frequency playhead updates inside the AMLL adapter', () => {
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
-  const jumpToLyric = source.match(
-    /function jumpToLyric\(time: number \| null\): void \{[\s\S]*?\n\}/
-  )?.[0]
-
-  assert.ok(jumpToLyric)
-  assert.match(jumpToLyric, /lyricViewport\.releaseManualBrowse\(\)/)
-  assert.match(jumpToLyric, /seek\(Math\.max\(0, time - currentLyricOffsetSeconds\.value\)\)/)
-  assert.match(source, /class="lyric-row"[\s\S]*@pointerdown\.stop[\s\S]*@click="jumpToLyric/)
-})
-
-test('now playing isolates high-frequency playhead updates from the full lyrics list', () => {
-  const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
-  const words = readFileSync(new URL('./PlayingLyricWords.vue', import.meta.url), 'utf8')
-  const timeChip = readFileSync(new URL('./PlayingMusicTimeChip.vue', import.meta.url), 'utf8')
+  const stage = readFileSync(new URL('./AmlLyricsStage.vue', import.meta.url), 'utf8')
 
   assert.match(source, /lyricsLoadState\.value\.status === 'loading'/)
-  assert.match(
-    source,
-    /watch\(\s*\[lyricLines, playbackClockSnapshot, currentLyricOffsetSeconds\],/
-  )
-  assert.doesNotMatch(source, /predictedLyricTime|scheduleLyricIndexBoundary|lyricIndexTimer/)
+  assert.match(source, /const lyricStageClock = \{/)
   assert.match(source, /snapshot: playbackClockSnapshot/)
-  assert.match(source, /<PlayingLyricWords[\s\S]*:clock="lyricWordClock"/)
-  assert.match(source, /lyrics-column--karaoke-disabled/)
-  assert.match(source, /<PlayingMusicTimeChip/)
-  assert.doesNotMatch(source, /formatTime\(currentTime\)/)
-  assert.doesNotMatch(source, /findActiveWordIndex/)
-  assert.doesNotMatch(words, /usePlayerStore/)
-  assert.match(words, /snapshot: Ref<LyricClockSnapshot>/)
-  assert.match(words, /isPlaying: Ref<boolean>/)
-  assert.match(words, /positionAt: \(at\?: number\) => number/)
-  assert.match(words, /karaokeEnabled: boolean/)
-  assert.doesNotMatch(words, /nextLineTime|reachNextLine|clockAnchorPosition|bindPlaybackClock/)
-  assert.match(words, /requestAnimationFrameWithFallback/)
-  // Karaoke fill and emphasis are precomputed keyframes handed to the compositor,
-  // not CSS variables rewritten every frame. Assert the property that matters:
-  // no per-frame main-thread work, and a seek is a single currentTime assignment.
-  assert.match(words, /\.animate\(/)
-  assert.doesNotMatch(words, /setWordProgress|--lyric-word-progress|dataset\.progressing/)
-  assert.match(words, /animation\.currentTime = target/)
-  assert.match(words, /buildKaraokeMaskPlan\(/)
-  assert.match(words, /buildEmphasisAnimation\(/)
-  assert.match(words, /data-word-text/)
-  assert.doesNotMatch(words, /findActiveWordIndex|activeWordIndex|lyric-word--active/)
+  assert.match(source, /positionAt: estimatePlaybackClockPosition/)
+  assert.match(source, /<AmlLyricsStage[\s\S]*:clock="lyricStageClock"/)
+  assert.match(stage, /function syncCurrentTime\(\)/)
+  assert.match(stage, /positionAt\(\)/)
+  assert.match(stage, /requestAnimationFrameWithFallback/)
+  assert.match(stage, /:word-fade-width=/)
+  assert.doesNotMatch(source, /PlayingLyricWords/)
   assert.doesNotMatch(source, /lyric-word--active|te-lyric-word-pulse/)
-  assert.match(timeChip, /const \{ currentTime, duration, formatTime \} = usePlayerStore\(\)/)
 })
 
 test('now playing and player bar share the same playback singleton', () => {
@@ -383,4 +334,38 @@ test('player volume control opens the volume drawer without toggling mute', () =
   assert.match(source, /:aria-expanded="volumeOpen"/)
   assert.doesNotMatch(source, /volume-control-chevron/)
   assert.doesNotMatch(source, /pi-angle-up/)
+})
+
+test('timed lyric rows remain click-to-seek controls through AMLL', () => {
+  const stage = readFileSync(new URL('./AmlLyricsStage.vue', import.meta.url), 'utf8')
+  assert.match(stage, /@line-click="onLineClick"/)
+  assert.match(stage, /LyricLineMouseEvent/)
+})
+
+test('lyric replacements are rebuilt by AMLL from immutable mapped line data', () => {
+  const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+  const stage = readFileSync(new URL('./AmlLyricsStage.vue', import.meta.url), 'utf8')
+  assert.match(source, /:lines="displayLyricLines"/)
+  assert.match(stage, /const amllLines = computed<AmlLyricLine\[\]>/)
+  assert.match(stage, /converts Twilight Echo's normalized LRC\/YRC model/)
+  assert.doesNotMatch(source, /function followLyricIntoView/)
+})
+
+test('playbar hover response applies globally while preserving the menu-position transition', () => {
+  const style = readFileSync(new URL('./player-bar/PlayerBar.css', import.meta.url), 'utf8')
+  const shell = style.match(/\.player-bar-shell \{[\s\S]*?\n\}/)?.[0] ?? ''
+
+  assert.match(shell, /opacity: 0\.15/)
+  assert.match(shell, /translate: 0 12px/)
+  assert.match(shell, /left 0\.32s var\(--te-ease-soft\)/)
+  assert.match(style, /\.player-bar-shell:hover,[\s\S]*?\.player-bar-shell:focus-within/)
+  assert.doesNotMatch(style, /data-te-now-playing-active/)
+})
+
+test('sung gaps do not add a local flash or interlude pulse over AMLL', () => {
+  const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+  const stage = readFileSync(new URL('./AmlLyricsStage.vue', import.meta.url), 'utf8')
+  assert.match(stage, /FmKaba_interludeDots[\s\S]*display: none !important/)
+  assert.match(stage, /:playing="clock\.isPlaying\.value"/)
+  assert.doesNotMatch(source, /completedLyricIndexInGap|interludeDots|te-lyric-focus/)
 })

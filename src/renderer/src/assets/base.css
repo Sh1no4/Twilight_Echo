@@ -727,6 +727,29 @@ html[data-theme='pureWhite'] body {
   background: #ffffff;
 }
 
+/* Pure white needs a quiet lighting field behind glass. Without tonal variation,
+   even a correctly translucent card can only sample flat white and therefore reads
+   as an opaque plastic panel. This belongs to the page backdrop, never the card. */
+html[data-theme='pureWhite'][data-te-surface-material='liquidGlass'] body {
+  background-color: #f5f7fb !important;
+  background-image:
+    radial-gradient(88% 74% at 8% -10%, rgba(116, 164, 245, 0.14) 0%, transparent 67%),
+    radial-gradient(72% 68% at 103% 92%, rgba(236, 164, 190, 0.09) 0%, transparent 70%),
+    linear-gradient(142deg, #fbfcff 0%, #f3f5fa 100%) !important;
+}
+
+/* Preserve every settings background choice: the configured image remains the top
+   layer, while the low-contrast light field only becomes visible through transparent
+   areas and through the liquid cards above it. */
+html[data-theme='pureWhite'][data-te-surface-material='liquidGlass'] body.te-settings-surface {
+  background-image:
+    var(--te-settings-bg-image, none),
+    radial-gradient(88% 74% at 8% -10%, rgba(116, 164, 245, 0.14) 0%, transparent 67%),
+    radial-gradient(72% 68% at 103% 92%, rgba(236, 164, 190, 0.09) 0%, transparent 70%),
+    linear-gradient(142deg, rgba(255, 255, 255, 0.72) 0%, rgba(241, 244, 250, 0.64) 100%),
+    linear-gradient(var(--te-settings-bg), var(--te-settings-bg)) !important;
+}
+
 html[data-theme='pureWhite'] body::before,
 html[data-theme='pureWhite'] .main-content::before,
 html[data-theme='pureWhite'] .main-content::after {
@@ -3081,18 +3104,40 @@ html[data-te-surface-material='liquidGlass']
     .output-diagnostic-panel,
     .background-accordion-panel
   ) {
+  /* Shared optical palette. The playbar uses these same roles, so cards feel
+     like material cut from the same sheet instead of separate opaque UI blocks. */
+  --te-lg-sheen-rgb: 255, 255, 255;
+  --te-lg-surface-rgb: 255, 255, 255;
+  --te-lg-shade-rgb: 15, 23, 42;
+  --te-lg-drop-rgb: 15, 23, 42;
+  /* Cards should feel like a thin optical sheet. Keep the visibly brighter,
+     more pronounced profile reserved for the compact playbar; broad content
+     surfaces become plastic as soon as their white wash and cast shadow stack. */
+  --te-lg-rim-strength: 0.44;
+  --te-lg-top-wash-alpha: 0.055;
+  --te-lg-bottom-density-alpha: 0.062;
+  --te-lg-shade-alpha: 0.062;
+  --te-lg-drop-near-alpha: 0.026;
+  --te-lg-drop-alpha: 0.072;
+  /* Respect the user's tint slider but keep large panes optically open. */
+  --te-lg-tint-scale: 0.72;
   position: relative;
   /* Contains the negative-z warp layer so it cannot slip behind an ancestor. */
   isolation: isolate;
   background: transparent !important;
-  /* Rim stays outside the filter: real glass edges read as a crisp highlight, and a
-     displaced rim would smear. */
+  /* The rim is crisp and the depth is diffused, rather than one dark, hard card
+     shadow. That is what keeps the surface reading as glass instead of plastic. */
   border-color: transparent !important;
   box-shadow:
-    inset 0 0 0 0.5px rgba(255, 255, 255, calc(var(--te-lg-specular, 0.55) * 0.9)),
-    inset 0 1px 1px rgba(255, 255, 255, calc(var(--te-lg-specular, 0.55) * 0.5)),
-    inset 0 -1px 1px rgba(0, 0, 0, 0.06),
-    0 10px 30px rgba(0, 0, 0, 0.16) !important;
+    /* Two sub-pixel inner edges give the surface its sharp glass boundary without
+       becoming the thick white outline associated with frosted plastic. */
+    inset 0 0 0 0.5px
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.54)),
+    inset 0 1px 0.5px
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.2)),
+    inset 0 -1px 1px rgba(var(--te-lg-shade-rgb), var(--te-lg-shade-alpha)),
+    0 2px 7px rgba(var(--te-lg-drop-rgb), var(--te-lg-drop-near-alpha)),
+    0 13px 32px rgba(var(--te-lg-drop-rgb), var(--te-lg-drop-alpha)) !important;
 }
 
 html[data-te-surface-material='liquidGlass']
@@ -3146,17 +3191,35 @@ html[data-te-surface-material='liquidGlass']
   border-radius: inherit;
   /* Elasticity lets the glass reach toward the cursor; 0 keeps it pinned. */
   transform: translate(var(--te-lg-elastic-x, 0px), var(--te-lg-elastic-y, 0px));
-  /* Tint plus a directional sheen. Both sit on the warped layer, so the highlight
-     refracts with the backdrop instead of floating flat above it. */
+  /* A real glass surface needs more than a translucent flat colour: the pointer
+     places a soft specular bloom, the sweep gives it direction, then top/bottom
+     density layers make the light feel enclosed by material. */
   background:
+    /* A small, directional highlight is enough to communicate curvature. The old
+       full-card bloom made large settings panes read as white molded plastic. */
+    radial-gradient(
+      112% 126% at var(--te-lg-light-x, 50%) var(--te-lg-light-y, 42%),
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.17)) 0%,
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.055))
+        21%,
+      transparent 55%
+    ),
     linear-gradient(
       var(--te-lg-angle, 135deg),
-      rgba(255, 255, 255, 0) 0%,
-      rgba(255, 255, 255, calc(var(--te-lg-specular, 0.55) * 0.22)) 38%,
-      rgba(255, 255, 255, calc(var(--te-lg-specular, 0.55) * 0.06)) 62%,
-      rgba(255, 255, 255, 0) 100%
+      rgba(var(--te-lg-sheen-rgb), 0) 0%,
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.1)) 35%,
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.022))
+        62%,
+      transparent 100%
     ),
-    rgba(255, 255, 255, var(--te-lg-tint, 0.12));
+    linear-gradient(
+      180deg,
+      rgba(var(--te-lg-sheen-rgb), var(--te-lg-top-wash-alpha)) 0%,
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-top-wash-alpha) * 0.25)) 30%,
+      transparent 55%,
+      rgba(var(--te-lg-shade-rgb), var(--te-lg-bottom-density-alpha)) 100%
+    ),
+    rgba(var(--te-lg-surface-rgb), calc(var(--te-lg-tint, 0.12) * var(--te-lg-tint-scale, 1)));
   /* Backdrop snapshots are as expensive as the SVG displacement. Idle cards use
      the tint and specular layer only; full blur/refraction is promoted on hover or
      keyboard focus, where the user can actually perceive the detail. */
@@ -3231,60 +3294,6 @@ html[data-te-surface-material='liquidGlass'][data-theme='dark']
     .streaming-placeholder,
     .empty-recommend,
     .detail-playlist-header,
-    .profile-panel,
-    .liked-panel,
-    .playlist-list-item,
-    .profile-card,
-    .recent-card,
-    .ranking-card,
-    .create-playlist-card,
-    .folder-card,
-    .empty-list-card,
-    .filter-card,
-    .sponsor-card,
-    .update-card,
-    .dsp-module-card,
-    .device-card,
-    .card,
-    .account-card,
-    .plugin-card,
-    .market-card,
-    .plugin-extension-card,
-    .bili-qr-card,
-    .chart-card,
-    .parameter-card,
-    .square-card,
-    .opra-panel,
-    .opra-result-item,
-    .device-panel,
-    .plugin-panel,
-    .output-diagnostic-panel,
-    .background-accordion-panel
-  )::after {
-  background:
-    linear-gradient(
-      var(--te-lg-angle, 135deg),
-      rgba(255, 255, 255, 0) 0%,
-      rgba(255, 255, 255, calc(var(--te-lg-specular, 0.35) * 0.26)) 38%,
-      rgba(255, 255, 255, calc(var(--te-lg-specular, 0.35) * 0.07)) 62%,
-      rgba(255, 255, 255, 0) 100%
-    ),
-    rgba(126, 134, 152, var(--te-lg-tint, 0.16));
-}
-
-html[data-te-surface-material='liquidGlass'][data-theme='dark']
-  :is(
-    .artist-card,
-    .album-card,
-    .playlist-card,
-    .glass-card,
-    .feature-card,
-    .playlist-grid-card,
-    .playlist-tile,
-    .favorites-card,
-    .streaming-placeholder,
-    .empty-recommend,
-    .detail-playlist-header,
     .track-table-wrapper,
     .profile-panel,
     .liked-panel,
@@ -3316,13 +3325,20 @@ html[data-te-surface-material='liquidGlass'][data-theme='dark']
     .output-diagnostic-panel,
     .background-accordion-panel
   ) {
-  box-shadow:
-    inset 0 0 0 0.5px rgba(255, 255, 255, calc(var(--te-lg-specular, 0.35) * 0.8)),
-    inset 0 1px 1px rgba(255, 255, 255, calc(var(--te-lg-specular, 0.35) * 0.45)),
-    inset 0 -1px 1px rgba(0, 0, 0, 0.22),
-    0 12px 34px rgba(0, 0, 0, 0.4) !important;
+  --te-lg-surface-rgb: 116, 126, 148;
+  --te-lg-shade-rgb: 0, 0, 0;
+  --te-lg-drop-rgb: 0, 0, 0;
+  /* A broad dark pane must remain an optical layer, not become a raised
+     graphite slab. The compact playbar can carry heavier depth; large cards use
+     only a restrained lower density and a short, diffuse separation shadow. */
+  --te-lg-rim-strength: 0.38;
+  --te-lg-top-wash-alpha: 0.04;
+  --te-lg-bottom-density-alpha: 0.13;
+  --te-lg-shade-alpha: 0.15;
+  --te-lg-drop-near-alpha: 0.07;
+  --te-lg-drop-alpha: 0.18;
+  --te-lg-tint-scale: 0.76;
 }
-
 /* feature-card and playlist-tile have dark-tone rules that set ::after to
    display: none; the warp layer has to opt back in. */
 html[data-te-surface-material='liquidGlass'][data-theme='dark']
@@ -3337,11 +3353,11 @@ html[data-te-surface-material='liquidGlass'][data-theme='dark']
 html[data-te-surface-material='liquidGlass'] .track-table-wrapper {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  background: rgba(255, 255, 255, var(--te-lg-tint, 0.12)) !important;
+  background: rgba(var(--te-lg-surface-rgb), calc(var(--te-lg-tint, 0.12) * 0.7)) !important;
 }
 
 html[data-te-surface-material='liquidGlass'][data-theme='dark'] .track-table-wrapper {
-  background: rgba(126, 134, 152, var(--te-lg-tint, 0.16)) !important;
+  background: rgba(var(--te-lg-surface-rgb), calc(var(--te-lg-tint, 0.16) * 0.72)) !important;
 }
 
 /* ===== Liquid glass degradation =====

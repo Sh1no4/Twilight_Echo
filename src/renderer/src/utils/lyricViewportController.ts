@@ -221,6 +221,7 @@ export function createLyricViewportController(options: LyricViewportControllerOp
     let settled = true
 
     for (const row of rows.values()) {
+      row.element.style.setProperty('--lyric-line-ready', '1')
       const top = row.posY.getCurrentPosition()
       const scale = row.scale.getCurrentPosition()
       if (!row.posY.arrived() || !row.scale.arrived()) settled = false
@@ -314,6 +315,11 @@ export function createLyricViewportController(options: LyricViewportControllerOp
       return
     }
 
+    // A replacement row starts at the absolute-position default (y=0). Hide it
+    // until the next committed layout has given it its own position so rapidly
+    // switching tracks or seeking cannot briefly pile every new line together.
+    element.style.setProperty('--lyric-line-ready', '0')
+
     rows.set(index, {
       element,
       posY: new LyricSpring(existing?.posY.getCurrentPosition() ?? 0, LYRIC_POS_Y_SPRING),
@@ -345,7 +351,10 @@ export function createLyricViewportController(options: LyricViewportControllerOp
 
   function recenter(mode: 'resize' | 'snap' = 'resize'): Promise<void> {
     const index = options.getActiveIndex?.() ?? -1
-    return index >= 0 ? follow(index, { mode }) : Promise.resolve()
+    // Plain/untimed lyrics intentionally have no active row. They still need a
+    // committed layout, otherwise newly registered absolute rows would remain at
+    // their default y=0 (and, during replacement, stay hidden forever).
+    return follow(index >= 0 ? index : 0, { mode })
   }
 
   /**

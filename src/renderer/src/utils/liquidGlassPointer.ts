@@ -70,6 +70,9 @@ export interface LiquidGlassPointerVariables {
   '--te-lg-angle': string
   '--te-lg-pointer-x': string
   '--te-lg-pointer-y': string
+  /** Element-relative coordinates for the specular bloom's focal point. */
+  '--te-lg-light-x': string
+  '--te-lg-light-y': string
   '--te-lg-elastic-x': string
   '--te-lg-elastic-y': string
 }
@@ -89,10 +92,14 @@ export function pointerCssVariables(
   elasticity = 0
 ): LiquidGlassPointerVariables {
   const factor = Math.max(0, Math.min(100, elasticity)) / 100
+  const lightX = ((clampOffset(offset.x) + MAX_OFFSET_PERCENT) / 2).toFixed(2)
+  const lightY = ((clampOffset(offset.y) + MAX_OFFSET_PERCENT) / 2).toFixed(2)
   return {
     '--te-lg-angle': `${resolveHighlightAngle(offset.x).toFixed(2)}deg`,
     '--te-lg-pointer-x': offset.x.toFixed(2),
     '--te-lg-pointer-y': offset.y.toFixed(2),
+    '--te-lg-light-x': `${lightX}%`,
+    '--te-lg-light-y': `${lightY}%`,
     '--te-lg-elastic-x': `${((offset.x / 100) * factor * MAX_ELASTIC_SHIFT_PX).toFixed(2)}px`,
     '--te-lg-elastic-y': `${((offset.y / 100) * factor * MAX_ELASTIC_SHIFT_PX).toFixed(2)}px`
   }

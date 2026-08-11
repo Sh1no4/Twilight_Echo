@@ -13,6 +13,10 @@ const defs = readFileSync(new URL('./LiquidGlassDefs.vue', import.meta.url), 'ut
 const app = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
 const themeStore = readFileSync(new URL('../stores/useThemeStore.ts', import.meta.url), 'utf8')
 const playerBarStyle = readFileSync(new URL('./player-bar/PlayerBar.css', import.meta.url), 'utf8')
+const settingsPageStyle = readFileSync(
+  new URL('./settings-page/SettingsPage.css', import.meta.url),
+  'utf8'
+)
 
 const MATERIAL_ATTRIBUTE = "html[data-te-surface-material='liquidGlass']"
 /** Scrolls horizontally, so an inset:0 warp layer would scroll out of view. */
@@ -57,6 +61,48 @@ test('the pointer tracker shares the stylesheet card list', () => {
   for (const className of LIQUID_GLASS_CARD_CLASSES) {
     assert.ok(LIQUID_GLASS_CARD_SELECTOR.includes(`.${className}`))
   }
+})
+
+test('flat light settings pages supply ambient variation behind liquid glass', () => {
+  // The settings route is a fixed, opaque page layer. Its backdrop must carry the
+  // light field itself; a body-only gradient would never be visible through cards.
+  const selector = "html[data-theme='pureWhite'][data-te-surface-material='liquidGlass'] .settings-preview-page"
+  const start = settingsPageStyle.indexOf(selector)
+  assert.notEqual(start, -1, 'light liquid-glass settings backdrop rule is missing')
+  const open = settingsPageStyle.indexOf('{', start)
+  const rule = settingsPageStyle.slice(open, settingsPageStyle.indexOf('}', open))
+  assert.match(rule, /var\(--te-settings-bg-image, none\)/)
+  assert.match(rule, /radial-gradient\(88% 74% at 8% -10%, rgba\(116, 164, 245, 0\.14\)/)
+  assert.match(rule, /radial-gradient\(72% 68% at 103% 92%, rgba\(236, 164, 190, 0\.09\)/)
+  assert.match(rule, /background-attachment:\s*fixed, fixed, fixed, fixed, fixed/)
+})
+
+test('flat dark settings pages supply restrained ambient variation behind liquid glass', () => {
+  // A flat charcoal page makes a translucent dark pane indistinguishable from an
+  // opaque raised block. Keep this fixed and subdued so scroll does not move the
+  // lighting field and the theme does not turn neon.
+  const selector = "html[data-theme='dark'][data-te-surface-material='liquidGlass'] .settings-preview-page"
+  const start = settingsPageStyle.indexOf(selector)
+  assert.notEqual(start, -1, 'dark liquid-glass settings backdrop rule is missing')
+  const open = settingsPageStyle.indexOf('{', start)
+  const rule = settingsPageStyle.slice(open, settingsPageStyle.indexOf('}', open))
+  assert.match(rule, /var\(--te-settings-bg-image, none\)/)
+  assert.match(rule, /radial-gradient\(96% 82% at 6% -14%, rgba\(62, 98, 168, 0\.22\)/)
+  assert.match(rule, /radial-gradient\(82% 78% at 106% 100%, rgba\(122, 63, 120, 0\.14\)/)
+  assert.match(rule, /background-attachment:\s*fixed, fixed, fixed, fixed, fixed/)
+})
+
+test('dark broad glass surfaces retain a thin rim instead of a heavy raised shadow', () => {
+  const selector = "html[data-te-surface-material='liquidGlass'][data-theme='dark']"
+  const start = baseStyle.indexOf(selector, sectionStart())
+  assert.notEqual(start, -1, 'dark liquid-glass token rule is missing')
+  const open = baseStyle.indexOf('{', start)
+  const rule = baseStyle.slice(open, baseStyle.indexOf('}', open))
+  assert.match(rule, /--te-lg-rim-strength:\s*0\.38/)
+  assert.match(rule, /--te-lg-bottom-density-alpha:\s*0\.13/)
+  assert.match(rule, /--te-lg-shade-alpha:\s*0\.15/)
+  assert.match(rule, /--te-lg-drop-near-alpha:\s*0\.07/)
+  assert.match(rule, /--te-lg-drop-alpha:\s*0\.18/)
 })
 
 test('the displacement filter runs only on an interacted ::after layer', () => {
