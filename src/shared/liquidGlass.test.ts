@@ -5,6 +5,8 @@ import {
   DEFAULT_LIQUID_GLASS_DARK,
   DEFAULT_LIQUID_GLASS_LIGHT,
   LIQUID_GLASS_BOUNDS,
+  LIQUID_GLASS_CARD_CLASSES,
+  LIQUID_GLASS_CARD_SELECTOR,
   liquidGlassCssVariables,
   normalizeLiquidGlass,
   normalizeLiquidGlassTheme,
@@ -22,6 +24,20 @@ test('surface material normalization only accepts known values', () => {
   assert.equal(normalizeSurfaceMaterial(null), 'standard')
   assert.equal(normalizeSurfaceMaterial(1), 'standard')
   assert.deepEqual([...SURFACE_MATERIALS], ['standard', 'liquidGlass'])
+})
+
+test('card surface list is non-trivial, unique, and selector-ready', () => {
+  assert.ok(LIQUID_GLASS_CARD_CLASSES.length > 30, 'card list must stay canonical')
+  assert.equal(new Set(LIQUID_GLASS_CARD_CLASSES).size, LIQUID_GLASS_CARD_CLASSES.length)
+  for (const className of ['album-card', 'artist-card', 'playlist-card', 'card'] as const) {
+    assert.ok(LIQUID_GLASS_CARD_CLASSES.includes(className), `${className} must be surfaced`)
+  }
+  for (const className of LIQUID_GLASS_CARD_CLASSES) {
+    assert.ok(
+      LIQUID_GLASS_CARD_SELECTOR.split(',').includes(`.${className}`),
+      `selector must contain .${className}`
+    )
+  }
 })
 
 test('theme normalization falls back per field and clamps to bounds', () => {
@@ -88,9 +104,11 @@ test('normalization never aliases the exported default objects', () => {
 
   assert.notEqual(normalized.light, DEFAULT_LIQUID_GLASS_LIGHT)
   assert.notEqual(normalized.dark, DEFAULT_LIQUID_GLASS_DARK)
-  assert.equal(DEFAULT_LIQUID_GLASS_LIGHT.blurAmount, 16)
-  assert.equal(DEFAULT_LIQUID_GLASS_DARK.blurAmount, 18)
-  assert.equal(DEFAULT_LIQUID_GLASS.light.blurAmount, 16)
+  assert.equal(DEFAULT_LIQUID_GLASS_LIGHT.blurAmount, 0)
+  assert.equal(DEFAULT_LIQUID_GLASS_DARK.blurAmount, 0)
+  assert.equal(DEFAULT_LIQUID_GLASS.light.blurAmount, 0)
+  assert.equal(DEFAULT_LIQUID_GLASS.dark.elasticity, 0)
+  assert.equal(DEFAULT_LIQUID_GLASS.overLight, false)
 })
 
 test('channel scales trail red to produce aberration and never invert', () => {
@@ -127,6 +145,7 @@ test('css variables carry units the stylesheet expects', () => {
     blurAmount: 16,
     saturation: 140,
     aberrationIntensity: 2,
+    elasticity: 40,
     specularOpacity: 55,
     tintOpacity: 12
   })
@@ -135,7 +154,33 @@ test('css variables carry units the stylesheet expects', () => {
   assert.equal(vars['--te-lg-blur'], '16px')
   assert.equal(vars['--te-lg-saturate'], '140%')
   assert.equal(vars['--te-lg-aberration'], '2')
+  assert.equal(vars['--te-lg-elasticity'], '40')
   // opacities are emitted as 0-1 ratios for direct use in color functions
   assert.equal(vars['--te-lg-specular'], '0.550')
   assert.equal(vars['--te-lg-tint'], '0.120')
+})
+
+test('new tuning fields normalize and clamp to their bounds', () => {
+  const normalized = normalizeLiquidGlassTheme(
+    {
+      displacementScale: 90,
+      blurAmount: 0,
+      saturation: 100,
+      aberrationIntensity: 1.5,
+      elasticity: 999,
+      specularOpacity: 41,
+      tintOpacity: 10
+    },
+    DEFAULT_LIQUID_GLASS_LIGHT
+  )
+  assert.equal(normalized.elasticity, 100)
+  assert.equal(normalized.displacementScale, 90)
+  assert.equal(normalized.blurAmount, 0)
+  assert.equal(normalized.saturation, 100)
+})
+
+test('over light flag normalizes to a strict boolean', () => {
+  assert.equal(normalizeLiquidGlass({ overLight: true }).overLight, true)
+  assert.equal(normalizeLiquidGlass({ overLight: 1 }).overLight, false)
+  assert.equal(normalizeLiquidGlass({}).overLight, false)
 })

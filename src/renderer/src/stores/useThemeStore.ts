@@ -367,7 +367,8 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
  */
 function applyLiquidGlassVariables(tone: ThemeTone, variables: Record<string, string>): void {
   if (surfaceMaterial !== 'liquidGlass') return
-  const theme = tone === 'dark' ? liquidGlass.dark : liquidGlass.light
+  // "Over Light" tints the glass dark on bright backgrounds so it stays visible.
+  const theme = tone === 'dark' || liquidGlass.overLight ? liquidGlass.dark : liquidGlass.light
   Object.assign(variables, liquidGlassCssVariables(theme))
 }
 

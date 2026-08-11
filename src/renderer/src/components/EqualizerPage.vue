@@ -1861,10 +1861,11 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
 .eq-page {
   position: fixed;
   inset: 0;
-  z-index: 1100;
+  /* Above the sidebar (1000) and player bar (1002); below the title bar (9999). */
+  z-index: 2000;
   overflow: hidden;
-  background-color: var(--te-settings-bg);
-  background-image: var(--te-settings-bg-image);
+  background-color: var(--te-app-bg);
+  background-image: var(--te-app-bg-image);
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
@@ -1873,8 +1874,8 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
 }
 
 :global(html[data-theme='dark'] .eq-page) {
-  background-color: var(--te-settings-bg);
-  background-image: var(--te-settings-bg-image);
+  background-color: var(--te-app-bg);
+  background-image: var(--te-app-bg-image);
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;

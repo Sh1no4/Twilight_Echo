@@ -845,9 +845,11 @@ onUnmounted(() => {
 .plugin-page {
   position: fixed;
   inset: 0;
-  z-index: 60;
-  background-color: var(--te-settings-bg);
-  background-image: var(--te-settings-bg-image);
+  /* Above the sidebar (1000) and player bar (1002); below the title bar (9999). */
+  z-index: 2000;
+  /* Render the bottom-most global background on this overlay surface. */
+  background-color: var(--te-app-bg);
+  background-image: var(--te-app-bg-image);
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
@@ -860,11 +862,7 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   flex: 1;
-  background-color: var(--te-settings-bg);
-  background-image: var(--te-settings-bg-image);
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
+  background: transparent;
   display: flex;
   overflow: hidden;
   position: relative;
@@ -873,7 +871,10 @@ onUnmounted(() => {
 /* Sidebar */
 .sidebar {
   width: 240px;
-  background: var(--te-bg-card, #ffffff);
+  /* Frosted surface: the bottom-most global background shows through. */
+  background: transparent;
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
   border-right: 1px solid var(--te-border-color, #e5e7eb);
   display: flex;
   flex-direction: column;

@@ -9,6 +9,7 @@ import type { PlaybackBookmark } from '../../../shared/playbackBookmarks.ts'
 import { useExtensionRegistry } from '../extensions/registry'
 import {
   createFrameCoalescer,
+  LIQUID_GLASS_POINTER_FRAME_INTERVAL_MS,
   pointerCssVariables,
   resolvePointerOffset,
   staticPointerCssVariables
@@ -1084,39 +1085,74 @@ async function toggleLyricHighlight(): Promise<void> {
 }
 
 /**
- * The playbar is a single surface, so it can afford an element-relative light source
- * rather than the shared viewport one the cards use. Writes are rAF-coalesced and the
- * variables are scoped to this element.
+ * The player bar has direct pointer events, so it never needs a window-wide
+ * listener. This avoids running hit tests while the cursor moves anywhere else in
+ * the app and limits expensive glass repaints to the active bar.
  */
 const playerBarRef = ref<HTMLElement | null>(null)
-const glassPointerFrames = createFrameCoalescer<{ x: number; y: number }>((point) => {
+let glassPointerEnabled = false
+let glassPointerOverBar = false
+let glassPointerRect: DOMRect | null = null
+let glassPointerElasticity = 0
+
+function writeGlassPointerVariables(variables: ReturnType<typeof pointerCssVariables>): void {
   const element = playerBarRef.value
   if (!element) return
-  const rect = element.getBoundingClientRect()
-  const variables = pointerCssVariables(
-    resolvePointerOffset(point.x, point.y, {
-      left: rect.left,
-      top: rect.top,
-      width: rect.width,
-      height: rect.height
-    })
-  )
   for (const [name, value] of Object.entries(variables)) {
-    element.style.setProperty(name, value)
+    if (element.style.getPropertyValue(name) !== value) element.style.setProperty(name, value)
   }
-})
+}
+
+function readGlassPointerElasticity(): number {
+  const value = Number.parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue('--te-lg-elasticity').trim()
+  )
+  return Number.isFinite(value) ? value : 0
+}
+
+const glassPointerFrames = createFrameCoalescer<{ x: number; y: number }>(
+  (point) => {
+    const element = playerBarRef.value
+    if (!element || !glassPointerEnabled || !glassPointerOverBar) return
+    // The player bar does not move while its controls are used. Reuse its geometry
+    // until the pointer leaves instead of reading layout every animation frame.
+    const rect = glassPointerRect ?? element.getBoundingClientRect()
+    glassPointerRect = rect
+    writeGlassPointerVariables(
+      pointerCssVariables(
+        resolvePointerOffset(point.x, point.y, {
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height
+        }),
+        glassPointerElasticity
+      )
+    )
+  },
+  { minIntervalMs: LIQUID_GLASS_POINTER_FRAME_INTERVAL_MS }
+)
+
+function resetGlassPointer(): void {
+  glassPointerFrames.cancel()
+  glassPointerOverBar = false
+  glassPointerRect = null
+  writeGlassPointerVariables(staticPointerCssVariables())
+}
 
 function onGlassPointerMove(event: PointerEvent): void {
+  if (!glassPointerEnabled) return
+  if (!glassPointerOverBar) {
+    glassPointerOverBar = true
+    glassPointerRect = null
+    glassPointerElasticity = readGlassPointerElasticity()
+  }
   glassPointerFrames.schedule({ x: event.clientX, y: event.clientY })
 }
 
-let glassPointerAttached = false
-
-function detachGlassPointer(): void {
-  if (!glassPointerAttached) return
-  window.removeEventListener('pointermove', onGlassPointerMove)
-  glassPointerFrames.cancel()
-  glassPointerAttached = false
+function onGlassPointerLeave(): void {
+  if (!glassPointerEnabled || !glassPointerOverBar) return
+  resetGlassPointer()
 }
 
 function motionAllowsPointer(): boolean {
@@ -1131,23 +1167,23 @@ function syncGlassPointer(): void {
     !props.preview &&
     motionAllowsPointer()
 
-  if (shouldTrack === glassPointerAttached) return
-  if (shouldTrack) {
-    window.addEventListener('pointermove', onGlassPointerMove, { passive: true })
-    glassPointerAttached = true
-    return
-  }
-  detachGlassPointer()
-  const element = playerBarRef.value
-  if (!element) return
-  for (const [name, value] of Object.entries(staticPointerCssVariables())) {
-    element.style.setProperty(name, value)
-  }
+  if (shouldTrack === glassPointerEnabled) return
+  glassPointerEnabled = shouldTrack
+  if (!shouldTrack) resetGlassPointer()
 }
 
 watch(
-  () => [liquidGlassActive.value, settings.value.liquidGlass.followPointer],
-  () => syncGlassPointer(),
+  () => [
+    liquidGlassActive.value,
+    settings.value.liquidGlass.followPointer,
+    settings.value.liquidGlass.light.elasticity,
+    settings.value.liquidGlass.dark.elasticity,
+    settings.value.theme
+  ],
+  () => {
+    if (glassPointerOverBar) glassPointerElasticity = readGlassPointerElasticity()
+    syncGlassPointer()
+  },
   { flush: 'post' }
 )
 
@@ -1192,7 +1228,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  detachGlassPointer()
+  glassPointerEnabled = false
+  resetGlassPointer()
 })
 </script>
 
@@ -1367,7 +1404,13 @@ onBeforeUnmount(() => {
         '--play-button-color': playButtonColor
       }"
       @pointerenter="onBarPointerEnter"
-      @pointerleave="onBarPointerLeave"
+      @pointermove="onGlassPointerMove"
+      @pointerleave="
+        (e) => {
+          onBarPointerLeave(e)
+          onGlassPointerLeave()
+        }
+      "
       @focusin="onBarFocusIn"
       @focusout="onBarFocusOut"
     >

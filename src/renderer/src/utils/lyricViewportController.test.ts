@@ -378,11 +378,7 @@ test('following is suppressed while browsing and resumes on release', async () =
   controller.beginManualBrowse()
   activeIndex.value = 6
   await controller.follow(6)
-  assert.notEqual(
-    controller.getRowTargetTop(6),
-    54,
-    'automatic follow must not fight the user'
-  )
+  assert.notEqual(controller.getRowTargetTop(6), 54, 'automatic follow must not fight the user')
 
   controller.releaseManualBrowse()
   await Promise.resolve()
@@ -500,4 +496,15 @@ test('following a negative index is a no-op', async () => {
   // and nothing was scheduled.
   assert.equal(controller.getRowTop(0), 0)
   assert.equal(manual.pendingFrames(), 0)
+})
+
+test('untimed lyrics still receive a snap layout when no row is active', async () => {
+  const { controller, activeIndex, rows } = harness()
+  activeIndex.value = -1
+
+  await controller.recenter('snap')
+
+  assert.ok((controller.getRowTop(1) as number) > (controller.getRowTop(0) as number))
+  assert.equal(rows[0].properties.get('--lyric-line-ready'), '1')
+  assert.equal(rows[1].properties.get('--lyric-line-ready'), '1')
 })

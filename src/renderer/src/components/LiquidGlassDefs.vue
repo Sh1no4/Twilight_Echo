@@ -16,6 +16,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   DEFAULT_LIQUID_GLASS_LIGHT,
   LIQUID_GLASS_CARD_FILTER_ID,
+  LIQUID_GLASS_CARD_SELECTOR,
   LIQUID_GLASS_PLAYBAR_FILTER_ID,
   resolveAberrationBlur,
   resolveChannelScales
@@ -27,8 +28,9 @@ import {
 } from '../utils/liquidGlassDisplacement.ts'
 import {
   createFrameCoalescer,
+  LIQUID_GLASS_POINTER_FRAME_INTERVAL_MS,
   pointerCssVariables,
-  resolveViewportPointerOffset,
+  resolvePointerOffset,
   staticPointerCssVariables,
   type LiquidGlassPointerVariables
 } from '../utils/liquidGlassPointer.ts'
@@ -73,6 +75,7 @@ function syncFilterInputs(): void {
     '--te-lg-aberration',
     DEFAULT_LIQUID_GLASS_LIGHT.aberrationIntensity
   )
+  pointerElasticity = readNumericVariable('--te-lg-elasticity', 0)
 }
 
 function ensureMaps(): void {
@@ -83,40 +86,173 @@ function ensureMaps(): void {
   }
 }
 
-function writePointerVariables(variables: LiquidGlassPointerVariables): void {
-  const root = document.documentElement
+function writePointerVariables(variables: LiquidGlassPointerVariables, target: HTMLElement): void {
   for (const [name, value] of Object.entries(variables)) {
-    root.style.setProperty(name, value)
+    // Avoid invalidating the filtered layer when the coalesced position rounds to
+    // the same values as the previous frame.
+    if (target.style.getPropertyValue(name) !== value) target.style.setProperty(name, value)
   }
 }
 
-const pointerFrames = createFrameCoalescer<{ x: number; y: number }>((point) => {
-  writePointerVariables(
-    pointerCssVariables(
-      resolveViewportPointerOffset(point.x, point.y, window.innerWidth, window.innerHeight)
-    )
-  )
-})
-
-function onPointerMove(event: PointerEvent): void {
-  pointerFrames.schedule({ x: event.clientX, y: event.clientY })
+function resolvePointerCard(target: EventTarget | null): HTMLElement | null {
+  return target instanceof Element ? target.closest<HTMLElement>(LIQUID_GLASS_CARD_SELECTOR) : null
 }
 
 /**
- * A single document-level listener drives the shared light source for every card.
- * The album grid renders in batches up to the full library, so per-card listeners
- * would scale with library size; one listener does not.
+ * The card currently under the pointer. Variables are scoped to this element, so
+ * only the hovered card rotates its highlight; the rest keep the static base
+ * angle. Reset to null when the pointer leaves the surface list.
+ */
+let hoveredCard: HTMLElement | null = null
+let hoveredCardRect: DOMRect | null = null
+let pointerElasticity = 0
+
+function clearHoveredCard(): void {
+  if (!hoveredCard) return
+  writePointerVariables(staticPointerCssVariables(), hoveredCard)
+  hoveredCard = null
+  hoveredCardRect = null
+}
+
+const pointerFrames = createFrameCoalescer<{ x: number; y: number; target: EventTarget | null }>(
+  (point) => {
+    // The pointer event already carries the hit target. Reusing it avoids a fresh
+    // document-wide hit test (elementFromPoint) during every rendering frame.
+    const next = resolvePointerCard(point.target)
+
+    if (next !== hoveredCard) {
+      clearHoveredCard()
+      hoveredCard = next
+      hoveredCardRect = null
+    }
+
+    if (!next) {
+      // Once the cursor leaves every liquid surface, stop observing high-rate
+      // pointer movement until the lightweight delegated boundary listener sees a
+      // card again.
+      detachPointerMove()
+      return
+    }
+    attachPointerMove()
+    // Card geometry only changes on a scroll, resize, or card transition. Cache it
+    // between those events so pointer tracking does not force layout every frame.
+    const rect = hoveredCardRect ?? next.getBoundingClientRect()
+    hoveredCardRect = rect
+    writePointerVariables(
+      pointerCssVariables(resolvePointerOffset(point.x, point.y, rect), pointerElasticity),
+      next
+    )
+  },
+  { minIntervalMs: LIQUID_GLASS_POINTER_FRAME_INTERVAL_MS }
+)
+
+function isMousePointer(event: PointerEvent): boolean {
+  return event.pointerType === 'mouse'
+}
+
+function resetHoveredPointer(): void {
+  pointerFrames.cancel()
+  clearHoveredCard()
+  detachPointerMove()
+}
+
+function onPointerMove(event: PointerEvent): void {
+  if (!isMousePointer(event)) return
+  pointerFrames.schedule({ x: event.clientX, y: event.clientY, target: event.target })
+}
+
+/**
+ * This listener stays active while glass pointer tracking is enabled, but only
+ * handles element-boundary changes. The high-frequency window pointermove listener
+ * is attached after a glass card is entered and released again on leave, preventing
+ * app-wide mouse movement from scheduling glass work while browsing non-card UI.
+ */
+function onPointerOver(event: PointerEvent): void {
+  if (!isMousePointer(event)) return
+  const card = resolvePointerCard(event.target)
+  // Arm the movement listener synchronously on entry. If the pointer crosses a
+  // card between two coalesced frames, its next boundary event can then schedule
+  // the reset instead of leaving an orphaned global listener behind.
+  if (card) attachPointerMove()
+  else if (!pointerMoveAttached) return
+  pointerFrames.schedule({ x: event.clientX, y: event.clientY, target: event.target })
+}
+
+function onPointerOut(event: PointerEvent): void {
+  if (!isMousePointer(event)) return
+  const previousCard = resolvePointerCard(event.target)
+  const nextCard = resolvePointerCard(event.relatedTarget)
+  // Moving between children of one card is not a card leave. Ignore those bubbling
+  // boundary events so its cached geometry and highlight remain stable.
+  if (previousCard === nextCard) return
+
+  if (!nextCard) {
+    // Clear synchronously instead of waiting for the 32 ms coalescer: otherwise a
+    // quick pass over a card can leave a stale highlight and a global move listener
+    // alive until the next unrelated pointer event.
+    resetHoveredPointer()
+    return
+  }
+
+  // Crossing directly from one card to another should keep tracking, but use the
+  // destination from relatedTarget so the old card can never receive a late frame.
+  attachPointerMove()
+  pointerFrames.schedule({
+    x: event.clientX,
+    y: event.clientY,
+    target: event.relatedTarget
+  })
+}
+
+function invalidateHoveredCardGeometry(): void {
+  hoveredCardRect = null
+}
+
+/* A pointerout is not guaranteed when the application loses focus or the page
+   becomes hidden. Reset here too, otherwise an old card can retain its sheen and
+   the high-rate window listener remains armed until the next mouse movement. */
+function onWindowBlur(): void {
+  resetHoveredPointer()
+}
+
+function onVisibilityChange(): void {
+  if (document.visibilityState !== 'visible') resetHoveredPointer()
+}
+
+/**
+ * One delegated boundary listener covers the whole virtualised card grid; the
+ * high-frequency movement listener is active only during a card hover. This avoids
+ * per-card handlers while keeping idle pointer traffic out of the glass pipeline.
  */
 function resolveMotionMode(): string {
   return document.documentElement.dataset.teMotion ?? 'full'
 }
 
 let pointerAttached = false
+let pointerMoveAttached = false
+
+function attachPointerMove(): void {
+  if (pointerMoveAttached) return
+  window.addEventListener('pointermove', onPointerMove, { passive: true })
+  pointerMoveAttached = true
+}
+
+function detachPointerMove(): void {
+  if (!pointerMoveAttached) return
+  window.removeEventListener('pointermove', onPointerMove)
+  pointerMoveAttached = false
+}
 
 function detachPointer(): void {
   if (!pointerAttached) return
-  window.removeEventListener('pointermove', onPointerMove)
-  pointerFrames.cancel()
+  document.removeEventListener('pointerover', onPointerOver)
+  document.removeEventListener('pointerout', onPointerOut)
+  window.removeEventListener('blur', onWindowBlur)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  window.removeEventListener('resize', invalidateHoveredCardGeometry)
+  document.removeEventListener('scroll', invalidateHoveredCardGeometry, true)
+  resetHoveredPointer()
+  hoveredCardRect = null
   pointerAttached = false
 }
 
@@ -127,12 +263,24 @@ function syncPointerTracking(): void {
 
   if (shouldTrack === pointerAttached) return
   if (shouldTrack) {
-    window.addEventListener('pointermove', onPointerMove, { passive: true })
+    // pointerover only fires at element boundaries, so idle movement through the
+    // rest of the app does not enter the pointer-frame coalescer at all.
+    document.addEventListener('pointerover', onPointerOver, { passive: true })
+    document.addEventListener('pointerout', onPointerOut, { passive: true })
+    window.addEventListener('blur', onWindowBlur)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('resize', invalidateHoveredCardGeometry, { passive: true })
+    // Scroll events do not bubble, so capture catches every scrollable card grid
+    // and invalidates geometry lazily before the next pointer repaint.
+    document.addEventListener('scroll', invalidateHoveredCardGeometry, {
+      capture: true,
+      passive: true
+    })
     pointerAttached = true
     return
   }
   detachPointer()
-  writePointerVariables(staticPointerCssVariables())
+  writePointerVariables(staticPointerCssVariables(), document.documentElement)
 }
 
 function isReducedMotion(): boolean {
@@ -144,7 +292,7 @@ let motionObserver: MutationObserver | null = null
 onMounted(() => {
   ensureMaps()
   syncFilterInputs()
-  writePointerVariables(staticPointerCssVariables())
+  writePointerVariables(staticPointerCssVariables(), document.documentElement)
   syncPointerTracking()
 
   // The theme runtime rewrites its stylesheet and `data-te-*` attributes on tone or
@@ -280,11 +428,20 @@ watch(
           operator="in"
           result="EDGE_ABERRATION"
         />
+        <!-- Clip the refraction band back to the source's own rounded alpha. The
+             displacement map is a full rectangle, so without this the corners of
+             a rounded card get filled with refracted content and read as square. -->
+        <feComposite
+          in="EDGE_ABERRATION"
+          in2="SourceGraphic"
+          operator="in"
+          result="EDGE_ABERRATION_CLIPPED"
+        />
         <feComponentTransfer in="EDGE_MASK" result="INVERTED_MASK">
           <feFuncA type="table" tableValues="1 0" />
         </feComponentTransfer>
         <feComposite in="CENTER_ORIGINAL" in2="INVERTED_MASK" operator="in" result="CENTER_CLEAN" />
-        <feComposite in="EDGE_ABERRATION" in2="CENTER_CLEAN" operator="over" />
+        <feComposite in="EDGE_ABERRATION_CLIPPED" in2="CENTER_CLEAN" operator="over" />
       </filter>
 
       <!-- Same chain against the wide-strip map, so the playbar's short axis keeps a
@@ -383,11 +540,19 @@ watch(
           operator="in"
           result="EDGE_ABERRATION"
         />
+        <!-- Same corner fix as the card filter: never paint refraction outside
+             the source's own rounded alpha. -->
+        <feComposite
+          in="EDGE_ABERRATION"
+          in2="SourceGraphic"
+          operator="in"
+          result="EDGE_ABERRATION_CLIPPED"
+        />
         <feComponentTransfer in="EDGE_MASK" result="INVERTED_MASK">
           <feFuncA type="table" tableValues="1 0" />
         </feComponentTransfer>
         <feComposite in="CENTER_ORIGINAL" in2="INVERTED_MASK" operator="in" result="CENTER_CLEAN" />
-        <feComposite in="EDGE_ABERRATION" in2="CENTER_CLEAN" operator="over" />
+        <feComposite in="EDGE_ABERRATION_CLIPPED" in2="CENTER_CLEAN" operator="over" />
       </filter>
     </defs>
   </svg>
