@@ -82,8 +82,6 @@
     "build:linux": "pnpm run build && electron-builder --linux"
   },
   "dependencies": {
-    "@applemusic-like-lyrics/core": "^0.5.2",
-    "@applemusic-like-lyrics/vue": "^0.5.2",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@neteasecloudmusicapienhanced/api": "^4.35.1",

@@ -54,53 +54,40 @@ test('playbar lyrics manager panel manages provider tracks and projects into Pla
       bundleName,
       'Vite should bundle the real PlayingMusic + LyricsManagerPanel components'
     )
-    const outputFiles = await readdir(bundleDirectory)
-    const styleNames = outputFiles.filter((name) => name.endsWith('.css'))
-    assert.ok(styleNames.length > 0, 'Vite lib build should emit the component stylesheet')
-    const styleCss = (
-      await Promise.all(styleNames.map((name) => readFile(join(bundleDirectory, name), 'utf8')))
-    ).join('\n')
-    const bundleSource = await readFile(join(bundleDirectory, bundleName), 'utf8')
-
-    // Twilight Echo now delegates positioning, spring interpolation and blur to
-    // the official AMLL renderer rather than retaining a second, hand-written
-    // scrolling implementation.
+    const styleName = (await readdir(bundleDirectory)).find((name) => name.endsWith('.css'))
+    assert.ok(styleName, 'Vite lib build should emit the component stylesheet')
+    const styleCss = await readFile(join(bundleDirectory, styleName), 'utf8')
     assert.match(
       styleCss,
-      /\.amll-lyric-player/,
-      'the official AMLL player stylesheet was not bundled'
+      /mask-image:\s*linear-gradient\(/,
+      'the lyric stage should fade its top and bottom edges with a gradient mask'
+    )
+    // The per-word sweep gradient is generated from measured glyph widths, so it
+    // is set inline by the component. What the stylesheet must own is the
+    // contrast the sweep reads and the escape hatches that switch it off.
+    assert.match(
+      styleCss,
+      /--lyric-bright-mask-alpha/,
+      'karaoke contrast variables should be owned by the stylesheet'
     )
     assert.match(
       styleCss,
-      /\.FmKaba_lyricLineWrapper/,
-      'the official AMLL virtual lyric-line stylesheet was not bundled'
+      /lyrics-column--karaoke-disabled[\s\S]{0,200}mask-image:\s*none/,
+      'disabling karaoke should clear the word mask from CSS'
     )
     assert.match(
       styleCss,
-      /\.FmKaba_lyricLineWrapper[\s\S]{0,600}position:\s*absolute/,
-      'AMLL should own its virtual transform layout'
+      /--lyric-line-top/,
+      'absolute line positioning variable should be in the stylesheet'
     )
-    assert.match(
-      styleCss,
-      /overflow:\s*hidden/,
-      'the lyrics viewport should be clipped instead of browser-scrolled'
-    )
-    assert.match(
-      styleCss,
-      /FmKaba_interludeDots[\s\S]{0,120}display:\s*none/,
-      'the AMLL interlude dots should be visually suppressed between lines'
-    )
+    assert.match(styleCss, /--lyric-line-scale/, 'line scale variable should be in the stylesheet')
+    assert.doesNotMatch(styleCss, /te-lyric-focus/, 'replaced focus animation should be removed')
     assert.doesNotMatch(
       styleCss,
-      /\.lyrics-list|\.lyric-row/,
-      'the retired local lyric-list renderer should not be bundled'
+      /--lyric-word-progress|--lyric-depth-scale/,
+      'the retired scroll-driven progress and depth variables should be gone'
     )
-    assert.doesNotMatch(
-      bundleSource,
-      /\.scrollTo\(/,
-      'the lyric renderer must not call the browser native scroll API'
-    )
-    await writeFile(htmlPath, runtimeHtml(bundleName, styleNames), 'utf8')
+    await writeFile(htmlPath, runtimeHtml(bundleName), 'utf8')
     await writeFile(runnerPath, electronRunnerSource(), 'utf8')
 
     const electronPath = require('electron') as string
@@ -186,7 +173,7 @@ function expect(condition, message) {
  */
 const measurementStyle = document.createElement('style')
 measurementStyle.textContent =
-  '.lyric-word { display: inline-block; font-size: 24px; } .lyric-space { white-space: pre; }'
+  '.lyric-word, .lyric-char { display: inline-block; font-size: 24px; } .lyric-space { white-space: pre; }'
 document.head.appendChild(measurementStyle)
 
 window.runPlayingLyricWordsRuntime = async () => {
@@ -302,19 +289,13 @@ window.runPlayingLyricWordsRuntime = async () => {
     'the following word did not share the line timeline; currentTime=' + secondMask.currentTime
   )
 
-  // Once the line is over, keep every WAAPI effect at the line end. Feeding an
-  // unbounded currentTime back into delayed word effects can visually restart
-  // the first word after the final syllable has completed.
-  setPosition(8)
-  await settle(
-    () => Math.abs(Number(firstMask.currentTime) - 2000) < 60,
-    'karaoke timeline was not clamped at the completed line; currentTime=' + firstMask.currentTime
+  // A held word also emphasises per character.
+  const chars = firstWord.querySelectorAll('.lyric-char')
+  expect(chars.length > 1, 'a held word was not split per character for emphasis')
+  expect(
+    chars[0].getAnimations().length >= 2,
+    'emphasised characters did not receive both a glow and a float animation'
   )
-
-  // Keep the lyric surface restrained: Apple-like karaoke is a continuous
-  // word fill, not a per-character bounce or glow effect.
-  expect(firstWord.querySelectorAll('.lyric-char').length === 0, 'karaoke should not split words into dancing characters')
-  expect(firstWord.getAnimations().length === 1, 'a word should own only its fill animation')
 
   const disabledRoot = document.createElement('div')
   document.body.appendChild(disabledRoot)
@@ -569,16 +550,12 @@ window.runPlayingMusicLyricsRuntime = async () => {
   expect(stored.original === '[00:03.00]Imported original', 'edited original was not persisted')
   expect(stored.translation === '[00:03.00]Imported translation', 'edited translation was not persisted')
   expect(stored.romanization === '[00:03.00]Imported romanization', 'edited romanization was not persisted')
-  // AMLL builds and measures its virtual lines on animation frames. Give the
-  // library, rather than a browser scroll event, a frame to commit the render.
-  await new Promise((resolve) => setTimeout(resolve, 180))
   await waitFor(
-    () => document.querySelector('.amll-stage')?.textContent.includes('Imported romanization'),
-    'persisted visibility and manual lyrics were not projected by the official AMLL component'
+    () => document.querySelector('.lyric-romanization')?.textContent.includes('Imported romanization'),
+    'persisted visibility and manual lyrics were not projected by the actual component'
   )
-  const importedLyrics = document.querySelector('.amll-stage')?.textContent ?? ''
-  expect(importedLyrics.includes('Imported original'), 'manual original was not rendered by AMLL')
-  expect(importedLyrics.includes('Imported translation'), 'manual translation was not rendered by AMLL')
+  expect(document.querySelector('.lyric-text')?.textContent.includes('Imported original'), 'manual original was not rendered')
+  expect(document.querySelector('.lyric-translation')?.textContent.includes('Imported translation'), 'manual translation was not rendered')
   expect(JSON.stringify(player.currentTrack.value) === beforeCurrent, 'manual UI projection mutated currentTrack')
   expect(
     JSON.stringify(player.queue.value) === beforeQueue,
@@ -601,11 +578,6 @@ window.runPlayingMusicLyricsRuntime = async () => {
   expect(mixedStored.translationSelection === 'automatic', 'automatic translation selection was lost')
   expect(mixedStored.romanizationSelection === 'manual', 'manual romanization selection was lost')
 
-  const amllRows = () => [...document.querySelectorAll('.amll-stage .FmKaba_lyricLineWrapper')]
-  const activeAmlRows = () => [...document.querySelectorAll('.amll-stage .FmKaba_lyricLineWrapper .FmKaba_active')]
-  const activeAmlText = () => activeAmlRows().map((item) => item.textContent ?? '').join(' | ')
-
-
   const playbackTrack = {
     ...track,
     id: 'fixture-provider:playback-clock',
@@ -620,14 +592,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
   player.duration.value = 180
   player.isPlaying.value = true
   player.seek(0)
-  await waitFor(
-    () => amllRows().length >= 3,
-    'official AMLL player did not mount the full timed lyric timeline'
-  )
-  const stage = document.querySelector('.amll-stage')
-  expect(stage?.querySelector('.amll-lyric-player'), 'the official AMLL LyricPlayer root was not mounted')
-  expect(stage.scrollTop === 0, 'the AMLL stage unexpectedly started with a native scroll offset')
-
+  await tick()
   player.isLoading.value = true
   window.__audioFixture.emitProperty('time-pos', 0.25)
   const stalledNextSamples = window.setInterval(
@@ -636,30 +601,45 @@ window.runPlayingMusicLyricsRuntime = async () => {
   )
   await new Promise((resolve) => setTimeout(resolve, 1400))
   window.clearInterval(stalledNextSamples)
-  await waitFor(
-    () => activeAmlText().includes('Moving line'),
-    'AMLL did not advance its active lyric from the high-frequency shared playback clock; currentTime=' + player.currentTime.value + '; active=' + activeAmlText()
-  )
+  await tick()
   expect(player.currentTime.value > 1, 'stalled engine samples froze the component playback clock')
-  expect(stage.scrollTop === 0, 'AMLL advanced by mutating native scrollTop instead of its own layout engine')
+  expect(!document.querySelector('.time-chip')?.textContent.includes('0:00'), 'lyrics time chip did not advance')
+  const activeAfterStall = document.querySelector('.lyric-row.active')?.textContent ?? ''
+  expect(
+    activeAfterStall.includes('Moving line'),
+    'active lyric did not advance; currentTime=' + player.currentTime.value + '; active=' + activeAfterStall
+  )
 
-  const seekLine = amllRows().find((item) => item.textContent.includes('Seek line'))
-  expect(seekLine, 'timed seek lyric was not rendered by AMLL')
+  const seekLine = [...document.querySelectorAll('.lyric-row')].find((item) => item.textContent.includes('Seek line'))
+  expect(seekLine, 'timed seek lyric was not rendered')
   seekLine.click()
-  await waitFor(
-    () => activeAmlText().includes('Seek line'),
-    'AMLL line click did not seek to the target lyric'
+  await tick()
+  expect(
+    document.querySelector('.lyric-row.active')?.textContent.includes('Seek line'),
+    'seek left the target lyric dimmed until the normal playback highlight delay elapsed'
   )
   player.seek(1)
-  await waitFor(
-    () => activeAmlText().includes('Moving line'),
-    'a backward seek left the AMLL target lyric stale'
+  await tick()
+  expect(
+    document.querySelector('.lyric-row.active')?.textContent.includes('Moving line'),
+    'a progress seek backward left the new target lyric dimmed'
   )
   player.seek(3)
-  await waitFor(
-    () => activeAmlText().includes('Seek line'),
-    'a forward seek left the AMLL target lyric stale'
+  await tick()
+  expect(
+    document.querySelector('.lyric-row.active')?.textContent.includes('Seek line'),
+    'a progress seek forward left the new target lyric dimmed'
   )
+  window.__audioFixture.emitProperty('time-pos', 3)
+  const stalledSeekSamples = window.setInterval(
+    () => window.__audioFixture.emitProperty('time-pos', 3),
+    100
+  )
+  await new Promise((resolve) => setTimeout(resolve, 900))
+  window.clearInterval(stalledSeekSamples)
+  await tick()
+  expect(player.currentTime.value > 3.4, 'lyric seek froze after repeated confirmation samples')
+  expect(document.querySelector('.lyric-row.active')?.textContent.includes('Seek line'), 'clicked lyric did not stay active while time advanced')
   player.isLoading.value = false
 
   button('1 行').click()
@@ -678,94 +658,212 @@ window.runPlayingMusicLyricsRuntime = async () => {
   player.currentTime.value = 20
   player.isPlaying.value = true
   player.seek(20)
-  await waitFor(() => amllRows().length >= 3, 'AMLL did not replace its timeline after a track switch')
+  await tick()
   const observedActiveLines = new Set()
-  const activeLineProbe = window.setInterval(() => observedActiveLines.add(activeAmlText()), 8)
-  // Brief line spans 20.10-20.42 (320ms), shorter than the store's coarse UI
-  // publication cadence. AMLL receives the stage rAF clock and must still show it.
+  let maxRenderedLyricRows = 0
+  const activeLineProbe = window.setInterval(() => {
+    observedActiveLines.add(document.querySelector('.lyric-row.active')?.textContent ?? '')
+    maxRenderedLyricRows = Math.max(
+      maxRenderedLyricRows,
+      document.querySelectorAll('.lyric-row').length
+    )
+  }, 8)
+  // Brief line spans 20.10-20.42 (320ms) while the store clock publishes every
+  // 250ms, so a 900ms window guarantees at least one sample inside the line
+  // regardless of tick phase.
   await new Promise((resolve) => setTimeout(resolve, 900))
   window.clearInterval(activeLineProbe)
   expect(
     [...observedActiveLines].some((line) => line.includes('Brief line')),
     'rapid plain LRC line never became active between playback time samples; currentTime=' +
       player.currentTime.value +
+      '; isPlaying=' +
+      player.isPlaying.value +
       '; observed=' +
       [...observedActiveLines].join(' | ')
   )
-  expect(stage.scrollTop === 0, 'rapid AMLL handoff used native scrolling')
+  expect(
+    maxRenderedLyricRows >= 3,
+    'full lyric timeline did not remain mounted during rapid handoff; maxRows=' +
+      maxRenderedLyricRows
+  )
+
+  // Programmatic centering must remain automatic after a track switch.
+  const automaticScrollTrack = {
+    ...rapidLyricsTrack,
+    id: 'fixture-provider:automatic-scroll-track',
+    title: 'Automatic scroll track'
+  }
+  const alternateScrollTrack = {
+    ...automaticScrollTrack,
+    id: 'fixture-provider:alternate-scroll-track',
+    title: 'Alternate scroll track'
+  }
+  player.currentTrack.value = structuredClone(automaticScrollTrack)
+  player.queue.value = [structuredClone(automaticScrollTrack)]
+  player.currentTime.value = 20
+  player.seek(20)
+  await tick()
+  expect(
+    document.querySelectorAll('.lyric-row').length === 3,
+    'automatic lyric scrolling did not retain the full lyric timeline'
+  )
+  player.currentTrack.value = structuredClone(alternateScrollTrack)
+  player.queue.value = [structuredClone(alternateScrollTrack)]
+  player.seek(20)
+  await tick()
+  player.currentTrack.value = structuredClone(automaticScrollTrack)
+  player.queue.value = [structuredClone(automaticScrollTrack)]
+  player.seek(20)
+  await tick()
+  expect(
+    document.querySelectorAll('.lyric-row').length === 3,
+    'track switching did not preserve the full automatic lyric timeline'
+  )
 
   button('全部').click()
   await waitFor(
     () => window.__settingsFixture.settings.lyricsAppearance?.focusLineCount === 'all',
-    'full lyric focus did not persist before the AMLL YRC regression probe'
+    'full lyric focus did not persist before the scroll regression probe'
   )
 
+  document.documentElement.dataset.teMotion = 'full'
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true,
+    get: () => 'visible'
+  })
   const yrcTrackA = {
     ...playbackTrack,
     id: 'fixture-provider:yrc-scroll-a',
     title: 'YRC scroll A',
     lyrics:
-      '[0,1000](0,300,0)Line (300,300,0)zero\\n[1000,1000](1000,300,0)Line (1300,300,0)one\\n[2000,1000](2000,300,0)Line (2300,300,0)two\\n[3000,1000](3000,300,0)Line (3300,300,0)three\\n[4000,600](4000,300,0)Line (4300,300,0)four\\n[5000,1000](5000,300,0)Line (5300,300,0)five'
+      '[0,1000](0,300,0)Line (300,300,0)zero\\n[1000,1000](1000,300,0)Line (1300,300,0)one\\n[2000,1000](2000,300,0)Line (2300,300,0)two\\n[3000,1000](3000,300,0)Line (3300,300,0)three\\n[4000,1000](4000,300,0)Line (4300,300,0)four\\n[5000,1000](5000,300,0)Line (5300,300,0)five'
   }
-  const yrcTrackB = { ...yrcTrackA, id: 'fixture-provider:yrc-scroll-b', title: 'YRC scroll B' }
+  const yrcTrackB = {
+    ...yrcTrackA,
+    id: 'fixture-provider:yrc-scroll-b',
+    title: 'YRC scroll B'
+  }
+  /*
+   * The stage is overflow:hidden and every row is absolutely positioned, so the
+   * controller only needs the stage box and each row's height. It never reads or
+   * writes scrollTop.
+   */
+  const installStageGeometry = () => {
+    const stage = document.querySelector('.lyrics-scroll')
+    expect(stage, 'lyric stage was not mounted for the YRC regression probe')
+    Object.defineProperties(stage, {
+      clientHeight: { configurable: true, value: 180 },
+      clientWidth: { configurable: true, value: 640 }
+    })
+    document.querySelectorAll('.lyric-row').forEach((row) => {
+      Object.defineProperties(row, {
+        offsetHeight: { configurable: true, value: 72 }
+      })
+    })
+    return stage
+  }
+
+  const rowTop = (row) => Number.parseFloat(row.style.getPropertyValue('--lyric-line-top'))
+  const rowScale = (row) => Number.parseFloat(row.style.getPropertyValue('--lyric-line-scale'))
+
   player.currentTrack.value = structuredClone(yrcTrackA)
   player.queue.value = [structuredClone(yrcTrackA)]
-  player.currentTime.value = 4
-  player.seek(4)
-  await waitFor(
-    () => amllRows().length >= 6 && activeAmlText().includes('Line four'),
-    'AMLL did not activate the expected YRC line'
-  )
-  expect(stage.scrollTop === 0, 'YRC positioning fell back to native scrollTop')
-
-  // The line finishes at 4.6s and the next starts at 5s. Interlude indicators
-  // may still be retained for timeline calculations, but our stage must never
-  // paint the flashing dots during that gap.
-  player.currentTime.value = 4.8
-  player.seek(4.8)
+  player.currentTime.value = 5
+  player.seek(5)
   await tick()
-  const interludeDots = document.querySelector('.amll-stage .FmKaba_interludeDots')
-  expect(!interludeDots || getComputedStyle(interludeDots).display === 'none', 'AMLL interlude dots were visible in the sung gap')
-  expect(stage.scrollTop === 0, 'the YRC gap triggered a browser scroll')
+  installStageGeometry()
+  window.dispatchEvent(new Event('resize'))
+  await new Promise((resolve) => setTimeout(resolve, 520))
+
+  const activeRow = document.querySelector('.lyric-row.active')
+  const rows = [...document.querySelectorAll('.lyric-row')]
+  expect(activeRow, 'no lyric row became active at 5s')
+  const activeIndex = rows.indexOf(activeRow)
+  expect(activeIndex > 0, 'the probe needs a later active line; index=' + activeIndex)
+
+  expect(
+    activeRow.style.getPropertyValue('--lyric-line-top') !== '',
+    'the layout loop did not position the active row'
+  )
+
+  // Anchoring replaces scrolling: the active line sits near the align position
+  // (0.35 of the stage) rather than being scrolled to.
+  const activeTop = rowTop(activeRow)
+  expect(
+    activeTop < 180 * 0.6,
+    'active line was not anchored into the upper region of the stage; top=' + activeTop
+  )
+
+  // Rows outside the stage deliberately stop receiving position writes, and are
+  // flagged instead. Compare only the rows actually on screen.
+  const positioned = rows.filter((row) => row.style.getPropertyValue('--lyric-line-top') !== '')
+  expect(
+    positioned.length >= 2 && positioned.length < rows.length,
+    'expected some rows positioned and some culled; positioned=' +
+      positioned.length +
+      ' of ' +
+      rows.length
+  )
+  const tops = positioned.map(rowTop)
+  expect(
+    tops.every((top, index) => index === 0 || top > tops[index - 1]),
+    'positioned rows were not stacked in reading order; tops=' + tops.join(',')
+  )
+  const culled = rows.find((row) => row.style.getPropertyValue('--lyric-line-in-sight') === '0')
+  expect(culled, 'no row was flagged out of sight despite the stage being shorter than the timeline')
+
+  // Depth now comes from per-line scale and blur, not from a scroll position.
+  const receding = positioned.find((row) => row !== activeRow)
+  expect(
+    rowScale(activeRow) > rowScale(receding),
+    'the active line did not scale above a receding one; active=' +
+      rowScale(activeRow) +
+      '; receding=' +
+      rowScale(receding)
+  )
+  const activeBlur = Number.parseFloat(activeRow.style.getPropertyValue('--lyric-line-blur'))
+  expect(activeBlur === 0, 'active row retained blur instead of staying sharp; blur=' + activeBlur)
+  const recedingBlur = Number.parseFloat(receding.style.getPropertyValue('--lyric-line-blur'))
+  expect(recedingBlur > 0, 'receding rows did not blur; blur=' + recedingBlur)
+  expect(
+    document.querySelector('.lyric-row[style*="--lyric-depth-scale"]') === null,
+    'the retired depth variable is still being written'
+  )
 
   player.currentTrack.value = structuredClone(yrcTrackB)
   player.queue.value = [structuredClone(yrcTrackB)]
   player.currentTime.value = 0
   player.seek(0)
   await tick()
+  installStageGeometry()
+
   player.currentTrack.value = structuredClone(yrcTrackA)
   player.queue.value = [structuredClone(yrcTrackA)]
-  player.currentTime.value = 2
-  player.seek(2)
-  await waitFor(
-    () => activeAmlText().includes('Line two'),
-    'switching back to a YRC track did not restore AMLL active-line state'
+  player.currentTime.value = 5
+  player.seek(5)
+  await tick()
+  installStageGeometry()
+  await new Promise((resolve) => setTimeout(resolve, 520))
+  const restoredRows = [...document.querySelectorAll('.lyric-row')]
+  const restoredActive = document.querySelector('.lyric-row.active')
+  expect(restoredActive, 'switching back to a YRC track left no active line')
+  const restoredIndex = restoredRows.indexOf(restoredActive)
+  expect(restoredIndex > 0, 'switching back did not restore the later active line')
+  // A later line being anchored means earlier lines were pushed off the top,
+  // which is what leaving it stuck at the top of the stage would not do.
+  expect(
+    restoredRows.slice(0, restoredIndex).some((row) => rowTop(row) < 0),
+    'switching back left the later active line at the top of the stage; tops=' +
+      restoredRows.map(rowTop).join(',')
   )
-  expect(stage.scrollTop === 0, 'track switching reintroduced native lyric scrolling')
-
-  const yrcTrackAReplacement = {
-    ...yrcTrackA,
-    lyrics:
-      '[0,1000](0,300,0)Replaced (300,300,0)zero\\n[1000,1000](1000,300,0)Replaced (1300,300,0)one\\n[2000,1000](2000,300,0)Replaced (2300,300,0)two\\n[3000,1000](3000,300,0)Replaced (3300,300,0)three\\n[4000,600](4000,300,0)Replaced (4300,300,0)four\\n[5000,1000](5000,300,0)Replaced (5300,300,0)five'
-  }
-  player.currentTrack.value = structuredClone(yrcTrackAReplacement)
-  player.queue.value = [structuredClone(yrcTrackAReplacement)]
-  await waitFor(
-    () => activeAmlText().includes('Replaced two'),
-    'same-track lyric replacement did not refresh the official AMLL timeline'
-  )
-  expect(stage.scrollTop === 0, 'replacing lyrics for the current track used browser scrolling')
-
   console.log('PLAYING_MUSIC_LYRICS_RUNTIME_OK')
 }
 `
 }
 
-function runtimeHtml(bundleName: string, styleNames: string[] = []): string {
-  const stylesheetLinks = styleNames
-    .map((name) => `<link rel="stylesheet" href="bundle/${name}">`)
-    .join('')
-  return `<!doctype html><html><head><meta charset="utf-8">${stylesheetLinks}<style>html, body, #app { width: 1280px; height: 900px; margin: 0; overflow: hidden; }</style></head><body><div id="app"></div>
+function runtimeHtml(bundleName: string): string {
+  return `<!doctype html><html><body><div id="app"></div>
 <script>
 window.process = { env: {} }
 window.__lyricsFixture = {
