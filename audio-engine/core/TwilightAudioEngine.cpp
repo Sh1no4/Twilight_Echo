@@ -562,6 +562,7 @@ std::string convolverInfoToJson(const ConvolverInfo& info) {
         << "\"memoryBytes\":" << info.memoryBytes << ","
         << "\"loading\":" << (info.loading ? "true" : "false") << ","
         << "\"overrunCount\":" << info.overrunCount << ","
+        << "\"bypassCount\":" << info.bypassCount << ","
        << "\"lastProcessMs\":" << info.lastProcessMs << ","
        << "\"maxProcessMs\":" << info.maxProcessMs << ","
        << "\"channelMappingMode\":\"" << json_utils::escape(info.channelMappingMode) << "\","

@@ -859,7 +859,7 @@ void AsioDriverSession::stop() {
 void AsioDriverSession::close() {
   if (!controlThread_) return;
   const auto state = state_;
-  std::string ignored;
+  std::string cleanupError;
   const auto operation = controlThread_->call(
       [state] {
         state->running = false;
@@ -885,9 +885,12 @@ void AsioDriverSession::close() {
         state->initialized = false;
         return true;
       },
-      &ignored);
-  if (!operation || !*operation) return;
+      &cleanupError);
   controlThread_->setMaintenance(nullptr);
+  if (!operation || !*operation) {
+    traceAsioDriverCall(("close cleanup incomplete: " + cleanupError).c_str());
+    return;
+  }
 }
 
 void* AsioDriverSession::outputBuffer(long channel, long bufferIndex) const {

@@ -1,14 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import { requestAnimationFrameWithFallback } from '../utils/animationFrameFallback'
-import {
-  buildEmphasisAnimation,
-  buildKaraokeMaskPlan,
-  buildWordFloatAnimation,
-  computeEmphasisStrength,
-  shouldEmphasizeChunk,
-  type WordMeasurement
-} from '../utils/lyricEmphasis'
+import { buildKaraokeMaskPlan, type WordMeasurement } from '../utils/lyricEmphasis'
 import {
   chunkAndSplitLyricWords,
   chunkSpan,
@@ -28,7 +21,7 @@ import type { LyricWord } from '../utils/lyrics'
  * assignment.
  *
  * Every animation shares one time origin (the line's start), so a single
- * `currentTime` value keeps the fill, the lift and the glow coherent.
+ * `currentTime` value keeps the fill coherent.
  */
 
 interface LyricClockSnapshot {
@@ -52,28 +45,22 @@ const props = defineProps<{
 interface RenderSyllable {
   key: number
   word: ResolvedLyricWord
-  /** Split per character only when the word is emphasised. */
-  chars: string[] | null
 }
 
 type RenderChunk =
   | { kind: 'space'; key: string; text: string }
-  | { kind: 'word'; key: string; syllables: RenderSyllable[]; emphasized: boolean }
+  | { kind: 'word'; key: string; syllables: RenderSyllable[] }
 
 /** Drift beyond this is corrected; below it, leave the compositor alone. */
 const DRIFT_TOLERANCE_MS = 80
 const BUILD_FRAME_FALLBACK_MS = 120
 
 const wordElements = ref<Array<HTMLElement | null>>([])
-const charElements = ref<Map<string, HTMLElement>>(new Map())
-
 let activeAnimations: Animation[] = []
 let cancelScheduledBuild: (() => void) | null = null
 let buildGeneration = 0
 
-const resolvedWords = computed<ResolvedLyricWord[]>(() =>
-  resolveLyricWordTimings(props.words)
-)
+const resolvedWords = computed<ResolvedLyricWord[]>(() => resolveLyricWordTimings(props.words))
 
 const lineStartSeconds = computed(() => {
   let start = Number.POSITIVE_INFINITY
@@ -99,46 +86,33 @@ const renderChunks = computed<RenderChunk[]>(() => {
     }
 
     const span = chunkSpan(chunk)
-    const isLast = chunks.slice(index + 1).every((rest) => rest.kind === 'space')
-    const emphasized = props.karaokeEnabled && shouldEmphasizeChunk(chunk)
     const words = chunk.kind === 'word' ? [chunk.word] : chunk.words
 
     result.push({
       kind: 'word',
       key: `w${index}-${span?.time ?? 0}`,
-      emphasized,
-      syllables: words.map((word) => ({
-        key: syllableKey++,
-        word,
-        chars: emphasized ? [...word.text.trim()] : null
-      }))
+      syllables: words.map((word) => ({ key: syllableKey++, word }))
     })
-
-    // Recorded for strength; the last word of a line carries the phrase.
-    if (emphasized && span) emphasisPlan.set(`w${index}`, { span, isLast })
   })
 
   return result
 })
 
-/** Emphasis inputs, keyed per chunk, filled while the render model is built. */
-const emphasisPlan = new Map<string, { span: ResolvedLyricWord; isLast: boolean }>()
-
-function setCharElement(key: string, element: Element | null): void {
-  if (element instanceof HTMLElement) charElements.value.set(key, element)
-  else charElements.value.delete(key)
-}
-
 function supportsWebAnimations(): boolean {
   return typeof Element !== 'undefined' && typeof Element.prototype.animate === 'function'
 }
 
-function lyricTime(position = props.clock.snapshot.value.position): number {
+function lyricTime(position = props.clock.positionAt()): number {
   return position + props.offsetSeconds
 }
 
 function timelineMs(time = lyricTime()): number {
-  return (time - lineStartSeconds.value) * 1000
+  // All animations use the line as their time origin. Keep that shared clock
+  // inside the line window: after a line is complete, WAAPI should retain its
+  // final fill instead of receiving an ever-growing currentTime that can make
+  // the first word's delayed effects appear to start over.
+  const lineDurationMs = Math.max(0, (lineEndSeconds.value - lineStartSeconds.value) * 1000)
+  return Math.min(lineDurationMs, Math.max(0, (time - lineStartSeconds.value) * 1000))
 }
 
 function releaseAnimations(): void {
@@ -184,13 +158,7 @@ function buildAnimations(): void {
   for (const chunk of renderChunks.value) {
     if (chunk.kind === 'space') continue
 
-    const plan = emphasisPlan.get(chunk.key.split('-')[0])
-    const strength =
-      chunk.emphasized && plan
-        ? computeEmphasisStrength((plan.span.endTime - plan.span.time) * 1000, plan.isLast)
-        : null
-
-    for (const syllable of chunk.syllables) {
+    for (let wordIndex = 0; wordIndex < chunk.syllables.length; wordIndex += 1) {
       const element = wordElements.value[syllableIndex]
       const index = syllableIndex
       syllableIndex += 1
@@ -214,26 +182,6 @@ function buildAnimations(): void {
           }
         }
       }
-
-      // Every word lifts slightly while sung, emphasised or not.
-      const float = buildWordFloatAnimation(syllable.word, lineStart)
-      activeAnimations.push(element.animate(float.keyframes, float.timing))
-
-      if (!strength || !syllable.chars) continue
-
-      const startDelayMs = (syllable.word.time - lineStart) * 1000
-      syllable.chars.forEach((_char, charIndex) => {
-        const charElement = charElements.value.get(`${syllable.key}:${charIndex}`)
-        if (!charElement) return
-        const emphasis = buildEmphasisAnimation(
-          charIndex,
-          syllable.chars?.length ?? 1,
-          strength,
-          startDelayMs
-        )
-        activeAnimations.push(charElement.animate(emphasis.glow, emphasis.glowTiming))
-        activeAnimations.push(charElement.animate(emphasis.float, emphasis.floatTiming))
-      })
     }
   }
 
@@ -247,14 +195,24 @@ function buildAnimations(): void {
 function syncAnimations(hard = false): void {
   if (activeAnimations.length === 0) return
 
+  // `positionAt()` is an interpolated clock, unlike the lower-frequency
+  // snapshot samples. Feeding snapshot positions back into a compositor-driven
+  // animation makes its fill visibly step backwards whenever the audio engine
+  // corrects a sample. During ordinary playback, preserve the compositor's
+  // monotonic motion and only correct material forward drift. Epoch changes
+  // (explicit seeks / track transitions) remain precise hard jumps.
   const target = timelineMs()
   const playing = props.active && props.clock.isPlaying.value
 
   for (const animation of activeAnimations) {
     const current = Number(animation.currentTime ?? 0)
-    if (hard || Math.abs(current - target) > DRIFT_TOLERANCE_MS) {
-      animation.currentTime = target
-    }
+    const forwardDrift = target - current
+    const shouldCorrect =
+      hard ||
+      (!playing
+        ? Math.abs(forwardDrift) > DRIFT_TOLERANCE_MS
+        : forwardDrift > DRIFT_TOLERANCE_MS)
+    if (shouldCorrect) animation.currentTime = target
     if (playing) animation.play()
     else animation.pause()
   }
@@ -263,24 +221,15 @@ function syncAnimations(hard = false): void {
 function scheduleBuild(): void {
   const generation = ++buildGeneration
   cancelScheduledBuild?.()
-  cancelScheduledBuild = requestAnimationFrameWithFallback(
-    () => {
-      cancelScheduledBuild = null
-      if (generation !== buildGeneration) return
-      buildAnimations()
-    },
-    BUILD_FRAME_FALLBACK_MS
-  )
+  cancelScheduledBuild = requestAnimationFrameWithFallback(() => {
+    cancelScheduledBuild = null
+    if (generation !== buildGeneration) return
+    buildAnimations()
+  }, BUILD_FRAME_FALLBACK_MS)
 }
 
 watch(
-  [
-    () => props.active,
-    () => props.karaokeEnabled,
-    () => props.words,
-    () => props.offsetSeconds,
-    () => props.clock.snapshot.value.epoch
-  ],
+  [() => props.active, () => props.karaokeEnabled, () => props.words, () => props.offsetSeconds],
   async () => {
     const generation = ++buildGeneration
     cancelScheduledBuild?.()
@@ -293,7 +242,19 @@ watch(
   { immediate: true, flush: 'post' }
 )
 
-// The clock ticks far slower than a frame; this only corrects drift and seeks.
+// A seek changes the clock epoch. Retarget the existing compositor effects
+// instead of cancelling, measuring and rebuilding them for a frame.
+watch(
+  () => (props.active ? props.clock.snapshot.value.epoch : null),
+  () => {
+    if (!props.active) return
+    syncAnimations(true)
+  }
+)
+
+// The clock ticks far slower than a frame; this only corrects material forward
+// drift. Backward sample corrections are deliberately left to the continuous
+// compositor timeline so the visible fill never twitches.
 watch(
   () => (props.active ? props.clock.snapshot.value.revision : null),
   () => {
@@ -318,30 +279,15 @@ onBeforeUnmount(() => {
   <span class="lyric-text lyric-text--words">
     <template v-for="chunk in renderChunks" :key="chunk.key">
       <span v-if="chunk.kind === 'space'" class="lyric-space">{{ chunk.text }}</span>
-      <span
-        v-else
-        class="lyric-word-group"
-        :class="{ 'lyric-word-group--emphasized': chunk.emphasized }"
-      >
+      <span v-else class="lyric-word-group">
         <span
           v-for="syllable in chunk.syllables"
           :key="syllable.key"
-          :ref="
-            (element) => (wordElements[syllable.key] = (element as HTMLElement | null) ?? null)
-          "
+          :ref="(element) => (wordElements[syllable.key] = (element as HTMLElement | null) ?? null)"
           class="lyric-word"
           :data-word-text="syllable.word.text"
         >
-          <template v-if="syllable.chars">
-            <span
-              v-for="(char, charIndex) in syllable.chars"
-              :key="charIndex"
-              :ref="(element) => setCharElement(`${syllable.key}:${charIndex}`, element as Element)"
-              class="lyric-char"
-              >{{ char }}</span
-            >
-          </template>
-          <template v-else>{{ syllable.word.text }}</template>
+          {{ syllable.word.text }}
         </span>
       </span>
     </template>

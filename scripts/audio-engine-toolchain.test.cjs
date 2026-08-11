@@ -18,6 +18,7 @@ const {
   findStaleCTestRegistrations,
   prepareMingwCmakeEnvironment,
   prepareMingwBuildLayout,
+  resolveMingwBuildJobs,
   resolveMingwBuildLayout,
   validateMingwBuildCommands,
   validateMingwCTestRegistration,
@@ -811,7 +812,10 @@ test('MinGW build runner reuses the preflight environment for builds and tests',
     /const preflight = prepareMingwCmakeEnvironment\(\{ buildDir: layout\.buildDir, env: toolchainEnvironment \}\)/
   )
   assert.match(script, /if \(!preflight\.ok\) \{[\s\S]*console\.error\(preflight\.message\)/)
-  assert.match(script, /action === 'build'[\s\S]*\['cmake', \['--build', layout\.buildDir\]\]/)
+  assert.match(
+    script,
+    /action === 'build'[\s\S]*\['cmake', \['--build', layout\.buildDir, '--parallel', String\(buildJobs\)\]\]/
+  )
   assert.match(
     script,
     /action === 'test'[\s\S]*\['ctest', \['--test-dir', layout\.buildDir, '--output-on-failure'\]\]/
@@ -849,13 +853,35 @@ test('MinGW CTest validation requires every native test registration, including 
     ...cmakeLists.matchAll(/add_test\(\s*NAME\s+(twilight_[a-z0-9_]+)/g)
   ].map((match) => match[1])
 
-  assert.equal(MINGW_EXPECTED_CTESTS.length, 26)
+  assert.equal(MINGW_EXPECTED_CTESTS.length, 27)
   assert.ok(MINGW_EXPECTED_CTESTS.includes('twilight_audio_performance_gate'))
   assert.deepEqual([...MINGW_EXPECTED_CTESTS].sort(), registeredTests.sort())
-  assert.match(
-    cmakeLists,
-    /target_compile_options\(twilight_audio_performance_gate PRIVATE -UNDEBUG\)/
-  )
+})
+
+test('every native test target keeps assert() live in Release builds', () => {
+  const cmakeLists = readFileSync(join(__dirname, '..', 'audio-engine', 'CMakeLists.txt'), 'utf8')
+
+  const targetList = cmakeLists.match(/set\(TAE_TEST_TARGETS\s*([^)]*)\)/)
+  assert.ok(targetList, 'audio-engine/CMakeLists.txt must declare TAE_TEST_TARGETS')
+  const undebugTargets = new Set(targetList[1].split(/\s+/).filter(Boolean))
+
+  // Release defines NDEBUG, which deletes assert() calls together with any side effects
+  // inside the asserted expression. Every executable that asserts its expectations must
+  // therefore opt out, or the suite silently degrades into a no-op that still reports pass.
+  const ctestTargets = [
+    ...cmakeLists.matchAll(/add_test\(\s*NAME\s+twilight_[a-z0-9_]+\s+COMMAND\s+(twilight_[a-z0-9_]+)/g)
+  ].map((match) => match[1])
+
+  assert.ok(ctestTargets.length >= 27)
+  for (const target of ctestTargets) {
+    assert.ok(undebugTargets.has(target), `${target} runs as a ctest but never clears NDEBUG`)
+  }
+  assert.ok(undebugTargets.has('twilight_audio_performance_gate'))
+  assert.ok(undebugTargets.has('twilight_vst3_host_pressure_fixture'))
+
+  assert.match(cmakeLists, /foreach\(tae_test_target IN LISTS TAE_TEST_TARGETS\)/)
+  assert.match(cmakeLists, /target_compile_options\(\$\{tae_test_target\} PRIVATE \/UNDEBUG\)/)
+  assert.match(cmakeLists, /target_compile_options\(\$\{tae_test_target\} PRIVATE -UNDEBUG\)/)
 })
 
 test('Windows release gate documents MinGW toolchain and no-whitespace build layout requirements', () => {
@@ -876,5 +902,51 @@ test('Windows release gate documents MinGW toolchain and no-whitespace build lay
   assert.ok(
     guide.indexOf('pnpm run build:audio-engine:mingw') <
       guide.indexOf('pnpm run test:audio-engine:mingw')
+  )
+})
+
+test('caps MinGW compile parallelism by available memory rather than core count', () => {
+  const gib = 1024 * 1024 * 1024
+
+  // A high-core / low-memory host is what makes cc1plus die with
+  // "out of memory allocating N bytes". 20 cores against 8 GiB must not
+  // dispatch 20 concurrent -O3 compiles.
+  assert.equal(
+    resolveMingwBuildJobs({ env: {}, totalMemoryBytes: 8 * gib, cpuCount: 20 }),
+    7
+  )
+
+  // When memory is plentiful the core count is the limit.
+  assert.equal(
+    resolveMingwBuildJobs({ env: {}, totalMemoryBytes: 128 * gib, cpuCount: 8 }),
+    8
+  )
+
+  // Never drop below a single job, however constrained the host is.
+  assert.equal(
+    resolveMingwBuildJobs({ env: {}, totalMemoryBytes: 1 * gib, cpuCount: 16 }),
+    1
+  )
+  assert.equal(
+    resolveMingwBuildJobs({ env: {}, totalMemoryBytes: 0, cpuCount: 4 }),
+    4
+  )
+
+  // An explicit override wins over both heuristics.
+  assert.equal(
+    resolveMingwBuildJobs({
+      env: { TAE_MINGW_BUILD_JOBS: '3' },
+      totalMemoryBytes: 128 * gib,
+      cpuCount: 32
+    }),
+    3
+  )
+  assert.equal(
+    resolveMingwBuildJobs({
+      env: { TAE_MINGW_BUILD_JOBS: 'not-a-number' },
+      totalMemoryBytes: 8 * gib,
+      cpuCount: 20
+    }),
+    7
   )
 })

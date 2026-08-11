@@ -20,6 +20,60 @@ export const SURFACE_MATERIALS: readonly SurfaceMaterial[] = ['standard', 'liqui
 export const LIQUID_GLASS_CARD_FILTER_ID = 'te-lg-card'
 export const LIQUID_GLASS_PLAYBAR_FILTER_ID = 'te-lg-playbar'
 
+/**
+ * Class names that receive the liquid glass card surface. Kept in sync with the
+ * selector list in `base.css`; the surfaces test asserts parity so the pointer
+ * tracker and the stylesheet can never drift apart.
+ */
+export const LIQUID_GLASS_CARD_CLASSES = [
+  'artist-card',
+  'album-card',
+  'playlist-card',
+  'glass-card',
+  'feature-card',
+  'playlist-grid-card',
+  'playlist-tile',
+  'favorites-card',
+  'streaming-placeholder',
+  'empty-recommend',
+  'detail-playlist-header',
+  'track-table-wrapper',
+  'profile-panel',
+  'liked-panel',
+  'playlist-list-item',
+  'profile-card',
+  'recent-card',
+  'ranking-card',
+  'create-playlist-card',
+  'folder-card',
+  'empty-list-card',
+  'filter-card',
+  'sponsor-card',
+  'update-card',
+  'dsp-module-card',
+  'device-card',
+  'card',
+  'account-card',
+  'plugin-card',
+  'market-card',
+  'plugin-extension-card',
+  'bili-qr-card',
+  'chart-card',
+  'parameter-card',
+  'square-card',
+  'opra-panel',
+  'opra-result-item',
+  'device-panel',
+  'plugin-panel',
+  'output-diagnostic-panel',
+  'background-accordion-panel'
+] as const
+
+/** Selector used by the pointer tracker to resolve the hovered card surface. */
+export const LIQUID_GLASS_CARD_SELECTOR = LIQUID_GLASS_CARD_CLASSES.map(
+  (className) => `.${className}`
+).join(',')
+
 export interface LiquidGlassTheme {
   /** Displacement magnitude in px fed to feDisplacementMap. */
   displacementScale: number
@@ -29,6 +83,8 @@ export interface LiquidGlassTheme {
   saturation: number
   /** Chromatic aberration strength; drives per-channel scale falloff. */
   aberrationIntensity: number
+  /** How strongly the surface reaches toward the cursor (percent). */
+  elasticity: number
   /** Specular rim/highlight opacity in percent. */
   specularOpacity: number
   /** Surface tint opacity in percent. */
@@ -38,6 +94,8 @@ export interface LiquidGlassTheme {
 export interface LiquidGlassSettings {
   /** Highlight gradient angle follows the pointer (rAF-throttled). */
   followPointer: boolean
+  /** Tint the glass dark on light backgrounds for visibility ("Over Light"). */
+  overLight: boolean
   light: LiquidGlassTheme
   dark: LiquidGlassTheme
 }
@@ -52,30 +110,36 @@ export const LIQUID_GLASS_BOUNDS: Readonly<Record<keyof LiquidGlassTheme, Bound>
   blurAmount: { min: 0, max: 40 },
   saturation: { min: 80, max: 200 },
   aberrationIntensity: { min: 0, max: 8 },
+  elasticity: { min: 0, max: 100 },
   specularOpacity: { min: 0, max: 100 },
   tintOpacity: { min: 0, max: 100 }
 }
 
 export const DEFAULT_LIQUID_GLASS_LIGHT: LiquidGlassTheme = {
-  displacementScale: 70,
-  blurAmount: 16,
-  saturation: 140,
-  aberrationIntensity: 2,
-  specularOpacity: 55,
-  tintOpacity: 12
+  // Blur and refraction remain interaction-only in CSS, so these values improve
+  // hover fidelity without making a full scrolling card grid expensive at rest.
+  displacementScale: 58,
+  blurAmount: 14,
+  saturation: 132,
+  aberrationIntensity: 1.1,
+  elasticity: 8,
+  specularOpacity: 56,
+  tintOpacity: 6
 }
 
 export const DEFAULT_LIQUID_GLASS_DARK: LiquidGlassTheme = {
-  displacementScale: 70,
+  displacementScale: 62,
   blurAmount: 18,
-  saturation: 150,
-  aberrationIntensity: 2,
-  specularOpacity: 35,
-  tintOpacity: 16
+  saturation: 136,
+  aberrationIntensity: 1.35,
+  elasticity: 7,
+  specularOpacity: 48,
+  tintOpacity: 17
 }
 
 export const DEFAULT_LIQUID_GLASS: LiquidGlassSettings = {
   followPointer: true,
+  overLight: false,
   light: DEFAULT_LIQUID_GLASS_LIGHT,
   dark: DEFAULT_LIQUID_GLASS_DARK
 }
@@ -107,6 +171,7 @@ export function normalizeLiquidGlassTheme(
       LIQUID_GLASS_BOUNDS.aberrationIntensity,
       defaults.aberrationIntensity
     ),
+    elasticity: clamp(t.elasticity, LIQUID_GLASS_BOUNDS.elasticity, defaults.elasticity),
     specularOpacity: clamp(
       t.specularOpacity,
       LIQUID_GLASS_BOUNDS.specularOpacity,
@@ -120,6 +185,7 @@ export function normalizeLiquidGlass(raw: unknown): LiquidGlassSettings {
   const value = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
   return {
     followPointer: value.followPointer !== false,
+    overLight: value.overLight === true,
     light: normalizeLiquidGlassTheme(value.light, DEFAULT_LIQUID_GLASS_LIGHT),
     dark: normalizeLiquidGlassTheme(value.dark, DEFAULT_LIQUID_GLASS_DARK)
   }
@@ -161,6 +227,7 @@ export function liquidGlassCssVariables(theme: LiquidGlassTheme): Record<string,
     '--te-lg-blur': `${theme.blurAmount}px`,
     '--te-lg-saturate': `${theme.saturation}%`,
     '--te-lg-aberration': String(theme.aberrationIntensity),
+    '--te-lg-elasticity': String(theme.elasticity),
     '--te-lg-specular': (theme.specularOpacity / 100).toFixed(3),
     '--te-lg-tint': (theme.tintOpacity / 100).toFixed(3)
   }

@@ -3,6 +3,7 @@
 #include "SacdIsoDemuxerUtils.h"
 #include "SacdIsoProbe.h"
 #include "ScarletbookToc.h"
+#include "../core/DsdRate.h"
 
 #include <algorithm>
 #include <array>
@@ -15,14 +16,6 @@ namespace twilight::audio {
 namespace {
 
 constexpr uint32_t kIsoSectorSize = 2048;
-
-int dsdRateFromSampleRate(int sampleRate) {
-  if (sampleRate >= 22000000) return 512;
-  if (sampleRate >= 10000000) return 256;
-  if (sampleRate >= 5000000) return 128;
-  if (sampleRate >= 2500000) return 64;
-  return 0;
-}
 
 struct IsoEntry {
   std::string path;

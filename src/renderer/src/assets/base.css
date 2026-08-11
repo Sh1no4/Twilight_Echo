@@ -75,6 +75,8 @@
   --te-local-bg: var(--te-app-bg);
   --te-local-bg-image: var(--te-app-bg-image);
   --te-settings-bg: #f5f6f8;
+  /* Always-opaque fallback behind settings colors and transparent PNG pixels. */
+  --te-settings-backplate: #f5f6f8;
   --te-settings-bg-image: none;
   --te-streaming-bg: var(--te-app-bg);
   --te-streaming-bg-image: var(--te-app-bg-image);
@@ -437,6 +439,7 @@ html[data-te-motion='off'] *::after {
   --te-app-bg: #17181a;
   --te-local-bg: var(--te-app-bg);
   --te-settings-bg: var(--te-app-bg);
+  --te-settings-backplate: #17181a;
   --te-streaming-bg: var(--te-app-bg);
   --te-player-bg: var(--te-app-bg);
   --te-streaming-surface: var(--te-streaming-bg);
@@ -640,19 +643,23 @@ body.te-no-blur * {
 
 body.te-settings-surface,
 html[data-theme='pureWhite'] body.te-settings-surface {
-  background-color: var(--te-settings-bg) !important;
-  background-image: var(--te-settings-bg-image) !important;
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
+  /* The image is the top layer; its transparent pixels reveal the settings
+     color, then this solid backplate — never the underlying home surface. */
+  background-color: var(--te-settings-backplate, #f5f6f8) !important;
+  background-image:
+    var(--te-settings-bg-image, none), linear-gradient(var(--te-settings-bg), var(--te-settings-bg)) !important;
+  background-position: center, center;
+  background-size: cover, cover;
+  background-repeat: no-repeat, no-repeat;
 }
 
 html[data-theme='dark'] body.te-settings-surface {
-  background-color: var(--te-settings-bg) !important;
-  background-image: var(--te-settings-bg-image) !important;
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
+  background-color: var(--te-settings-backplate, #17181a) !important;
+  background-image:
+    var(--te-settings-bg-image, none), linear-gradient(var(--te-settings-bg), var(--te-settings-bg)) !important;
+  background-position: center, center;
+  background-size: cover, cover;
+  background-repeat: no-repeat, no-repeat;
 }
 
 body.te-settings-surface::before,
@@ -718,6 +725,29 @@ body::before {
 
 html[data-theme='pureWhite'] body {
   background: #ffffff;
+}
+
+/* Pure white needs a quiet lighting field behind glass. Without tonal variation,
+   even a correctly translucent card can only sample flat white and therefore reads
+   as an opaque plastic panel. This belongs to the page backdrop, never the card. */
+html[data-theme='pureWhite'][data-te-surface-material='liquidGlass'] body {
+  background-color: #f5f7fb !important;
+  background-image:
+    radial-gradient(88% 74% at 8% -10%, rgba(116, 164, 245, 0.14) 0%, transparent 67%),
+    radial-gradient(72% 68% at 103% 92%, rgba(236, 164, 190, 0.09) 0%, transparent 70%),
+    linear-gradient(142deg, #fbfcff 0%, #f3f5fa 100%) !important;
+}
+
+/* Preserve every settings background choice: the configured image remains the top
+   layer, while the low-contrast light field only becomes visible through transparent
+   areas and through the liquid cards above it. */
+html[data-theme='pureWhite'][data-te-surface-material='liquidGlass'] body.te-settings-surface {
+  background-image:
+    var(--te-settings-bg-image, none),
+    radial-gradient(88% 74% at 8% -10%, rgba(116, 164, 245, 0.14) 0%, transparent 67%),
+    radial-gradient(72% 68% at 103% 92%, rgba(236, 164, 190, 0.09) 0%, transparent 70%),
+    linear-gradient(142deg, rgba(255, 255, 255, 0.72) 0%, rgba(241, 244, 250, 0.64) 100%),
+    linear-gradient(var(--te-settings-bg), var(--te-settings-bg)) !important;
 }
 
 html[data-theme='pureWhite'] body::before,
@@ -791,8 +821,15 @@ html[data-theme='pureWhite'] .title-bar.title-bar-streaming {
   box-shadow: none;
 }
 
+/* Settings is an independent, opaque page surface; do not inherit the
+   transparent title chrome used by the home page. */
 html[data-theme='pureWhite'] .title-bar.title-bar-settings {
-  background: transparent !important;
+  background-color: var(--te-settings-backplate, #f5f6f8) !important;
+  background-image:
+    var(--te-settings-bg-image, none), linear-gradient(var(--te-settings-bg), var(--te-settings-bg)) !important;
+  background-position: center, center;
+  background-size: cover, cover;
+  background-repeat: no-repeat, no-repeat;
 }
 
 html[data-theme='pureWhite'] .title-bar.title-bar-settings::before {
@@ -836,7 +873,8 @@ html[data-theme='pureWhite'] .title-bar:not(.title-bar-glass) .control-btn:hover
 
 html[data-theme='pureWhite'] .side-menu {
   border-right-color: rgba(17, 24, 39, 0.06);
-  background: #ffffff;
+  /* Only the bottom-most global background renders; no separate surface. */
+  background: transparent;
   box-shadow: 8px 0 24px rgba(15, 23, 42, 0.04);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -986,7 +1024,7 @@ html[data-theme='pureWhite'] .audio-output-mini.active {
 }
 
 html[data-theme='pureWhite'] .settings-page {
-  background: #ffffff;
+  background: transparent;
 }
 
 html[data-theme='pureWhite'] .settings-tabs,
@@ -1153,7 +1191,6 @@ html[data-theme='dark'] .main-content::after {
 }
 
 html[data-theme='dark'] .title-bar,
-html[data-theme='dark'] .title-bar.title-bar-settings,
 html[data-theme='dark'] .title-bar.title-bar-streaming,
 html[data-theme='dark']
   .title-bar.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings),
@@ -1187,21 +1224,13 @@ html[data-theme='dark'] .control-btn:hover {
 
 html[data-theme='dark'] .side-menu {
   border-right-color: transparent;
-  background-color: var(--te-local-bg);
-  background-image: var(--te-local-bg-image);
-  background-position: left center;
-  background-size: cover;
-  background-repeat: no-repeat;
+  background: transparent;
   box-shadow: none;
 }
 
 html[data-theme='dark'] .streaming-sidebar {
   border-right-color: transparent;
-  background-color: var(--te-streaming-bg);
-  background-image: var(--te-streaming-bg-image);
-  background-position: left center;
-  background-size: cover;
-  background-repeat: no-repeat;
+  background: transparent;
   box-shadow: none;
 }
 
@@ -2042,11 +2071,8 @@ html[data-theme='dark'] .plugin-extension-input::placeholder {
 
 /* ===== Settings & Plugin pages: dark backgrounds ===== */
 html[data-theme='dark'] .settings-preview-layout {
-  background-color: var(--te-settings-bg);
-  background-image: var(--te-settings-bg-image);
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
+  /* The fixed page backdrop owns the image so it remains continuous in both gutters. */
+  background: transparent;
 }
 
 html[data-theme='dark'] .preview-select,
@@ -2123,23 +2149,24 @@ html[data-theme='dark'] .plugin-extension-icon {
 }
 
 /* ===== Dark mode: settings & plugin page surface fix ===== */
-/* body.te-settings-surface forces #f4f4f7 !important on settings/plugin pages;
-   override it for dark mode so the page background isn't white. */
+/* The dark settings surface still uses the same opaque image stack. */
 html[data-theme='dark'] body.te-settings-surface {
-  background-color: var(--te-settings-bg) !important;
-  background-image: var(--te-settings-bg-image) !important;
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
+  background-color: var(--te-settings-backplate, #17181a) !important;
+  background-image:
+    var(--te-settings-bg-image, none), linear-gradient(var(--te-settings-bg), var(--te-settings-bg)) !important;
+  background-position: center, center;
+  background-size: cover, cover;
+  background-repeat: no-repeat, no-repeat;
 }
 
 /* --- Settings page: page-level background & hardcoded text --- */
 html[data-theme='dark'] .settings-preview-page {
-  background-color: var(--te-settings-bg);
-  background-image: var(--te-settings-bg-image);
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
+  background-color: var(--te-settings-backplate, #17181a);
+  background-image:
+    var(--te-settings-bg-image, none), linear-gradient(var(--te-settings-bg), var(--te-settings-bg));
+  background-position: center, center;
+  background-size: cover, cover;
+  background-repeat: no-repeat, no-repeat;
   color: rgba(248, 250, 252, 0.95);
 }
 
@@ -2212,8 +2239,8 @@ html[data-theme='dark'] .plugin-page,
 html[data-theme='dark'] .plugin-page .plugin-window,
 html[data-theme='dark'] .plugin-page .main-content,
 html[data-theme='dark'] .plugin-page .topbar {
-  background-color: var(--te-settings-bg);
-  background-image: var(--te-settings-bg-image);
+  background-color: var(--te-app-bg);
+  background-image: var(--te-app-bg-image);
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
@@ -2221,7 +2248,7 @@ html[data-theme='dark'] .plugin-page .topbar {
 }
 
 html[data-theme='dark'] .plugin-page .sidebar {
-  background: var(--te-card-bg);
+  background: transparent;
   border-right-color: var(--te-card-border);
 }
 
@@ -2624,7 +2651,7 @@ html[data-window-transparent='on'][data-theme='pureWhite'] body,
 html[data-window-transparent='on'] body.te-settings-surface,
 html[data-window-transparent='on'] body.te-streaming-surface {
   background-color: rgba(var(--te-tp-surface-rgb), var(--te-tp-base-alpha, 0.78)) !important;
-  background-image: none !important;
+  background-image: var(--te-app-bg-image) !important;
 }
 
 /* Kill the fixed ambient gradient / blurred-wallpaper overlays that would
@@ -2641,9 +2668,7 @@ html[data-window-transparent='on'] .main-content::after {
 /* 2. Page-filling surfaces → translucent so blur reads through them. */
 html[data-window-transparent='on']
   :is(
-    .side-menu,
     .dashboard-wrapper,
-    .streaming-sidebar,
     .song-list,
     .settings-page,
     .settings-preview-layout,
@@ -2657,13 +2682,22 @@ html[data-window-transparent='on']
     .playing-music
   ) {
   background-color: var(--te-tp-surface) !important;
-  background-image: none !important;
+  background-image: var(--te-app-bg-image) !important;
+}
+
+/* Settings retains its own backdrop even when the window chrome is transparent. */
+html[data-window-transparent='on'] body.te-settings-surface,
+/* Match the most-specific transparent-window surface selector above, so the
+   settings page itself stays opaque rather than merely relying on its root. */
+html[data-window-transparent='on'] .settings-preview-page.settings-preview-page {
+  background-color: var(--te-settings-backplate, #17181a) !important;
+  background-image:
+    var(--te-settings-bg-image, none), linear-gradient(var(--te-settings-bg), var(--te-settings-bg)) !important;
 }
 
 html[data-window-transparent='on'] .title-bar,
 html[data-window-transparent='on'] .title-bar.title-bar-streaming,
 html[data-window-transparent='on'] .title-bar.title-bar-menu-open,
-html[data-window-transparent='on'] .title-bar.title-bar-settings,
 html[data-window-transparent='on'] .title-bar.title-bar-glass,
 html[data-window-transparent='on'] .title-bar-background {
   background-color: transparent !important;
@@ -2674,17 +2708,23 @@ html[data-window-transparent='on'] .title-bar-background {
   border-bottom-color: transparent !important;
 }
 
+/* The generic transparent-window rule above deliberately excludes no title
+   variants. Re-apply the settings surface after it so the title controls stay
+   on the settings backdrop instead of the home page. */
+html[data-window-transparent='on'] .title-bar.title-bar-settings,
+html[data-window-transparent='on'] .title-bar.title-bar-settings .title-bar-background {
+  background-color: var(--te-settings-backplate, #17181a) !important;
+  background-image:
+    var(--te-settings-bg-image, none), linear-gradient(var(--te-settings-bg), var(--te-settings-bg)) !important;
+  background-position: center, center;
+  background-size: cover, cover;
+  background-repeat: no-repeat, no-repeat;
+  background-attachment: fixed, fixed;
+}
+
 /* 3. Floating chrome (player bar, panels, drawers, plugin sidebar). */
 html[data-window-transparent='on']
-  :is(
-    .player-bar,
-    .playlist-panel,
-    .volume-drawer,
-    .more-drawer,
-    .plugin-page .sidebar,
-    .context-menu,
-    .submenu
-  ) {
+  :is(.player-bar, .playlist-panel, .volume-drawer, .more-drawer, .context-menu, .submenu) {
   background-color: var(--te-tp-chrome) !important;
   background-image: none !important;
 }
@@ -2846,6 +2886,17 @@ html[data-te-background-treatment='cover-blur']
   ) {
   background-color: color-mix(in srgb, var(--te-app-bg) 76%, transparent) !important;
   background-image: none !important;
+}
+
+/* Cover-blur is a homepage treatment. The settings overlay keeps its own image. */
+html[data-te-background-treatment='cover-blur'] .settings-preview-page {
+  background-color: var(--te-settings-backplate, #f5f6f8) !important;
+  background-image:
+    var(--te-settings-bg-image, none), linear-gradient(var(--te-settings-bg), var(--te-settings-bg)) !important;
+}
+
+html[data-te-background-treatment='cover-blur'] .settings-preview-layout {
+  background: transparent !important;
 }
 
 html.te-theme-tone-transition
@@ -3053,18 +3104,40 @@ html[data-te-surface-material='liquidGlass']
     .output-diagnostic-panel,
     .background-accordion-panel
   ) {
+  /* Shared optical palette. The playbar uses these same roles, so cards feel
+     like material cut from the same sheet instead of separate opaque UI blocks. */
+  --te-lg-sheen-rgb: 255, 255, 255;
+  --te-lg-surface-rgb: 255, 255, 255;
+  --te-lg-shade-rgb: 15, 23, 42;
+  --te-lg-drop-rgb: 15, 23, 42;
+  /* Cards should feel like a thin optical sheet. Keep the visibly brighter,
+     more pronounced profile reserved for the compact playbar; broad content
+     surfaces become plastic as soon as their white wash and cast shadow stack. */
+  --te-lg-rim-strength: 0.44;
+  --te-lg-top-wash-alpha: 0.055;
+  --te-lg-bottom-density-alpha: 0.062;
+  --te-lg-shade-alpha: 0.062;
+  --te-lg-drop-near-alpha: 0.026;
+  --te-lg-drop-alpha: 0.072;
+  /* Respect the user's tint slider but keep large panes optically open. */
+  --te-lg-tint-scale: 0.72;
   position: relative;
   /* Contains the negative-z warp layer so it cannot slip behind an ancestor. */
   isolation: isolate;
   background: transparent !important;
-  /* Rim stays outside the filter: real glass edges read as a crisp highlight, and a
-     displaced rim would smear. */
+  /* The rim is crisp and the depth is diffused, rather than one dark, hard card
+     shadow. That is what keeps the surface reading as glass instead of plastic. */
   border-color: transparent !important;
   box-shadow:
-    inset 0 0 0 0.5px rgba(255, 255, 255, calc(var(--te-lg-specular, 0.55) * 0.9)),
-    inset 0 1px 1px rgba(255, 255, 255, calc(var(--te-lg-specular, 0.55) * 0.5)),
-    inset 0 -1px 1px rgba(0, 0, 0, 0.06),
-    0 10px 30px rgba(0, 0, 0, 0.16) !important;
+    /* Two sub-pixel inner edges give the surface its sharp glass boundary without
+       becoming the thick white outline associated with frosted plastic. */
+    inset 0 0 0 0.5px
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.54)),
+    inset 0 1px 0.5px
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.2)),
+    inset 0 -1px 1px rgba(var(--te-lg-shade-rgb), var(--te-lg-shade-alpha)),
+    0 2px 7px rgba(var(--te-lg-drop-rgb), var(--te-lg-drop-near-alpha)),
+    0 13px 32px rgba(var(--te-lg-drop-rgb), var(--te-lg-drop-alpha)) !important;
 }
 
 html[data-te-surface-material='liquidGlass']
@@ -3116,25 +3189,49 @@ html[data-te-surface-material='liquidGlass']
   z-index: -1;
   pointer-events: none;
   border-radius: inherit;
-  /* Tint plus a directional sheen. Both sit on the warped layer, so the highlight
-     refracts with the backdrop instead of floating flat above it. */
+  /* Elasticity lets the glass reach toward the cursor; 0 keeps it pinned. */
+  transform: translate(var(--te-lg-elastic-x, 0px), var(--te-lg-elastic-y, 0px));
+  /* A real glass surface needs more than a translucent flat colour: the pointer
+     places a soft specular bloom, the sweep gives it direction, then top/bottom
+     density layers make the light feel enclosed by material. */
   background:
+    /* A small, directional highlight is enough to communicate curvature. The old
+       full-card bloom made large settings panes read as white molded plastic. */
+    radial-gradient(
+      112% 126% at var(--te-lg-light-x, 50%) var(--te-lg-light-y, 42%),
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.17)) 0%,
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.055))
+        21%,
+      transparent 55%
+    ),
     linear-gradient(
       var(--te-lg-angle, 135deg),
-      rgba(255, 255, 255, 0) 0%,
-      rgba(255, 255, 255, calc(var(--te-lg-specular, 0.55) * 0.22)) 38%,
-      rgba(255, 255, 255, calc(var(--te-lg-specular, 0.55) * 0.06)) 62%,
-      rgba(255, 255, 255, 0) 100%
+      rgba(var(--te-lg-sheen-rgb), 0) 0%,
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.1)) 35%,
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.022))
+        62%,
+      transparent 100%
     ),
-    rgba(255, 255, 255, var(--te-lg-tint, 0.12));
-  backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
-  -webkit-backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
-  filter: url(#te-lg-card);
+    linear-gradient(
+      180deg,
+      rgba(var(--te-lg-sheen-rgb), var(--te-lg-top-wash-alpha)) 0%,
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-top-wash-alpha) * 0.25)) 30%,
+      transparent 55%,
+      rgba(var(--te-lg-shade-rgb), var(--te-lg-bottom-density-alpha)) 100%
+    ),
+    rgba(var(--te-lg-surface-rgb), calc(var(--te-lg-tint, 0.12) * var(--te-lg-tint-scale, 1)));
+  /* Backdrop snapshots are as expensive as the SVG displacement. Idle cards use
+     the tint and specular layer only; full blur/refraction is promoted on hover or
+     keyboard focus, where the user can actually perceive the detail. */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  filter: none;
 }
 
-/* Dark tone: the sheen stays light (it is a specular highlight) but the tint
-   darkens, otherwise a light film washes out dark surfaces. */
-html[data-te-surface-material='liquidGlass'][data-theme='dark']
+/* Keeping full blur and displacement to one interacted card avoids repainting a
+   full album grid whenever it scrolls, while the idle tint/rim preserve the glass
+   material at a fraction of the compositing cost. */
+html[data-te-surface-material='liquidGlass']
   :is(
     .artist-card,
     .album-card,
@@ -3176,18 +3273,14 @@ html[data-te-surface-material='liquidGlass'][data-theme='dark']
     .plugin-panel,
     .output-diagnostic-panel,
     .background-accordion-panel
-  )::after {
-  background:
-    linear-gradient(
-      var(--te-lg-angle, 135deg),
-      rgba(255, 255, 255, 0) 0%,
-      rgba(255, 255, 255, calc(var(--te-lg-specular, 0.35) * 0.26)) 38%,
-      rgba(255, 255, 255, calc(var(--te-lg-specular, 0.35) * 0.07)) 62%,
-      rgba(255, 255, 255, 0) 100%
-    ),
-    rgba(126, 134, 152, var(--te-lg-tint, 0.16));
+  ):is(:hover, :focus-within)::after {
+  backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
+  -webkit-backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
+  filter: url(#te-lg-card);
 }
 
+/* Dark tone: the sheen stays light (it is a specular highlight) but the tint
+   darkens, otherwise a light film washes out dark surfaces. */
 html[data-te-surface-material='liquidGlass'][data-theme='dark']
   :is(
     .artist-card,
@@ -3232,13 +3325,20 @@ html[data-te-surface-material='liquidGlass'][data-theme='dark']
     .output-diagnostic-panel,
     .background-accordion-panel
   ) {
-  box-shadow:
-    inset 0 0 0 0.5px rgba(255, 255, 255, calc(var(--te-lg-specular, 0.35) * 0.8)),
-    inset 0 1px 1px rgba(255, 255, 255, calc(var(--te-lg-specular, 0.35) * 0.45)),
-    inset 0 -1px 1px rgba(0, 0, 0, 0.22),
-    0 12px 34px rgba(0, 0, 0, 0.4) !important;
+  --te-lg-surface-rgb: 116, 126, 148;
+  --te-lg-shade-rgb: 0, 0, 0;
+  --te-lg-drop-rgb: 0, 0, 0;
+  /* A broad dark pane must remain an optical layer, not become a raised
+     graphite slab. The compact playbar can carry heavier depth; large cards use
+     only a restrained lower density and a short, diffuse separation shadow. */
+  --te-lg-rim-strength: 0.38;
+  --te-lg-top-wash-alpha: 0.04;
+  --te-lg-bottom-density-alpha: 0.13;
+  --te-lg-shade-alpha: 0.15;
+  --te-lg-drop-near-alpha: 0.07;
+  --te-lg-drop-alpha: 0.18;
+  --te-lg-tint-scale: 0.76;
 }
-
 /* feature-card and playlist-tile have dark-tone rules that set ::after to
    display: none; the warp layer has to opt back in. */
 html[data-te-surface-material='liquidGlass'][data-theme='dark']
@@ -3246,16 +3346,18 @@ html[data-te-surface-material='liquidGlass'][data-theme='dark']
   display: block !important;
 }
 
-/* The one scrollable surface keeps the rim but no warp layer: an inset:0 absolute
-   child scrolls with content, so the refraction would drift out of view. */
+/* The track table is the largest continuously scrolling glass surface. A backdrop
+   snapshot there must be recomputed for every row scroll, so retain the tint/rim but
+   deliberately skip blur and SVG refraction. Card and playbar interaction states
+   still provide the full liquid response where the detail is perceptible. */
 html[data-te-surface-material='liquidGlass'] .track-table-wrapper {
-  backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
-  -webkit-backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
-  background: rgba(255, 255, 255, var(--te-lg-tint, 0.12)) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: rgba(var(--te-lg-surface-rgb), calc(var(--te-lg-tint, 0.12) * 0.7)) !important;
 }
 
 html[data-te-surface-material='liquidGlass'][data-theme='dark'] .track-table-wrapper {
-  background: rgba(126, 134, 152, var(--te-lg-tint, 0.16)) !important;
+  background: rgba(var(--te-lg-surface-rgb), calc(var(--te-lg-tint, 0.16) * 0.72)) !important;
 }
 
 /* ===== Liquid glass degradation =====

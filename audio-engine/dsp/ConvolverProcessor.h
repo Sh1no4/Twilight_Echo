@@ -3,6 +3,7 @@
 #include "IAudioProcessor.h"
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -28,6 +29,12 @@ class ConvolverProcessor final : public IAudioProcessor {
   void unloadImpulseResponse();
   ConvolverInfo info() const;
 
+  // Shares realtime telemetry with the render clone of this node. AudioPipeline hands the
+  // control instance's state to every graph it builds for the same configuration, so a
+  // bypass raised on the audio thread becomes visible to info() and to the UI.
+  void setRealtimeState(std::shared_ptr<ConvolverRealtimeState> state);
+  const std::shared_ptr<ConvolverRealtimeState>& realtimeState() const { return realtimeState_; }
+
  private:
   struct IrData {
     int sampleRate = 0;
@@ -46,6 +53,8 @@ class ConvolverProcessor final : public IAudioProcessor {
   void rebuild();
   bool prepareRuntimeIr(std::string* error);
   void bypassRealtime();
+  // Returns true when a previously bypassed convolver may try again.
+  bool shouldRearmAfterBypass();
   uint32_t choosePartitionSize(const IrData& ir) const;
   std::vector<float> impulseForOutputChannel(const IrData& ir, int outputChannel) const;
   void updateInfoFromRuntime(const IrData& ir, bool resampled);
@@ -63,7 +72,13 @@ class ConvolverProcessor final : public IAudioProcessor {
   size_t wetDelayWriteFrame_ = 0;
   ConvolverInfo info_;
   uint64_t consecutiveOverruns_ = 0;
+  // Successive bypasses back off exponentially so a genuinely too-heavy IR settles into
+  // "off" instead of thrashing, while a one-off scheduling hiccup recovers quickly.
+  uint32_t bypassGeneration_ = 0;
+  std::chrono::steady_clock::time_point lastBypassAt_{};
   bool active_ = false;
+  bool realtimeBypassed_ = false;
+  std::shared_ptr<ConvolverRealtimeState> realtimeState_ = std::make_shared<ConvolverRealtimeState>();
 };
 
 }  // namespace twilight::audio

@@ -1200,7 +1200,8 @@ onUnmounted(() => {
 
   position: fixed;
   inset: 0;
-  z-index: 100;
+  /* Above the sidebar (1000) and player bar (1002); below the title bar (9999). */
+  z-index: 2000;
   display: grid;
   place-items: center;
   background-color: var(--te-streaming-bg);

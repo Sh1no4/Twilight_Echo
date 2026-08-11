@@ -29,6 +29,10 @@ constexpr std::array<unsigned char, 16> kWaveSubFormatFloat = {
     0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71};
 constexpr uint64_t kConvolverRealtimeBypassOverrunThreshold = 3;
 constexpr const char* kConvolverRealtimeBypassReason = "convolver process exceeded realtime budget";
+// First re-arm waits 500 ms, then 1 s, 2 s, ... Anything that keeps missing its budget this
+// many times stays bypassed until the user changes the configuration.
+constexpr std::chrono::milliseconds kConvolverRearmBaseCooldown{500};
+constexpr uint32_t kConvolverMaxBypassGenerations = 5;
 constexpr uint64_t kMaxImpulseFrames = 16ULL * 1024ULL * 1024ULL;
 constexpr uint64_t kMaxImpulseSamples = kMaxImpulseFrames * 8ULL;
 
@@ -197,7 +201,11 @@ void ConvolverProcessor::setTrackContext(const DspTrackContext&) {
 }
 
 void ConvolverProcessor::process(float* samples, size_t frameCount) {
-  if (!active_ || !samples || frameCount == 0) return;
+  if (!samples || frameCount == 0) return;
+  // A realtime bypass is a temporary retreat, not a permanent one: give it another go once
+  // the backoff elapses so a single scheduling hiccup does not mute convolution for the
+  // rest of this graph generation.
+  if (!active_ && !shouldRearmAfterBypass()) return;
   const auto started = std::chrono::steady_clock::now();
   const int channels = std::clamp(format_.channelCount, 1, 8);
   const bool routed = hasRoutingMatrix(config_, channels);
@@ -246,8 +254,17 @@ void ConvolverProcessor::process(float* samples, size_t frameCount) {
   const double budgetMs = std::max(2.0, blockMs * 0.5);
   info_.lastProcessMs = elapsedMs;
   info_.maxProcessMs = std::max(info_.maxProcessMs, elapsedMs);
+  if (realtimeState_) {
+    realtimeState_->lastProcessMs.store(elapsedMs, std::memory_order_relaxed);
+    double previousMax = realtimeState_->maxProcessMs.load(std::memory_order_relaxed);
+    while (elapsedMs > previousMax &&
+           !realtimeState_->maxProcessMs.compare_exchange_weak(
+               previousMax, elapsedMs, std::memory_order_relaxed, std::memory_order_relaxed)) {
+    }
+  }
   if (elapsedMs > budgetMs) {
     info_.overrunCount += 1;
+    if (realtimeState_) realtimeState_->overrunCount.fetch_add(1, std::memory_order_relaxed);
     consecutiveOverruns_ += 1;
     if (consecutiveOverruns_ >= kConvolverRealtimeBypassOverrunThreshold) {
       bypassRealtime();
@@ -309,6 +326,15 @@ void ConvolverProcessor::unloadImpulseResponse() {
   active_ = false;
   info_ = {};
   consecutiveOverruns_ = 0;
+  realtimeBypassed_ = false;
+  bypassGeneration_ = 0;
+  if (realtimeState_) {
+    realtimeState_->bypassed.store(false, std::memory_order_release);
+    realtimeState_->overrunCount.store(0, std::memory_order_relaxed);
+    realtimeState_->bypassCount.store(0, std::memory_order_relaxed);
+    realtimeState_->lastProcessMs.store(0.0, std::memory_order_relaxed);
+    realtimeState_->maxProcessMs.store(0.0, std::memory_order_relaxed);
+  }
   config_.convolverEnabled = false;
   config_.impulseResponsePath.clear();
 }
@@ -316,6 +342,22 @@ void ConvolverProcessor::unloadImpulseResponse() {
 ConvolverInfo ConvolverProcessor::info() const {
   ConvolverInfo copy = info_;
   copy.active = active_;
+  if (!realtimeState_) return copy;
+
+  // Fold in what the render clone reported. This instance is not the one that runs on the
+  // audio thread, so without the shared state a realtime bypass would never show up here.
+  const uint64_t realtimeOverruns = realtimeState_->overrunCount.load(std::memory_order_relaxed);
+  copy.overrunCount = std::max(copy.overrunCount, realtimeOverruns);
+  copy.bypassCount = realtimeState_->bypassCount.load(std::memory_order_relaxed);
+  const double realtimeLast = realtimeState_->lastProcessMs.load(std::memory_order_relaxed);
+  if (realtimeLast > 0.0) copy.lastProcessMs = realtimeLast;
+  copy.maxProcessMs =
+      std::max(copy.maxProcessMs, realtimeState_->maxProcessMs.load(std::memory_order_relaxed));
+  if (realtimeState_->bypassed.load(std::memory_order_acquire)) {
+    copy.bypassed = true;
+    copy.active = false;
+    if (copy.lastError.empty()) copy.lastError = kConvolverRealtimeBypassReason;
+  }
   return copy;
 }
 
@@ -550,9 +592,49 @@ void ConvolverProcessor::rebuild() {
 
 void ConvolverProcessor::bypassRealtime() {
   active_ = false;
+  realtimeBypassed_ = true;
   info_.active = false;
   info_.bypassed = true;
-  info_.lastError = kConvolverRealtimeBypassReason;
+  // No std::string assignment here: this runs on the audio thread and the old
+  // info_.lastError write allocated. info() reconstitutes the reason from the shared flag.
+  if (bypassGeneration_ < kConvolverMaxBypassGenerations) ++bypassGeneration_;
+  lastBypassAt_ = std::chrono::steady_clock::now();
+  if (realtimeState_) {
+    realtimeState_->bypassed.store(true, std::memory_order_release);
+    realtimeState_->bypassCount.fetch_add(1, std::memory_order_relaxed);
+    realtimeState_->lastBypassTicks.store(
+        std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_relaxed);
+  }
+}
+
+bool ConvolverProcessor::shouldRearmAfterBypass() {
+  if (!realtimeBypassed_) return false;
+  if (channels_.empty()) return false;
+  if (bypassGeneration_ >= kConvolverMaxBypassGenerations) return false;
+
+  const auto cooldown = kConvolverRearmBaseCooldown * (1u << (bypassGeneration_ - 1));
+  const auto elapsed = std::chrono::steady_clock::now() - lastBypassAt_;
+  if (elapsed < cooldown) return false;
+
+  // Re-arm. Filter state is stale after the gap, so clear it -- FftChannel::reset() only
+  // fills existing buffers and never allocates, so this is realtime-safe.
+  for (auto& channel : channels_) {
+    if (channel) channel->reset();
+  }
+  std::fill(wetDelayBuffer_.begin(), wetDelayBuffer_.end(), 0.0f);
+  wetDelayWriteFrame_ = 0;
+  consecutiveOverruns_ = 0;
+  realtimeBypassed_ = false;
+  active_ = true;
+  info_.active = true;
+  info_.bypassed = false;
+  if (realtimeState_) realtimeState_->bypassed.store(false, std::memory_order_release);
+  return true;
+}
+
+void ConvolverProcessor::setRealtimeState(std::shared_ptr<ConvolverRealtimeState> state) {
+  if (!state) return;
+  realtimeState_ = std::move(state);
 }
 
 bool ConvolverProcessor::prepareRuntimeIr(std::string* error) {
@@ -612,6 +694,11 @@ bool ConvolverProcessor::prepareRuntimeIr(std::string* error) {
   info_.active = true;
   info_.bypassed = false;
   consecutiveOverruns_ = 0;
+  // A fresh runtime IR is a clean slate: drop the accumulated backoff so a reconfigured
+  // convolver is not still serving a penalty earned by the previous setup.
+  realtimeBypassed_ = false;
+  bypassGeneration_ = 0;
+  if (realtimeState_) realtimeState_->bypassed.store(false, std::memory_order_release);
   return true;
 }
 

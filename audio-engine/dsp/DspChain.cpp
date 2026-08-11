@@ -778,6 +778,16 @@ ConvolverInfo DspChain::convolverInfo() const {
   return convolver_ ? convolver_->info() : ConvolverInfo{};
 }
 
+void DspChain::setConvolverRealtimeState(std::shared_ptr<ConvolverRealtimeState> state) {
+  std::lock_guard lock(mutex_);
+  if (convolver_) convolver_->setRealtimeState(std::move(state));
+}
+
+std::shared_ptr<ConvolverRealtimeState> DspChain::convolverRealtimeState() const {
+  std::lock_guard lock(mutex_);
+  return convolver_ ? convolver_->realtimeState() : nullptr;
+}
+
 void DspChain::setEqBands(const std::vector<DspEqBand>& bands, EqMode mode, double preampDb, bool enabled) {
   processingRequired_.store(true, std::memory_order_relaxed);
   std::lock_guard lock(mutex_);
@@ -875,7 +885,11 @@ std::string DspChain::graphStatusJson() const {
        << totalLatency << ",\"totalTailFrames\":" << totalTail << ",\"nodes\":[";
   for (size_t index = 0; index < graphNodes_.size(); ++index) {
     const GraphNodeRuntime& node = graphNodes_[index];
-    const bool active = node.processor && node.enabled && node.bypassReason.empty() && node.processor->isActive();
+    // A convolver bypassed on the render thread still reports isActive() here -- this chain
+    // holds the control instance. convolverInfo() carries the shared realtime flag.
+    const bool convolverRealtimeBypassed = node.type == "convolver" && convolverInfo.bypassed;
+    const bool active = node.processor && node.enabled && node.bypassReason.empty() &&
+                        node.processor->isActive() && !convolverRealtimeBypassed;
     const uint32_t latency = node.type == "convolver" ? convolverInfo.latencyFrames :
                              node.type == "truepeaklimiter" ? limiterLatency :
                              node.vst3Bridge ? node.vst3Bridge->latencyFrames() : 0;
@@ -886,6 +900,7 @@ std::string DspChain::graphStatusJson() const {
     const uint64_t clipCount = node.type == "meter" && meter_ ? meter_->clipCount() : 0;
     const std::string bypassReason =
         !node.bypassReason.empty() ? node.bypassReason :
+        convolverRealtimeBypassed ? convolverInfo.lastError :
         node.vst3Bridge && node.enabled && !active ? node.vst3Bridge->bypassReason() : "";
     const bool bypassed = !node.enabled || !bypassReason.empty();
     if (index > 0) json << ",";

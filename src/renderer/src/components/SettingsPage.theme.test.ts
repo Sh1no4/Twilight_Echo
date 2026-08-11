@@ -5,6 +5,8 @@ import assert from 'node:assert/strict'
 const styles = readFileSync(new URL('./settings-page/SettingsPage.css', import.meta.url), 'utf8')
 const baseStyles = readFileSync(new URL('../assets/base.css', import.meta.url), 'utf8')
 const pageSource = readFileSync(new URL('./SettingsPage.vue', import.meta.url), 'utf8')
+const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
+const titleBarSource = readFileSync(new URL('./TitleBar.vue', import.meta.url), 'utf8')
 
 test('settings option bars define dark-mode container and active option surfaces', () => {
   assert.match(
@@ -48,5 +50,79 @@ test('native checkboxes inherit the active dark color scheme and theme accent', 
   assert.match(
     baseStyles,
     /html\[data-theme='dark'\] input\[type='checkbox'\]:checked::after\s*\{[\s\S]*?content:\s*''/
+  )
+})
+
+test('settings uses an opaque independent backdrop without covering title controls', () => {
+  assert.match(
+    styles,
+    /\.settings-preview-page\s*\{[\s\S]*?inset:\s*32px 0 0;[\s\S]*?z-index:\s*2000;[\s\S]*?height:\s*auto/
+  )
+  assert.match(
+    styles,
+    /\.settings-preview-page\s*\{[\s\S]*?background-color:\s*#17181a;[\s\S]*?background-image:\s*var\(--te-settings-bg-image, none\),[\s\S]*?linear-gradient\(var\(--te-settings-bg\), var\(--te-settings-bg\)\),[\s\S]*?linear-gradient\(#17181a, #17181a\)[\s\S]*?background-attachment:\s*fixed, fixed, fixed/
+  )
+  assert.match(
+    baseStyles,
+    /--te-settings-backplate:\s*#f5f6f8;[\s\S]*?:root\[data-theme='dark'\] \{[\s\S]*?--te-settings-backplate:\s*#17181a;/
+  )
+  assert.match(
+    baseStyles,
+    /body\.te-settings-surface,[\s\S]*?background-color:\s*var\(--te-settings-backplate, #f5f6f8\) !important;[\s\S]*?background-image:[\s\S]*?linear-gradient\(var\(--te-settings-bg\), var\(--te-settings-bg\)\) !important/
+  )
+  assert.match(
+    baseStyles,
+    /html\[data-window-transparent='on'\] \.settings-preview-page\.settings-preview-page\s*\{[\s\S]*?background-color:\s*var\(--te-settings-backplate, #17181a\) !important;[\s\S]*?linear-gradient\(var\(--te-settings-bg\), var\(--te-settings-bg\)\) !important/
+  )
+  assert.match(
+    baseStyles,
+    /html\[data-window-transparent='on'\] \.title-bar\.title-bar-settings,[\s\S]*?background-color:\s*var\(--te-settings-backplate, #17181a\) !important;[\s\S]*?linear-gradient\(var\(--te-settings-bg\), var\(--te-settings-bg\)\) !important/
+  )
+  const darkSettingsPageRule =
+    pageSource.match(/html\[data-theme='dark'\] \.settings-preview-page\s*\{([\s\S]*?)\n\}/)?.[1] ??
+    ''
+  assert.match(
+    darkSettingsPageRule,
+    /background-color:\s*var\(--te-settings-backplate, #17181a\) !important;/
+  )
+  assert.match(
+    darkSettingsPageRule,
+    /linear-gradient\(var\(--te-settings-bg\), var\(--te-settings-bg\)\) !important;/
+  )
+  assert.match(
+    appSource,
+    /class="settings-overlay-root"[\s\S]*?settings-overlay-root--active[\s\S]*?<Transition name="settings-page">[\s\S]*?<SettingsPage/
+  )
+  assert.match(
+    appSource,
+    /\.settings-overlay-root--active\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?inset:\s*32px 0 0;[\s\S]*?z-index:\s*2000;[\s\S]*?isolation:\s*isolate;[\s\S]*?background:\s*#17181a !important;/
+  )
+  assert.match(
+    appSource,
+    /\.settings-overlay-root--active::before\s*\{[\s\S]*?background-color:\s*#17181a;[\s\S]*?var\(--te-settings-bg-image, none\),[\s\S]*?linear-gradient\(var\(--te-settings-bg\), var\(--te-settings-bg\)\),[\s\S]*?linear-gradient\(#17181a, #17181a\)/
+  )
+  assert.match(appSource, /\.app-shell-title\s*\{[\s\S]*?z-index:\s*2100/)
+  assert.match(appSource, /\.settings-page-enter-active\s*\{[\s\S]*?z-index:\s*2000/)
+  assert.match(
+    titleBarSource,
+    /\.title-bar\.title-bar-settings,[\s\S]*?background-color:\s*var\(--te-settings-backplate, #17181a\) !important;[\s\S]*?linear-gradient\(var\(--te-settings-bg\), var\(--te-settings-bg\)\) !important/
+  )
+  assert.doesNotMatch(baseStyles, /html\[data-theme='dark'\] \.title-bar\.title-bar-settings,/)
+})
+
+test('audio output device cards are opt-in through a closed native checkbox', () => {
+  assert.match(pageSource, /const audioOutputPanelExpanded = ref\(false\)/)
+  assert.match(
+    pageSource,
+    /<input[\s\S]{0,260}?v-model="audioOutputPanelExpanded"[\s\S]{0,160}?type="checkbox"[\s\S]{0,200}?aria-controls="audio-output-device-panel"[\s\S]{0,160}?:aria-expanded="audioOutputPanelExpanded"/
+  )
+  assert.match(
+    pageSource,
+    /<div\s+v-if="audioOutputPanelExpanded"\s+id="audio-output-device-panel"\s+class="device-panel-content"[\s\S]{0,240}?<div class="device-grid">/
+  )
+  assert.match(styles, /\.device-panel-disclosure\s*\{[\s\S]*?cursor:\s*pointer/)
+  assert.match(
+    styles,
+    /@media \(max-width: 520px\)\s*\{[\s\S]*?\.device-panel-head\s*\{[\s\S]*?flex-direction:\s*column/
   )
 })

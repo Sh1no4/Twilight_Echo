@@ -6,7 +6,6 @@ import {
   pointerCssVariables,
   resolveHighlightAngle,
   resolvePointerOffset,
-  resolveViewportPointerOffset,
   staticPointerCssVariables
 } from './liquidGlassPointer.ts'
 
@@ -48,12 +47,6 @@ test('non-finite pointer coordinates degrade to zero', () => {
   assert.equal(offset.y, 0)
 })
 
-test('viewport offset treats the whole viewport as the surface', () => {
-  assert.deepEqual(resolveViewportPointerOffset(960, 540, 1920, 1080), { x: 0, y: 0 })
-  assert.deepEqual(resolveViewportPointerOffset(1920, 540, 1920, 1080), { x: 50, y: 0 })
-  assert.deepEqual(resolveViewportPointerOffset(0, 0, 1920, 1080), { x: -50, y: -50 })
-})
-
 test('highlight angle rotates around the base angle with pointer offset', () => {
   assert.equal(resolveHighlightAngle(0), BASE_HIGHLIGHT_ANGLE)
   assert.ok(resolveHighlightAngle(50) > BASE_HIGHLIGHT_ANGLE, 'right of center rotates one way')
@@ -70,6 +63,23 @@ test('css variables carry deg units and plain offsets', () => {
   assert.match(vars['--te-lg-angle'], /^-?\d+\.\d{2}deg$/)
   assert.equal(vars['--te-lg-pointer-x'], '25.00')
   assert.equal(vars['--te-lg-pointer-y'], '-10.00')
+  // elasticity defaults to 0, so the surface stays pinned to its corner radius
+  assert.equal(vars['--te-lg-elastic-x'], '0.00px')
+  assert.equal(vars['--te-lg-elastic-y'], '0.00px')
+})
+
+test('elasticity scales how far the surface reaches toward the cursor', () => {
+  const zero = pointerCssVariables({ x: 50, y: -50 }, 0)
+  assert.equal(zero['--te-lg-elastic-x'], '0.00px')
+  assert.equal(zero['--te-lg-elastic-y'], '0.00px')
+
+  const full = pointerCssVariables({ x: 100, y: 0 }, 100)
+  assert.equal(full['--te-lg-elastic-x'], '10.00px')
+  assert.equal(full['--te-lg-elastic-y'], '0.00px')
+
+  const half = pointerCssVariables({ x: 50, y: 50 }, 50)
+  assert.equal(half['--te-lg-elastic-x'], '2.50px')
+  assert.equal(half['--te-lg-elastic-y'], '2.50px')
 })
 
 test('static variables sit at the neutral base angle', () => {
@@ -77,6 +87,8 @@ test('static variables sit at the neutral base angle', () => {
   assert.equal(vars['--te-lg-angle'], `${BASE_HIGHLIGHT_ANGLE.toFixed(2)}deg`)
   assert.equal(vars['--te-lg-pointer-x'], '0.00')
   assert.equal(vars['--te-lg-pointer-y'], '0.00')
+  assert.equal(vars['--te-lg-elastic-x'], '0.00px')
+  assert.equal(vars['--te-lg-elastic-y'], '0.00px')
 })
 
 // --- frame coalescing ---
@@ -217,4 +229,56 @@ test('payloads scheduled from inside a flush land on a later frame', () => {
   assert.deepEqual(seen, [1, 2])
   frames.runFrame()
   assert.deepEqual(seen, [1, 2, 3])
+})
+
+test('rate-limited coalescer keeps only the newest pointer sample until its interval elapses', () => {
+  const frames = manualFrames()
+  const seen: number[] = []
+  let timestamp = 0
+  const coalescer = createFrameCoalescer<number>((value) => seen.push(value), {
+    ...frames,
+    minIntervalMs: 32,
+    now: () => timestamp
+  })
+
+  coalescer.schedule(1)
+  frames.runFrame()
+  assert.deepEqual(seen, [1], 'the first interaction applies immediately')
+
+  timestamp = 16
+  coalescer.schedule(2)
+  frames.runFrame()
+  assert.deepEqual(seen, [1], 'the next display frame is held below the cap')
+  assert.equal(frames.pendingFrames(), 1, 'the latest sample stays queued for a later frame')
+
+  timestamp = 31
+  coalescer.schedule(3)
+  frames.runFrame()
+  assert.deepEqual(seen, [1])
+
+  timestamp = 32
+  frames.runFrame()
+  assert.deepEqual(seen, [1, 3], 'the held update uses the most recent pointer sample')
+})
+
+test('cancelling a rate-limited coalescer allows the next interaction immediately', () => {
+  const frames = manualFrames()
+  const seen: number[] = []
+  let timestamp = 0
+  const coalescer = createFrameCoalescer<number>((value) => seen.push(value), {
+    ...frames,
+    minIntervalMs: 32,
+    now: () => timestamp
+  })
+
+  coalescer.schedule(1)
+  frames.runFrame()
+  timestamp = 16
+  coalescer.schedule(2)
+  frames.runFrame()
+  coalescer.cancel()
+
+  coalescer.schedule(3)
+  frames.runFrame()
+  assert.deepEqual(seen, [1, 3])
 })

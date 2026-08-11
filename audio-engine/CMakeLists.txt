@@ -508,6 +508,16 @@ if(TAE_BUILD_TESTS)
     target_link_libraries(twilight_asio_abi_cross_dll_tests PRIVATE ole32 uuid)
     add_test(NAME twilight_asio_abi_cross_dll COMMAND twilight_asio_abi_cross_dll_tests)
     set_tests_properties(twilight_asio_abi_cross_dll PROPERTIES SKIP_RETURN_CODE 77)
+
+    add_executable(twilight_asio_control_thread_tests
+      output/asio/windows/AsioControlThread.test.cpp
+      output/asio/windows/AsioControlThread.cpp
+    )
+    target_include_directories(twilight_asio_control_thread_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(twilight_asio_control_thread_tests PRIVATE TAE_ENABLE_ASIO=1)
+    target_link_libraries(twilight_asio_control_thread_tests PRIVATE ole32 uuid advapi32 user32)
+    add_test(NAME twilight_asio_control_thread_unit COMMAND twilight_asio_control_thread_tests)
+    set_tests_properties(twilight_asio_control_thread_unit PROPERTIES TIMEOUT 120)
   endif()
 
   add_executable(twilight_output_backend_tests
@@ -633,13 +643,7 @@ if(TAE_BUILD_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
-  # The MinGW release preset defines NDEBUG. This target's assertions are the
-  # gate itself, so keep them active in every configuration.
-  if(MSVC)
-    target_compile_options(twilight_audio_performance_gate PRIVATE /UNDEBUG)
-  else()
-    target_compile_options(twilight_audio_performance_gate PRIVATE -UNDEBUG)
-  endif()
+  # NDEBUG is stripped from every test target at the end of this block.
   target_link_libraries(twilight_audio_performance_gate PRIVATE ${CMAKE_DL_LIBS})
   if(FFMPEG_FOUND)
     target_compile_definitions(twilight_audio_performance_gate PRIVATE TAE_HAS_FFMPEG=1)
@@ -707,5 +711,49 @@ if(TAE_BUILD_TESTS)
     target_link_libraries(twilight_alsa_backend_tests PRIVATE ${ALSA_LIBRARIES})
   endif()
   add_test(NAME twilight_alsa_backend_unit COMMAND twilight_alsa_backend_tests)
+
+  # Every native test asserts its expectations with assert(). The Release
+  # configuration defines NDEBUG, which deletes those calls outright -- and with
+  # them any side effects in the asserted expression, e.g. assert(decoder.init(...)).
+  # That silently turns the whole suite into a no-op that still reports "Passed".
+  # Keep assertions live on every test target regardless of configuration.
+  set(TAE_TEST_TARGETS
+    twilight_audio_tests
+    twilight_dsp_tests
+    twilight_channel_router_tests
+    twilight_wsola_tests
+    twilight_audio_buffer_tests
+    twilight_native_dsp_plugin_tests
+    twilight_metadata_tests
+    twilight_bitperfect_tests
+    twilight_ffmpeg_decoder_tests
+    twilight_dsd_dop_tests
+    twilight_pcm_to_dsd_tests
+    twilight_queue_tests
+    twilight_backend_factory_tests
+    twilight_platform_backend_smoke
+    twilight_wasapi_format_negotiator_tests
+    twilight_asio_backend_tests
+    twilight_asio_abi_checks
+    twilight_asio_abi_manifest
+    twilight_asio_abi_cross_dll_tests
+    twilight_asio_control_thread_tests
+    twilight_output_backend_tests
+    twilight_runtime_queue_reroute_tests
+    twilight_vst3_host_pressure_fixture
+    twilight_audio_performance_gate
+    twilight_dst_decoder_tests
+    twilight_coreaudio_backend_tests
+    twilight_alsa_backend_tests
+  )
+  foreach(tae_test_target IN LISTS TAE_TEST_TARGETS)
+    if(TARGET ${tae_test_target})
+      if(MSVC)
+        target_compile_options(${tae_test_target} PRIVATE /UNDEBUG)
+      else()
+        target_compile_options(${tae_test_target} PRIVATE -UNDEBUG)
+      endif()
+    endif()
+  endforeach()
 
 endif()

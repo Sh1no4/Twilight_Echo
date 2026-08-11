@@ -6,8 +6,19 @@
   right: 18px;
   z-index: 1002;
   pointer-events: none;
-  will-change: left;
-  transition: left 0.32s var(--te-ease-soft);
+  will-change: left, translate, opacity;
+  opacity: 0.15;
+  translate: 0 12px;
+  transition:
+    left 0.32s var(--te-ease-soft),
+    opacity 0.2s ease,
+    translate 0.24s var(--te-ease-spring, ease-out);
+}
+
+.player-bar-shell:hover,
+.player-bar-shell:focus-within {
+  opacity: 1;
+  translate: 0 0;
 }
 
 .player-bar-shell.menu-open {
@@ -3509,7 +3520,10 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   --te-lg-shade-rgb: 0, 0, 0;
   --te-lg-drop-rgb: 15, 23, 42;
   --te-lg-rim-strength: 0.55;
-  --te-lg-shade-alpha: 0.06;
+  --te-lg-top-wash-alpha: 0.11;
+  --te-lg-bottom-density-alpha: 0.1;
+  --te-lg-shade-alpha: 0.08;
+  --te-lg-drop-near-alpha: 0.07;
   --te-lg-drop-alpha: 0.16;
   background: transparent !important;
   border-color: transparent !important;
@@ -3520,6 +3534,7 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
     inset 0 1px 1px
       rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.5)),
     inset 0 -1px 1px rgba(var(--te-lg-shade-rgb), var(--te-lg-shade-alpha)),
+    0 5px 18px rgba(var(--te-lg-drop-rgb), var(--te-lg-drop-near-alpha)),
     0 24px 70px rgba(var(--te-lg-drop-rgb), var(--te-lg-drop-alpha)) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -3531,17 +3546,42 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   z-index: 0;
   pointer-events: none;
   border-radius: inherit;
+  /* Elasticity lets the playbar reach toward the cursor; 0 keeps it pinned. */
+  transform: translate(var(--te-lg-elastic-x, 0px), var(--te-lg-elastic-y, 0px));
   background:
+    radial-gradient(
+      135% 210% at var(--te-lg-light-x, 50%) var(--te-lg-light-y, 42%),
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.36)) 0%,
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.12))
+        27%,
+      transparent 67%
+    ),
     linear-gradient(
       var(--te-lg-angle, 135deg),
       rgba(var(--te-lg-sheen-rgb), 0) 0%,
       rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.24))
-        38%,
-      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.07))
-        62%,
-      rgba(var(--te-lg-sheen-rgb), 0) 100%
+        36%,
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.055))
+        65%,
+      transparent 100%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(var(--te-lg-sheen-rgb), var(--te-lg-top-wash-alpha)) 0%,
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-top-wash-alpha) * 0.25)) 38%,
+      transparent 62%,
+      rgba(var(--te-lg-shade-rgb), var(--te-lg-bottom-density-alpha)) 100%
     ),
     rgba(var(--te-lg-surface-rgb), var(--te-lg-tint, 0.12));
+  /* A fixed full-width backdrop would otherwise be recomputed on every main-page
+     scroll. Keep the inexpensive tint at rest and promote blur/refraction only
+     while the user is actually interacting with the player. */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  filter: none;
+}
+
+.player-bar-liquid:is(:hover, :focus-within) .player-bar-warp {
   backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
   -webkit-backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
   filter: url(#te-lg-playbar);
@@ -3566,8 +3606,11 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 html[data-theme='dark'] .player-bar-liquid {
   --te-lg-surface-rgb: 126, 134, 152;
   --te-lg-drop-rgb: var(--te-lg-shade-rgb);
-  --te-lg-rim-strength: 0.35;
+  --te-lg-rim-strength: 0.4;
+  --te-lg-top-wash-alpha: 0.055;
+  --te-lg-bottom-density-alpha: 0.18;
   --te-lg-shade-alpha: 0.24;
+  --te-lg-drop-near-alpha: 0.2;
   --te-lg-drop-alpha: 0.44;
 }
 
@@ -3589,6 +3632,7 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
   -webkit-backdrop-filter: none !important;
 }
 
+<<<<<<< HEAD
 /* ===== Mini shape =====
 
    Geometry is keyed off the shell's data attribute so it can out-specify preset
@@ -3786,3 +3830,11 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
 html[data-theme='dark'] .player-bar-mini .mini-progress-track {
   background: color-mix(in srgb, var(--accent-color, #60a5fa) 30%, rgba(255, 255, 255, 0.14));
 }
+
+:global(html[data-te-motion='reduced'] .player-bar-shell),
+:global(html[data-te-motion='off'] .player-bar-shell) {
+  opacity: 1 !important;
+  translate: 0 0 !important;
+  transition-duration: 0.12s !important;
+}
+

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
+  LIQUID_GLASS_CARD_CLASSES,
+  LIQUID_GLASS_CARD_SELECTOR,
   LIQUID_GLASS_CARD_FILTER_ID,
   LIQUID_GLASS_PLAYBAR_FILTER_ID
 } from '../../../shared/liquidGlass.ts'
@@ -10,6 +12,11 @@ const baseStyle = readFileSync(new URL('../assets/base.css', import.meta.url), '
 const defs = readFileSync(new URL('./LiquidGlassDefs.vue', import.meta.url), 'utf8')
 const app = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
 const themeStore = readFileSync(new URL('../stores/useThemeStore.ts', import.meta.url), 'utf8')
+const playerBarStyle = readFileSync(new URL('./player-bar/PlayerBar.css', import.meta.url), 'utf8')
+const settingsPageStyle = readFileSync(
+  new URL('./settings-page/SettingsPage.css', import.meta.url),
+  'utf8'
+)
 
 const MATERIAL_ATTRIBUTE = "html[data-te-surface-material='liquidGlass']"
 /** Scrolls horizontally, so an inset:0 warp layer would scroll out of view. */
@@ -42,11 +49,72 @@ test('liquid glass covers exactly the same surfaces as the standard card list', 
   )
 })
 
-test('the warp layer rides on ::after, never ::before', () => {
+test('the pointer tracker shares the stylesheet card list', () => {
+  // Hover resolution uses the exported selector; if it drifts from base.css the
+  // tracker could light a card the stylesheet does not surface (or vice versa).
+  const liquidClasses = classesInBlockAfter(baseStyle, MATERIAL_ATTRIBUTE)
+  assert.deepEqual(
+    [...LIQUID_GLASS_CARD_CLASSES].sort(),
+    [...liquidClasses].sort(),
+    'exported card classes drifted from the base.css surface list'
+  )
+  for (const className of LIQUID_GLASS_CARD_CLASSES) {
+    assert.ok(LIQUID_GLASS_CARD_SELECTOR.includes(`.${className}`))
+  }
+})
+
+test('flat light settings pages supply ambient variation behind liquid glass', () => {
+  // The settings route is a fixed, opaque page layer. Its backdrop must carry the
+  // light field itself; a body-only gradient would never be visible through cards.
+  const selector = "html[data-theme='pureWhite'][data-te-surface-material='liquidGlass'] .settings-preview-page"
+  const start = settingsPageStyle.indexOf(selector)
+  assert.notEqual(start, -1, 'light liquid-glass settings backdrop rule is missing')
+  const open = settingsPageStyle.indexOf('{', start)
+  const rule = settingsPageStyle.slice(open, settingsPageStyle.indexOf('}', open))
+  assert.match(rule, /var\(--te-settings-bg-image, none\)/)
+  assert.match(rule, /radial-gradient\(88% 74% at 8% -10%, rgba\(116, 164, 245, 0\.14\)/)
+  assert.match(rule, /radial-gradient\(72% 68% at 103% 92%, rgba\(236, 164, 190, 0\.09\)/)
+  assert.match(rule, /background-attachment:\s*fixed, fixed, fixed, fixed, fixed/)
+})
+
+test('flat dark settings pages supply restrained ambient variation behind liquid glass', () => {
+  // A flat charcoal page makes a translucent dark pane indistinguishable from an
+  // opaque raised block. Keep this fixed and subdued so scroll does not move the
+  // lighting field and the theme does not turn neon.
+  const selector = "html[data-theme='dark'][data-te-surface-material='liquidGlass'] .settings-preview-page"
+  const start = settingsPageStyle.indexOf(selector)
+  assert.notEqual(start, -1, 'dark liquid-glass settings backdrop rule is missing')
+  const open = settingsPageStyle.indexOf('{', start)
+  const rule = settingsPageStyle.slice(open, settingsPageStyle.indexOf('}', open))
+  assert.match(rule, /var\(--te-settings-bg-image, none\)/)
+  assert.match(rule, /radial-gradient\(96% 82% at 6% -14%, rgba\(62, 98, 168, 0\.22\)/)
+  assert.match(rule, /radial-gradient\(82% 78% at 106% 100%, rgba\(122, 63, 120, 0\.14\)/)
+  assert.match(rule, /background-attachment:\s*fixed, fixed, fixed, fixed, fixed/)
+})
+
+test('dark broad glass surfaces retain a thin rim instead of a heavy raised shadow', () => {
+  const selector = "html[data-te-surface-material='liquidGlass'][data-theme='dark']"
+  const start = baseStyle.indexOf(selector, sectionStart())
+  assert.notEqual(start, -1, 'dark liquid-glass token rule is missing')
+  const open = baseStyle.indexOf('{', start)
+  const rule = baseStyle.slice(open, baseStyle.indexOf('}', open))
+  assert.match(rule, /--te-lg-rim-strength:\s*0\.38/)
+  assert.match(rule, /--te-lg-bottom-density-alpha:\s*0\.13/)
+  assert.match(rule, /--te-lg-shade-alpha:\s*0\.15/)
+  assert.match(rule, /--te-lg-drop-near-alpha:\s*0\.07/)
+  assert.match(rule, /--te-lg-drop-alpha:\s*0\.18/)
+})
+
+test('the displacement filter runs only on an interacted ::after layer', () => {
   // Five of these classes already use ::before for hover glows and layers; claiming
-  // it would silently break them.
-  const warpBlocks = baseStyle.match(/\)::after \{[^}]*filter: url\(#te-lg-card\)[^}]*\}/g)
-  assert.ok(warpBlocks && warpBlocks.length > 0, 'no ::after warp layer found')
+  // it would silently break them. Keeping SVG displacement off idle cards also
+  // prevents a full grid of filter passes during scroll.
+  const warpBlocks = baseStyle.match(
+    /\):is\(:hover, :focus-within\)::after \{[^}]*filter: url\(#te-lg-card\)[^}]*\}/g
+  )
+  assert.ok(warpBlocks && warpBlocks.length > 0, 'no interactive ::after warp layer found')
+  const interactiveRule = warpBlocks?.[0] ?? ''
+  assert.match(interactiveRule, /backdrop-filter: blur\(var\(--te-lg-blur, 16px\)\)/)
   assert.ok(
     !/data-te-surface-material='liquidGlass'[\s\S]{0,4000}?\)::before \{[^}]*filter: url\(/.test(
       baseStyle
@@ -80,8 +148,10 @@ function warpRuleIndex(): number {
   return index
 }
 
-function warpRuleBody(): string {
-  const open = baseStyle.lastIndexOf('{', warpRuleIndex())
+function baseWarpRuleBody(): string {
+  const index = baseStyle.indexOf('filter: none;', sectionStart())
+  assert.notEqual(index, -1, 'idle card warp layer must skip SVG displacement')
+  const open = baseStyle.lastIndexOf('{', index)
   return baseStyle.slice(open, baseStyle.indexOf('}', open))
 }
 
@@ -100,7 +170,7 @@ test('the scrollable surface is excluded from the warp layer but keeps the mater
     )
     assert.ok(
       baseStyle.includes(`${MATERIAL_ATTRIBUTE} .${excluded}`),
-      `${excluded} should still get the glass tint and blur`
+      `${excluded} should still get the lightweight glass tint`
     )
   }
 })
@@ -113,17 +183,45 @@ test('the excluded scrollable surface is still part of the canonical card list',
   }
 })
 
+test('continuously scrolling surfaces keep only the lightweight glass layer', () => {
+  const marker = `${MATERIAL_ATTRIBUTE} .track-table-wrapper`
+  const start = baseStyle.indexOf(marker, sectionStart())
+  assert.notEqual(start, -1, 'track table liquid-glass rule is missing')
+  const open = baseStyle.indexOf('{', start)
+  const tableRule = baseStyle.slice(open, baseStyle.indexOf('}', open))
+  assert.match(tableRule, /backdrop-filter:\s*none/)
+  assert.match(tableRule, /-webkit-backdrop-filter:\s*none/)
+  assert.doesNotMatch(tableRule, /blur\(/)
+})
+
+test('the player promotes blur and refraction only while it is interacted with', () => {
+  const idleWarp =
+    playerBarStyle.match(/\.player-bar-liquid \.player-bar-warp\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+  assert.match(idleWarp, /backdrop-filter:\s*none/)
+  assert.match(idleWarp, /-webkit-backdrop-filter:\s*none/)
+  assert.match(idleWarp, /filter:\s*none/)
+
+  const interactiveWarp =
+    playerBarStyle.match(
+      /\.player-bar-liquid:is\(:hover, :focus-within\) \.player-bar-warp\s*\{([\s\S]*?)\n\}/
+    )?.[1] ?? ''
+  assert.match(interactiveWarp, /backdrop-filter:\s*blur\(var\(--te-lg-blur, 16px\)\)/)
+  assert.match(interactiveWarp, /filter:\s*url\(#te-lg-playbar\)/)
+})
+
 test('content stays sharp: the warp layer sits behind content in an isolated context', () => {
   const surfaceRule = ruleBodyAt(baseStyle, MATERIAL_ATTRIBUTE)
   // Without isolation the negative-z layer can escape behind an ancestor background.
   assert.match(surfaceRule, /isolation: isolate/)
   assert.match(surfaceRule, /position: relative/)
 
-  const warpRule = warpRuleBody()
+  const warpRule = baseWarpRuleBody()
   assert.match(warpRule, /z-index: -1/)
   assert.match(warpRule, /position: absolute/)
   assert.match(warpRule, /inset: 0/)
   assert.match(warpRule, /pointer-events: none/)
+  assert.match(warpRule, /backdrop-filter: none/)
+  assert.match(warpRule, /filter: none/)
 })
 
 test('all three degradation contracts drop the displacement filter', () => {
@@ -164,6 +262,25 @@ test('filter attributes are bound, not hardcoded, since SVG cannot read CSS vars
   assert.match(defs, /getPropertyValue/, 'tuning must be read back from computed style')
 })
 
+test('both filters clip refraction back to the source so corners stay rounded', () => {
+  // The displacement map is a full rectangle, so without clipping the aberration
+  // band by SourceGraphic, refracted pixels fill the square corner wedges outside
+  // a rounded element's arc and the surface reads as having right angles.
+  const clipCount = (defs.match(/result="EDGE_ABERRATION_CLIPPED"/g) ?? []).length
+  assert.equal(clipCount, 2, 'card and playbar filters must both clip the refraction band')
+  const clipSteps = (
+    defs.match(
+      /<feComposite[\s\S]{0,220}?in2="SourceGraphic"[\s\S]{0,80}?operator="in"[\s\S]{0,80}?result="EDGE_ABERRATION_CLIPPED"/g
+    ) ?? []
+  ).length
+  assert.equal(clipSteps, 2, 'each aberration pass must be composited with SourceGraphic')
+  assert.equal(
+    (defs.match(/in="EDGE_ABERRATION_CLIPPED" in2="CENTER_CLEAN" operator="over"/g) ?? []).length,
+    2,
+    'the final composite must use the corner-clipped aberration'
+  )
+})
+
 test('the defs component is mounted once by the app shell', () => {
   assert.match(app, /<LiquidGlassDefs/)
   assert.match(app, /:active="settings\.surfaceMaterial === 'liquidGlass'"/)
@@ -172,12 +289,70 @@ test('the defs component is mounted once by the app shell', () => {
 
 test('pointer tracking uses one shared listener rather than one per card', () => {
   // The album grid renders in batches up to the full library, so per-card listeners
-  // would scale with library size.
-  assert.match(defs, /window\.addEventListener\('pointermove'/)
+  // would scale with library size. A delegated pointerover listener arms high-rate
+  // movement only after a card has actually been entered.
+  assert.match(defs, /document\.addEventListener\('pointerover', onPointerOver/)
+  assert.match(defs, /document\.addEventListener\('pointerout', onPointerOut/)
+  assert.match(defs, /if \(card\) attachPointerMove\(\)/)
+  assert.match(defs, /window\.addEventListener\('pointermove', onPointerMove/)
   const listenerCount = (defs.match(/addEventListener\('pointermove'/g) ?? []).length
   assert.equal(listenerCount, 1, 'exactly one pointermove listener')
+  assert.match(defs, /pointerMoveAttached/)
+  assert.match(defs, /detachPointerMove\(\)/, 'high-rate listener must be released')
   assert.match(defs, /passive: true/)
-  assert.match(defs, /removeEventListener\('pointermove'/, 'listener must be released')
+})
+
+test('pointer exit clears a card synchronously so quick passes cannot leave stale glass state', () => {
+  assert.match(defs, /function onPointerOut\(event: PointerEvent\): void/)
+  assert.match(
+    defs,
+    /pointerFrames\.cancel\(\)[\s\S]{0,160}?clearHoveredCard\(\)[\s\S]{0,160}?detachPointerMove\(\)/
+  )
+  assert.match(defs, /const nextCard = resolvePointerCard\(event\.relatedTarget\)/)
+  assert.match(defs, /if \(previousCard === nextCard\) return/)
+})
+
+test('pointer tracking is mouse-only and always resets when focus leaves the app', () => {
+  assert.match(
+    defs,
+    /function isMousePointer\(event: PointerEvent\): boolean\s*\{[\s\S]*?event\.pointerType === 'mouse'/
+  )
+  assert.match(
+    defs,
+    /function onPointerMove\(event: PointerEvent\): void\s*\{[\s\S]{0,100}?if \(!isMousePointer\(event\)\) return/
+  )
+  assert.match(
+    defs,
+    /function onPointerOver\(event: PointerEvent\): void\s*\{[\s\S]{0,100}?if \(!isMousePointer\(event\)\) return/
+  )
+  assert.match(
+    defs,
+    /function onPointerOut\(event: PointerEvent\): void\s*\{[\s\S]{0,100}?if \(!isMousePointer\(event\)\) return/
+  )
+  assert.match(defs, /window\.addEventListener\('blur', onWindowBlur\)/)
+  assert.match(defs, /document\.addEventListener\('visibilitychange', onVisibilityChange\)/)
+  assert.match(defs, /window\.removeEventListener\('blur', onWindowBlur\)/)
+  assert.match(defs, /document\.removeEventListener\('visibilitychange', onVisibilityChange\)/)
+  assert.match(
+    defs,
+    /function resetHoveredPointer\(\): void\s*\{[\s\S]{0,200}?pointerFrames\.cancel\(\)[\s\S]{0,160}?clearHoveredCard\(\)[\s\S]{0,160}?detachPointerMove\(\)/
+  )
+})
+
+test('pointer tracking lights only the hovered card without repeated hit tests or layout reads', () => {
+  // The shared listener uses the event's already-resolved target and scopes
+  // variables to that element, so moving the mouse does not rotate every card or
+  // invoke document.elementFromPoint once per rendered frame.
+  assert.doesNotMatch(defs, /document\.elementFromPoint/)
+  assert.match(defs, /target instanceof Element/)
+  assert.match(defs, /closest<HTMLElement>\(LIQUID_GLASS_CARD_SELECTOR\)/)
+  assert.match(defs, /target: event\.target/)
+  assert.match(defs, /hoveredCardRect \?\? next\.getBoundingClientRect\(\)/)
+  assert.match(defs, /minIntervalMs: LIQUID_GLASS_POINTER_FRAME_INTERVAL_MS/)
+  const staticResets = (defs.match(/staticPointerCssVariables\(\), hoveredCard/g) ?? []).length
+  assert.ok(staticResets >= 1, 'the previously hovered card must be reset to static')
+  const perElementWrites = (defs.match(/style\.setProperty\(name, value\)/g) ?? []).length
+  assert.ok(perElementWrites >= 1, 'variables must be written onto the hovered element')
 })
 
 test('the material attribute is emitted on every theme runtime return path', () => {
