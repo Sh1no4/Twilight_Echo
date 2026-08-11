@@ -30,7 +30,22 @@ void AsioControlThread::stop() {
     stopping_ = true;
   }
   condition_.notify_all();
-  if (thread_.joinable()) thread_.join();
+  if (thread_.joinable()) {
+    const auto joinStart = std::chrono::steady_clock::now();
+    while (thread_.joinable()) {
+      {
+        std::lock_guard lock(mutex_);
+        if (!running_) break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      const auto elapsed = std::chrono::steady_clock::now() - joinStart;
+      if (elapsed > std::chrono::seconds(3)) {
+        unhealthy_ = true;
+        break;
+      }
+    }
+    if (thread_.joinable()) thread_.detach();
+  }
 }
 
 bool AsioControlThread::healthy() const {
