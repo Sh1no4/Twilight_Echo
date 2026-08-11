@@ -1,9 +1,11 @@
 import { defineStore } from 'pinia'
-import type { ComputedRef, Ref } from 'vue'
-import type { OutputInfo, PlaybackInfo } from '../../../preload/types'
 import { usePlayerStore } from './usePlayerStore'
 
 // Output routing and DSP controls are exposed independently from queue state.
+// Forward the player store's refs directly so components that read them via
+// storeToRefs retain the live two-way binding; wrapping these in computed()
+// would re-create the refs at setup time and freeze consumers (equalizer page,
+// settings panels, dashboards) while the engine keeps processing changes.
 export const useAudioOutputDspStore = defineStore('audio-output-dsp', () => {
   const player = usePlayerStore()
 
@@ -21,8 +23,8 @@ export const useAudioOutputDspStore = defineStore('audio-output-dsp', () => {
     audioOutputConfigApplyStatus: player.audioOutputConfigApplyStatus,
     dspOutputStage: player.dspOutputStage,
     dspStereoImage: player.dspStereoImage,
-    playbackInfo: player.playbackInfo as Ref<PlaybackInfo | null>,
-    outputInfo: player.outputInfo as ComputedRef<OutputInfo | null>,
+    playbackInfo: player.playbackInfo,
+    outputInfo: player.outputInfo,
     loudnormStatus: player.loudnormStatus,
     loudnormStatusSource: player.loudnormStatusSource,
     toggleExclusiveMode: player.toggleExclusiveMode,
@@ -32,6 +34,7 @@ export const useAudioOutputDspStore = defineStore('audio-output-dsp', () => {
     refreshAudioOutputState: player.refreshAudioOutputState,
     dismissAudioEngineRecoveryNotice: player.dismissAudioEngineRecoveryNotice,
     setAudioProcessing: player.setAudioProcessing,
+    applyAudioProcessingState: player.applyAudioProcessingState,
     setOutputStage: player.setOutputStage,
     setStereoImage: player.setStereoImage,
     toggleDspEnabled: player.toggleDspEnabled,
