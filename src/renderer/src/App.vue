@@ -378,8 +378,10 @@ const hasPlayerBar = computed(
     !visualizerActive.value &&
     !!currentTrack.value
 )
-/* Shape resolution lives in shared/playerBar.ts so main and renderer agree and the
-   truth table stays unit-testable; App.vue only forwards the result. */
+/* Shape and visibility resolution live in shared/playerBar.ts so main and renderer
+   agree and the truth table stays unit-testable; App.vue only forwards the result.
+   A fully hidden bar stays mounted — playback controls, the HiFi panel and the
+   geometry flag both consumers read all live on it — so CSS does the hiding. */
 const playerBarPresentation = computed(() =>
   resolvePlayerBarPresentation(settings.value.playerBar, {
     onPlayingPage: showPlayingPage.value
@@ -814,6 +816,7 @@ const titleSurface = computed<TitleSurface>(() => {
         :glass="showPlayingPage"
         :mode="playerBarPresentation.mode"
         :auto-hide="playerBarPresentation.autoHide"
+        :hidden-bar="playerBarPresentation.hidden"
         :playing-page-open="showPlayingPage"
         @toggle-lyrics-page="handleToggleLyricsPage"
         @click-cover="handleCoverClick"
@@ -973,6 +976,14 @@ html[data-te-shell-layout='custom'] .app-shell-player .player-bar-shell.menu-ope
   width: 100% !important;
   height: 100%;
   pointer-events: auto;
+}
+
+/* A fully hidden bar still occupies its grid area here, so the shell above would
+   keep eating clicks across that row. Re-assert none, out-specifying that rule. */
+html[data-te-shell-layout='custom']
+  .app-shell-player
+  .player-bar-shell[data-te-playbar-visibility='hidden'] {
+  pointer-events: none;
 }
 
 @media (max-width: 760px) {

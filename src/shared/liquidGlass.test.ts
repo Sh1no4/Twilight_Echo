@@ -104,10 +104,13 @@ test('normalization never aliases the exported default objects', () => {
 
   assert.notEqual(normalized.light, DEFAULT_LIQUID_GLASS_LIGHT)
   assert.notEqual(normalized.dark, DEFAULT_LIQUID_GLASS_DARK)
-  assert.equal(DEFAULT_LIQUID_GLASS_LIGHT.blurAmount, 0)
-  assert.equal(DEFAULT_LIQUID_GLASS_DARK.blurAmount, 0)
-  assert.equal(DEFAULT_LIQUID_GLASS.light.blurAmount, 0)
-  assert.equal(DEFAULT_LIQUID_GLASS.dark.elasticity, 0)
+  // Values track the tuned defaults in liquidGlass.ts. The point of the test is
+  // that mutating a normalized copy never writes through to the exported
+  // constants, so these read the real defaults rather than a placeholder 0.
+  assert.equal(DEFAULT_LIQUID_GLASS_LIGHT.blurAmount, 14)
+  assert.equal(DEFAULT_LIQUID_GLASS_DARK.blurAmount, 18)
+  assert.equal(DEFAULT_LIQUID_GLASS.light.blurAmount, 14)
+  assert.equal(DEFAULT_LIQUID_GLASS.dark.elasticity, 7)
   assert.equal(DEFAULT_LIQUID_GLASS.overLight, false)
 })
 

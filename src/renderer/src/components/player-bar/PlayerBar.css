@@ -6,19 +6,8 @@
   right: 18px;
   z-index: 1002;
   pointer-events: none;
-  will-change: left, translate, opacity;
-  opacity: 0.15;
-  translate: 0 12px;
-  transition:
-    left 0.32s var(--te-ease-soft),
-    opacity 0.2s ease,
-    translate 0.24s var(--te-ease-spring, ease-out);
-}
-
-.player-bar-shell:hover,
-.player-bar-shell:focus-within {
-  opacity: 1;
-  translate: 0 0;
+  will-change: left;
+  transition: left 0.32s var(--te-ease-soft);
 }
 
 .player-bar-shell.menu-open {
@@ -3632,7 +3621,6 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
   -webkit-backdrop-filter: none !important;
 }
 
-<<<<<<< HEAD
 /* ===== Mini shape =====
 
    Geometry is keyed off the shell's data attribute so it can out-specify preset
@@ -3673,6 +3661,30 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
   .player-bar.player-bar-mini.player-bar-mini.player-bar-mini {
   transform: translateY(calc(100% + 24px));
   opacity: 0;
+  pointer-events: none;
+}
+
+/* Fully hidden ("完全隐藏") is the third visibility step and a different thing
+   from auto-hide: there is no reveal gesture, so the bar must also leave the tab
+   order and the accessibility tree — `opacity: 0` alone still lets Tab land on
+   invisible transport buttons. `visibility` does that while keeping the element
+   in the DOM, which is what the two geometry consumers query for the flag.
+
+   Unlike the rule above this one is shape-agnostic: a standard bar can be hidden
+   outright because nothing has to be revealed, so nothing is lost. The class is
+   repeated to out-specify the preset theme layouts, same as mini geometry. */
+.player-bar-shell[data-te-playbar-visibility='hidden'] .player-bar.player-bar.player-bar {
+  transform: translateY(calc(100% + 24px));
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* The shell keeps its box (grid area, clearance measurement) but must not
+   intercept anything either. It is already `pointer-events: none` in the default
+   layout; the custom shell layout re-asserts `auto` on it, and App.vue carries
+   the matching override for that case. */
+.player-bar-shell[data-te-playbar-visibility='hidden'] {
   pointer-events: none;
 }
 
@@ -3830,11 +3842,3 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
 html[data-theme='dark'] .player-bar-mini .mini-progress-track {
   background: color-mix(in srgb, var(--accent-color, #60a5fa) 30%, rgba(255, 255, 255, 0.14));
 }
-
-:global(html[data-te-motion='reduced'] .player-bar-shell),
-:global(html[data-te-motion='off'] .player-bar-shell) {
-  opacity: 1 !important;
-  translate: 0 0 !important;
-  transition-duration: 0.12s !important;
-}
-
