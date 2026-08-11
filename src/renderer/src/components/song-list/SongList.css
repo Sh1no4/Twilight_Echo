@@ -730,7 +730,7 @@
 /* Card Grid Layout */
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(192px, 1fr));
   gap: 22px 20px;
   width: 100%;
   padding: 2px 2px 8px;
@@ -740,14 +740,14 @@
    stay usable without overflowing or becoming oversized. */
 @media (max-width: 900px) {
   .card-grid {
-    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 16px 14px;
   }
 }
 
 @media (max-width: 640px) {
   .card-grid {
-    grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
     gap: 12px 10px;
   }
 }
@@ -1283,13 +1283,13 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   flex-shrink: 0;
 }
 
 .track-cover-cell.has-selection {
-  width: 58px;
+  width: 64px;
   justify-content: flex-start;
   gap: 6px;
 }
@@ -1343,15 +1343,15 @@
 }
 
 .cover-img {
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   border-radius: var(--te-artwork-list-radius, var(--te-library-cover-radius));
   object-fit: cover;
   box-shadow: 0 10px 22px rgba(86, 70, 160, 0.14);
 }
 .cover-placeholder {
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   border-radius: var(--te-artwork-list-radius, var(--te-library-cover-radius));
   background:
     radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.9), transparent 36%),
@@ -1396,12 +1396,12 @@
 }
 .col-cover,
 .col-cover-header {
-  width: 56px;
+  width: 64px;
   flex-shrink: 0;
 }
 .track-table:has(.track-cover-cell.has-selection) .col-cover,
 .track-table:has(.track-cover-cell.has-selection) .col-cover-header {
-  width: 80px;
+  width: 88px;
 }
 .col-cover-header {
   color: #888;
@@ -2312,7 +2312,7 @@
 }
 
 :global(html[data-te-library-density='compact'] .card-grid) {
-  grid-template-columns: repeat(auto-fill, minmax(142px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(154px, 1fr));
   gap: 10px;
 }
 
