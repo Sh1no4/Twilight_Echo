@@ -37,6 +37,8 @@ import {
   streamingAudioCachePolicyOptions,
   playerBarModeOptions,
   playerBarPageModeOptions,
+  playerBarVisibilityOptions,
+  playerBarPageVisibilityOptions,
   SETTINGS_SEARCH_INDEX,
   RESET_DESKTOP_LYRICS
 } from './settings-page/types.ts'
@@ -110,8 +112,12 @@ import {
   DEFAULT_PLAYER_BAR_SETTINGS,
   PLAYER_BAR_BOUNDS,
   clonePlayerBarSettings,
+  normalizePlayerBarPageVisibility,
+  playerBarAutoHideApplies,
   type PlayerBarMode,
-  type PlayerBarPageMode
+  type PlayerBarPageMode,
+  type PlayerBarPageVisibility,
+  type PlayerBarVisibility
 } from '../../../shared/playerBar.ts'
 
 const props = defineProps<{
@@ -1518,13 +1524,15 @@ function setPlayerBarPlayingPageMode(value: string): void {
   void updateSettings({ playerBar: { ...settings.value.playerBar, playingPageMode } })
 }
 
-function togglePlayerBarAutoHide(): void {
-  void updateSettings({
-    playerBar: {
-      ...settings.value.playerBar,
-      autoHideOnPlayingPage: !settings.value.playerBar.autoHideOnPlayingPage
-    }
-  })
+function setPlayerBarVisibility(visibility: PlayerBarVisibility): void {
+  if (settings.value.playerBar.visibility === visibility) return
+  void updateSettings({ playerBar: { ...settings.value.playerBar, visibility } })
+}
+
+function setPlayerBarPlayingPageVisibility(value: string): void {
+  const playingPageVisibility = normalizePlayerBarPageVisibility(value)
+  if (settings.value.playerBar.playingPageVisibility === playingPageVisibility) return
+  void updateSettings({ playerBar: { ...settings.value.playerBar, playingPageVisibility } })
 }
 
 function setPlayerBarNumber(field: 'revealThresholdPx' | 'hideDelayMs', value: number): void {
@@ -1532,11 +1540,36 @@ function setPlayerBarNumber(field: 'revealThresholdPx' | 'hideDelayMs', value: n
   void updateSettings({ playerBar: { ...settings.value.playerBar, [field]: value } })
 }
 
-/** Auto-hide only has meaning once the playing page actually resolves to mini. */
+/**
+ * The reveal sliders only matter if auto-hide can actually take effect somewhere,
+ * so ask the shared policy about both scopes rather than re-deriving the rules.
+ */
+const autoHideAppliesAnywhere = computed(() => {
+  const bar = settings.value.playerBar
+  return (
+    playerBarAutoHideApplies(bar, { onPlayingPage: false }) ||
+    playerBarAutoHideApplies(bar, { onPlayingPage: true })
+  )
+})
+
+/** Shape resolved for each scope, for explaining why auto-hide is unavailable. */
+const globalResolvesMini = computed(() => settings.value.playerBar.mode === 'mini')
 const playingPageResolvesMini = computed(() => {
   const bar = settings.value.playerBar
   return bar.playingPageMode === 'inherit' ? bar.mode === 'mini' : bar.playingPageMode === 'mini'
 })
+
+/**
+ * Auto-hide needs the mini shape. Rather than letting the user pick a step that
+ * silently does nothing, mark it unavailable per scope and say why.
+ */
+function visibilityOptionDisabled(value: PlayerBarVisibility | PlayerBarPageVisibility): boolean {
+  return value === 'autoHide' && !globalResolvesMini.value
+}
+
+function pageVisibilityOptionDisabled(value: PlayerBarPageVisibility): boolean {
+  return value === 'autoHide' && !playingPageResolvesMini.value
+}
 
 function pluginPanelStateKey(panel: UiContribution): string {
   return `${panel.pluginId}:${panel.id}`
@@ -5213,9 +5246,10 @@ onBeforeUnmount(() => {
               @click="playerBarOpen = !playerBarOpen"
             >
               <span class="setting-copy">
-                <strong>播放条形态</strong>
+                <strong>播放条形态与可见性</strong>
                 <span
-                  >标准播放条或迷你播放条；迷你形态更长、隐藏进度条，并可在播放页自动隐藏。</span
+                  >标准或迷你形态，配合常显 / 自动隐藏 /
+                  完全隐藏三档可见性；两者都可以在播放页单独覆盖。</span
                 >
               </span>
               <i class="pi pi-chevron-down"></i>
@@ -5265,24 +5299,55 @@ onBeforeUnmount(() => {
               <hr />
               <div class="setting-item">
                 <div class="setting-copy">
-                  <strong>播放页自动隐藏</strong>
+                  <strong>播放条可见性</strong>
                   <span>
-                    播放页的迷你播放条平时收起；鼠标靠近窗口底边时滑出。需要播放页形态为迷你。
+                    常显始终保留播放条；自动隐藏平时收起、鼠标靠近窗口底边时滑出（需迷你形态）；完全隐藏则不再出现，也不会被鼠标唤出。
                   </span>
                 </div>
-                <span
-                  class="toggle-switch"
-                  :class="{
-                    active: settings.playerBar.autoHideOnPlayingPage,
-                    disabled: !playingPageResolvesMini
-                  }"
-                  role="switch"
-                  :aria-checked="settings.playerBar.autoHideOnPlayingPage"
-                  :aria-disabled="!playingPageResolvesMini"
-                  @click="playingPageResolvesMini && togglePlayerBarAutoHide()"
-                ></span>
+                <div class="segmented-control">
+                  <button
+                    v-for="option in playerBarVisibilityOptions"
+                    :key="option.value"
+                    type="button"
+                    :class="{
+                      active: settings.playerBar.visibility === option.value,
+                      disabled: visibilityOptionDisabled(option.value)
+                    }"
+                    :disabled="visibilityOptionDisabled(option.value)"
+                    :title="
+                      visibilityOptionDisabled(option.value) ? '自动隐藏需要全局形态为迷你' : ''
+                    "
+                    @click="setPlayerBarVisibility(option.value)"
+                  >
+                    <i :class="option.icon"></i>
+                    {{ option.label }}
+                  </button>
+                </div>
               </div>
-              <template v-if="settings.playerBar.autoHideOnPlayingPage">
+              <hr />
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>播放页可见性</strong>
+                  <span>可以只在播放页自动隐藏或完全隐藏播放条，其余界面保持全局可见性。</span>
+                </div>
+                <select
+                  class="preview-select"
+                  :value="settings.playerBar.playingPageVisibility"
+                  @change="
+                    setPlayerBarPlayingPageVisibility(($event.target as HTMLSelectElement).value)
+                  "
+                >
+                  <option
+                    v-for="option in playerBarPageVisibilityOptions"
+                    :key="option.value"
+                    :value="option.value"
+                    :disabled="pageVisibilityOptionDisabled(option.value)"
+                  >
+                    {{ option.label }}
+                  </option>
+                </select>
+              </div>
+              <template v-if="autoHideAppliesAnywhere">
                 <hr />
                 <div class="setting-item">
                   <div class="setting-copy">

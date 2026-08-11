@@ -603,19 +603,39 @@ test('playbar shape persists across settings layers and flips without an IPC rou
   }
 })
 
-test('playbar settings UI exposes shape, playing-page shape and the auto-hide tuning', () => {
+test('playbar settings UI exposes shape and visibility as independent dimensions', () => {
   const source = readSettingsPageSources()
 
   assert.match(source, /playerBarModeOptions/)
   assert.match(source, /playerBarPageModeOptions/)
   assert.match(source, /setPlayerBarMode\(option\.value\)/)
   assert.match(source, /setPlayerBarPlayingPageMode\(/)
-  assert.match(source, /togglePlayerBarAutoHide\(\)/)
-  // Auto-hide only means something once the playing page resolves to mini, so
-  // the toggle is gated rather than silently ineffective.
+
+  // Visibility is its own three-step control, with a playing-page override that
+  // mirrors the shape override rather than being folded into it.
+  assert.match(source, /playerBarVisibilityOptions/)
+  assert.match(source, /playerBarPageVisibilityOptions/)
+  assert.match(source, /setPlayerBarVisibility\(option\.value\)/)
+  assert.match(source, /setPlayerBarPlayingPageVisibility\(/)
+  // The page override must round-trip through the shared normalizer, so a stale
+  // stored value cannot reach the settings patch.
+  assert.match(source, /normalizePlayerBarPageVisibility\(value\)/)
+
+  // Auto-hide only means something on a mini bar, so that one step is marked
+  // unavailable per scope instead of being silently ineffective.
+  assert.match(source, /const globalResolvesMini = computed/)
   assert.match(source, /const playingPageResolvesMini = computed/)
   assert.match(source, /bar\.playingPageMode === 'inherit' \? bar\.mode === 'mini'/)
-  assert.match(source, /:aria-disabled="!playingPageResolvesMini"/)
+  assert.match(source, /function visibilityOptionDisabled/)
+  assert.match(source, /function pageVisibilityOptionDisabled/)
+  assert.match(source, /:disabled="visibilityOptionDisabled\(option\.value\)"/)
+  assert.match(source, /:disabled="pageVisibilityOptionDisabled\(option\.value\)"/)
+
+  // The reveal sliders are gated on auto-hide being reachable in either scope,
+  // and the gate asks the shared policy rather than re-deriving the rules.
+  assert.match(source, /playerBarAutoHideApplies\(bar, \{ onPlayingPage: false \}\)/)
+  assert.match(source, /playerBarAutoHideApplies\(bar, \{ onPlayingPage: true \}\)/)
+  assert.match(source, /v-if="autoHideAppliesAnywhere"/)
   // Sliders must be bounded by the shared contract, not by hand-typed numbers.
   assert.match(source, /:min="PLAYER_BAR_BOUNDS\.revealThresholdPx\.min"/)
   assert.match(source, /:max="PLAYER_BAR_BOUNDS\.revealThresholdPx\.max"/)
@@ -623,4 +643,7 @@ test('playbar settings UI exposes shape, playing-page shape and the auto-hide tu
   assert.match(source, /setPlayerBarNumber\('hideDelayMs',/)
   // Appearance reset has to drop the playbar back to the shared default too.
   assert.match(source, /playerBar: clonePlayerBarSettings\(DEFAULT_PLAYER_BAR_SETTINGS\)/)
+  // The removed legacy toggle must not linger anywhere in the settings sources.
+  assert.doesNotMatch(source, /togglePlayerBarAutoHide/)
+  assert.doesNotMatch(source, /autoHideOnPlayingPage/)
 })

@@ -1317,6 +1317,15 @@ html[data-te-motion='full'] .toggle-switch.active::after {
   box-shadow: 0 1px 5px rgba(15, 23, 42, 0.08);
 }
 
+/* An unavailable step (e.g. auto-hide without the mini shape) has to read as
+   unavailable — without this it looks identical to a selectable one and only the
+   dead click tells the user. `:disabled` carries the reason in its title. */
+.segmented-control button:disabled,
+.theme-segment button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
 html[data-theme='dark'] .segmented-control,
 html[data-theme='dark'] .theme-segment {
   border-color: var(--te-card-border);
