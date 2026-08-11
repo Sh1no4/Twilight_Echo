@@ -2,9 +2,10 @@
  * Player bar presentation — shared contract.
  *
  * The playbar has two shapes. `standard` is the full bar (cover, inline
- * progress, time labels). `mini` drops the cover and the inline progress row
- * and moves seeking onto a thin rail sitting on the bar's bottom border, so the
- * bar can shrink to roughly the width of its controls.
+ * progress, time labels). `mini` is a longer, progress-free pill: it drops the
+ * cover, the inline progress row and the bottom border rail, keeping only the
+ * track info and transport. The rail stays in the DOM behind `display: none`
+ * so a future "show rail" option can restore seeking on the mini shape.
  *
  * The now-playing page may use a different shape than the rest of the app, and
  * a mini bar there can auto-hide until the pointer approaches the bottom edge.
@@ -89,8 +90,6 @@ export function clonePlayerBarSettings(value: PlayerBarSettings): PlayerBarSetti
 
 export interface PlayerBarPresentation {
   mode: PlayerBarMode
-  /** Border progress rail is visible; only the mini shape carries one. */
-  edgeProgress: boolean
   /** Bar stays hidden until the pointer approaches the bottom edge. */
   autoHide: boolean
 }
@@ -116,7 +115,6 @@ export function resolvePlayerBarPresentation(
     : settings.mode
   return {
     mode,
-    edgeProgress: mode === 'mini',
     autoHide: context.onPlayingPage && mode === 'mini' && settings.autoHideOnPlayingPage
   }
 }

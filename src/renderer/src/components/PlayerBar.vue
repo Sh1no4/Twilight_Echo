@@ -50,12 +50,14 @@ const props = withDefaults(
     glass?: boolean
     menuOpen?: boolean
     preview?: boolean
-    /** Standard = full bar; mini drops cover / inline progress for a border rail. */
+    /** Standard = full bar; mini is a longer pill with cover, inline progress and the border rail hidden. */
     mode?: PlayerBarMode
     /** Hide until the pointer approaches the bottom edge. Mini shape only. */
     autoHide?: boolean
+    /** Lyrics page (now-playing) is open; the mini lyrics toggle reflects it. */
+    playingPageOpen?: boolean
   }>(),
-  { preview: false, mode: 'standard', autoHide: false }
+  { preview: false, mode: 'standard', autoHide: false, playingPageOpen: false }
 )
 
 const isMini = computed(() => props.mode === 'mini')
@@ -154,6 +156,7 @@ const {
 const mediaProviders = useMediaProviders()
 
 const coverRef = ref<HTMLElement | null>(null)
+const lyricsToggleRef = ref<HTMLElement | null>(null)
 const playerBarShellRef = ref<HTMLElement | null>(null)
 const playButtonColor = computed(() => normalizeAccentColor(dominantColor.value))
 const { uiContributions, syncExtensions } = useExtensionRegistry()
@@ -204,6 +207,7 @@ if (!props.preview) {
 
 const emit = defineEmits<{
   clickCover: [rect: { x: number; y: number; w: number; h: number }]
+  toggleLyricsPage: [rect: { x: number; y: number; w: number; h: number }]
   openSettings: []
   openDsp: []
   openEqualizer: []
@@ -222,6 +226,16 @@ function onCoverClick(): void {
     emit('clickCover', { x: r.left, y: r.top, w: r.width, h: r.height })
   } else {
     emit('clickCover', { x: 24, y: window.innerHeight - 60, w: 48, h: 48 })
+  }
+}
+
+function onToggleLyricsPage(): void {
+  const el = lyricsToggleRef.value
+  if (el) {
+    const r = el.getBoundingClientRect()
+    emit('toggleLyricsPage', { x: r.left, y: r.top, w: r.width, h: r.height })
+  } else {
+    emit('toggleLyricsPage', { x: 24, y: window.innerHeight - 60, w: 48, h: 48 })
   }
 }
 
@@ -1361,7 +1375,7 @@ onBeforeUnmount(() => {
            content so controls and text are never displaced by the filter. -->
       <span v-if="liquidGlassActive" class="player-bar-warp" aria-hidden="true"></span>
 
-      <!-- 迷你模式：进度轨贴在底边框上，取代内联进度条 -->
+      <!-- 迷你模式：底边进度轨默认隐藏，保持更长更简洁的胶囊形态 -->
       <div v-if="isMini && !isLiveStream" class="mini-progress-rail">
         <div class="mini-progress-track" aria-hidden="true">
           <div class="mini-progress-fill" :style="progressFillStyle"></div>
@@ -1592,6 +1606,19 @@ onBeforeUnmount(() => {
         </button>
 
         <button
+          v-if="isMini"
+          ref="lyricsToggleRef"
+          class="icon-btn mini-lyrics-btn player-misc-icon"
+          :class="{ active: playingPageOpen }"
+          :title="playingPageOpen ? '退出歌词页' : '进入歌词页'"
+          :aria-label="playingPageOpen ? '退出歌词页' : '进入歌词页'"
+          :aria-pressed="playingPageOpen"
+          @click="onToggleLyricsPage"
+        >
+          <i class="ph ph-text-aa" aria-hidden="true"></i>
+        </button>
+
+        <button
           v-if="!isMini"
           class="icon-btn mini-player-btn player-misc-icon"
           title="切换到迷你播放器"
@@ -1603,7 +1630,6 @@ onBeforeUnmount(() => {
         </button>
 
         <button
-          v-if="!isMini"
           class="icon-btn desktop-lyrics-btn player-misc-icon"
           :class="{ active: desktopLyricsOn }"
           title="桌面歌词"

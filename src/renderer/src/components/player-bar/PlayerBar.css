@@ -3604,13 +3604,14 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar.player-bar-mini.player-bar-mini.player-bar-mini {
   height: 52px;
-  max-width: min(560px, 100%);
+  max-width: min(960px, 100%);
   margin: 0 auto;
-  /* Track info takes the slack; controls and icons size to content. */
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  column-gap: 14px;
-  /* Bottom padding reserves the rail's hit area so controls never sit on it. */
-  padding: 0 16px 6px;
+  /* Equal side columns keep the transport dead-centre; track info and icons
+     take the slack on either side. */
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  column-gap: 18px;
+  /* The rail is hidden, so symmetric padding; the pill reads longer and cleaner. */
+  padding: 0 18px;
   border-radius: 18px;
   transition:
     background 0.3s,
@@ -3633,8 +3634,9 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
 
 /* ===== Mini edge progress rail =====
 
-   The rail replaces the inline progress area by riding the bar's bottom border.
-   It is absolute so it stays out of the three-column grid; the compound
+   The mini style hides the rail entirely, so the pill is longer and
+   progress-free. The DOM and geometry stay behind `display: none` so a future
+   "show rail" option can flip it back with one line. The compound
    `.player-bar.player-bar-mini >` prefix is needed to out-specify the liquid
    glass rule `.player-bar-liquid > *:not(.player-bar-warp)`, which would
    otherwise force `position: relative` on it. */
@@ -3645,7 +3647,7 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
   bottom: 0;
   height: 14px;
   z-index: 3;
-  display: flex;
+  display: none;
   align-items: flex-end;
   pointer-events: auto;
 }
@@ -3662,9 +3664,6 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
   background: color-mix(in srgb, var(--accent-color, #1a73e8) 22%, transparent);
   overflow: hidden;
   pointer-events: none;
-  transition:
-    height var(--te-motion-hover) ease,
-    bottom var(--te-motion-hover) ease;
 }
 
 .mini-progress-fill {
@@ -3675,14 +3674,6 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
   will-change: width;
   transform: translateZ(0);
   transition: none;
-}
-
-/* Thickens on approach so the 14px hit area is discoverable without a visible
-   14px band; the centre line stays at 6.5px so it does not appear to jump. */
-.player-bar-mini:hover .mini-progress-track,
-.mini-progress-rail:focus-within .mini-progress-track {
-  height: 6px;
-  bottom: 3.5px;
 }
 
 .mini-progress-slider {

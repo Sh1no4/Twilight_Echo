@@ -130,9 +130,33 @@ test('the mini shape keeps transport, favourite, mode, volume, queue and the HiF
       `${marker} must survive in the mini shape`
     )
   }
-  // These two only make sense on a wide bar and stay reachable from the HiFi panel.
+  // The mini-player window button only makes sense on a wide bar and stays
+  // reachable from the HiFi panel; desktop lyrics stays on the bar in both shapes.
   assert.match(playerBar, /v-if="!isMini"[\s\S]{0,200}class="icon-btn mini-player-btn/)
-  assert.match(playerBar, /v-if="!isMini"[\s\S]{0,200}class="icon-btn desktop-lyrics-btn/)
+  assert.match(playerBar, /class="icon-btn desktop-lyrics-btn player-misc-icon"/)
+})
+
+test('the mini shape gets a dedicated lyrics-page toggle wired to App', () => {
+  // The button is mini-only and reflects the open lyrics page.
+  assert.match(
+    playerBar,
+    /v-if="isMini"[\s\S]{0,160}class="icon-btn mini-lyrics-btn player-misc-icon"/
+  )
+  assert.match(playerBar, /:class="{ active: playingPageOpen }"/)
+  assert.match(playerBar, /:title="playingPageOpen \? '退出歌词页' : '进入歌词页'"/)
+  assert.match(playerBar, /@click="onToggleLyricsPage"/)
+  // Distinct from the desktop-lyrics 词 glyph: the page toggle uses ph-text-aa.
+  assert.match(
+    playerBar,
+    /class="icon-btn mini-lyrics-btn player-misc-icon"[\s\S]{0,400}ph ph-text-aa/
+  )
+  assert.match(
+    playerBar,
+    /emit\('toggleLyricsPage', \{ x: r\.left, y: r\.top, w: r\.width, h: r\.height \}\)/
+  )
+  // App owns the open/close decision and tells the bar which state to show.
+  assert.match(app, /:playing-page-open="showPlayingPage"/)
+  assert.match(app, /@toggle-lyrics-page="handleToggleLyricsPage"/)
 })
 
 test('the border rail carries seeking and is skipped for unseekable streams', () => {
@@ -159,6 +183,10 @@ test('mini geometry out-specifies the preset theme layouts without !important', 
   for (const property of ['height', 'max-width', 'padding', 'grid-template-columns']) {
     assert.match(rule, new RegExp(`\\b${property}\\s*:`), `mini geometry must set ${property}`)
   }
+  // The mini pill is intentionally longer than the old compact 560px width.
+  assert.match(rule, /max-width:\s*min\(960px, 100%\)/)
+  // Equal side columns put the transport dead-centre in the mini pill.
+  assert.match(rule, /grid-template-columns:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\)/)
 })
 
 test('no preset theme layout can out-specify a mini rule on a property mini sets', () => {
@@ -212,33 +240,21 @@ test('the hidden state translates the bar away and stops swallowing pointer inpu
   assert.match(hidden[0], /opacity:\s*0/)
 })
 
-test('the rail survives the liquid glass child reset and stays hit-testable', () => {
+test('the mini rail is hidden by default but keeps its liquid-glass override', () => {
   // `.player-bar-liquid > *:not(.player-bar-warp)` forces position: relative, which
-  // would knock the absolutely positioned rail off the bottom border.
+  // would knock an absolutely positioned rail off the bottom border if a future
+  // option re-enables it.
   assert.match(playerBarCss, /\.player-bar\.player-bar-mini\s*>\s*\.mini-progress-rail\s*\{/)
   const rail = playerBarCss.match(
     /\.player-bar\.player-bar-mini\s*>\s*\.mini-progress-rail\s*\{[^}]*\}/
   )
   assert.ok(rail)
+  // The mini style is progress-free: the rail is hidden entirely.
+  assert.match(rail[0], /display:\s*none/)
+  // The geometry stays behind, so re-enabling is a one-line CSS flip.
   assert.match(rail[0], /position:\s*absolute/)
   assert.match(rail[0], /pointer-events:\s*auto/)
-  // 14px hit area over a 3px line: the rail must be easy to grab.
   assert.match(rail[0], /height:\s*14px/)
-})
-
-test('the rail thickens on approach around a fixed centre line', () => {
-  const track = playerBarCss.match(/\.mini-progress-track\s*\{[^}]*\}/)
-  assert.ok(track)
-  assert.match(track[0], /height:\s*3px/)
-  assert.match(track[0], /bottom:\s*5px/)
-  const hover = playerBarCss.match(
-    /\.player-bar-mini:hover \.mini-progress-track,[\s\S]{0,120}?\{[^}]*\}/
-  )
-  assert.ok(hover, 'hover / focus-within must thicken the rail')
-  assert.match(hover[0], /height:\s*6px/)
-  assert.match(hover[0], /bottom:\s*3\.5px/)
-  assert.match(hover[0], /focus-within/)
-  // 5 + 3/2 === 3.5 + 6/2: the visual centre stays put so hover is not a jump.
 })
 
 test('mini CSS compiles under scoped mode without leaking rules onto ancestors', () => {

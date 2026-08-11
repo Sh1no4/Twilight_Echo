@@ -100,13 +100,6 @@ test('playing page mode overrides the global shape only on the playing page', ()
   assert.equal(resolvePlayerBarPresentation(inverse, { onPlayingPage: false }).mode, 'mini')
 })
 
-test('edge progress tracks the mini shape exactly', () => {
-  const mini = normalizePlayerBarSettings({ mode: 'mini' })
-  const standard = normalizePlayerBarSettings({ mode: 'standard' })
-  assert.equal(resolvePlayerBarPresentation(mini, { onPlayingPage: false }).edgeProgress, true)
-  assert.equal(resolvePlayerBarPresentation(standard, { onPlayingPage: false }).edgeProgress, false)
-})
-
 test('auto-hide requires the playing page, the mini shape, and the setting', () => {
   const enabled = normalizePlayerBarSettings({
     mode: 'mini',
