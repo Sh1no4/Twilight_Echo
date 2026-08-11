@@ -31,6 +31,7 @@ export type {
 
 export type AppTheme = 'system' | 'pureWhite' | 'dark'
 export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
+export type PreviousButtonAction = 'restart' | 'previous'
 export type NcmPlaybackQuality = 'auto' | 'standard' | 'exhigh' | 'lossless' | 'hires'
 export type StartupHomePage = 'local' | 'streaming'
 export type TrackActivationMode = 'singleClick' | 'doubleClick'
@@ -43,6 +44,7 @@ export type PlayerShortcutAction =
   | 'playPause'
   | 'play'
   | 'pause'
+  | 'toggleDesktopLyrics'
   | { action: 'seek'; positionSeconds: number }
   | { action: 'setVolume'; volume: number }
   | { action: 'jumpQueue'; index: number }
@@ -305,6 +307,7 @@ export interface AppSettings {
   launchAtLogin: boolean
   hardwareAcceleration: boolean
   globalShortcuts: boolean
+  globalShortcutBindings: GlobalShortcutSettings
   musicCachePath: string
   cachePath: string
   cachePolicy: MusicCachePolicySettings
@@ -346,6 +349,8 @@ export interface AppSettings {
   playerBar: PlayerBarSettings
   nowPlayingBackground: NowPlayingBackground
   playbackResumeMode: PlaybackResumeMode
+  /** restart: previous button replays the current track first; previous: always jump to the previous track. */
+  previousButtonAction: PreviousButtonAction
   sleepTimer: SleepTimerSettings
   ncmPlaybackQuality: NcmPlaybackQuality
   playMode: PlayMode
@@ -393,4 +398,10 @@ export interface PlayerShortcutStatus {
   label: string
   registered: boolean
   error: string | null
+}
+export interface GlobalShortcutSettings {
+  previous: string
+  next: string
+  playPause: string
+  toggleDesktopLyrics: string
 }

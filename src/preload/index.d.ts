@@ -113,6 +113,7 @@ type PlayerShortcutAction =
   | 'playPause'
   | 'play'
   | 'pause'
+  | 'toggleDesktopLyrics'
   | { action: 'seek'; positionSeconds: number }
   | { action: 'setVolume'; volume: number }
   | { action: 'jumpQueue'; index: number }
@@ -123,8 +124,15 @@ interface PlayerShortcutStatus {
   registered: boolean
   error: string | null
 }
+interface GlobalShortcutSettings {
+  previous: string
+  next: string
+  playPause: string
+  toggleDesktopLyrics: string
+}
 type AppTheme = 'system' | 'pureWhite' | 'dark'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
+type PreviousButtonAction = 'restart' | 'previous'
 type NcmPlaybackQuality = 'auto' | 'standard' | 'exhigh' | 'lossless' | 'hires'
 type StartupHomePage = 'local' | 'streaming'
 type TrackActivationMode = 'singleClick' | 'doubleClick'
@@ -727,6 +735,7 @@ interface AppSettings {
   launchAtLogin: boolean
   hardwareAcceleration: boolean
   globalShortcuts: boolean
+  globalShortcutBindings: GlobalShortcutSettings
   minimizeToTray: boolean
   musicCachePath: string
   cachePath: string
@@ -769,6 +778,8 @@ interface AppSettings {
   playerBar: PlayerBarSettings
   nowPlayingBackground: NowPlayingBackground
   playbackResumeMode: PlaybackResumeMode
+  /** restart: previous button replays the current track first; previous: always jump to the previous track. */
+  previousButtonAction: PreviousButtonAction
   sleepTimer: SleepTimerSettings
   ncmPlaybackQuality: NcmPlaybackQuality
   playMode: PlayMode
@@ -1199,6 +1210,10 @@ interface OutputDiagnostics {
   driverRestartCount: number
   deviceLostCount: number
   driverXrunCount?: number
+  dsdRouteOverrideActive?: boolean
+  dsdRouteBackend?: string
+  dsdRouteDevice?: string
+  dsdRouteFallbackReason?: string
   lastError: string
 }
 

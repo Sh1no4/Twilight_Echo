@@ -97,7 +97,7 @@ const {
 const playbackStore = usePlayerStore()
 const settingsStore = useSettingsStore()
 const { currentTrack } = playbackStore
-const { playTrack, playTrackFromPosition, setPlayMode } = playbackStore
+const { playTrack, playTrackFromPosition, setPlayMode, playNextTrack } = playbackStore
 const playbackBookmarks = usePlaybackBookmarks()
 void playbackBookmarks.ensureLoaded()
 const mediaProviders = useMediaProviders()
@@ -586,13 +586,10 @@ async function playNetworkTrack(track: Track): Promise<void> {
   const network = track.networkSource
   if (!network || !window.api?.networkSources) return
   try {
-    const plan = await window.api.networkSources.resolvePlayback(
-      network.profileId,
-      network.entry
-    )
+    const plan = await window.api.networkSources.resolvePlayback(network.profileId, network.entry)
     const resolved: Track = {
       ...track,
-      filePath: plan.kind === 'direct-url' ? plan.url ?? '' : plan.cacheFilePath ?? ''
+      filePath: plan.kind === 'direct-url' ? (plan.url ?? '') : (plan.cacheFilePath ?? '')
     }
     playTrack(resolved, [resolved])
   } catch (err) {
@@ -787,6 +784,11 @@ const {
   menuX,
   menuY,
   selectedTrack,
+  canViewSelectedContext,
+  canPlayNextSelectedTrack,
+  handlePlayNext,
+  handleViewArtist,
+  handleViewAlbum,
   showPlaylistSubmenu,
   showCreatePlaylistDialog,
   newPlaylistName,
@@ -814,7 +816,22 @@ const {
     clearTrackMetadataMatch(track.id)
   },
   createPlaylist,
-  deletePlaylist
+  deletePlaylist,
+  playNext: playNextTrack,
+  viewArtist: (track) => {
+    const artist = track.artist.trim()
+    if (!artist) return
+    emit('selectView', 'artists', `artist:${artist}`)
+  },
+  viewAlbum: (track) => {
+    const album = track.album?.trim()
+    if (!album) return
+    const albumItem = albums.value.find((item) =>
+      item.tracks.some((albumTrack) => albumTrack.id === track.id)
+    )
+    if (!albumItem?.id) return
+    emit('selectView', 'albums', `album:${albumItem.id}`)
+  }
 })
 
 useEscapeToClose(showContextMenu, closeContextMenu)
@@ -2154,6 +2171,39 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 :style="{ top: menuY + 'px', left: menuX + 'px' }"
                 @click.stop
               >
+                <div
+                  v-if="canPlayNextSelectedTrack && contextActionCount <= 1"
+                  class="menu-item"
+                  data-te-interactive
+                  @click="handlePlayNext"
+                >
+                  <i class="pi pi-step-forward"></i>
+                  <span>下一首播放</span>
+                </div>
+                <div
+                  v-if="
+                    canViewSelectedContext &&
+                    selectedTrack?.artist.trim() &&
+                    contextActionCount <= 1
+                  "
+                  class="menu-item"
+                  data-te-interactive
+                  @click="handleViewArtist"
+                >
+                  <i class="ph ph-microphone-stage"></i>
+                  <span>查看歌手</span>
+                </div>
+                <div
+                  v-if="
+                    canViewSelectedContext && selectedTrack?.album.trim() && contextActionCount <= 1
+                  "
+                  class="menu-item"
+                  data-te-interactive
+                  @click="handleViewAlbum"
+                >
+                  <i class="ph ph-disc"></i>
+                  <span>查看专辑</span>
+                </div>
                 <div
                   v-if="contextLocalTrackCount > 0"
                   class="menu-item"

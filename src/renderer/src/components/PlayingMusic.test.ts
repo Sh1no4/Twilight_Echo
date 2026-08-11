@@ -126,6 +126,35 @@ test('now playing exposes independent lyric customization with live persisted pr
   assert.match(appearance, /highlightEffect: LyricsHighlightEffect/)
 })
 
+test('lyrics customizer survives slider drags while embedded in the HiFi sidebar', () => {
+  const customizer = readFileSync(
+    new URL('./LyricsAppearanceCustomizer.vue', import.meta.url),
+    'utf8'
+  )
+  const sidebar = readFileSync(new URL('./player-bar/HiFiSidebar.vue', import.meta.url), 'utf8')
+
+  // The panel is Teleported to <body>, so the PlayerBar's document-level
+  // pointerdown listener (useFloatingPanels) would otherwise misread any
+  // interaction inside as an outside click and close the floating drawer,
+  // unmounting this panel mid-drag. `.stop` keeps the event from bubbling up.
+  assert.match(customizer, /@pointerdown\.stop/)
+  assert.match(customizer, /@pointerdown\.self="emit\('close'\)"/)
+
+  // The backdrop stays clear (no blur, no scrim) so adjusting a control lets
+  // the user watch the lyrics respond live underneath.
+  const shell = customizer.match(/\.lyrics-customizer-shell \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.doesNotMatch(shell, /backdrop-filter/)
+  assert.match(shell, /background:\s*transparent/)
+
+  // The sidebar now embeds the panel itself instead of navigating to Settings.
+  assert.match(
+    sidebar,
+    /import LyricsAppearanceCustomizer from '\.\.\/LyricsAppearanceCustomizer\.vue'/
+  )
+  assert.match(sidebar, /<LyricsAppearanceCustomizer/)
+  assert.match(sidebar, /lyricsCustomizerOpen/)
+})
+
 test('font size is per layer, with an explicit action to unify it', () => {
   const editor = readFileSync(
     new URL('../composables/useLyricsAppearanceEditor.ts', import.meta.url),

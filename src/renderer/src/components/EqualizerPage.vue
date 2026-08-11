@@ -544,7 +544,7 @@ async function loadAppSettings(): Promise<void> {
       ...settings.headphoneCompensation,
       bands: cloneBands(settings.headphoneCompensation?.bands ?? [])
     }
-    audioProcessing.value = appSettings.value.audioProcessing
+    audioOutputDspStore.applyAudioProcessingState(appSettings.value.audioProcessing)
     const dspState = await window.api.audioEngine.getDspSceneState()
     applyActiveSceneEqToEditor(dspState)
     if (audioProcessing.value.eqMode === 'parametric') {
@@ -572,7 +572,7 @@ function applyActiveSceneEqToEditor(dspState: DspSceneState): void {
     eqPreamp: typeof params.preampDb === 'number' ? params.preampDb : 0,
     eqBands: Array.isArray(params.bands) ? (params.bands as EqualizerBand[]) : []
   })
-  audioProcessing.value = settings
+  audioOutputDspStore.applyAudioProcessingState(settings)
   if (appSettings.value) appSettings.value.audioProcessing = settings
 }
 
@@ -714,12 +714,12 @@ function stageBandPatch(index: number, patch: Partial<EqualizerBand>): void {
     const bands = patchBand(audioProcessing.value.eqBands, pendingBandIndex, pendingBandPatch)
     pendingBandIndex = -1
     pendingBandPatch = null
-    audioProcessing.value = {
+    audioOutputDspStore.applyAudioProcessingState({
       ...audioProcessing.value,
       eqBands: bands,
       eqEnabled: true,
       dspEnabled: true
-    }
+    })
     if (appSettings.value) {
       appSettings.value = { ...appSettings.value, audioProcessing: audioProcessing.value }
     }
@@ -732,12 +732,12 @@ async function commitStagedBands(): Promise<void> {
     pendingBandFrame = 0
     if (pendingBandIndex >= 0 && pendingBandPatch) {
       const bands = patchBand(audioProcessing.value.eqBands, pendingBandIndex, pendingBandPatch)
-      audioProcessing.value = {
+      audioOutputDspStore.applyAudioProcessingState({
         ...audioProcessing.value,
         eqBands: bands,
         eqEnabled: true,
         dspEnabled: true
-      }
+      })
     }
     pendingBandIndex = -1
     pendingBandPatch = null

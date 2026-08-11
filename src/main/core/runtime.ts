@@ -64,5 +64,6 @@ export const runtime = {
   discordReconnectTimer: null as NodeJS.Timeout | null,
   lastDiscordActivity: null as DiscordActivityData | null,
   coversMissingNotified: false,
-  libraryWatcherDebounceMs: 2000
+  libraryWatcherDebounceMs: 2000,
+  refreshSmtcButtons: null as (() => void) | null
 }

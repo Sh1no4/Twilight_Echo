@@ -168,3 +168,13 @@ test('parametric editor reuses native player visualization data and cleans up an
   assert.match(source, /onBeforeUnmount/)
   assert.match(source, /cancelAnimationFrame\(spectrumAnimationFrame\)/)
 })
+
+test('equalizer state writes go through the store action instead of detaching storeToRefs', () => {
+  assert.match(source, /audioOutputDspStore\.applyAudioProcessingState\(/)
+  // Reassigning the storeToRefs audioProcessing would detach it from the
+  // player store and freeze the graph/sliders while audio still changes.
+  assert.doesNotMatch(
+    source,
+    /audioProcessing\.value\s*=\s*(appSettings\.value\.audioProcessing|settings|{)/
+  )
+})

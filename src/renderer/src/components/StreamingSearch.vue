@@ -576,14 +576,14 @@ function emitPage(first: number): void {
 
 .playlist-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
   gap: 18px;
   margin-top: 0;
 }
 
 @media (max-width: 900px) {
   .playlist-grid {
-    grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
     gap: 12px 10px;
   }
 
@@ -604,7 +604,7 @@ function emitPage(first: number): void {
 
 @media (max-width: 640px) {
   .playlist-grid {
-    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
     gap: 10px 8px;
   }
 

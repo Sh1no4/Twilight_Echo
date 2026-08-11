@@ -973,6 +973,7 @@ export class PlaybackController {
         state: waitingForNativePosition ? this.playbackInfo.state : nativeInfo.state,
         position: resolvedPosition,
         playbackRate,
+        volume: this.playbackInfo.volume,
         nativePlaybackActive: waitingForNativePosition
           ? this.nativePlaybackActive
           : nativeInfo.nativePlaybackActive
@@ -987,6 +988,7 @@ export class PlaybackController {
         state: waitingForNativePosition ? this.playbackInfo.state : nativeInfo.state,
         position: resolvedPosition,
         playbackRate,
+        volume: this.playbackInfo.volume,
         nativePlaybackActive: waitingForNativePosition
           ? this.nativePlaybackActive
           : nativeInfo.nativePlaybackActive
@@ -997,7 +999,11 @@ export class PlaybackController {
       ...this.playbackInfo,
       position: resolvedPosition,
       duration: this.playbackInfo.duration || nativeInfo.duration,
-      volume: nativeInfo.volume,
+      // Native GetPlaybackInfo can report unity while a startup SetVolume is
+      // still in flight or was dropped before the service engine existed.
+      // Keep the app-layer saved volume authoritative so a transient unity
+      // report can never poison a later restore and leave the engine loud.
+      volume: this.playbackInfo.volume,
       playbackRate,
       requestedConfigRevision: nativeInfo.requestedConfigRevision,
       appliedConfigRevision: nativeInfo.appliedConfigRevision,

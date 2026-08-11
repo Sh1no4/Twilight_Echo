@@ -3734,6 +3734,10 @@ async function handlePlayerShortcutAction(
       if (isPlaying.value) await togglePlayState()
       return
     }
+    if (action === 'toggleDesktopLyrics') {
+      await window.api.desktopLyrics.toggle()
+      return
+    }
     // playPause
     await togglePlayState()
     return
@@ -3811,7 +3815,7 @@ async function togglePlayState(): Promise<void> {
 function previous(): void {
   if (queue.value.length === 0) return
   clearCrossfadeTimer()
-  if (latestPlaybackTime > 3) {
+  if (appSettings.value.previousButtonAction === 'restart' && latestPlaybackTime > 3) {
     const track = currentTrack.value
     beginPlaybackPositionTransition(0)
     if (track && loadedTrackId !== track.id) {
@@ -5049,6 +5053,7 @@ export function usePlayerStore(): {
   refreshAudioOutputState: () => Promise<void>
   dismissAudioEngineRecoveryNotice: () => void
   setAudioProcessing: (settings: Partial<AudioProcessingSettings>) => Promise<void>
+  applyAudioProcessingState: (processing: AudioProcessingSettings) => void
   setOutputStage: (partial: Partial<DspOutputStageConfig>) => Promise<void>
   setStereoImage: (partial: Partial<DspStereoImageConfig>) => Promise<void>
   toggleDspEnabled: () => Promise<void>
@@ -5245,6 +5250,16 @@ export function usePlayerStore(): {
       setAudioEngineError(err instanceof Error ? err.message : String(err))
       console.error('[audio-engine] Failed to update audio processing settings:', err)
     }
+  }
+
+  /**
+   * Replace the renderer-side audio processing snapshot without touching the
+   * engine. The equalizer page must use this instead of reassigning a
+   * storeToRefs value, which would detach the DSP store from this store's
+   * live ref and freeze the EQ UI while the engine still processes changes.
+   */
+  function applyAudioProcessingState(processing: AudioProcessingSettings): void {
+    audioProcessing.value = cloneAudioProcessingSettings(processing)
   }
 
   /**
@@ -5494,6 +5509,7 @@ export function usePlayerStore(): {
     refreshAudioOutputState,
     dismissAudioEngineRecoveryNotice,
     setAudioProcessing,
+    applyAudioProcessingState,
     setOutputStage,
     setStereoImage,
     toggleDspEnabled,

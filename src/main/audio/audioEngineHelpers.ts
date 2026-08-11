@@ -866,6 +866,52 @@ export function normalizeAudioProcessingSettings(
   }
 }
 
+export interface ProcessingMasterState {
+  dspEnabled: boolean
+  directMode: boolean
+}
+
+export function resolveProcessingMasterState(
+  processing: Pick<
+    AudioProcessingSettings,
+    | 'dspEnabled'
+    | 'directMode'
+    | 'eqEnabled'
+    | 'eqPreamp'
+    | 'volumeNormalization'
+    | 'convolverEnabled'
+    | 'convolverIrPath'
+    | 'crossfeedEnabled'
+    | 'crossfeedStrength'
+  >,
+  explicitDspEnabled?: boolean,
+  explicitDirectMode?: boolean
+): ProcessingMasterState {
+  const moduleActive =
+    processing.eqEnabled ||
+    processing.volumeNormalization !== 'off' ||
+    processing.convolverEnabled ||
+    processing.convolverIrPath.length > 0 ||
+    (processing.crossfeedEnabled && processing.crossfeedStrength > 0) ||
+    Math.abs(processing.eqPreamp) > 0.001
+
+  // An explicit master-switch off always wins: bit-perfect direct path.
+  if (explicitDspEnabled === false) {
+    return { dspEnabled: false, directMode: true }
+  }
+  // Enabling DSP or any processing module implies the graph must run.
+  if (explicitDspEnabled === true || moduleActive) {
+    return { dspEnabled: true, directMode: false }
+  }
+  if (explicitDirectMode === true) {
+    return { dspEnabled: false, directMode: true }
+  }
+  if (explicitDirectMode === false) {
+    return { dspEnabled: processing.dspEnabled, directMode: false }
+  }
+  return { dspEnabled: processing.dspEnabled, directMode: processing.directMode }
+}
+
 export function parseNativeJson<T>(value: string | T | undefined, fallback: T): T {
   if (typeof value !== 'string') return value ?? fallback
   const parsed = tryParseJsonWithNestingLimit(value)

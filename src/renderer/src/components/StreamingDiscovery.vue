@@ -805,13 +805,13 @@ function emitPage(nextOffset: number): void {
 
 .disc-mosaic {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
   gap: 20px 18px;
 }
 
 @media (max-width: 900px) {
   .disc-mosaic {
-    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
     gap: 14px 12px;
   }
 
@@ -826,7 +826,7 @@ function emitPage(nextOffset: number): void {
 
 @media (max-width: 640px) {
   .disc-mosaic {
-    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
     gap: 12px 10px;
   }
 

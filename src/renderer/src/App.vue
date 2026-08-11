@@ -171,6 +171,14 @@ function handleCoverClick(rect: { x: number; y: number; w: number; h: number }):
   }
 }
 
+function handleToggleLyricsPage(rect: { x: number; y: number; w: number; h: number }): void {
+  if (showPlayingPage.value) {
+    closePlayingPage()
+  } else {
+    openPlayingPage(rect)
+  }
+}
+
 function enterStreamingLogin(): void {
   // First entry starts on home; later re-entries keep the mounted page state.
   if (!streamingPageMounted.value) {
@@ -817,6 +825,8 @@ const titleSurface = computed<TitleSurface>(() => {
         :glass="showPlayingPage"
         :mode="playerBarPresentation.mode"
         :auto-hide="playerBarPresentation.autoHide"
+        :playing-page-open="showPlayingPage"
+        @toggle-lyrics-page="handleToggleLyricsPage"
         @click-cover="handleCoverClick"
         @open-settings="openPlaybackSettings"
         @open-dsp="openDspSettings"

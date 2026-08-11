@@ -1914,11 +1914,18 @@ let stopDownloadListener: (() => void) | null = null
 const activeDownloadTasks = computed(() =>
   downloadTasks.value.filter((task) => task.status !== 'completed' && task.status !== 'cancelled')
 )
-const contextMenuCanDownload = computed(
-  () =>
-    streamingContextActionTracks.value.length > 0 &&
-    providerStore.getProvider(activeProvider.value)?.capabilities.includes('download') === true
-)
+const contextMenuDownloadProviderId = computed<string | null>(() => {
+  const tracks = streamingContextActionTracks.value
+  if (tracks.length === 0) return null
+  const providerId = getTrackSource(tracks[0])
+  if (providerId === 'local') return null
+  if (!providerStore.getProvider(providerId)?.capabilities.includes('download')) return null
+  for (const track of tracks) {
+    if (getTrackSource(track) !== providerId) return null
+  }
+  return providerId
+})
+const contextMenuCanDownload = computed(() => contextMenuDownloadProviderId.value !== null)
 
 onMounted(() => {
   stopDownloadListener = window.api.providerDownloads.onChanged((tasks) => {
@@ -1935,9 +1942,10 @@ onUnmounted(() => {
 
 async function handleContextDownload(quality: ProviderDownloadQuality): Promise<void> {
   const tracks = streamingContextActionTracks.value
-  const providerId = activeProvider.value
+  const providerId = contextMenuDownloadProviderId.value
   closeStreamingContextMenu()
   downloadQualityMenuOpen.value = false
+  if (!providerId) return
   for (const track of tracks) {
     try {
       await window.api.providerDownloads.create({
@@ -3649,7 +3657,12 @@ onMounted(async () => {
           class="provider-download-panel-overlay"
           @click.self="showDownloadPanel = false"
         >
-          <div class="provider-download-panel" role="dialog" aria-modal="true" aria-label="下载管理">
+          <div
+            class="provider-download-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label="下载管理"
+          >
             <div class="provider-download-panel-header">
               <h3>下载管理</h3>
               <button type="button" class="soft-button" @click="showDownloadPanel = false">
@@ -3664,7 +3677,10 @@ onMounted(async () => {
                 v-for="task in downloadTasks"
                 :key="task.id"
                 class="provider-download-item"
-                :class="{ completed: task.status === 'completed', failed: task.status === 'failed' }"
+                :class="{
+                  completed: task.status === 'completed',
+                  failed: task.status === 'failed'
+                }"
               >
                 <div class="provider-download-item-info">
                   <strong>{{ task.track.title }}</strong>
@@ -3672,7 +3688,9 @@ onMounted(async () => {
                   <small :class="{ error: task.status === 'failed' }">
                     {{ downloadStatusLabel(task) }}
                     <template v-if="task.actualQuality"> · {{ task.actualQuality }}</template>
-                    <template v-if="task.fileSize"> · {{ (task.fileSize / 1048576).toFixed(1) }} MB</template>
+                    <template v-if="task.fileSize">
+                      · {{ (task.fileSize / 1048576).toFixed(1) }} MB</template
+                    >
                   </small>
                   <small v-if="task.error" class="error">{{ task.error }}</small>
                   <small v-if="task.targetPath && task.status === 'completed'" class="path">

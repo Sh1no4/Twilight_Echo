@@ -117,7 +117,20 @@ watch(
 
 <template>
   <Transition name="lyrics-customizer">
-    <div v-if="open" class="lyrics-customizer-shell" @pointerdown.self="emit('close')">
+    <!--
+      Teleported to <body>, so the PlayerBar's document-level pointerdown
+      listener would misread any interaction inside the panel as an outside
+      click and close the floating drawer. Stopping propagation here keeps
+      the panel alive while the user drags a slider; `.self` still fires when
+      the pointer lands on the translucent shell itself, preserving the
+      click-outside-to-dismiss behaviour.
+    -->
+    <div
+      v-if="open"
+      class="lyrics-customizer-shell"
+      @pointerdown.self="emit('close')"
+      @pointerdown.stop
+    >
       <aside
         class="lyrics-customizer"
         role="dialog"
@@ -711,24 +724,29 @@ watch(
 </template>
 
 <style scoped>
+/*
+ * The shell stays fullscreen and interactive so "click outside to close" still
+ * works, but it paints nothing: no blur, no scrim. The whole point of opening
+ * the panel is to watch the lyrics underneath respond while tweaking, and a
+ * blurred backdrop defeats that entirely.
+ */
 .lyrics-customizer-shell {
   position: fixed;
   inset: 0;
   z-index: 15000;
   display: flex;
-  justify-content: flex-end;
-  background: color-mix(in srgb, var(--te-neutral-900) 48%, transparent);
-  backdrop-filter: blur(8px);
+  justify-content: flex-start;
+  background: transparent;
 }
 .lyrics-customizer {
-  width: min(560px, 100vw);
+  width: min(460px, 100vw);
   height: 100%;
   display: flex;
   flex-direction: column;
   color: var(--te-neutral-900);
-  border-left: 1px solid color-mix(in srgb, var(--te-card-border) 86%, transparent);
-  background: color-mix(in srgb, var(--te-settings-bg) 94%, transparent);
-  box-shadow: -24px 0 70px color-mix(in srgb, var(--te-neutral-900) 34%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--te-card-border) 86%, transparent);
+  background: var(--te-settings-bg);
+  box-shadow: 24px 0 70px color-mix(in srgb, var(--te-neutral-900) 34%, transparent);
 }
 .customizer-header {
   display: flex;
@@ -1147,9 +1165,7 @@ watch(
 }
 .lyrics-customizer-enter-active,
 .lyrics-customizer-leave-active {
-  transition:
-    background 220ms ease,
-    backdrop-filter 220ms ease;
+  transition: opacity 220ms ease;
 }
 .lyrics-customizer-enter-active .lyrics-customizer,
 .lyrics-customizer-leave-active .lyrics-customizer {
@@ -1159,12 +1175,11 @@ watch(
 }
 .lyrics-customizer-enter-from,
 .lyrics-customizer-leave-to {
-  background: transparent;
-  backdrop-filter: blur(0);
+  opacity: 0;
 }
 .lyrics-customizer-enter-from .lyrics-customizer,
 .lyrics-customizer-leave-to .lyrics-customizer {
-  transform: translateX(100%);
+  transform: translateX(-100%);
   opacity: 0.5;
 }
 @media (max-width: 620px) {

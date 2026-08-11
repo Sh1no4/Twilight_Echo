@@ -213,12 +213,21 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
           </button>
         </div>
         <div class="favorites-cover">
-          <img v-if="likedSummary.cover" :src="likedSummary.cover" alt="Favorites Cover" class="liked-cover-img" />
+          <img
+            v-if="likedSummary.cover"
+            :src="likedSummary.cover"
+            alt="Favorites Cover"
+            class="liked-cover-img"
+          />
           <span v-else class="liked-cover-img liked-card-cover-placeholder">
             <i class="pi pi-heart-fill"></i>
           </span>
           <div class="heart-icon">
-            <svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+            <svg viewBox="0 0 24 24">
+              <path
+                d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"
+              />
+            </svg>
           </div>
         </div>
       </div>
@@ -227,7 +236,11 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
     <!-- Feature Cards: Recent & Ranking portals (ncm only — external providers don't implement these) -->
     <section class="feature-cards" v-if="isLoggedIn && showFeatureCards !== false">
       <!-- Recent Played Card -->
-      <div class="glass-card feature-card recent-card" data-te-interactive @click="emit('openRecent')">
+      <div
+        class="glass-card feature-card recent-card"
+        data-te-interactive
+        @click="emit('openRecent')"
+      >
         <div class="feature-info">
           <div class="icon-wrap">
             <i class="pi pi-history" style="font-size: 1.1rem"></i>
@@ -243,7 +256,11 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
       </div>
 
       <!-- Top Ranking Card -->
-      <div class="glass-card feature-card ranking-card" data-te-interactive @click="emit('openRanking')">
+      <div
+        class="glass-card feature-card ranking-card"
+        data-te-interactive
+        @click="emit('openRanking')"
+      >
         <div class="feature-info">
           <div class="icon-wrap">
             <i class="pi pi-chart-bar" style="font-size: 1.1rem"></i>
@@ -343,11 +360,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
             :title="deletePlaylistLabel(playlist)"
             @click.stop="emit('deletePlaylist', playlist)"
           >
-            <i
-              :class="
-                isPlaylistDeleting(playlist) ? 'pi pi-spin pi-spinner' : 'pi pi-trash'
-              "
-            ></i>
+            <i :class="isPlaylistDeleting(playlist) ? 'pi pi-spin pi-spinner' : 'pi pi-trash'"></i>
           </button>
 
           <div class="playlist-item-arrow">
@@ -385,7 +398,9 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   border: 1px solid rgba(255, 255, 255, 0.6);
   border-radius: 24px;
   padding: 32px;
-  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  box-shadow:
+    0 20px 40px rgba(15, 23, 42, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
   position: relative;
   overflow: hidden;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -393,7 +408,9 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 }
 .glass-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  box-shadow:
+    0 24px 48px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 /* User Profile Card */
@@ -532,7 +549,9 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s;
   text-align: left;
 }
 .provider-menu-item:hover {
@@ -627,7 +646,11 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   right: -50px;
   width: 200px;
   height: 200px;
-  background: radial-gradient(circle, rgba(var(--te-primary-rgb, 99, 102, 241), 0.15) 0%, transparent 70%);
+  background: radial-gradient(
+    circle,
+    rgba(var(--te-primary-rgb, 99, 102, 241), 0.15) 0%,
+    transparent 70%
+  );
   border-radius: 50%;
   pointer-events: none;
 }
@@ -925,12 +948,12 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 .playlist-item {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 18px;
   background: var(--te-glass-bg-strong);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.6);
-  padding: 16px;
+  padding: 18px;
   border-radius: 20px;
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.02);
   cursor: pointer;
@@ -945,16 +968,16 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 }
 
 .playlist-item-cover {
-  width: 64px;
-  height: 64px;
-  border-radius: 12px;
+  width: 88px;
+  height: 88px;
+  border-radius: 14px;
   object-fit: cover;
   box-shadow: 0 8px 16px rgba(15, 23, 42, 0.1);
   transition: all 0.3s;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 24px;
+  font-size: 30px;
 }
 .playlist-cover-placeholder {
   background: #f3f0ff;
@@ -1077,17 +1100,23 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 :global(html[data-theme='dark'] .library-view .empty-state) {
   background: var(--te-glass-bg-strong);
   border-color: var(--te-glass-border);
-  box-shadow: var(--te-glass-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  box-shadow:
+    var(--te-glass-shadow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.045);
 }
 
 :global(html[data-theme='dark'] .library-view .glass-card:hover),
 :global(html[data-theme='dark'] .library-view .playlist-item:hover) {
   background: #202020;
-  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  box-shadow:
+    0 22px 56px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.055);
 }
 
 :global(html[data-theme='dark'] .library-view .profile-card:hover) {
-  box-shadow: var(--te-glass-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  box-shadow:
+    var(--te-glass-shadow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.045);
 }
 
 :global(html[data-theme='dark'] .library-view .profile-avatar) {
@@ -1246,7 +1275,8 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 }
 
 @media (max-width: 1080px) {
-  .top-cards, .feature-cards {
+  .top-cards,
+  .feature-cards {
     grid-template-columns: 1fr;
     gap: 20px;
   }
@@ -1271,8 +1301,8 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   }
 
   .playlist-item-cover {
-    width: 52px;
-    height: 52px;
+    width: 68px;
+    height: 68px;
   }
 
   .profile-card,
@@ -1297,7 +1327,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
     align-self: center;
     transform: rotateY(0);
   }
-  
+
   .feature-preview {
     align-self: flex-end;
     min-width: 0;

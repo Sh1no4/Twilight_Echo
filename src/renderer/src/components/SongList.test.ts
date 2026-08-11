@@ -317,6 +317,25 @@ test('library playback controls render below the table header', () => {
   assert.ok(playActionsIndex > tableHeaderEnd)
 })
 
+test('song list context menu exposes play next, view artist, and view album actions', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+
+  assert.match(source, /playNextTrack/)
+  assert.match(source, /playNext: playNextTrack/)
+  assert.match(source, /canPlayNextSelectedTrack/)
+  assert.match(source, /handlePlayNext/)
+  assert.match(source, /下一首播放/)
+
+  assert.match(source, /canViewSelectedContext/)
+  assert.match(source, /handleViewArtist/)
+  assert.match(source, /handleViewAlbum/)
+  assert.match(source, /查看歌手/)
+  assert.match(source, /查看专辑/)
+
+  assert.match(source, /emit\('selectView', 'artists', `artist:\$\{artist\}`\)/)
+  assert.match(source, /emit\('selectView', 'albums', `album:\$\{albumItem\.id\}`\)/)
+})
+
 test('track table places the list number before artwork and reserves metadata track numbers for album details', () => {
   const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8').replace(
     /\r\n/g,

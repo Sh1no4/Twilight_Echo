@@ -24,6 +24,9 @@ export type PlaylistActions = {
   clearMetadataMatch?: (track: Track) => Promise<void> | void
   createPlaylist: (name: string) => void
   deletePlaylist: (playlistId: string) => void
+  playNext?: (track: Track) => void
+  viewArtist?: (track: Track) => void
+  viewAlbum?: (track: Track) => void
 }
 
 export type TrackPlayback = {

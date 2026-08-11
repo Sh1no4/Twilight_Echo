@@ -38,6 +38,7 @@ import {
   normalizeAudioProcessingSettings,
   parseDspGraphStatusOrThrow,
   parseNativeJson,
+  resolveProcessingMasterState,
   sourceLooksDsd
 } from './audioEngineHelpers.ts'
 
@@ -124,13 +125,18 @@ export class DspOrchestrator {
         }))
     // Pre-direct-mode settings did not always persist the master switch. Keep
     // those legacy module/scene configurations active, while an explicit false
-    // remains an authoritative request to bypass every processing node.
+    // remains an authoritative request to bypass every processing node. An
+    // enabled processing module (for example EQ) also implies the graph must
+    // run, so a stale persisted directMode never silently bypasses it.
+    const { dspEnabled, directMode } = resolveProcessingMasterState(
+      normalizedProcessing,
+      undefined,
+      normalizedProcessing.directMode
+    )
     this.processing = {
       ...normalizedProcessing,
-      dspEnabled:
-        normalizedProcessing.directMode || hasExplicitMasterSwitch
-          ? normalizedProcessing.dspEnabled
-          : hasConfiguredProcessing
+      dspEnabled: dspEnabled || (hasConfiguredProcessing && !hasExplicitMasterSwitch),
+      directMode
     }
     this.dspScenes = normalizeDspScenes(config.dspScenes, this.processing)
     this.dspPinnedSceneId =
@@ -1056,27 +1062,15 @@ export class DspOrchestrator {
     settings: Partial<AudioProcessingSettings>
   ): AudioProcessingSettings {
     const normalized = normalizeAudioProcessingSettings({ ...this.processing, ...settings })
-    const explicitlyDisabled = settings.dspEnabled === false
-    const explicitlyEnabled = settings.dspEnabled === true
-    const directMode =
-      settings.directMode === true || (settings.directMode === undefined && explicitlyDisabled)
-    const processingModuleEnabled =
-      normalized.eqEnabled ||
-      normalized.volumeNormalization !== 'off' ||
-      normalized.convolverEnabled ||
-      normalized.convolverIrPath.length > 0 ||
-      (normalized.crossfeedEnabled && normalized.crossfeedStrength > 0) ||
-      Math.abs(normalized.eqPreamp) > 0.001
+    const { dspEnabled, directMode } = resolveProcessingMasterState(
+      normalized,
+      settings.dspEnabled,
+      settings.directMode
+    )
     return {
       ...normalized,
       directMode,
-      dspEnabled: directMode
-        ? false
-        : explicitlyDisabled
-          ? false
-          : explicitlyEnabled
-            ? true
-            : normalized.dspEnabled || processingModuleEnabled
+      dspEnabled
     }
   }
 

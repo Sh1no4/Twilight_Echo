@@ -34,6 +34,7 @@ import type { DlnaDeviceInfo } from '../../../../shared/remoteControl.ts'
 import type { PlaybackBookmark } from '../../../../shared/playbackBookmarks.ts'
 import type { LyricLayerSourceSelection } from '../../../../shared/lyricsManagement.ts'
 import LyricsManagerPanel from './LyricsManagerPanel.vue'
+import LyricsAppearanceCustomizer from '../LyricsAppearanceCustomizer.vue'
 
 export type StatusTone = 'success' | 'warning' | 'muted'
 
@@ -198,6 +199,7 @@ const loudnormStatusTone = computed(() => {
 })
 
 const activeSection = ref<'console' | 'output' | 'dsp' | 'tools' | 'lyrics'>('console')
+const lyricsCustomizerOpen = ref(false)
 
 const bufferSizeOptions = [
   { value: 0, label: 'Auto' },
@@ -1685,10 +1687,21 @@ const deckAccentVars = computed(() => {
             </section>
 
             <section class="deck-card">
-              <button type="button" class="deck-action full" @click="emit('openSettings')">
+              <button type="button" class="deck-action full" @click="lyricsCustomizerOpen = true">
                 <i class="ph ph-text-aa"></i>
                 <span>
                   <strong>歌词显示样式</strong>
+                  <em>字体 · 颜色 · 背景 · 高亮 · 动效</em>
+                </span>
+              </button>
+              <button
+                type="button"
+                class="deck-action deck-action-secondary full"
+                @click="emit('openSettings')"
+              >
+                <i class="ph ph-arrow-square-out"></i>
+                <span>
+                  <strong>打开设置页</strong>
                   <em>字号 · 对齐 · 暗度 · 桌面歌词外观</em>
                 </span>
               </button>
@@ -1716,6 +1729,12 @@ const deckAccentVars = computed(() => {
         </section>
       </div>
     </div>
+    <Teleport to="body">
+      <LyricsAppearanceCustomizer
+        :open="lyricsCustomizerOpen"
+        @close="lyricsCustomizerOpen = false"
+      />
+    </Teleport>
   </div>
 </template>
 
@@ -3092,6 +3111,29 @@ html[data-theme='dark'] .deck .deck-select {
 
 .deck-action.full {
   width: 100%;
+}
+
+.deck-action + .deck-action {
+  margin-top: 8px;
+}
+
+/* Secondary entry: keeps "open the full Settings page" reachable from the
+   lyrics card without competing with the primary customizer action. */
+.deck-action-secondary {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--d-line);
+  padding-block: 9px;
+}
+
+.deck-action-secondary strong {
+  font-weight: 500;
+  color: var(--d-muted);
+}
+
+.deck-action-secondary:hover {
+  border-color: var(--d-accent-line);
+  background: var(--d-accent-soft);
 }
 
 /* ===== 投送 / 书签 ===== */

@@ -8,8 +8,12 @@ import {
 } from 'electron'
 import { existsSync } from 'fs'
 import { runtime } from '../core/runtime'
-import { PLAYER_SHORTCUTS } from '../core/types'
-import type { PlayerShortcutAction, PlayerShortcutStatus } from '../core/types'
+import {
+  MEDIA_KEY_SHORTCUTS,
+  type PlayerShortcutAction,
+  type PlayerShortcutKeyAction,
+  type PlayerShortcutStatus
+} from '../core/types'
 import { buildPlayerShortcutStatuses } from '../core/shortcutStatus'
 import { getAppIconPath } from '../app/window'
 import { applyDiscordRpcSetting } from './discord'
@@ -20,7 +24,7 @@ import { destroyTrayPlayerWindow, openMainWindowAt } from './trayPlayer'
 import type { MiniPlayerCommand, MiniPlayerPlayMode } from '../../shared/miniPlayer.ts'
 
 let playerShortcutStatuses: PlayerShortcutStatus[] = buildPlayerShortcutStatuses(
-  PLAYER_SHORTCUTS,
+  buildPlayerShortcutDefinitions(),
   false,
   () => false
 )
@@ -29,6 +33,33 @@ export function sendPlayerShortcut(action: PlayerShortcutAction): void {
   if (runtime.mainWindow?.isDestroyed() === false) {
     runtime.mainWindow.webContents.send('player:shortcut', action)
   }
+}
+
+export function handleGlobalShortcutAction(action: PlayerShortcutKeyAction): void {
+  if (action === 'toggleDesktopLyrics') {
+    toggleDesktopLyrics()
+    return
+  }
+  sendPlayerShortcut(action)
+}
+
+export function buildPlayerShortcutDefinitions(): {
+  accelerator: string
+  action: PlayerShortcutKeyAction
+  label: string
+}[] {
+  const bindings = runtime.appSettings.globalShortcutBindings
+  return [
+    { accelerator: bindings.previous, action: 'previous', label: '上一首' },
+    { accelerator: bindings.next, action: 'next', label: '下一首' },
+    { accelerator: bindings.playPause, action: 'playPause', label: '播放 / 暂停' },
+    {
+      accelerator: bindings.toggleDesktopLyrics,
+      action: 'toggleDesktopLyrics',
+      label: '桌面歌词'
+    },
+    ...MEDIA_KEY_SHORTCUTS
+  ]
 }
 
 export function applyAutoLaunch(enabled: boolean): void {
@@ -43,21 +74,20 @@ export function applyAutoLaunch(enabled: boolean): void {
 }
 
 export function unregisterPlayerShortcuts(): void {
-  for (const shortcut of PLAYER_SHORTCUTS) {
-    globalShortcut.unregister(shortcut.accelerator)
-  }
+  globalShortcut.unregisterAll()
 }
 
 export function registerPlayerShortcuts(): void {
   unregisterPlayerShortcuts()
+  const shortcuts = buildPlayerShortcutDefinitions()
   playerShortcutStatuses = buildPlayerShortcutStatuses(
-    PLAYER_SHORTCUTS,
+    shortcuts,
     runtime.appSettings.globalShortcuts,
     (accelerator) => {
-      const shortcut = PLAYER_SHORTCUTS.find((item) => item.accelerator === accelerator)
+      const shortcut = shortcuts.find((item) => item.accelerator === accelerator)
       if (!shortcut) return false
       const ok = globalShortcut.register(shortcut.accelerator, () => {
-        sendPlayerShortcut(shortcut.action)
+        handleGlobalShortcutAction(shortcut.action)
       })
       if (!ok) {
         console.warn(`全局快捷键注册失败：${shortcut.label} ${shortcut.accelerator}`)
@@ -72,7 +102,11 @@ export function getPlayerShortcutStatuses(): PlayerShortcutStatus[] {
 }
 
 export function resetPlayerShortcutStatuses(): void {
-  playerShortcutStatuses = buildPlayerShortcutStatuses(PLAYER_SHORTCUTS, false, () => false)
+  playerShortcutStatuses = buildPlayerShortcutStatuses(
+    buildPlayerShortcutDefinitions(),
+    false,
+    () => false
+  )
 }
 
 const PLAY_MODE_LABELS: Record<MiniPlayerPlayMode, string> = {

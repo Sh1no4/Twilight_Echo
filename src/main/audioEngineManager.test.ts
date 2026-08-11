@@ -1768,6 +1768,43 @@ test('direct mode submits an identity graph and restores rate/routing without ch
   manager.destroy()
 })
 
+test('startup with stale directMode and enabled EQ heals to an active DSP graph', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto',
+      audioProcessing: {
+        dspEnabled: false,
+        directMode: true,
+        eqEnabled: true,
+        eqMode: 'parametric',
+        eqPreamp: -2,
+        eqBands: [
+          { frequency: 100, gain: 4, q: 1, filterType: 'peak' },
+          { frequency: 1000, gain: -3, q: 1.2, filterType: 'peak' }
+        ]
+      }
+    },
+    nativeBinding
+  )
+
+  const processing = manager.getAudioProcessing()
+  assert.equal(processing.directMode, false)
+  assert.equal(processing.dspEnabled, true)
+  assert.equal(processing.eqEnabled, true)
+
+  await manager.start()
+  const graph = nativeBinding.lastDspGraphPayload?.graph as {
+    nodes?: Array<{ type?: string; enabled?: boolean }>
+  }
+  const eqNode = graph?.nodes?.find((node) => node.type === 'equalizer')
+  assert.ok(eqNode, 'equalizer node must be present when EQ is enabled')
+  assert.equal(eqNode.enabled, true)
+  manager.destroy()
+})
+
 test('module switches gate matching nodes in an active custom scene', async () => {
   const nativeBinding = new FakeNativeBinding()
   const manager = makeManager(
@@ -6607,10 +6644,7 @@ test('play preserves saved volume and reasserts SetVolume on native', async () =
       perfectReason: ''
     })
   })
-  const manager = new AudioEngineManager(
-    { exclusiveMode: false, volume: 0.42 },
-    { nativeBinding }
-  )
+  const manager = new AudioEngineManager({ exclusiveMode: false, volume: 0.42 }, { nativeBinding })
   assert.equal((await manager.getPlaybackInfo()).volume, 0.42)
 
   // Simulate native GetPlaybackInfo defaulting volume to 1 after Play (the
@@ -6630,6 +6664,50 @@ test('play preserves saved volume and reasserts SetVolume on native', async () =
   assert.equal(nativeBinding.playbackInfo.volume, 0.42)
   assert.ok(nativeBinding.volumeCalls >= 1)
 
+  manager.destroy()
+})
+
+test('getPlaybackInfo refresh never lets a native unity report clobber the saved volume', async () => {
+  const service = new FakeAudioServiceBinding()
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: false,
+      volume: 0.31,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+
+  await manager.start()
+  assert.equal(service.volume, 0.31)
+
+  // Auto-resume starts native playback before the service confirms the saved
+  // volume; the fresh engine reports unity (the exact failure mode where a
+  // startup SetVolume was dropped before the pipeline existed).
+  await manager.play('C:\\music\\track.flac', 0)
+  service.playbackInfo = makePlaybackInfo({
+    state: 'playing',
+    nativePlaybackActive: true,
+    volume: 1
+  })
+
+  // The renderer's getPlaybackInfo refresh must not adopt the transient unity
+  // report; otherwise a later restore re-applies 1.0 while the UI still shows
+  // the saved volume (user hears 100% despite the slider showing the old value).
+  assert.equal((await manager.getPlaybackInfo()).volume, 0.31)
+  assert.equal((await manager.getPlaybackInfo()).volume, 0.31)
+
+  // A later service-ready restore must re-apply the saved volume, not unity.
+  service.emit('ready')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(service.volume, 0.31)
+  assert.equal((await manager.getPlaybackInfo()).volume, 0.31)
   manager.destroy()
 })
 
