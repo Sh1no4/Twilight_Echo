@@ -15,6 +15,7 @@ import { DEFAULT_SOFTWARE_VOLUME } from '../../shared/audioProcessingOptions.ts'
 import {
   AudioEngineManager,
   normalizeAudioProcessingSettings,
+  resolveProcessingMasterState,
   type AudioProcessingSettings,
   type AudioOutputId,
   type AudioEngineQueueItem,
@@ -106,7 +107,10 @@ function persistSoftwareVolumeNow(): void {
 function scheduleSoftwareVolumePersist(volume: number): void {
   pendingSoftwareVolume = volume
   if (softwareVolumePersistTimer) clearTimeout(softwareVolumePersistTimer)
-  softwareVolumePersistTimer = setTimeout(persistSoftwareVolumeNow, SOFTWARE_VOLUME_PERSIST_DELAY_MS)
+  softwareVolumePersistTimer = setTimeout(
+    persistSoftwareVolumeNow,
+    SOFTWARE_VOLUME_PERSIST_DELAY_MS
+  )
 }
 
 function flushSoftwareVolumePersist(): void {
@@ -423,6 +427,25 @@ export async function setupAudioEngineIpc(): Promise<void> {
   app.on('before-quit', () => {
     flushSoftwareVolumePersist()
   })
+  // A stale persisted directMode can silently bypass an enabled processing
+  // module (for example EQ) after a restart. Reconcile the master switch once
+  // at startup so the engine and the stored settings agree on what should run.
+  const startupProcessing = normalizeAudioProcessingSettings(runtime.appSettings.audioProcessing)
+  const startupMasterState = resolveProcessingMasterState(
+    startupProcessing,
+    undefined,
+    startupProcessing.directMode
+  )
+  if (
+    startupMasterState.dspEnabled !== startupProcessing.dspEnabled ||
+    startupMasterState.directMode !== startupProcessing.directMode
+  ) {
+    runtime.appSettings = normalizeAppSettings({
+      ...runtime.appSettings,
+      audioProcessing: { ...startupProcessing, ...startupMasterState }
+    })
+    writeAppSettings(runtime.appSettings)
+  }
   let initialAudioProcessing = getEffectiveAudioProcessing()
   try {
     initialAudioProcessing = await authorizeAudioProcessingSettings(initialAudioProcessing)
@@ -764,15 +787,19 @@ export async function setupAudioEngineIpc(): Promise<void> {
     'audioEngine:setAudioProcessing',
     async (_event, settings: Partial<AudioProcessingSettings>) => {
       assertTrustedIpcSender(_event, 'audio engine IPC')
-      const directMode =
-        settings.directMode === true || settings.dspEnabled === false
-          ? true
-          : settings.directMode === false || settings.dspEnabled === true
-            ? false
-            : runtime.appSettings.audioProcessing.directMode
+      const merged = normalizeAudioProcessingSettings({
+        ...runtime.appSettings.audioProcessing,
+        ...settings
+      })
+      const { dspEnabled, directMode } = resolveProcessingMasterState(
+        merged,
+        settings.dspEnabled,
+        settings.directMode
+      )
       const normalized = await authorizeAudioProcessingSettings({
         ...runtime.appSettings.audioProcessing,
         ...settings,
+        dspEnabled,
         directMode
       })
       await persistAndApplyAudioProcessingState(normalized)
@@ -1082,11 +1109,19 @@ export async function setupAudioEngineIpc(): Promise<void> {
     'audioEngine:setEqBands',
     async (_event, settings: Partial<AudioProcessingSettings>) => {
       assertTrustedIpcSender(_event, 'audio engine IPC')
-      const normalized = await authorizeAudioProcessingSettings({
+      const merged = normalizeAudioProcessingSettings({
         ...runtime.appSettings.audioProcessing,
         ...settings,
         dspEnabled: true,
         eqEnabled: true
+      })
+      const { dspEnabled, directMode } = resolveProcessingMasterState(merged, true, false)
+      const normalized = await authorizeAudioProcessingSettings({
+        ...runtime.appSettings.audioProcessing,
+        ...settings,
+        dspEnabled,
+        eqEnabled: true,
+        directMode
       })
       await persistAndApplyAudioProcessingState(normalized)
       return runtime.appSettings.audioProcessing
@@ -1104,11 +1139,19 @@ export async function setupAudioEngineIpc(): Promise<void> {
       }
     ) => {
       assertTrustedIpcSender(_event, 'audio engine IPC')
-      const normalized = await authorizeAudioProcessingSettings({
+      const merged = normalizeAudioProcessingSettings({
         ...runtime.appSettings.audioProcessing,
         ...preset,
         dspEnabled: true,
         eqEnabled: true
+      })
+      const { dspEnabled, directMode } = resolveProcessingMasterState(merged, true, false)
+      const normalized = await authorizeAudioProcessingSettings({
+        ...runtime.appSettings.audioProcessing,
+        ...preset,
+        dspEnabled,
+        eqEnabled: true,
+        directMode
       })
       await persistAndApplyAudioProcessingState(normalized)
       return runtime.appSettings.audioProcessing

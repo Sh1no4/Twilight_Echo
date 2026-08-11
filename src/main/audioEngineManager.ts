@@ -47,7 +47,7 @@ import {
   MAX_METADATA_CACHE_ENTRIES,
   clampNumber,
   createDefaultPlaybackInfo,
-  parseNativeJson,
+  parseNativeJson
 } from './audio/audioEngineHelpers.ts'
 import {
   getNativeAddonCandidates,
@@ -103,6 +103,7 @@ export {
   normalizeAudioOutput,
   createPlaybackInfoFanoutSignature,
   normalizeAudioProcessingSettings,
+  resolveProcessingMasterState,
   mapSpectrumToVisualizerBars
 } from './audio/audioEngineHelpers.ts'
 export {
@@ -283,8 +284,7 @@ export class AudioEngineManager extends EventEmitter {
         updateNativeInfoSnapshot: () => this.updateNativeInfoSnapshot(),
         syncLoudnormModeTransition: (previousMode, nextMode) =>
           this.syncLoudnormModeTransition(previousMode, nextMode),
-        applyDirectModeRuntimeOverrides: (enabled) =>
-          this.applyDirectModeRuntimeOverrides(enabled),
+        applyDirectModeRuntimeOverrides: (enabled) => this.applyDirectModeRuntimeOverrides(enabled),
         tryNative: (context, action) => this.tryNative(context, action)
       },
       config,
@@ -293,9 +293,6 @@ export class AudioEngineManager extends EventEmitter {
     this.resetOutputInfoDefaults()
     this.updateOutputPerfect()
   }
-
-
-
 
   private get playbackInfo(): PlaybackInfo {
     return this.playback.playbackInfo
@@ -377,14 +374,10 @@ export class AudioEngineManager extends EventEmitter {
   private get nativeDspPluginChainJson(): string {
     return this.dsp.getEffectiveNativeDspPluginChainJson()
   }
-  private set lastNativeDspPluginStatusCache(
-    value: { readAt: number; status: unknown } | null
-  ) {
+  private set lastNativeDspPluginStatusCache(value: { readAt: number; status: unknown } | null) {
     this.dsp.lastNativeDspPluginStatusCache = value
   }
-  private set lastConvolverInfoCache(
-    value: { readAt: number; info: ConvolverInfo } | null
-  ) {
+  private set lastConvolverInfoCache(value: { readAt: number; info: ConvolverInfo } | null) {
     this.dsp.lastConvolverInfoCache = value
   }
 
@@ -526,7 +519,6 @@ export class AudioEngineManager extends EventEmitter {
     }
   }
 
-
   private async restoreAudioServicePlaybackState(): Promise<{ synced: boolean; errors: string[] }> {
     const results: Array<{ ok: boolean; error: string }> = []
     if (this.nativeDspPluginChainJson) {
@@ -609,7 +601,6 @@ export class AudioEngineManager extends EventEmitter {
   getLoudnormStatus(): { status: LoudnormStatus; source: string | null } {
     return { status: this.loudnormStatus, source: this.loudnormStatusSource }
   }
-
 
   getMetadata(source: string): NativeAudioMetadata | null {
     const cached = this.getCachedMetadata(source)
@@ -831,7 +822,6 @@ export class AudioEngineManager extends EventEmitter {
     )
   }
 
-
   refreshDspGraph(): void {
     this.dsp.refreshDspGraph()
   }
@@ -957,7 +947,6 @@ export class AudioEngineManager extends EventEmitter {
     return this.dsp.refreshResolvedDspScene()
   }
 
-
   async setExclusiveMode(enabled: boolean): Promise<AudioOutputState> {
     return this.outputRouter.setExclusiveMode(enabled)
   }
@@ -1025,7 +1014,6 @@ export class AudioEngineManager extends EventEmitter {
     return this.outputRouter.getNativeBackendId()
   }
 
-
   private shouldFallbackFromAsio(output: AudioOutputId): boolean {
     return this.outputRouter.shouldFallbackFromAsio(output)
   }
@@ -1038,7 +1026,6 @@ export class AudioEngineManager extends EventEmitter {
     this.outputRouter.refreshOutputInfoFromNative(resetDefaults)
   }
 
-
   private pollAudioDeviceOptionsForChanges(): void {
     this.outputRouter.pollAudioDeviceOptionsForChanges()
   }
@@ -1050,7 +1037,6 @@ export class AudioEngineManager extends EventEmitter {
   private createDeviceCapabilityRefreshSignature(info: PlaybackInfo): string {
     return this.outputRouter.createDeviceCapabilityRefreshSignature(info)
   }
-
 
   async play(source: string, startTime = 0): Promise<AudioEnginePlayResult> {
     return this.playback.play(source, startTime)
@@ -1153,7 +1139,6 @@ export class AudioEngineManager extends EventEmitter {
     this.playback.publishPlaybackInfo(options)
   }
 
-
   destroy(): void {
     if (this.destroyed) return
 
@@ -1196,11 +1181,9 @@ export class AudioEngineManager extends EventEmitter {
     }
   }
 
-
   updateNativeInfoSnapshot(): void {
     this.refreshOutputInfoFromNative(false)
   }
-
 
   private getCachedMetadata(source: string): {
     found: boolean
@@ -1240,8 +1223,6 @@ export class AudioEngineManager extends EventEmitter {
       this.metadataCache.delete(oldestSource)
     }
   }
-
-
 
   private tryNative(
     context: string,
@@ -1315,7 +1296,7 @@ export class AudioEngineManager extends EventEmitter {
         throw error
       }
     } else {
-      const restoreRate = this.directModePlaybackRateRestore ?? (this.playbackInfo.playbackRate ?? 1)
+      const restoreRate = this.directModePlaybackRateRestore ?? this.playbackInfo.playbackRate ?? 1
       await this.outputRouter.setDirectRoutingOverride(false)
       try {
         await this.playback.setPlaybackRate(restoreRate)
