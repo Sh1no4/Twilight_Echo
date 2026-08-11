@@ -36,6 +36,26 @@ const SPONSORS: readonly Sponsor[] = [
     id: 'jiang-feng-jiang1021',
     name: '江枫Jiang1021',
     avatarUrl: ''
+  },
+  {
+    id: 'your-rain',
+    name: 'YourRain',
+    avatarUrl: 'https://s41.ax1x.com/2026/08/10/pmbqWUH.jpg'
+  },
+  {
+    id: 'afdian-user-fa664',
+    name: '剑锋',
+    avatarUrl: 'https://s41.ax1x.com/2026/08/10/pmbL1de.jpg'
+  },
+  {
+    id: 'yunshan',
+    name: '云杉',
+    avatarUrl: 'https://s41.ax1x.com/2026/08/10/pmbq7Kf.jpg'
+  },
+  {
+    id: 'yu',
+    name: '羽',
+    avatarUrl: 'https://s41.ax1x.com/2026/08/10/pmbqHr8.jpg'
   }
 ]
 
