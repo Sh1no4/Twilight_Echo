@@ -477,6 +477,20 @@ function normalizeRemoteAssetUrl(value) {
   return trimmed
 }
 
+const NCM_COVER_PARAM = 'param=600y600'
+
+function normalizePlaylistCoverUrl(value) {
+  const url = normalizeRemoteAssetUrl(value)
+  if (!url) return null
+  // NetEase serves resized thumbnails via ?param=WxH; request a larger square
+  // so playlist-list covers stay sharp when displayed bigger.
+  if (!/^https?:\/\//i.test(url) || !/music\.126\.net/i.test(url)) return url
+  if (/[?&]param=/i.test(url)) {
+    return url.replace(/([?&])param=[^&#]*/i, `$1${NCM_COVER_PARAM}`)
+  }
+  return `${url}${url.includes('?') ? '&' : '?'}${NCM_COVER_PARAM}`
+}
+
 function getSongAudioMeta(song) {
   const candidates = [
     song.sq,
@@ -579,7 +593,7 @@ function normalizePlaylist(playlist, ownerUid) {
   return {
     id: Number(playlist.id),
     name: playlist.name || '未命名歌单',
-    cover: normalizeRemoteAssetUrl(playlist.coverImgUrl || playlist.picUrl || null),
+    cover: normalizePlaylistCoverUrl(playlist.coverImgUrl || playlist.picUrl || null),
     trackCount: typeof playlist.trackCount === 'number' ? playlist.trackCount : 0,
     creatorName:
       typeof playlist.creator?.nickname === 'string'
@@ -1649,7 +1663,7 @@ async function fetchRecommendPlaylists() {
     return recommend.map((item) => ({
       id: Number(item.id),
       name: item.name || '未命名歌单',
-      cover: normalizeRemoteAssetUrl(item.picUrl || item.coverImgUrl || null),
+      cover: normalizePlaylistCoverUrl(item.picUrl || item.coverImgUrl || null),
       trackCount: item.trackCount || 0
     }))
   } catch {

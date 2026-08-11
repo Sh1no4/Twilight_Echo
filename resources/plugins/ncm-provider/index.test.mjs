@@ -1875,6 +1875,38 @@ test('discovery playlists pass tag paging params and normalize playlists with pl
   }
 })
 
+test('playlist covers request higher-resolution NetEase thumbnails', async () => {
+  const provider = await activateProvider(
+    async () => ({
+      playlists: [
+        {
+          id: 901,
+          name: 'High-res cover',
+          coverImgUrl: 'https://p1.music.126.net/abc/cover.jpg?param=300y300',
+          trackCount: 12
+        },
+        {
+          id: 902,
+          name: 'High-res cover',
+          coverImgUrl: 'https://p2.music.126.net/abc/original.jpg',
+          trackCount: 7
+        }
+      ],
+      total: 2,
+      more: false
+    }),
+    new Map()
+  )
+
+  try {
+    const page = await provider.fetchDiscoveryPlaylists('all', 'hot', 30, 0)
+    assert.equal(page.items[0].cover, 'https://p1.music.126.net/abc/cover.jpg?param=600y600')
+    assert.equal(page.items[1].cover, 'https://p2.music.126.net/abc/original.jpg?param=600y600')
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
 test('discovery playlists fall back to hot order for invalid order values', async () => {
   const requests = []
   const provider = await activateProvider(async (path) => {
