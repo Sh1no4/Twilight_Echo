@@ -170,9 +170,15 @@ export function createLyricViewportController(options: LyricViewportControllerOp
   function applyLayout(force: boolean, isSeeking = false): void {
     if (!stage || rows.size === 0) return
 
+    // `getActiveIndex` returns -1 before any line is presented; the layout is
+    // expecting a real line index, so pin to the first row instead of leaving
+    // the anchor stranded off the timeline.
+    const rawIndex = options.getActiveIndex?.() ?? 0
+    const scrollToIndex = rawIndex >= 0 ? rawIndex : 0
+
     const result = computeLyricLayout({
       lines: layoutLines(),
-      scrollToIndex: options.getActiveIndex?.() ?? 0,
+      scrollToIndex,
       buffered: bufferedIndices(),
       viewportHeight: stage.clientHeight,
       viewportWidth: stage.clientWidth,
@@ -363,8 +369,15 @@ export function createLyricViewportController(options: LyricViewportControllerOp
   }
 
   function recenter(mode: 'resize' | 'snap' = 'resize'): Promise<void> {
+    // A `-1` active index means "no line is presented yet": paused before
+    // playback starts, or the position watcher has not fired. This is exactly
+    // the case entering the lyrics page hits. Skipping the layout here leaves
+    // every row's `--lyric-line-top` at its CSS default of 0 and all rows
+    // render stacked on the same pixel. Anchor to the first row instead so
+    // the lines spread — a real follow() call from `activeLyricIndex` will
+    // re-anchor to the live line as soon as one is presented.
     const index = options.getActiveIndex?.() ?? -1
-    return index >= 0 ? follow(index, { mode }) : Promise.resolve()
+    return follow(index >= 0 ? index : 0, { mode })
   }
 
   /**
