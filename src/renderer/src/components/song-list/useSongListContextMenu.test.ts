@@ -27,11 +27,16 @@ const localTrack = {
   source: 'local'
 }
 
-function createMenu(overrides: {
-  rematchTrack?: (track: typeof providerTrack) => Promise<void> | void
-  rematchMetadata?: (track: typeof providerTrack) => Promise<void> | void
-  clearMetadataMatch?: (track: typeof providerTrack) => Promise<void> | void
-} = {}): ReturnType<typeof useSongListContextMenu> {
+function createMenu(
+  overrides: {
+    rematchTrack?: (track: typeof providerTrack) => Promise<void> | void
+    rematchMetadata?: (track: typeof providerTrack) => Promise<void> | void
+    clearMetadataMatch?: (track: typeof providerTrack) => Promise<void> | void
+    playNext?: (track: typeof providerTrack) => void
+    viewArtist?: (track: typeof providerTrack) => void
+    viewAlbum?: (track: typeof providerTrack) => void
+  } = {}
+): ReturnType<typeof useSongListContextMenu> {
   ;(globalThis as Record<string, unknown>).window = {
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -47,17 +52,22 @@ function createMenu(overrides: {
     querySelector: () => null
   }
   const scope = effectScope()
-  const menu = scope.run(() => useSongListContextMenu({
-    currentPlaylistName: computed(() => null),
-    removeTrack: () => {},
-    addToPlaylist: () => {},
-    removeFromPlaylist: () => {},
-    createPlaylist: () => 'playlist-id',
-    deletePlaylist: () => {},
-    rematchTrack: overrides.rematchTrack,
-    rematchMetadata: overrides.rematchMetadata,
-    clearMetadataMatch: overrides.clearMetadataMatch
-  }))
+  const menu = scope.run(() =>
+    useSongListContextMenu({
+      currentPlaylistName: computed(() => null),
+      removeTrack: () => {},
+      addToPlaylist: () => {},
+      removeFromPlaylist: () => {},
+      createPlaylist: () => 'playlist-id',
+      deletePlaylist: () => {},
+      rematchTrack: overrides.rematchTrack,
+      rematchMetadata: overrides.rematchMetadata,
+      clearMetadataMatch: overrides.clearMetadataMatch,
+      playNext: overrides.playNext,
+      viewArtist: overrides.viewArtist,
+      viewAlbum: overrides.viewAlbum
+    })
+  )
   if (!menu) throw new Error('context menu setup failed')
   return menu
 }
@@ -77,6 +87,60 @@ test('context menu exposes rematch action for provider tracks', async () => {
 
   assert.equal(rematchedTrackId, 'ncm:expired')
   assert.equal(menu.showContextMenu.value, false)
+})
+
+test('context menu exposes play next action for any track', () => {
+  let playedTrackId = ''
+  const menu = createMenu({
+    playNext: (track) => {
+      playedTrackId = track.id
+    }
+  })
+
+  menu.selectedTrack.value = providerTrack
+  assert.equal(menu.canPlayNextSelectedTrack.value, true)
+
+  menu.handlePlayNext()
+
+  assert.equal(playedTrackId, 'ncm:expired')
+  assert.equal(menu.showContextMenu.value, false)
+  assert.equal(menu.selectedTrack.value, null)
+})
+
+test('context menu exposes view artist action when artist is present', () => {
+  let viewedArtistTrackId = ''
+  const menu = createMenu({
+    viewArtist: (track) => {
+      viewedArtistTrackId = track.id
+    }
+  })
+
+  menu.selectedTrack.value = localTrack
+  assert.equal(menu.canViewSelectedContext.value, true)
+
+  menu.handleViewArtist()
+
+  assert.equal(viewedArtistTrackId, 'local:hash')
+  assert.equal(menu.showContextMenu.value, false)
+  assert.equal(menu.selectedTrack.value, null)
+})
+
+test('context menu exposes view album action when album is present', () => {
+  let viewedAlbumTrackId = ''
+  const menu = createMenu({
+    viewAlbum: (track) => {
+      viewedAlbumTrackId = track.id
+    }
+  })
+
+  menu.selectedTrack.value = localTrack
+  assert.equal(menu.canViewSelectedContext.value, true)
+
+  menu.handleViewAlbum()
+
+  assert.equal(viewedAlbumTrackId, 'local:hash')
+  assert.equal(menu.showContextMenu.value, false)
+  assert.equal(menu.selectedTrack.value, null)
 })
 
 test('context menu does not expose rematch action for local tracks', () => {

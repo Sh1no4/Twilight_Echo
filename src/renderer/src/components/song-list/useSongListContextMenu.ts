@@ -24,12 +24,20 @@ export function useSongListContextMenu({
   rematchMetadata,
   clearMetadataMatch,
   createPlaylist,
-  deletePlaylist
+  deletePlaylist,
+  playNext,
+  viewArtist,
+  viewAlbum
 }: UseSongListContextMenuOptions): {
   showContextMenu: Ref<boolean>
   menuX: Ref<number>
   menuY: Ref<number>
   selectedTrack: Ref<Track | null>
+  canViewSelectedContext: ComputedRef<boolean>
+  canPlayNextSelectedTrack: ComputedRef<boolean>
+  handlePlayNext: () => void
+  handleViewArtist: () => void
+  handleViewAlbum: () => void
   showPlaylistSubmenu: Ref<boolean>
   showCreatePlaylistDialog: Ref<boolean>
   newPlaylistName: Ref<string>
@@ -74,6 +82,11 @@ export function useSongListContextMenu({
     if (!track || !clearMetadataMatch || !track.metadataMatch) return false
     return getTrackSource(track) === 'local'
   })
+  const canViewSelectedContext = computed(() => {
+    const track = selectedTrack.value
+    return !!track && (!!viewArtist || !!viewAlbum)
+  })
+  const canPlayNextSelectedTrack = computed(() => !!selectedTrack.value && !!playNext)
 
   function onContextMenu(event: MouseEvent, track: Track): void {
     event.preventDefault()
@@ -182,6 +195,27 @@ export function useSongListContextMenu({
     deletePlaylist(playlistId)
   }
 
+  function handlePlayNext(): void {
+    const track = selectedTrack.value
+    if (!track || !playNext) return
+    playNext(track)
+    closeContextMenu()
+  }
+
+  function handleViewArtist(): void {
+    const track = selectedTrack.value
+    if (!track || !viewArtist) return
+    viewArtist(track)
+    closeContextMenu()
+  }
+
+  function handleViewAlbum(): void {
+    const track = selectedTrack.value
+    if (!track || !viewAlbum) return
+    viewAlbum(track)
+    closeContextMenu()
+  }
+
   if (getCurrentInstance()) {
     onMounted(() => {
       window.addEventListener('click', closeContextMenu)
@@ -197,6 +231,11 @@ export function useSongListContextMenu({
     menuX,
     menuY,
     selectedTrack,
+    canViewSelectedContext,
+    canPlayNextSelectedTrack,
+    handlePlayNext,
+    handleViewArtist,
+    handleViewAlbum,
     showPlaylistSubmenu,
     showCreatePlaylistDialog,
     newPlaylistName,
