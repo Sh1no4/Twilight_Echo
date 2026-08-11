@@ -706,6 +706,10 @@ test('next and previous only use native controls when the native queue is delega
   assert.match(nextBody, /playQueueTrack\(track\)/)
   assert.match(previousBody, /playQueueTrack\(/)
   assert.match(previousBody, /controlCast\?\.\(\{ seek: 0 \}\)/)
+  assert.match(
+    previousBody,
+    /appSettings\.value\.previousButtonAction === 'restart' && latestPlaybackTime > 3/
+  )
 })
 
 test('applyNativePlayingState ignores stale pause events during toggle intent grace', () => {
@@ -1862,4 +1866,13 @@ test('single-song repeat replays the current track when playback ends in fallbac
   // loadAndPlay must clear the guards on success so the loop can repeat.
   assert.match(loadAndPlay, /advancingFromEndedTrackId = ''[\s\S]*autoAdvanceInFlight = false/)
   assert.match(loadAndPlay, /loadedTrackId = track\.id/)
+})
+
+test('applyAudioProcessingState replaces processing locally without engine IPC', () => {
+  const storeSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const dspSource = readFileSync(new URL('./useAudioOutputDspStore.ts', import.meta.url), 'utf8')
+  const body = extractInternalFunctionBody(storeSource, 'applyAudioProcessingState')
+  assert.match(body, /audioProcessing\.value = cloneAudioProcessingSettings\(processing\)/)
+  assert.doesNotMatch(body, /window\.api/)
+  assert.match(dspSource, /applyAudioProcessingState: player\.applyAudioProcessingState/)
 })

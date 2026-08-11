@@ -14,6 +14,7 @@ import type {
   MotionPreference,
   NcmPlaybackQuality,
   PlaybackResumeMode,
+  PreviousButtonAction,
   SacdProgramMode,
   StartupHomePage,
   TrackActivationMode,
@@ -75,6 +76,11 @@ export const playbackResumeOptions: { value: PlaybackResumeMode; label: string }
   { value: 'off', label: '关闭' },
   { value: 'track', label: '记住曲目' },
   { value: 'trackAndPosition', label: '曲目和位置' }
+]
+
+export const previousButtonActionOptions: { value: PreviousButtonAction; label: string }[] = [
+  { value: 'restart', label: '重播当前歌曲' },
+  { value: 'previous', label: '切换到上一首' }
 ]
 
 export const ncmPlaybackQualityOptions: { value: NcmPlaybackQuality; label: string }[] = [
@@ -311,6 +317,11 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = (
       terms: '无缝 播放 gapless 间隙 连续 歌曲'
     },
     { section: 'playback', title: '启动时恢复播放', terms: '恢复 播放 resume 上次 曲目 位置 启动' },
+    {
+      section: 'playback',
+      title: '上一首按钮行为',
+      terms: '上一首 按钮 重播 重放 回到 开头 previous restart 行为'
+    },
     { section: 'playback', title: '睡眠定时器', terms: '睡眠 定时 sleep timer 停止 播放 计时' },
     {
       section: 'playback',

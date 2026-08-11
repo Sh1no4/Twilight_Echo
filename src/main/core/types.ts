@@ -33,6 +33,7 @@ export type PlayerShortcutAction =
   | 'playPause'
   | 'play'
   | 'pause'
+  | 'toggleDesktopLyrics'
   | { action: 'seek'; positionSeconds: number }
   | { action: 'setVolume'; volume: number }
   | { action: 'jumpQueue'; index: number }
@@ -41,6 +42,7 @@ export type PlayerShortcutAction =
 export type PlayerShortcutKeyAction = Extract<PlayerShortcutAction, string>
 export type AppTheme = 'system' | 'pureWhite' | 'dark'
 export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
+export type PreviousButtonAction = 'restart' | 'previous'
 export type NcmPlaybackQuality = 'auto' | 'standard' | 'exhigh' | 'lossless' | 'hires'
 export type StartupHomePage = 'local' | 'streaming'
 export type TrackActivationMode = 'singleClick' | 'doubleClick'
@@ -156,12 +158,20 @@ export interface AudioEqPreset {
   eqBands: EqualizerBand[]
 }
 
+export interface GlobalShortcutSettings {
+  previous: string
+  next: string
+  playPause: string
+  toggleDesktopLyrics: string
+}
+
 export interface AppSettings {
   autoCheckLogin: boolean
   autoLaunch: boolean
   launchAtLogin: boolean
   hardwareAcceleration: boolean
   globalShortcuts: boolean
+  globalShortcutBindings: GlobalShortcutSettings
   minimizeToTray: boolean
   musicCachePath: string
   cachePath: string
@@ -204,6 +214,8 @@ export interface AppSettings {
   playerBar: PlayerBarSettings
   nowPlayingBackground: NowPlayingBackground
   playbackResumeMode: PlaybackResumeMode
+  /** restart: previous button replays the current track first; previous: always jump to the previous track. */
+  previousButtonAction: PreviousButtonAction
   sleepTimer: SleepTimerSettings
   ncmPlaybackQuality: NcmPlaybackQuality
   playMode: PlayMode
@@ -268,6 +280,17 @@ export interface PlayerShortcutStatus {
   error: string | null
 }
 
+export const MEDIA_KEY_SHORTCUTS: {
+  accelerator: string
+  action: PlayerShortcutKeyAction
+  label: string
+}[] = [
+  { accelerator: 'MediaPreviousTrack', action: 'previous', label: '上一首（媒体键）' },
+  { accelerator: 'MediaNextTrack', action: 'next', label: '下一首（媒体键）' },
+  { accelerator: 'MediaPlayPause', action: 'playPause', label: '播放 / 暂停（媒体键）' },
+  { accelerator: 'MediaStop', action: 'pause', label: '停止（媒体键）' }
+]
+
 export const PLAYER_SHORTCUTS: {
   accelerator: string
   action: PlayerShortcutKeyAction
@@ -275,5 +298,7 @@ export const PLAYER_SHORTCUTS: {
 }[] = [
   { accelerator: 'CommandOrControl+Alt+Left', action: 'previous', label: '上一首' },
   { accelerator: 'CommandOrControl+Alt+Right', action: 'next', label: '下一首' },
-  { accelerator: 'CommandOrControl+Alt+Space', action: 'playPause', label: '播放 / 暂停' }
+  { accelerator: 'CommandOrControl+Alt+Space', action: 'playPause', label: '播放 / 暂停' },
+  { accelerator: 'CommandOrControl+Alt+D', action: 'toggleDesktopLyrics', label: '桌面歌词' },
+  ...MEDIA_KEY_SHORTCUTS
 ]

@@ -98,6 +98,12 @@ const fallbackSettings: AppSettings = {
   launchAtLogin: false,
   hardwareAcceleration: true,
   globalShortcuts: false,
+  globalShortcutBindings: {
+    previous: 'CommandOrControl+Alt+Left',
+    next: 'CommandOrControl+Alt+Right',
+    playPause: 'CommandOrControl+Alt+Space',
+    toggleDesktopLyrics: 'CommandOrControl+Alt+D'
+  },
   musicCachePath: '',
   cachePath: '',
   cachePolicy: {
@@ -191,6 +197,7 @@ const fallbackSettings: AppSettings = {
   playerBar: clonePlayerBarSettings(DEFAULT_PLAYER_BAR_SETTINGS),
   nowPlayingBackground: 'blur',
   playbackResumeMode: 'off',
+  previousButtonAction: 'restart',
   sleepTimer: DEFAULT_SLEEP_TIMER_SETTINGS,
   ncmPlaybackQuality: 'auto',
   playMode: 'sequential',

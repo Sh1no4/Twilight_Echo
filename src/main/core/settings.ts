@@ -30,11 +30,13 @@ import type {
   CardHoverEffect,
   CardShadowStrength,
   DesktopLyricsSettings,
+  GlobalShortcutSettings,
   WindowTransparencyEffectSettings,
   MusicCachePolicySettings,
   NcmPlaybackQuality,
   NowPlayingBackground,
   PlaybackResumeMode,
+  PreviousButtonAction,
   ProxyMode,
   SettingsSnapshot,
   StartupHomePage,
@@ -114,12 +116,20 @@ export const DEFAULT_MUSIC_CACHE_POLICY: MusicCachePolicySettings = {
   streamingAudio: 'provider'
 }
 
+export const DEFAULT_GLOBAL_SHORTCUT_BINDINGS: GlobalShortcutSettings = {
+  previous: 'CommandOrControl+Alt+Left',
+  next: 'CommandOrControl+Alt+Right',
+  playPause: 'CommandOrControl+Alt+Space',
+  toggleDesktopLyrics: 'CommandOrControl+Alt+D'
+}
+
 export const DEFAULT_SETTINGS: AppSettings = {
   autoCheckLogin: true,
   autoLaunch: false,
   launchAtLogin: false,
   hardwareAcceleration: true,
   globalShortcuts: false,
+  globalShortcutBindings: { ...DEFAULT_GLOBAL_SHORTCUT_BINDINGS },
   minimizeToTray: false,
   musicCachePath: '',
   cachePath: '',
@@ -209,6 +219,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   playerBar: clonePlayerBarSettings(DEFAULT_PLAYER_BAR_SETTINGS),
   nowPlayingBackground: 'blur',
   playbackResumeMode: 'off',
+  previousButtonAction: 'restart',
   sleepTimer: DEFAULT_SLEEP_TIMER_SETTINGS,
   ncmPlaybackQuality: 'auto',
   playMode: 'sequential',
@@ -320,6 +331,10 @@ export function normalizePlaybackResumeMode(mode: unknown): PlaybackResumeMode {
     : DEFAULT_SETTINGS.playbackResumeMode
 }
 
+export function normalizePreviousButtonAction(value: unknown): PreviousButtonAction {
+  return value === 'previous' ? 'previous' : DEFAULT_SETTINGS.previousButtonAction
+}
+
 export function normalizeNcmPlaybackQuality(value: unknown): NcmPlaybackQuality {
   return value === 'standard' ||
     value === 'exhigh' ||
@@ -340,6 +355,34 @@ export function normalizeTrackActivationMode(value: unknown): TrackActivationMod
 
 export function normalizeStreamingAudioCachePolicy(value: unknown): StreamingAudioCachePolicy {
   return value === 'off' ? 'off' : 'provider'
+}
+
+const ACCELERATOR_PATTERN = /^([A-Za-z0-9+]+)$/
+export function normalizeShortcutAccelerator(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const trimmed = value.trim().slice(0, 128)
+  if (!trimmed) return fallback
+  if (!ACCELERATOR_PATTERN.test(trimmed)) return fallback
+  return trimmed
+}
+
+export function normalizeGlobalShortcutBindings(raw: unknown): GlobalShortcutSettings {
+  const value = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+  return {
+    previous: normalizeShortcutAccelerator(
+      value.previous,
+      DEFAULT_GLOBAL_SHORTCUT_BINDINGS.previous
+    ),
+    next: normalizeShortcutAccelerator(value.next, DEFAULT_GLOBAL_SHORTCUT_BINDINGS.next),
+    playPause: normalizeShortcutAccelerator(
+      value.playPause,
+      DEFAULT_GLOBAL_SHORTCUT_BINDINGS.playPause
+    ),
+    toggleDesktopLyrics: normalizeShortcutAccelerator(
+      value.toggleDesktopLyrics,
+      DEFAULT_GLOBAL_SHORTCUT_BINDINGS.toggleDesktopLyrics
+    )
+  }
 }
 
 export function normalizeMusicCachePolicy(raw: unknown): MusicCachePolicySettings {
@@ -676,6 +719,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     launchAtLogin,
     hardwareAcceleration: settings.hardwareAcceleration !== false,
     globalShortcuts: settings.globalShortcuts === true,
+    globalShortcutBindings: normalizeGlobalShortcutBindings(settings.globalShortcutBindings),
     minimizeToTray,
     musicCachePath: cachePath,
     cachePath,
@@ -720,6 +764,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     playerBar: normalizePlayerBarSettings(settings.playerBar),
     nowPlayingBackground: normalizeNowPlayingBackground(settings.nowPlayingBackground),
     playbackResumeMode: normalizePlaybackResumeMode(settings.playbackResumeMode),
+    previousButtonAction: normalizePreviousButtonAction(settings.previousButtonAction),
     sleepTimer: normalizeSleepTimerSettings(settings.sleepTimer),
     ncmPlaybackQuality: normalizeNcmPlaybackQuality(settings.ncmPlaybackQuality),
     playMode: normalizePlayMode(settings.playMode),

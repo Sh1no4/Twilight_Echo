@@ -15,6 +15,7 @@ import {
   sections,
   colorModeOptions,
   playbackResumeOptions,
+  previousButtonActionOptions,
   ncmPlaybackQualityOptions,
   startupHomePageOptions,
   trackActivationModeOptions,
@@ -85,7 +86,9 @@ import type {
   OutputConfig,
   PcmToDsdMode,
   PlayerShortcutStatus,
+  GlobalShortcutSettings,
   PlaybackResumeMode,
+  PreviousButtonAction,
   StartupHomePage,
   TrackActivationMode,
   AppBackgroundSettings,
@@ -851,6 +854,13 @@ async function toggleGlobalShortcuts(): Promise<void> {
   await refreshShortcutStatuses()
 }
 
+async function onUpdateShortcutBindings(patch: Partial<GlobalShortcutSettings>): Promise<void> {
+  await updateSettings({
+    globalShortcutBindings: { ...settings.value.globalShortcutBindings, ...patch }
+  })
+  await refreshShortcutStatuses()
+}
+
 function toggleCacheArtifact(key: keyof MusicCachePolicySettings): void {
   if (key === 'streamingAudio') return
   void updateSettings({
@@ -911,6 +921,7 @@ function resetSettingsGroup(group: 'appearance' | 'playback' | 'desktopLyrics'):
   if (group === 'playback') {
     void updateSettings({
       playbackResumeMode: 'off',
+      previousButtonAction: 'restart',
       sleepTimer: { defaultMinutes: 30, fadeSeconds: 10 },
       ncmPlaybackQuality: 'auto',
       audioExclusiveMode: false,
@@ -1000,6 +1011,12 @@ function setTrackActivationMode(trackActivationMode: TrackActivationMode): void 
 
 function setPlaybackResumeModeFromSelect(event: Event): void {
   setPlaybackResumeMode((event.target as HTMLSelectElement).value as PlaybackResumeMode)
+}
+
+function setPreviousButtonActionFromSelect(event: Event): void {
+  const previousButtonAction = (event.target as HTMLSelectElement).value as PreviousButtonAction
+  if (settings.value.previousButtonAction === previousButtonAction) return
+  void updateSettings({ previousButtonAction })
 }
 
 function setSleepTimerDefaultMinutes(event: Event): void {
@@ -3372,6 +3389,29 @@ onBeforeUnmount(() => {
                 </select>
               </div>
               <hr />
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>上一首按钮行为</strong>
+                  <span
+                    >播放超过 3 秒时点击“上一首”，是回到当前歌曲开头，还是直接切到上一首曲目；不超过
+                    3 秒时总是切歌。</span
+                  >
+                </div>
+                <select
+                  class="preview-select"
+                  :value="settings.previousButtonAction"
+                  @change="setPreviousButtonActionFromSelect"
+                >
+                  <option
+                    v-for="option in previousButtonActionOptions"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </option>
+                </select>
+              </div>
+              <hr />
               <div class="setting-item compact-row">
                 <div class="setting-copy">
                   <strong>睡眠定时器</strong>
@@ -5152,7 +5192,7 @@ onBeforeUnmount(() => {
               <span class="setting-copy">
                 <strong>播放条形态</strong>
                 <span
-                  >标准播放条或迷你播放条；迷你形态把进度调节移到底边框，并可在播放页自动隐藏。</span
+                  >标准播放条或迷你播放条；迷你形态更长、隐藏进度条，并可在播放页自动隐藏。</span
                 >
               </span>
               <i class="pi pi-chevron-down"></i>
@@ -5162,7 +5202,9 @@ onBeforeUnmount(() => {
               <div class="setting-item">
                 <div class="setting-copy">
                   <strong>播放条形态</strong>
-                  <span>迷你形态不显示封面与内联进度条，进度改在底边框上拖动。</span>
+                  <span
+                    >迷你形态不显示封面、内联进度条与底边框进度，只保留歌曲信息与播放控制。</span
+                  >
                 </div>
                 <div class="segmented-control">
                   <button
@@ -6390,7 +6432,9 @@ onBeforeUnmount(() => {
         <ShortcutsSettingsSection
           :global-shortcuts="settings.globalShortcuts"
           :shortcut-statuses="shortcutStatuses"
+          :shortcut-bindings="settings.globalShortcutBindings"
           @update:global-shortcuts="toggleGlobalShortcuts"
+          @update:shortcut-bindings="onUpdateShortcutBindings"
         />
 
         <AboutSettingsSection
