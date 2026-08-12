@@ -8,6 +8,52 @@ const test = require('node:test')
 
 const ROOT = path.join(__dirname, '..')
 
+const UTILS_DOM_EXEMPT = new Set([
+  'src/renderer/src/utils/animationFrameFallback.ts',
+  'src/renderer/src/utils/autoHideScrollbars.ts',
+  'src/renderer/src/utils/colorExtractor.ts',
+  'src/renderer/src/utils/liquidGlassDisplacement.ts',
+  'src/renderer/src/utils/lyricViewportController.ts',
+  'src/renderer/src/utils/themePreviewScheduler.ts',
+  'src/renderer/src/utils/useSmoothedValue.ts',
+  'src/renderer/src/utils/coverLoader.ts',
+  'src/renderer/src/utils/playbackQueueVirtualization.ts',
+  'src/renderer/src/utils/playlistFileValidation.ts'
+])
+
+
+test('IPC channels are consistently registered in main and exposed through preload', () => {
+  const sorted = (values) => [...new Set(values)].sort()
+  const mainHandle = []
+  const mainOn = []
+  const preloadChannels = []
+  for (const file of walk(path.join(ROOT, 'src', 'main'))) {
+    if (isTestFile(file)) continue
+    const source = fs.readFileSync(file, 'utf8')
+    for (const m of source.matchAll(/\bipcMain\s*\.\s*handle(?:Once)?\s*\(\s*(['"])([^'"]+)\1/g)) {
+      mainHandle.push(m[2])
+    }
+    for (const m of source.matchAll(/\bipcMain\s*\.\s*on\s*\(\s*(['"])([^'"]+)\1/g)) {
+      mainOn.push(m[2])
+    }
+  }
+  for (const file of walk(path.join(ROOT, 'src', 'preload'))) {
+    if (isTestFile(file)) continue
+    const source = fs.readFileSync(file, 'utf8')
+    for (const m of source.matchAll(/[\w:.-]+:/g)) {
+      const candidate = m[0].replace(/[\s]+$/, '')
+      if (/^[a-zA-Z][\w.-]*:[\w.-]*$/.test(candidate)) preloadChannels.push(candidate)
+    }
+    for (const m of source.matchAll(/['\"]([\w.-]+:[\w.-]+)['\"]/g)) {
+      preloadChannels.push(m[1])
+    }
+  }
+  const preloadSet = new Set(preloadChannels)
+  assert.deepEqual(sorted(mainHandle).filter((ch) => !preloadSet.has(ch)), [])
+  assert.deepEqual(sorted(mainOn).filter((ch) => !preloadSet.has(ch)), [])
+})
+
+
 function walk(dir) {
   const out = []
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
