@@ -5,6 +5,7 @@ import MiniPlayerSettingsSection from './settings-page/MiniPlayerSettingsSection
 import IntegrationsSettingsSection from './settings-page/IntegrationsSettingsSection.vue'
 import CacheSettingsSection from './settings-page/CacheSettingsSection.vue'
 import DesktopLyricsSettingsSection from './settings-page/DesktopLyricsSettingsSection.vue'
+import NetworkProxySettingsSection from './settings-page/NetworkProxySettingsSection.vue'
 import LyricsAppearanceCustomizer from './LyricsAppearanceCustomizer.vue'
 import AboutSettingsSection from './settings-page/AboutSettingsSection.vue'
 import ShortcutsSettingsSection from './settings-page/ShortcutsSettingsSection.vue'
@@ -687,21 +688,6 @@ async function setGenreSeparators(event: Event): Promise<void> {
   const value = (event.target as HTMLInputElement).value
   await updateSettings({ genreSeparators: value })
   refreshLibraryIndex()
-}
-
-function setProxyMode(event: Event): void {
-  const value = (event.target as HTMLSelectElement).value as ProxyMode
-  void updateSettings({ proxyMode: value })
-}
-
-function setProxyHost(event: Event): void {
-  const value = (event.target as HTMLInputElement).value
-  void updateSettings({ proxyHost: value })
-}
-
-function setProxyPort(event: Event): void {
-  const value = parseInt((event.target as HTMLInputElement).value, 10)
-  void updateSettings({ proxyPort: Number.isFinite(value) ? value : 0 })
 }
 
 function toggleSetting(key: BooleanSettingKey): void {
@@ -2774,73 +2760,16 @@ onBeforeUnmount(() => {
               </template>
             </div>
           </div>
-          <div class="section-block">
-            <h3>网络代理 (Network Proxy)</h3>
-            <div class="setting-list">
-              <div class="setting-item">
-                <div class="setting-copy">
-                  <strong>代理模式</strong>
-                  <span>为流媒体插件（YouTube Music 等）配置 HTTP 代理，需重启后生效。</span>
-                </div>
-                <select class="preview-select" :value="settings.proxyMode" @change="setProxyMode">
-                  <option value="auto">自动检测</option>
-                  <option value="custom">自定义</option>
-                  <option value="off">关闭</option>
-                </select>
-              </div>
-              <template v-if="settings.proxyMode === 'custom'">
-                <hr />
-                <div class="setting-item">
-                  <div class="setting-copy">
-                    <strong>代理地址</strong>
-                    <span>HTTP 代理服务器地址，不含协议前缀。</span>
-                  </div>
-                  <input
-                    class="preview-select"
-                    type="text"
-                    placeholder="127.0.0.1"
-                    :value="settings.proxyHost"
-                    @change="setProxyHost"
-                  />
-                </div>
-                <hr />
-                <div class="setting-item">
-                  <div class="setting-copy">
-                    <strong>代理端口</strong>
-                    <span>HTTP 代理服务器端口。</span>
-                  </div>
-                  <input
-                    class="preview-select"
-                    type="number"
-                    placeholder="7897"
-                    :value="settings.proxyPort || ''"
-                    @change="setProxyPort"
-                    min="0"
-                    max="65535"
-                  />
-                </div>
-              </template>
-              <template v-if="settings.proxyMode !== 'off'">
-                <hr />
-                <div class="setting-item">
-                  <div class="setting-copy">
-                    <strong>代理失败时允许直连</strong>
-                    <span>默认关闭。开启后代理连接失败才会尝试直连；已取消的请求永不回退。</span>
-                  </div>
-                  <span
-                    class="toggle-switch"
-                    :class="{
-                      active: settings.proxyAllowDirectFallback,
-                      inactive: !settings.proxyAllowDirectFallback
-                    }"
-                    role="switch"
-                    :aria-checked="settings.proxyAllowDirectFallback"
-                    @click="toggleSetting('proxyAllowDirectFallback')"
-                  ></span>
-                </div>
-              </template>
-            </div>
-          </div>
+          <NetworkProxySettingsSection
+            :proxy-mode="settings.proxyMode"
+            :proxy-host="settings.proxyHost"
+            :proxy-port="settings.proxyPort"
+            :proxy-allow-direct-fallback="settings.proxyAllowDirectFallback"
+            @update:proxy-mode="(value: ProxyMode) => void updateSettings({ proxyMode: value })"
+            @update:proxy-host="(value: string) => void updateSettings({ proxyHost: value })"
+            @update:proxy-port="(value: number) => void updateSettings({ proxyPort: value })"
+            @toggle:allow-direct-fallback="toggleSetting('proxyAllowDirectFallback')"
+          />
         </section>
 
         <section id="playback" class="glass-card preview-section">
