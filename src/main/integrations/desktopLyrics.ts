@@ -3,7 +3,7 @@ import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { runtime } from '../core/runtime'
 import type { DesktopLyricsSettings } from '../core/types'
-import type { DesktopLyricsTrackPayload } from '../../preload/types'
+import type { DesktopLyricsTrackPayload } from '../../shared/lyricsManagement.ts'
 import { normalizeDesktopLyrics, writeAppSettings } from '../core/settings'
 import { assertTrustedIpcSender, shouldAcceptIpcEvent } from '../security/electronSecurity.ts'
 

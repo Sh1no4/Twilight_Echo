@@ -59,7 +59,9 @@ export type {
 export type {
   LyricsManagementDocument,
   LyricTrackOverride,
-  LyricSourcePreference
+  LyricSourcePreference,
+  LyricSource,
+  DesktopLyricsTrackPayload
 } from '../shared/lyricsManagement.ts'
 
 export type {
@@ -240,16 +242,6 @@ export interface DesktopLyricsSettings {
   lineOffset: number
 }
 
-export interface DesktopLyricsTrackPayload {
-  lyrics: string | null
-  translatedLyrics?: string | null
-  romanizedLyrics?: string | null
-  lyricsSource?: LyricSource | null
-  translatedLyricsSource?: LyricSource | null
-  title?: string
-  artist?: string
-}
-
 export interface MusicCachePolicySettings {
   cover: boolean
   lyrics: boolean
@@ -259,7 +251,6 @@ export interface MusicCachePolicySettings {
 
 export type BuiltInTrackSource = 'local' | 'ncm'
 export type TrackSource = BuiltInTrackSource | (string & {})
-export type LyricSource = 'embedded' | 'local' | 'provider' | 'manual' | 'online'
 export type MetadataMatchConfidence = 'high' | 'medium'
 export interface TrackMetadataMatch {
   providerId: string
