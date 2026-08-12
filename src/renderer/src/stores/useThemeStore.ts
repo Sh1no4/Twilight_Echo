@@ -305,7 +305,8 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
           css: '',
           dataAttributes: {
             ...themeModesToDataAttributes(resolveThemeProfileModes(null)),
-            'data-te-surface-material': surfaceMaterial
+            'data-te-surface-material': surfaceMaterial,
+            'data-te-lg-full': surfaceMaterial === 'liquidGlass' && liquidGlass.fullGlass ? 'on' : 'off'
           },
           activeTheme: TWILIGHT_DEFAULT_THEME_ID,
           presetLayout: presetLayoutKey(TWILIGHT_DEFAULT_THEME_ID),
@@ -350,7 +351,8 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
       ...themeModesToDataAttributes(modes),
       ...themeShellLayoutToDataAttributes(shellLayout),
       // Settings-owned, so it wins over anything a theme profile declares.
-      'data-te-surface-material': surfaceMaterial
+      'data-te-surface-material': surfaceMaterial,
+      'data-te-lg-full': surfaceMaterial === 'liquidGlass' && liquidGlass.fullGlass ? 'on' : 'off'
     },
     activeTheme: activeThemeKey(selection),
     presetLayout: resolvePresetLayout(selection, selectedProfile),

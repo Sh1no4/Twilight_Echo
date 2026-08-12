@@ -96,6 +96,12 @@ export interface LiquidGlassSettings {
   followPointer: boolean
   /** Tint the glass dark on light backgrounds for visibility ("Over Light"). */
   overLight: boolean
+  /**
+   * Keep backdrop blur active at all times instead of only on hover/focus.
+   * Disables the performance carve-out that strips idle blur to protect scroll
+   * grids; intended for users who prefer the full wet-glass look on capable GPUs.
+   */
+  fullGlass: boolean
   light: LiquidGlassTheme
   dark: LiquidGlassTheme
 }
@@ -140,6 +146,7 @@ export const DEFAULT_LIQUID_GLASS_DARK: LiquidGlassTheme = {
 export const DEFAULT_LIQUID_GLASS: LiquidGlassSettings = {
   followPointer: true,
   overLight: false,
+  fullGlass: true,
   light: DEFAULT_LIQUID_GLASS_LIGHT,
   dark: DEFAULT_LIQUID_GLASS_DARK
 }
@@ -186,6 +193,7 @@ export function normalizeLiquidGlass(raw: unknown): LiquidGlassSettings {
   return {
     followPointer: value.followPointer !== false,
     overLight: value.overLight === true,
+    fullGlass: value.fullGlass !== false,
     light: normalizeLiquidGlassTheme(value.light, DEFAULT_LIQUID_GLASS_LIGHT),
     dark: normalizeLiquidGlassTheme(value.dark, DEFAULT_LIQUID_GLASS_DARK)
   }
