@@ -109,7 +109,7 @@
 
 目标：把文档里的“建议”变成 CI/ESLint 红黄线。
 
-#### A1 补齐 ESLint 边界规则
+#### A1 补齐 ESLint 边界规则（已完成）
 
 在 `eslint.config.mjs` 中新增 no-restricted-imports / no-restricted-globals 段落：
 
@@ -120,7 +120,7 @@
 
 执行方式：新增一个独立的 `scripts/architecture-boundaries.test.cjs`，用 import 扫描和 AST 正则双保险。挂进 `test:app` 或新增 `test:architecture`。
 
-#### A2 生成 IPC 通道清单并纳入 CI
+#### A2 生成 IPC 通道清单并纳入 CI（已完成）
 
 - 写一个扫描脚本 `scripts/ipc-channel-report.cjs`：枚举 main 侧 `ipcMain.handle/on`，renderer 侧 `window.api.*`，preload 暴露的 API，生成三张表。
 - 在 CI 或 `verify` 阶段对比上次生成的基线：新增通道必须同时出现在 preload 暴露和 main 注册两处，否则失败。
