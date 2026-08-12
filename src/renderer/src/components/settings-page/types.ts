@@ -678,3 +678,25 @@ export const RESET_DESKTOP_LYRICS: DesktopLyricsSettings = {
   maxLines: 2,
   lineOffset: 0
 }
+export type PluginSettingsFieldType = 'text' | 'password' | 'url' | 'select'
+
+export interface PluginSettingsOption {
+  label: string
+  value: string
+}
+
+export interface PluginSettingsField {
+  key: string
+  label: string
+  type: PluginSettingsFieldType
+  required: boolean
+  placeholder: string
+  value: string
+  options: PluginSettingsOption[]
+}
+
+export interface PluginSettingsForm {
+  submitCommand: string
+  fields: PluginSettingsField[]
+  notice: string
+}
