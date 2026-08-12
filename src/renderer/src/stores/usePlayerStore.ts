@@ -101,6 +101,7 @@ import {
   createVisualizationPolling,
   type NativeVisualizationData
 } from './player/useVisualizationPolling.ts'
+import { createPlaybackClock } from './player/usePlaybackClock.ts'
 
 type NativePlaybackInfo = Awaited<ReturnType<typeof window.api.audioEngine.getPlaybackInfo>>
 type NativeOutputInfo = NativePlaybackInfo['outputInfo']
@@ -1373,7 +1374,7 @@ function applyNativePlaybackInfo(
     ? Math.max(0, info.position)
     : switchedTrack
       ? 0
-      : latestPlaybackTime
+      : playbackClock.getLatestPlaybackTime()
 
   if (switchedTrack) {
     // Native gapless / queue next does not go through loadAndPlay — clear A-B and
@@ -1703,7 +1704,10 @@ function flushPodcastEpisodeProgress(force = false): void {
   if (!track || track.source !== 'podcast') return
   const parsed = parsePodcastTrackId(track.id)
   if (!parsed) return
-  const seconds = Math.max(0, Math.floor(latestPlaybackTime || currentTime.value || 0))
+  const seconds = Math.max(
+    0,
+    Math.floor(playbackClock.getLatestPlaybackTime() || currentTime.value || 0)
+  )
   if (seconds < 1 && !force) return
   const now = Date.now()
   const sameTrack = lastPodcastProgressTrackId === track.id
@@ -1807,14 +1811,9 @@ const cleanupFns: (() => void)[] = []
 let listenersSetup = false
 let crossfadeTimer: number | null = null
 let crossfadeTrackId = ''
-const TIME_UPDATE_INTERVAL_MS = 250
 const NATIVE_PAUSE_CONFIRMATION_MS = 500
-let latestPlaybackTime = 0
-let lastTimePublishAt = 0
-let pendingTimePublishTimer: number | null = null
 let pendingNativePause: { position: number } | null = null
 let nativePauseConfirmationTimer: number | null = null
-let rendererClockTimer: number | null = null
 let playbackClockResyncInFlight = false
 let advancingFromEndedTrackId = ''
 let autoAdvanceInFlight = false
@@ -1842,6 +1841,24 @@ function publishPlaybackClockSnapshot(
   return snapshot
 }
 
+const playbackClock = createPlaybackClock({
+  currentTime,
+  getNow: getNowMs,
+  enforceAbLoop,
+  onTick: () => {
+    if (isCurrentTrackLiveStream()) return
+    const estimated = playbackSessionClock.estimate()
+    if (estimated?.needsResync) {
+      void requestPlaybackClockResync()
+      return
+    }
+    if (estimated !== null) {
+      publishPlaybackClockSnapshot(estimated)
+      playbackClock.publishCurrentTime(estimated.position)
+    }
+  }
+})
+
 function clearPendingNativePause(): void {
   pendingNativePause = null
   if (nativePauseConfirmationTimer !== null) {
@@ -1852,7 +1869,10 @@ function clearPendingNativePause(): void {
 
 function deferNativePause(position: number): void {
   pendingNativePause = {
-    position: Math.max(0, Number.isFinite(position) ? position : latestPlaybackTime)
+    position: Math.max(
+      0,
+      Number.isFinite(position) ? position : playbackClock.getLatestPlaybackTime()
+    )
   }
   if (nativePauseConfirmationTimer !== null) return
   nativePauseConfirmationTimer = window.setTimeout(() => {
@@ -1874,30 +1894,11 @@ function recoverFromStaleNativePause(position: number): void {
   isPlaying.value = true
 }
 
-function clearPendingTimePublish(): void {
-  if (pendingTimePublishTimer !== null) {
-    window.clearTimeout(pendingTimePublishTimer)
-    pendingTimePublishTimer = null
-  }
-}
-
-function publishCurrentTime(time: number): void {
-  latestPlaybackTime = time
-  currentTime.value = time
-  lastTimePublishAt = getNowMs()
-  enforceAbLoop(time)
-}
-
-function publishLatestCurrentTime(): void {
-  pendingTimePublishTimer = null
-  publishCurrentTime(latestPlaybackTime)
-}
-
 function setCurrentTimeImmediate(time: number, clockAlreadyUpdated = false): void {
-  clearPendingTimePublish()
+  playbackClock.cancelScheduledPublish()
   if (!clockAlreadyUpdated)
     publishPlaybackClockSnapshot(playbackSessionClock.setPosition(time, 'intent'))
-  publishCurrentTime(time)
+  playbackClock.publishCurrentTime(time)
 }
 
 function anchorRendererPlaybackClock(time: number): void {
@@ -1955,19 +1956,6 @@ function applyPlaybackPositionSample(
   return true
 }
 
-function tickRendererPlaybackClock(): void {
-  if (isCurrentTrackLiveStream()) return
-  const estimated = playbackSessionClock.estimate()
-  if (estimated?.needsResync) {
-    void requestPlaybackClockResync()
-    return
-  }
-  if (estimated !== null) {
-    publishPlaybackClockSnapshot(estimated)
-    publishCurrentTime(estimated.position)
-  }
-}
-
 function estimatePlaybackClockPosition(at = getNowMs()): number {
   return playbackSessionClock.positionAt(at)
 }
@@ -1987,33 +1975,22 @@ async function requestPlaybackClockResync(): Promise<void> {
   }
 }
 
-function startRendererPlaybackClock(): void {
-  if (rendererClockTimer !== null) return
-  rendererClockTimer = window.setInterval(tickRendererPlaybackClock, TIME_UPDATE_INTERVAL_MS)
-}
-
 function setCurrentTimeThrottled(time: number, clockAlreadyUpdated = false): void {
   if (!clockAlreadyUpdated)
     publishPlaybackClockSnapshot(playbackSessionClock.setPosition(time, 'intent'))
-  latestPlaybackTime = time
-  enforceAbLoop(time)
-  const now = getNowMs()
-  const remainingMs = TIME_UPDATE_INTERVAL_MS - (now - lastTimePublishAt)
-
-  if (remainingMs <= 0 || currentTime.value === 0) {
-    clearPendingTimePublish()
-    publishCurrentTime(time)
-    return
-  }
-
-  if (pendingTimePublishTimer === null) {
-    pendingTimePublishTimer = window.setTimeout(publishLatestCurrentTime, remainingMs)
-  }
+  playbackClock.setCurrentTimeThrottled(time)
 }
 
 function flushLatestCurrentTime(): void {
-  clearPendingTimePublish()
-  publishCurrentTime(latestPlaybackTime)
+  playbackClock.flushLatestCurrentTime()
+}
+
+function clearPendingTimePublish(): void {
+  playbackClock.cancelScheduledPublish()
+}
+
+function startRendererPlaybackClock(): void {
+  playbackClock.startRendererClock()
 }
 
 function publishAudioEngineRecoveryNotice(notice: AudioEngineRecoveryNotice): void {
@@ -2896,7 +2873,10 @@ function setupAudioEngineListeners(): void {
           ) {
             break
           }
-          applyNativePlayingState(!data, data === true ? latestPlaybackTime : null)
+          applyNativePlayingState(
+            !data,
+            data === true ? playbackClock.getLatestPlaybackTime() : null
+          )
           flushLatestCurrentTime()
           break
         case 'eof-reached':
@@ -3154,10 +3134,7 @@ function disposePlayerStoreRuntime(): void {
   clearPendingTimePublish()
   clearCrossfadeTimer()
   stopVisualizationPolling(false)
-  if (rendererClockTimer !== null) {
-    window.clearInterval(rendererClockTimer)
-    rendererClockTimer = null
-  }
+  playbackClock.stopRendererClock()
 }
 
 // Claim before registering listeners. A Vite replacement invokes the previous
@@ -3220,7 +3197,7 @@ function scheduleCrossfadeIfNeeded(): void {
   if (queue.value.length <= 1) return
   if (queueIndex.value + 1 >= queue.value.length) return
 
-  const remaining = duration.value - latestPlaybackTime
+  const remaining = duration.value - playbackClock.getLatestPlaybackTime()
   if (remaining > seconds || remaining < 0) {
     if (crossfadeTrackId !== track.id) clearCrossfadeTimer()
     return
@@ -3268,7 +3245,10 @@ function acceptResumeOffer(): void {
 function addManualBookmarkAtCurrentTime(): void {
   const track = currentTrack.value
   if (!track) return
-  const position = latestPlaybackTime > 0 ? latestPlaybackTime : currentTime.value
+  const position =
+    playbackClock.getLatestPlaybackTime() > 0
+      ? playbackClock.getLatestPlaybackTime()
+      : currentTime.value
   void usePlaybackBookmarks()
     .addBookmark(track, position, { kind: 'manual' })
     .catch(() => {})
@@ -3307,12 +3287,15 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         ? currentTrack.value
         : null
   if (previousTrack && previousTrack.id !== track.id) {
-    maybeRecordResumeBookmark(previousTrack, latestPlaybackTime)
+    maybeRecordResumeBookmark(previousTrack, playbackClock.getLatestPlaybackTime())
     // Force-write podcast progress for the track we are leaving.
     if (previousTrack.source === 'podcast') {
       const prevParsed = parsePodcastTrackId(previousTrack.id)
       if (prevParsed) {
-        const seconds = Math.max(0, Math.floor(latestPlaybackTime || 0))
+        const seconds = Math.max(
+          0,
+          Math.floor(playbackClock.getLatestPlaybackTime() || 0)
+        )
         if (seconds >= 1) {
           void usePodcastStore().updateEpisodeProgress(
             prevParsed.subscriptionId,
@@ -3674,7 +3657,7 @@ async function togglePlayState(): Promise<void> {
       // Local engine stays paused while casting; only mirror transport to the device.
       const nextPlaying = !isPlaying.value
       if (isPlaying.value && !nextPlaying) {
-        maybeRecordResumeBookmark(track, latestPlaybackTime)
+        maybeRecordResumeBookmark(track, playbackClock.getLatestPlaybackTime())
         flushPodcastEpisodeProgress(true)
       }
       isPlaying.value = nextPlaying
@@ -3686,7 +3669,7 @@ async function togglePlayState(): Promise<void> {
     if (nativePlaybackActive) {
       const nextPlaying = !isPlaying.value
       if (isPlaying.value && !nextPlaying) {
-        maybeRecordResumeBookmark(track, latestPlaybackTime)
+        maybeRecordResumeBookmark(track, playbackClock.getLatestPlaybackTime())
         flushPodcastEpisodeProgress(true)
       }
       isPlaying.value = nextPlaying
@@ -3704,7 +3687,7 @@ async function togglePlayState(): Promise<void> {
         await stopNativeAudio()
         await audio.play()
       } else {
-        maybeRecordResumeBookmark(track, latestPlaybackTime)
+        maybeRecordResumeBookmark(track, playbackClock.getLatestPlaybackTime())
         flushPodcastEpisodeProgress(true)
         audio.pause()
       }
@@ -3721,7 +3704,10 @@ async function togglePlayState(): Promise<void> {
 function previous(): void {
   if (queue.value.length === 0) return
   clearCrossfadeTimer()
-  if (appSettings.value.previousButtonAction === 'restart' && latestPlaybackTime > 3) {
+  if (
+    appSettings.value.previousButtonAction === 'restart' &&
+    playbackClock.getLatestPlaybackTime() > 3
+  ) {
     const track = currentTrack.value
     beginPlaybackPositionTransition(0)
     if (track && loadedTrackId !== track.id) {
@@ -3819,7 +3805,7 @@ function isCurrentTrackLiveStream(): boolean {
   )
 }
 
-function setAbLoopPoint(point: 'a' | 'b', time = latestPlaybackTime): void {
+function setAbLoopPoint(point: 'a' | 'b', time = playbackClock.getLatestPlaybackTime()): void {
   if (isCurrentTrackLiveStream()) return
   const position = Math.max(0, Number.isFinite(time) ? time : 0)
   if (point === 'a') {
