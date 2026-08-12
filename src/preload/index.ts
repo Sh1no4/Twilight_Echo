@@ -1,10 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
-  NcmCloudDownloadRequest,
-  NcmCloudDownloadResult,
-  NcmCloudSelectedFile,
-  NcmCloudTransferProgress,
-  NcmCloudUploadResult,
   MiniPlayerBootstrap,
   MiniPlayerCommand,
   MiniPlayerSettings,
@@ -12,10 +7,9 @@ import type {
   MiniPlayerStateSnapshot,
   TrayNavigationTarget,
   TrayPlayerBootstrap,
-  MotionPreference,
+  MotionPreference
 } from './types'
 import { createSleepTimerEventBridge } from './sleepTimerEvents.ts'
-import { collectClosePersistenceOutcome } from './closePersistence.ts'
 import { dataApi, miniPlayerCoverDataApi } from './domains/dataApi.ts'
 import { audioEngineApi, bindAudioEngineIpcEvents } from './domains/audioEngineApi.ts'
 import { bindDesktopLyricsIpcEvents, desktopLyricsApi } from './domains/desktopLyricsApi.ts'
@@ -25,19 +19,18 @@ import { networkSourcesApi } from './domains/networkSourcesApi.ts'
 import { bindSettingsIpcEvents, settingsApi } from './domains/settingsApi.ts'
 import { bindThemesIpcEvents, themesApi } from './domains/themesApi.ts'
 import { bindPluginsIpcEvents, pluginsApi } from './domains/pluginsApi.ts'
-import { NCM_CLOUD_TRANSFER_PROGRESS_CHANNEL } from '../shared/ncmCloud.ts'
+import { bindSystemIpcEvents, systemApi } from './domains/systemApi.ts'
 
 const miniPlayerStateCallbacks = new Set<(state: MiniPlayerStateSnapshot) => void>()
 const miniPlayerSettingsCallbacks = new Set<(settings: MiniPlayerSettings) => void>()
 const miniPlayerMotionPreferenceCallbacks = new Set<(preference: MotionPreference) => void>()
 const miniPlayerCommandCallbacks = new Set<(command: MiniPlayerCommand) => void>()
 const trayPlayerStateCallbacks = new Set<(state: MiniPlayerStateSnapshot) => void>()
-const appNavigationCallbacks = new Set<(target: TrayNavigationTarget) => void>()
-const savePlaybackSessionCallbacks = new Set<() => Promise<void> | void>()
 const sleepTimerEvents = createSleepTimerEventBridge()
 
 bindSettingsIpcEvents()
 bindPluginsIpcEvents()
+bindSystemIpcEvents()
 bindAudioEngineIpcEvents()
 bindDesktopLyricsIpcEvents()
 bindThemesIpcEvents()
@@ -66,22 +59,6 @@ ipcRenderer.on('miniPlayer:command', (_event, command: MiniPlayerCommand) => {
 
 ipcRenderer.on('trayPlayer:state', (_event, state: MiniPlayerStateSnapshot) => {
   for (const cb of trayPlayerStateCallbacks) cb(state)
-})
-
-ipcRenderer.on('app:navigate', (_event, target: TrayNavigationTarget) => {
-  if (target !== 'local' && target !== 'streaming') return
-  for (const cb of appNavigationCallbacks) cb(target)
-})
-
-ipcRenderer.on('app:save-playback-session', async (_event, requestId: string) => {
-  const outcome = await collectClosePersistenceOutcome(savePlaybackSessionCallbacks)
-  try {
-    await ipcRenderer.invoke('app:playback-session-saved', requestId, outcome)
-  } catch (error) {
-    // The main process treats a missing result as a timeout and keeps the
-    // window open. Do not convert this IPC failure into a successful ACK.
-    console.error('[persistence] Failed to report close persistence outcome:', error)
-  }
 })
 
 const miniPlayerWindowApi = {
@@ -153,105 +130,13 @@ const api = {
     onState: sleepTimerEvents.onState,
     onTrigger: sleepTimerEvents.onTrigger
   },
-  window: {
-    minimize: (): void => ipcRenderer.send('window:minimize'),
-    toggleMaximize: (): void => ipcRenderer.send('window:toggleMaximize'),
-    close: (): void => ipcRenderer.send('window:close')
-  },
-  dialog: {
-    openFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:openFolder')
-  },
-  shell: {
-    showItemInFolder: (filePath: string): Promise<void> =>
-      ipcRenderer.invoke('shell:showItemInFolder', filePath),
-    openPath: (path: string): Promise<string> => ipcRenderer.invoke('shell:openPath', path),
-    openExternal: (url: string): Promise<void> => ipcRenderer.invoke('shell:openExternal', url)
-  },
-  discord: {
-    getStatus: (): Promise<{
-      enabled: boolean
-      connected: boolean
-      lastError: string | null
-    }> => ipcRenderer.invoke('discord:getStatus'),
-    updateActivity: (data: {
-      title: string
-      artist: string
-      album?: string
-      playing: boolean
-      startTime?: number
-    }): Promise<void> => ipcRenderer.invoke('discord:updateActivity', data),
-    clearActivity: (): Promise<void> => ipcRenderer.invoke('discord:clearActivity')
-  },
   ...libraryAndFileSystemApi,
   ...audioEngineApi,
-  app: {
-    consumePendingNavigation: (): Promise<TrayNavigationTarget | null> =>
-      ipcRenderer.invoke('app:consumePendingNavigation'),
-    relaunch: (): Promise<void> => ipcRenderer.invoke('app:relaunch'),
-    checkForUpdates: (): Promise<import('../shared/appUpdate').AppUpdateCheckResult> =>
-      ipcRenderer.invoke('app:checkForUpdates'),
-    downloadUpdate: (): Promise<import('../shared/appUpdate').AppUpdateDownloadResult> =>
-      ipcRenderer.invoke('app:downloadUpdate'),
-    cancelUpdateDownload: (): Promise<boolean> => ipcRenderer.invoke('app:cancelUpdateDownload'),
-    installUpdate: (): Promise<import('../shared/appUpdate').AppUpdateInstallResult> =>
-      ipcRenderer.invoke('app:installUpdate'),
-    onUpdateProgress: (
-      cb: (progress: import('../shared/appUpdate').AppUpdateProgress) => void
-    ): (() => void) => {
-      const handler = (
-        _event: Electron.IpcRendererEvent,
-        progress: import('../shared/appUpdate').AppUpdateProgress
-      ): void => {
-        cb(progress)
-      }
-      ipcRenderer.on('app:update-progress', handler)
-      return () => ipcRenderer.removeListener('app:update-progress', handler)
-    },
-    onSavePlaybackSession: (cb: () => Promise<void> | void): (() => void) => {
-      savePlaybackSessionCallbacks.add(cb)
-      return () => savePlaybackSessionCallbacks.delete(cb)
-    },
-    onNavigate: (cb: (target: TrayNavigationTarget) => void): (() => void) => {
-      appNavigationCallbacks.add(cb)
-      return () => appNavigationCallbacks.delete(cb)
-    }
-  },
-  ncm: {
-    getPort: (): Promise<number> => ipcRenderer.invoke('ncm:getPort'),
-    request: (path: string, cookie?: string): Promise<unknown> =>
-      ipcRenderer.invoke('ncm:request', path, cookie),
-    getCachedSong: (songId: number): Promise<string | null> =>
-      ipcRenderer.invoke('ncm:getCachedSong', songId),
-    cacheSong: (songId: number, url: string, fileName?: string): Promise<string | null> =>
-      ipcRenderer.invoke('ncm:cacheSong', songId, url, fileName)
-  },
-  ncmCloud: {
-    chooseUploadFiles: (): Promise<NcmCloudSelectedFile[]> =>
-      ipcRenderer.invoke('ncmCloud:chooseUploadFiles'),
-    upload: (handle: string): Promise<NcmCloudUploadResult> =>
-      ipcRenderer.invoke('ncmCloud:upload', handle),
-    download: (request: NcmCloudDownloadRequest): Promise<NcmCloudDownloadResult> =>
-      ipcRenderer.invoke('ncmCloud:download', request),
-    cancel: (transferId: string): Promise<boolean> =>
-      ipcRenderer.invoke('ncmCloud:cancel', transferId),
-    onProgress: (callback: (progress: NcmCloudTransferProgress) => void): (() => void) => {
-      const handler = (
-        _event: Electron.IpcRendererEvent,
-        progress: NcmCloudTransferProgress
-      ): void => {
-        callback(progress)
-      }
-      ipcRenderer.on(NCM_CLOUD_TRANSFER_PROGRESS_CHANNEL, handler)
-      return () => ipcRenderer.removeListener(NCM_CLOUD_TRANSFER_PROGRESS_CHANNEL, handler)
-    }
-  },
   ...mediaSubscriptionsApi,
   ...networkSourcesApi,
   ...dataApi,
   ...settingsApi,
-  fonts: {
-    listInstalled: (): Promise<string[]> => ipcRenderer.invoke('fonts:listInstalled')
-  },
+  ...systemApi,
   ...themesApi,
   ...pluginsApi,
   desktopLyrics: desktopLyricsApi,
