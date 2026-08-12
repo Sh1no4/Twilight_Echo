@@ -5,6 +5,8 @@
 ## 开发与架构
 
 - [开发者文档](./DEVELOPER_README.md)
+- [Agent 架构与维护指南](./agent-architecture-guide.md)
+- [高内聚低耦合维护执行方案](./architecture-maintainability-action-plan.md)
 - [音频引擎架构](./twilight-audio-engine-architecture.md)
 - [音频引擎 API](./audio-engine-api.md)
 - [安全加固边界](./security-hardening.md)
