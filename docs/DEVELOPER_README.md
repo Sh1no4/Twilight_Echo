@@ -8,7 +8,7 @@ Twilight Echo 是 Electron + Vue 3 + TypeScript 应用，使用 electron-vite �
 
 核心依赖：
 
-- Electron `^39.2.6`
+- Electron `^43.0.0`
 - Vue `^3.5.25`
 - TypeScript `^5.9.3`
 - electron-vite `^5.0.0`
