@@ -762,63 +762,6 @@ const {
   cancel: cancelSleepTimer
 } = playerSleepTimer
 
-function stopForSleepTimer(): void {
-  clearCrossfadeTimer()
-  stopVisualizationPolling(true)
-  stopRendererAudio(false)
-  void stopNativeAudio()
-  isPlaying.value = false
-  isLoading.value = false
-  sleepTimerNotice.value = '睡眠定时器已停止播放'
-}
-
-function beginSleepShutdown(state: SleepTimerState): void {
-  getSleepTimerFadeController().begin(state)
-}
-
-function getSleepTimerFadeController(): ReturnType<typeof createSleepTimerFadeController> {
-  if (!sleepTimerFadeController) {
-    sleepTimerFadeController = createSleepTimerFadeController({
-      getVolume: () => (muted.value ? 0 : volume.value),
-      setVolume: (nextVolume) => {
-        volume.value = nextVolume
-        if (nextVolume > 0.001) muted.value = false
-      },
-      stop: stopForSleepTimer
-    })
-  }
-  return sleepTimerFadeController
-}
-
-function getSleepTimerController(): ReturnType<typeof createSleepTimerController> {
-  if (!sleepTimerController) {
-    sleepTimerController = createSleepTimerController({
-      bridge: window.api.sleepTimer,
-      getSettings: () => useSettingsStore().settings.value.sleepTimer,
-      getState: () => sleepTimerState.value,
-      setState: (state) => {
-        sleepTimerState.value = state
-      },
-      persistSession: persistSelectedTrackSession,
-      setNotice: (notice) => {
-        sleepTimerNotice.value = notice
-      },
-      onTriggered: beginSleepShutdown
-    })
-  }
-  return sleepTimerController
-}
-
-function configureSleepTimer(mode: SleepTimerMode, minutes?: number): void {
-  clearSleepTimerIntervals()
-  getSleepTimerController().configure(mode, minutes)
-}
-
-function cancelSleepTimer(): void {
-  clearSleepTimerIntervals()
-  getSleepTimerController().cancel()
-}
-
 function toggleMute(): void {
   const next = toggleVolumeMute({
     volume: volume.value,

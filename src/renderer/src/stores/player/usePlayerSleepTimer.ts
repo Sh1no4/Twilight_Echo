@@ -1,9 +1,10 @@
-import type { Ref } from 'vue'
-import type { SleepTimerMode, SleepTimerSettings, SleepTimerState } from '../../../../shared/sleepTimer.ts'
-import {
-  createSleepTimerController,
-  type SleepTimerBridge
-} from '../sleepTimerController.ts'
+﻿import type { Ref } from 'vue'
+import type {
+  SleepTimerMode,
+  SleepTimerSettings,
+  SleepTimerState
+} from '../../../../shared/sleepTimer.ts'
+import { createSleepTimerController, type SleepTimerBridge } from '../sleepTimerController.ts'
 import { createSleepTimerFadeController } from '../sleepTimerFade.ts'
 
 export interface PlayerSleepTimerOptions {
@@ -94,3 +95,4 @@ export function createPlayerSleepTimer(options: PlayerSleepTimerOptions) {
     cancel
   }
 }
+
