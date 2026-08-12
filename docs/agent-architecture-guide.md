@@ -1,4 +1,4 @@
-﻿# Twilight Echo 架构与 AI 代理维护指南
+# Twilight Echo 架构与 AI 代理维护指南
 
 > 面向后续 AI 代理（Qoder / Claude / Codex 等）的架构地图与高内聚、低耦合维护手册。
 > 调查日期：2026-08-12，基于当前工作区（分支 `Pxasen`，`TwilightEcho@1.1.4` 包版本）。
@@ -178,7 +178,7 @@ Twilight Echo 是一款桌面 HiFi 音乐播放器：Electron + Vue 3 + TypeScri
 
 | store | 拥有状态 | 要点 |
 |---|---|---|
-| `usePlayerStore.ts`（188KB，最大 store） | 播放队列、当前曲目、播放状态、音频输出、会话恢复 | 播放 tick/统计用 `shallowRef` + `triggerRef`；不要整表复制 |
+| `usePlayerStore.ts`（约 189KB，最大 store） | 播放队列、当前曲目、播放状态、音频输出、会话恢复 | 播放 tick/统计用 `shallowRef` + `triggerRef`；不要整表复制 |
 | `useMusicStore.ts`（81KB） | 本地曲库、艺术家/专辑/文件夹派生、歌单、收藏 | 非响应式 `trackById`/`trackByPath` 索引；只能走 store 替换路径，否则缓存不失效 |
 | `useSettingsStore.ts` | 设置快照 | 与 main `core/settings.ts` 对应 |
 | `useProviderStore.ts` | 插件 provider 注册与健康度 | |
@@ -296,10 +296,10 @@ BPM/响度只走 `audioAnalysisService` 的有界优先级队列（aging 防饥�
 
 | 文件 | 大小 | 建议 |
 |---|---|---|
-| `components/SettingsPage.vue` | 236KB（持续拆分中） | 页面级巨型组件，按 SettingsSection 拆分；已有 8 个分区组件 |
-| `stores/usePlayerStore.ts` | 185KB | 按领域（队列/会话/输出/统计）拆 composable |
-| `shared/theme.ts` | 141KB（已开始拆分） | 契约层大而全，谨慎改（双端依赖广）；2026-08-12 已把主题配色/字体纯数据拆到 `shared/themeData.ts`，后续按 themeData 模式继续拆 token/仓库/profile 运行时 |
-| `components/StreamingPage.vue` | 131KB | 页面级，按子页面拆分 |
+| `components/SettingsPage.vue` | 约 241KB（持续拆分中） | 页面级巨型组件，按 SettingsSection 拆分；已有 8 个分区组件 |
+| `stores/usePlayerStore.ts` | 约 189KB | 按领域（队列/会话/输出/统计）拆 composable |
+| `shared/theme.ts` | 约 139KB（已开始拆分） | 契约层大而全，谨慎改（双端依赖广）；2026-08-12 已把主题配色/字体纯数据拆到 `shared/themeData.ts`，后续按 themeData 模式继续拆 token/仓库/profile 运行时 |
+| `components/StreamingPage.vue` | 约 134KB | 页面级，按子页面拆分 |
 | `components/DspRackPage.vue` / `EqualizerPage.vue` | 115KB / 100KB | DSP 领域组件，考虑子组件化 |
 | `components/player-bar/HiFiSidebar.vue` | 95KB | 组件化拆分 |
 | `components/SongList.vue` | 91KB | 已虚拟化，逻辑再抽 utils |
@@ -384,7 +384,7 @@ BPM/响度只走 `audioAnalysisService` 的有界优先级队列（aging 防饥�
 
 | 风险 | 现状 | 处置建议 |
 |---|---|---|
-| 巨型组件/store | SettingsPage 236KB（拆分中）、usePlayerStore 185KB 等 | 9.2 拆分红线，大改前先拆 |
+| 巨型组件/store | SettingsPage 约 241KB（拆分中）、usePlayerStore 约 189KB 等 | 9.2 拆分红线，大改前先拆 |
 | 分支膨胀 | 本地 20+ 历史分支 | 合入后删除；发布以 tag/远端 release 分支为准 |
 | 文档重复/过期 | CLAUDE.md 与 AGENTS.md 重复；DEVELOPER_README 的 Electron 版本过期；package.json 版本号滞后 | 按单一权威原则收敛；升级依赖/发版时顺手同步 |
 | 原生工具链复杂 | MinGW 主路径、MSVC VST3/SMTC/ASIO 分路径、clean-room ASIO | 改动 `audio-engine/output/` 时按 AGENTS.md 的 Windows 工具链要求验证；macOS/Linux 后端未发布级验证 |
