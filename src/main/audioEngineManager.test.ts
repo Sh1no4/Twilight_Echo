@@ -8,6 +8,29 @@ import { createSleepTimerState } from '../shared/sleepTimer.ts'
 import { registerNativeSleepTimerBoundaries } from './audio/sleepTimerNativeBoundary.ts'
 import { SleepTimerService } from './sleepTimerCore.ts'
 
+function readPreloadSources(): string {
+  const root = new URL('../preload/', import.meta.url)
+  return [
+    'index.ts',
+    'types.ts',
+    'index.d.ts',
+    'sleepTimerEvents.ts',
+    'domains/dataApi.ts',
+    'domains/audioEngineApi.ts',
+    'domains/desktopLyricsApi.ts',
+    'domains/libraryApi.ts',
+    'domains/mediaSubscriptionsApi.ts',
+    'domains/networkSourcesApi.ts',
+    'domains/settingsApi.ts',
+    'domains/themesApi.ts',
+    'domains/pluginsApi.ts',
+    'domains/systemApi.ts',
+    'domains/versionedData.ts'
+  ]
+    .map((rel) => readFileSync(new URL(rel, root), 'utf8'))
+    .join('\n')
+}
+
 import type {
   AudioEngineServiceNativeBinding,
   AudioDeviceOption,
@@ -6735,7 +6758,7 @@ test('loudnorm status event, library RG queue fields, and cancel IPC are wired e
     new URL('../renderer/src/stores/useAudioOutputDspStore.ts', import.meta.url),
     'utf8'
   )
-  const preloadSource = readFileSync(new URL('../preload/index.ts', import.meta.url), 'utf8')
+  const preloadSource = readPreloadSources()
   const preloadDtsSource = readFileSync(new URL('../preload/index.d.ts', import.meta.url), 'utf8')
   const pipelineSource = readFileSync(
     new URL('../../audio-engine/core/AudioPipeline.cpp', import.meta.url),

@@ -86,7 +86,10 @@ test('background image import accepts ArrayBuffer views from Electron IPC', () =
     new URL('../../../main/library/coverCache.ts', import.meta.url),
     'utf8'
   )
-  const ipcSource = readFileSync(new URL('../../../main/ipc/data.ts', import.meta.url), 'utf8')
+  const ipcSource = readFileSync(
+    new URL('../../../main/ipc/settingsIpc.ts', import.meta.url),
+    'utf8'
+  )
 
   assert.match(
     source,

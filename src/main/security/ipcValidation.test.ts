@@ -8,7 +8,15 @@ function readDataIpcSources(): string {
     '../ipc/shellIpc.ts',
     '../ipc/discordIpc.ts',
     '../ipc/windowIpc.ts',
-    '../ipc/fonts.ts'
+    '../ipc/fonts.ts',
+    '../ipc/settingsIpc.ts',
+    '../ipc/debugIpc.ts',
+    '../ipc/filesystemIpc.ts',
+    '../ipc/libraryIpc.ts',
+    '../ipc/coverIpc.ts',
+    '../ipc/lyricsIpc.ts',
+    '../ipc/persistenceIpc.ts',
+    '../ipc/persistenceReporting.ts'
   ]
     .map((rel) => readFileSync(new URL(rel, import.meta.url), 'utf8'))
     .join('\n')

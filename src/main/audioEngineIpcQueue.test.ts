@@ -3,8 +3,31 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { normalizeCueRange } from '../shared/cue.ts'
 
+function readPreloadSources(): string {
+  const root = new URL('../preload/', import.meta.url)
+  return [
+    'index.ts',
+    'types.ts',
+    'index.d.ts',
+    'sleepTimerEvents.ts',
+    'domains/dataApi.ts',
+    'domains/audioEngineApi.ts',
+    'domains/desktopLyricsApi.ts',
+    'domains/libraryApi.ts',
+    'domains/mediaSubscriptionsApi.ts',
+    'domains/networkSourcesApi.ts',
+    'domains/settingsApi.ts',
+    'domains/themesApi.ts',
+    'domains/pluginsApi.ts',
+    'domains/systemApi.ts',
+    'domains/versionedData.ts'
+  ]
+    .map((rel) => readFileSync(new URL(rel, root), 'utf8'))
+    .join('\n')
+}
+
 const source = readFileSync(new URL('./audio/engineIpc.ts', import.meta.url), 'utf8')
-const preloadSource = readFileSync(new URL('../preload/index.ts', import.meta.url), 'utf8')
+const preloadSource = readPreloadSources()
 const preloadTypes = readFileSync(new URL('../preload/types.ts', import.meta.url), 'utf8')
 const preloadDeclaration = readFileSync(new URL('../preload/index.d.ts', import.meta.url), 'utf8')
 const deviceHotplugSource = readFileSync(

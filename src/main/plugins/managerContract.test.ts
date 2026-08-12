@@ -23,7 +23,29 @@ const pluginApiSource = readFileSync(
   new URL('../../../packages/plugin-api/src/index.ts', import.meta.url),
   'utf8'
 )
-const preloadSource = readFileSync(new URL('../../preload/index.ts', import.meta.url), 'utf8')
+function readPreloadSources(): string {
+  const root = new URL('../../preload/', import.meta.url)
+  return [
+    'index.ts',
+    'types.ts',
+    'index.d.ts',
+    'sleepTimerEvents.ts',
+    'domains/dataApi.ts',
+    'domains/audioEngineApi.ts',
+    'domains/desktopLyricsApi.ts',
+    'domains/libraryApi.ts',
+    'domains/mediaSubscriptionsApi.ts',
+    'domains/networkSourcesApi.ts',
+    'domains/settingsApi.ts',
+    'domains/themesApi.ts',
+    'domains/pluginsApi.ts',
+    'domains/systemApi.ts'
+  ]
+    .map((rel) => readFileSync(new URL(rel, root), 'utf8'))
+    .join('\n')
+}
+
+const preloadSource = readPreloadSources()
 const pluginIpcSource = readFileSync(new URL('../ipc/plugins.ts', import.meta.url), 'utf8')
 const pluginExtensionPageSource = readFileSync(
   new URL('../../renderer/src/components/PluginExtensionPage.vue', import.meta.url),
