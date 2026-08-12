@@ -356,8 +356,8 @@ test('audio settings expose advanced replaygain, fft, crossfeed, and real loudno
     )
   )
   assert.ok(
-    settingsPageSource.includes(
-      `v-if="normalizeCapabilityState(device.nativeDsdSupportState) !== 'unsupported'"`
+    /v-if="\s*normalizeCapabilityState\(device\.nativeDsdSupportState\) !== 'unsupported'\s*"/.test(
+      settingsPageSource
     )
   )
   assert.match(settingsPageSource, /DoP \{\{ capabilityStateLabel\(device\.dopSupportState\) \}\}/)

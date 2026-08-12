@@ -383,8 +383,11 @@ async function availableTargetPath(
 }
 
 function sanitizeSegment(value: string): string {
-  const sanitized = value
-    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+  const sanitized = Array.from(value, (character) => {
+    const code = character.charCodeAt(0)
+    return code < 0x20 || '<>:"/\\|?*'.includes(character) ? '_' : character
+  })
+    .join('')
     .replace(/[. ]+$/g, '')
     .trim()
     .slice(0, 180)
