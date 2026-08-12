@@ -296,8 +296,8 @@ BPM/响度只走 `audioAnalysisService` 的有界优先级队列（aging 防饥�
 
 | 文件 | 大小 | 建议 |
 |---|---|---|
-| `components/SettingsPage.vue` | 270KB | 页面级巨型组件，按 SettingsSection 拆分 |
-| `stores/usePlayerStore.ts` | 188KB | 按领域（队列/会话/输出/统计）拆 composable |
+| `components/SettingsPage.vue` | 236KB（持续拆分中） | 页面级巨型组件，按 SettingsSection 拆分；已有 8 个分区组件 |
+| `stores/usePlayerStore.ts` | 185KB | 按领域（队列/会话/输出/统计）拆 composable |
 | `shared/theme.ts` | 141KB（已开始拆分） | 契约层大而全，谨慎改（双端依赖广）；2026-08-12 已把主题配色/字体纯数据拆到 `shared/themeData.ts`，后续按 themeData 模式继续拆 token/仓库/profile 运行时 |
 | `components/StreamingPage.vue` | 131KB | 页面级，按子页面拆分 |
 | `components/DspRackPage.vue` / `EqualizerPage.vue` | 115KB / 100KB | DSP 领域组件，考虑子组件化 |
@@ -384,7 +384,7 @@ BPM/响度只走 `audioAnalysisService` 的有界优先级队列（aging 防饥�
 
 | 风险 | 现状 | 处置建议 |
 |---|---|---|
-| 巨型组件/store | SettingsPage 270KB、usePlayerStore 188KB 等 | 9.2 拆分红线，大改前先拆 |
+| 巨型组件/store | SettingsPage 236KB（拆分中）、usePlayerStore 185KB 等 | 9.2 拆分红线，大改前先拆 |
 | 分支膨胀 | 本地 20+ 历史分支 | 合入后删除；发布以 tag/远端 release 分支为准 |
 | 文档重复/过期 | CLAUDE.md 与 AGENTS.md 重复；DEVELOPER_README 的 Electron 版本过期；package.json 版本号滞后 | 按单一权威原则收敛；升级依赖/发版时顺手同步 |
 | 原生工具链复杂 | MinGW 主路径、MSVC VST3/SMTC/ASIO 分路径、clean-room ASIO | 改动 `audio-engine/output/` 时按 AGENTS.md 的 Windows 工具链要求验证；macOS/Linux 后端未发布级验证 |
