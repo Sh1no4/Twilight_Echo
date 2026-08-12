@@ -125,7 +125,10 @@ import {
   isVersionedDataEnvelope,
   persistentDataRevisionConflictFromResponse
 } from '../shared/versionedPersistence.ts'
-import { isLyricsManagementDocument } from '../shared/lyricsManagement.ts'
+import {
+  isLyricsManagementDocument,
+  type OnlineLyricsSearchResult
+} from '../shared/lyricsManagement.ts'
 import { NCM_CLOUD_TRANSFER_PROGRESS_CHANNEL } from '../shared/ncmCloud.ts'
 import { PROVIDER_DOWNLOAD_CHANGED_CHANNEL } from '../shared/providerDownloads.ts'
 
@@ -1043,7 +1046,7 @@ const api = {
       artist: string
       album?: string
       durationSeconds?: number
-    }): Promise<import('../main/lyrics/onlineLyricsSearch.ts').OnlineLyricsSearchResult> =>
+    }): Promise<OnlineLyricsSearchResult> =>
       ipcRenderer.invoke('lyrics:searchOnline', query),
     saveLyricsManagement: (
       document: LyricsManagementDocument,

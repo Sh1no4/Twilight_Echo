@@ -41,6 +41,31 @@ export interface LyricDisplayContent {
   romanization: string | null
 }
 
+export interface OnlineLyricsQuery {
+  title: string
+  artist: string
+  album?: string
+  durationSeconds?: number
+}
+
+export interface OnlineLyricsCandidate {
+  id: number | string
+  title: string
+  artist: string
+  album: string
+  durationSeconds: number | null
+  score: number
+  syncedLyrics: string | null
+  plainLyrics: string | null
+  source: 'lrclib'
+}
+
+export interface OnlineLyricsSearchResult {
+  query: OnlineLyricsQuery
+  candidates: OnlineLyricsCandidate[]
+  best: OnlineLyricsCandidate | null
+}
+
 export const DEFAULT_LYRICS_MANAGEMENT: LyricsManagementDocument = {
   schemaVersion: 1,
   globalOffsetMs: 0,
