@@ -5,13 +5,6 @@ import type {
   NcmCloudSelectedFile,
   NcmCloudTransferProgress,
   NcmCloudUploadResult,
-  TwilightPluginDescriptor,
-  TwilightPluginInstallResult,
-  TwilightPluginIndexEntry,
-  TwilightPluginIndexStatus,
-  TwilightPluginExtensionContribution,
-  TwilightMediaProviderMethod,
-  TwilightMediaProviderRegistration,
   MiniPlayerBootstrap,
   MiniPlayerCommand,
   MiniPlayerSettings,
@@ -21,7 +14,6 @@ import type {
   TrayPlayerBootstrap,
   MotionPreference,
 } from './types'
-import { ProviderWriteIdempotencyCoordinator } from '../shared/providerWriteIdempotency.ts'
 import { createSleepTimerEventBridge } from './sleepTimerEvents.ts'
 import { collectClosePersistenceOutcome } from './closePersistence.ts'
 import { dataApi, miniPlayerCoverDataApi } from './domains/dataApi.ts'
@@ -32,10 +24,9 @@ import { mediaSubscriptionsApi } from './domains/mediaSubscriptionsApi.ts'
 import { networkSourcesApi } from './domains/networkSourcesApi.ts'
 import { bindSettingsIpcEvents, settingsApi } from './domains/settingsApi.ts'
 import { bindThemesIpcEvents, themesApi } from './domains/themesApi.ts'
+import { bindPluginsIpcEvents, pluginsApi } from './domains/pluginsApi.ts'
 import { NCM_CLOUD_TRANSFER_PROGRESS_CHANNEL } from '../shared/ncmCloud.ts'
-import { PROVIDER_DOWNLOAD_CHANGED_CHANNEL } from '../shared/providerDownloads.ts'
 
-const providerWriteIdempotency = new ProviderWriteIdempotencyCoordinator()
 const miniPlayerStateCallbacks = new Set<(state: MiniPlayerStateSnapshot) => void>()
 const miniPlayerSettingsCallbacks = new Set<(settings: MiniPlayerSettings) => void>()
 const miniPlayerMotionPreferenceCallbacks = new Set<(preference: MotionPreference) => void>()
@@ -43,33 +34,15 @@ const miniPlayerCommandCallbacks = new Set<(command: MiniPlayerCommand) => void>
 const trayPlayerStateCallbacks = new Set<(state: MiniPlayerStateSnapshot) => void>()
 const appNavigationCallbacks = new Set<(target: TrayNavigationTarget) => void>()
 const savePlaybackSessionCallbacks = new Set<() => Promise<void> | void>()
-const pluginChangedCallbacks = new Set<() => void>()
-const providerDownloadChangedCallbacks = new Set<
-  (tasks: import('./types').ProviderDownloadTaskSnapshot[]) => void
->()
 const sleepTimerEvents = createSleepTimerEventBridge()
 
 bindSettingsIpcEvents()
+bindPluginsIpcEvents()
 bindAudioEngineIpcEvents()
 bindDesktopLyricsIpcEvents()
 bindThemesIpcEvents()
 
 sleepTimerEvents.bind(ipcRenderer)
-ipcRenderer.on('plugins:changed', () => {
-  for (const cb of pluginChangedCallbacks) {
-    cb()
-  }
-})
-
-ipcRenderer.on(
-  PROVIDER_DOWNLOAD_CHANGED_CHANNEL,
-  (_event, tasks: import('./types').ProviderDownloadTaskSnapshot[]) => {
-    for (const cb of providerDownloadChangedCallbacks) {
-      cb(tasks)
-    }
-  }
-)
-
 ipcRenderer.on('desktopLyrics:position', (_event, pos: { x: number; y: number }) => {
   // Forward to a temporary global that the HTML page can read
   ;(window as unknown as Record<string, unknown>).__dlPos = pos
@@ -280,97 +253,7 @@ const api = {
     listInstalled: (): Promise<string[]> => ipcRenderer.invoke('fonts:listInstalled')
   },
   ...themesApi,
-  plugins: {
-    list: (): Promise<TwilightPluginDescriptor[]> => ipcRenderer.invoke('plugins:list'),
-    installFromPath: (path: string): Promise<TwilightPluginInstallResult> =>
-      ipcRenderer.invoke('plugins:installFromPath', path),
-    chooseAndInstall: (): Promise<TwilightPluginInstallResult | null> =>
-      ipcRenderer.invoke('plugins:chooseAndInstall'),
-    enable: (id: string): Promise<TwilightPluginDescriptor> =>
-      ipcRenderer.invoke('plugins:enable', id),
-    disable: (id: string): Promise<TwilightPluginDescriptor> =>
-      ipcRenderer.invoke('plugins:disable', id),
-    uninstall: (id: string, options?: { removeData?: boolean }): Promise<void> =>
-      ipcRenderer.invoke('plugins:uninstall', id, options),
-    openLog: (id: string): Promise<void> => ipcRenderer.invoke('plugins:openLog', id),
-    getLog: (id: string): Promise<string> => ipcRenderer.invoke('plugins:getLog', id),
-    listIndex: (): Promise<TwilightPluginIndexEntry[]> => ipcRenderer.invoke('plugins:listIndex'),
-    refreshIndex: (): Promise<TwilightPluginIndexEntry[]> =>
-      ipcRenderer.invoke('plugins:refreshIndex'),
-    getIndexStatus: (): Promise<TwilightPluginIndexStatus> =>
-      ipcRenderer.invoke('plugins:getIndexStatus'),
-    installFromIndex: (id: string): Promise<TwilightPluginInstallResult> =>
-      ipcRenderer.invoke('plugins:installFromIndex', id),
-    setNativeDspParameters: (
-      id: string,
-      parameters: Record<string, number>
-    ): Promise<TwilightPluginDescriptor> =>
-      ipcRenderer.invoke('plugins:setNativeDspParameters', id, parameters),
-    onChanged: (cb: () => void): (() => void) => {
-      pluginChangedCallbacks.add(cb)
-      return () => pluginChangedCallbacks.delete(cb)
-    }
-  },
-  providers: {
-    list: (): Promise<TwilightMediaProviderRegistration[]> => ipcRenderer.invoke('providers:list'),
-    call: async (
-      providerId: string,
-      method: TwilightMediaProviderMethod,
-      args: unknown[],
-      options?: { idempotencyKey?: string; requestId?: string }
-    ): Promise<unknown> => {
-      const ipcOptions = {
-        ...(options?.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : {}),
-        ...(options?.requestId ? { requestId: options.requestId } : {})
-      }
-      const lease = providerWriteIdempotency.begin(
-        providerId,
-        method,
-        args,
-        options?.idempotencyKey
-      )
-      try {
-        const value = await ipcRenderer.invoke('providers:call', providerId, method, args, {
-          ...ipcOptions,
-          ...(lease.idempotencyKey ? { idempotencyKey: lease.idempotencyKey } : {})
-        })
-        lease.settle(true)
-        return value
-      } catch (error) {
-        lease.settle(false)
-        throw error
-      }
-    },
-    cancel: (requestId: string): void => {
-      ipcRenderer.send('providers:cancel', requestId)
-    }
-  },
-  providerDownloads: {
-    list: (): Promise<import('./types').ProviderDownloadTaskSnapshot[]> =>
-      ipcRenderer.invoke('providerDownloads:list'),
-    create: (
-      input: import('./types').ProviderDownloadCreateInput
-    ): Promise<import('./types').ProviderDownloadTaskSnapshot> =>
-      ipcRenderer.invoke('providerDownloads:create', input),
-    cancel: (taskId: string): Promise<void> =>
-      ipcRenderer.invoke('providerDownloads:cancel', taskId),
-    retry: (taskId: string): Promise<import('./types').ProviderDownloadTaskSnapshot> =>
-      ipcRenderer.invoke('providerDownloads:retry', taskId),
-    onChanged: (
-      cb: (tasks: import('./types').ProviderDownloadTaskSnapshot[]) => void
-    ): (() => void) => {
-      providerDownloadChangedCallbacks.add(cb)
-      return () => providerDownloadChangedCallbacks.delete(cb)
-    }
-  },
-  extensions: {
-    list: (): Promise<TwilightPluginExtensionContribution[]> =>
-      ipcRenderer.invoke('extensions:list'),
-    executeCommand: (command: string, args?: unknown[]): Promise<unknown> =>
-      ipcRenderer.invoke('extensions:executeCommand', command, args),
-    readThemeStylesheet: (stylesheetPath: string): Promise<string> =>
-      ipcRenderer.invoke('extensions:readThemeStylesheet', stylesheetPath)
-  },
+  ...pluginsApi,
   desktopLyrics: desktopLyricsApi,
   miniPlayer: miniPlayerHostApi,
   trayPlayer: trayPlayerWindowApi,
