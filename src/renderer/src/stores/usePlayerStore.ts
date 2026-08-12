@@ -96,13 +96,14 @@ import {
   normalizeAudioDeviceOptions,
   normalizeAudioOutputOptions
 } from './player/audioOutputNormalize.ts'
+import {
+  createInactiveVisualizationData,
+  createVisualizationPolling,
+  type NativeVisualizationData
+} from './player/useVisualizationPolling.ts'
 
 type NativePlaybackInfo = Awaited<ReturnType<typeof window.api.audioEngine.getPlaybackInfo>>
 type NativeOutputInfo = NativePlaybackInfo['outputInfo']
-type NativeVisualizationData = Awaited<
-  ReturnType<typeof window.api.audioEngine.getVisualizationData>
->
-
 // Module state is intentionally shared by all player consumers. Vite replaces
 // this module in development, so every watcher must belong to a runtime scope
 // that the replacement can stop before registering its own listeners.
@@ -333,26 +334,6 @@ const playbackInfo = ref<NativePlaybackInfo | null>(null)
 const loudnormStatus = ref<'idle' | 'measuring' | 'cached' | 'fallback' | 'unavailable'>('idle')
 const loudnormStatusSource = ref<string | null>(null)
 const outputInfo = computed<NativeOutputInfo | null>(() => playbackInfo.value?.outputInfo ?? null)
-const visualizationOptions = {
-  spectrumPoints: 64,
-  waveformPoints: 48,
-  spectrogramFrames: 32,
-  oscilloscopePoints: 512
-} as const
-const createInactiveVisualizationData = (): NativeVisualizationData => ({
-  spectrum: Array.from({ length: visualizationOptions.spectrumPoints }, () => 0),
-  waveform: Array.from({ length: visualizationOptions.waveformPoints }, () => 0),
-  oscilloscope: Array.from({ length: visualizationOptions.oscilloscopePoints }, () => 0),
-  peakDb: -120,
-  rmsDb: -120,
-  lufsMomentary: null,
-  spectrogram: [],
-  sampleRate: 0,
-  maxFrequency: 20000,
-  active: false,
-  tapStatus: 'stopped',
-  reason: ''
-})
 const visualizationData = ref<NativeVisualizationData>(createInactiveVisualizationData())
 const { settings: appSettings, updateSettings } = useSettingsStore()
 let playbackAudio: HTMLAudioElement | null = null
@@ -1825,13 +1806,9 @@ watch(
 const cleanupFns: (() => void)[] = []
 let listenersSetup = false
 let crossfadeTimer: number | null = null
-let visualizationTimer: number | null = null
-let visualizationRequestInFlight = false
-let visualizationPollingGeneration = 0
 let crossfadeTrackId = ''
 const TIME_UPDATE_INTERVAL_MS = 250
 const NATIVE_PAUSE_CONFIRMATION_MS = 500
-const VISUALIZATION_UPDATE_INTERVAL_MS = 200
 let latestPlaybackTime = 0
 let lastTimePublishAt = 0
 let pendingTimePublishTimer: number | null = null
@@ -2088,43 +2065,12 @@ function setAudioServiceReadyNotice(event?: {
   })
 }
 
-async function refreshVisualizationData(): Promise<void> {
-  if (visualizationRequestInFlight) return
-  const requestGeneration = visualizationPollingGeneration
-  visualizationRequestInFlight = true
-  try {
-    const nextVisualizationData =
-      await window.api.audioEngine.getVisualizationData(visualizationOptions)
-    if (requestGeneration !== visualizationPollingGeneration) return
-    visualizationData.value = nextVisualizationData
-  } catch {
-    if (requestGeneration !== visualizationPollingGeneration) return
-    visualizationData.value = createInactiveVisualizationData()
-  } finally {
-    visualizationRequestInFlight = false
-  }
-}
+const visualizationPolling = createVisualizationPolling({
+  data: visualizationData,
+  active: visualizerActive
+})
 
-function stopVisualizationPolling(clearData = false): void {
-  visualizationPollingGeneration += 1
-  if (visualizationTimer !== null) {
-    window.clearInterval(visualizationTimer)
-    visualizationTimer = null
-  }
-  if (clearData) {
-    visualizationData.value = createInactiveVisualizationData()
-  }
-}
-
-function startVisualizationPolling(): void {
-  if (visualizerActive.value) return
-  if (visualizationTimer !== null) return
-  void refreshVisualizationData()
-  visualizationTimer = window.setInterval(
-    () => void refreshVisualizationData(),
-    VISUALIZATION_UPDATE_INTERVAL_MS
-  )
-}
+const { stop: stopVisualizationPolling, start: startVisualizationPolling } = visualizationPolling
 
 async function handlePlaybackEnded(): Promise<void> {
   if (await getSleepTimerController().reportBoundary('trackEnd')) return
