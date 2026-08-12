@@ -12,12 +12,7 @@ import type {
   AudioEngineServiceReadyCallback,
   AudioEngineLoudnormStatusCallback,
   LoudnormStatusEvent,
-  PlayerShortcutAction,
-  PlayerShortcutStatus,
   PlaybackInfo,
-  SettingsSnapshot,
-  DesktopLyricsSettings,
-  DesktopLyricsTrackPayload,
   LibraryChange,
   LocalLibraryRemoveRequest,
   LocalLibraryRemoveResult,
@@ -50,7 +45,6 @@ import type {
   NcmCloudSelectedFile,
   NcmCloudTransferProgress,
   NcmCloudUploadResult,
-  AppSettings,
   AudioEqPreset,
   ConvolverInfo,
   OpraCatalogStatus,
@@ -94,8 +88,10 @@ import { ProviderWriteIdempotencyCoordinator } from '../shared/providerWriteIdem
 import { createSleepTimerEventBridge } from './sleepTimerEvents.ts'
 import { collectClosePersistenceOutcome } from './closePersistence.ts'
 import { dataApi, miniPlayerCoverDataApi } from './domains/dataApi.ts'
+import { bindDesktopLyricsIpcEvents, desktopLyricsApi } from './domains/desktopLyricsApi.ts'
 import { mediaSubscriptionsApi } from './domains/mediaSubscriptionsApi.ts'
 import { networkSourcesApi } from './domains/networkSourcesApi.ts'
+import { bindSettingsIpcEvents, settingsApi } from './domains/settingsApi.ts'
 import { bindThemesIpcEvents, themesApi } from './domains/themesApi.ts'
 import { NCM_CLOUD_TRANSFER_PROGRESS_CHANNEL } from '../shared/ncmCloud.ts'
 import { PROVIDER_DOWNLOAD_CHANGED_CHANNEL } from '../shared/providerDownloads.ts'
@@ -113,16 +109,6 @@ const audioEngineDeviceOptionsChangedCallbacks = new Set<AudioEngineDeviceOption
 const audioEngineServiceCrashCallbacks = new Set<AudioEngineServiceCrashCallback>()
 const audioEngineServiceReadyCallbacks = new Set<AudioEngineServiceReadyCallback>()
 const providerWriteIdempotency = new ProviderWriteIdempotencyCoordinator()
-const playerShortcutCallbacks = new Set<(action: PlayerShortcutAction) => void>()
-const settingsChangedCallbacks = new Set<(snapshot: SettingsSnapshot) => void>()
-const desktopLyricsToggleCallbacks = new Set<(enabled: boolean) => void>()
-const desktopLyricsInitSettingsCallbacks = new Set<(settings: DesktopLyricsSettings) => void>()
-const desktopLyricsTrackCallbacks = new Set<(data: DesktopLyricsTrackPayload) => void>()
-const desktopLyricsTimeCallbacks = new Set<(time: number) => void>()
-const desktopLyricsSettingsUpdateCallbacks = new Set<(settings: DesktopLyricsSettings) => void>()
-const desktopLyricsLoadFailedCallbacks = new Set<
-  (payload: { code: number; description: string }) => void
->()
 const miniPlayerStateCallbacks = new Set<(state: MiniPlayerStateSnapshot) => void>()
 const miniPlayerSettingsCallbacks = new Set<(settings: MiniPlayerSettings) => void>()
 const miniPlayerMotionPreferenceCallbacks = new Set<(preference: MotionPreference) => void>()
@@ -136,6 +122,8 @@ const providerDownloadChangedCallbacks = new Set<
 >()
 const sleepTimerEvents = createSleepTimerEventBridge()
 
+bindSettingsIpcEvents()
+bindDesktopLyricsIpcEvents()
 bindThemesIpcEvents()
 
 ipcRenderer.on('audioEngine:property-change', (_event, data: { name: string; data: unknown }) => {
@@ -218,18 +206,6 @@ ipcRenderer.on(
   }
 )
 
-ipcRenderer.on('player:shortcut', (_event, action: PlayerShortcutAction) => {
-  for (const cb of playerShortcutCallbacks) {
-    cb(action)
-  }
-})
-
-ipcRenderer.on('settings:changed', (_event, snapshot: SettingsSnapshot) => {
-  for (const cb of settingsChangedCallbacks) {
-    cb(snapshot)
-  }
-})
-
 ipcRenderer.on('plugins:changed', () => {
   for (const cb of pluginChangedCallbacks) {
     cb()
@@ -241,45 +217,6 @@ ipcRenderer.on(
   (_event, tasks: import('./types').ProviderDownloadTaskSnapshot[]) => {
     for (const cb of providerDownloadChangedCallbacks) {
       cb(tasks)
-    }
-  }
-)
-
-ipcRenderer.on('desktopLyrics:toggleChanged', (_event, enabled: boolean) => {
-  for (const cb of desktopLyricsToggleCallbacks) {
-    cb(enabled)
-  }
-})
-
-ipcRenderer.on('desktopLyrics:initSettings', (_event, settings: DesktopLyricsSettings) => {
-  for (const cb of desktopLyricsInitSettingsCallbacks) {
-    cb(settings)
-  }
-})
-
-ipcRenderer.on('desktopLyrics:updateTrack', (_event, data: DesktopLyricsTrackPayload) => {
-  for (const cb of desktopLyricsTrackCallbacks) {
-    cb(data)
-  }
-})
-
-ipcRenderer.on('desktopLyrics:updateTime', (_event, time: number) => {
-  for (const cb of desktopLyricsTimeCallbacks) {
-    cb(time)
-  }
-})
-
-ipcRenderer.on('desktopLyrics:updateSettings', (_event, settings: DesktopLyricsSettings) => {
-  for (const cb of desktopLyricsSettingsUpdateCallbacks) {
-    cb(settings)
-  }
-})
-
-ipcRenderer.on(
-  'desktopLyrics:loadFailed',
-  (_event, payload: { code: number; description: string }) => {
-    for (const cb of desktopLyricsLoadFailedCallbacks) {
-      cb(payload)
     }
   }
 )
@@ -764,32 +701,7 @@ const api = {
   ...mediaSubscriptionsApi,
   ...networkSourcesApi,
   ...dataApi,
-  settings: {
-    get: (): Promise<SettingsSnapshot> => ipcRenderer.invoke('settings:get'),
-    update: (patch: Partial<AppSettings>): Promise<SettingsSnapshot> =>
-      ipcRenderer.invoke('settings:update', patch),
-    chooseCacheFolder: (): Promise<string | null> =>
-      ipcRenderer.invoke('settings:chooseCacheFolder'),
-    chooseBackgroundImage: (): Promise<string | null> =>
-      ipcRenderer.invoke('settings:chooseBackgroundImage'),
-    importBackgroundImage: (fileName: string, data: ArrayBuffer): Promise<string | null> =>
-      ipcRenderer.invoke('settings:importBackgroundImage', fileName, data),
-    exportBackup: (): Promise<string> => ipcRenderer.invoke('settings:export'),
-    importBackup: (json: string): Promise<SettingsSnapshot> =>
-      ipcRenderer.invoke('settings:import', json),
-    getCacheSize: (): Promise<number> => ipcRenderer.invoke('settings:getCacheSize'),
-    clearCache: (): Promise<number> => ipcRenderer.invoke('settings:clearCache'),
-    getShortcutStatuses: (): Promise<PlayerShortcutStatus[]> =>
-      ipcRenderer.invoke('settings:getShortcutStatuses'),
-    onChanged: (cb: (snapshot: SettingsSnapshot) => void): (() => void) => {
-      settingsChangedCallbacks.add(cb)
-      return () => settingsChangedCallbacks.delete(cb)
-    },
-    onPlayerShortcut: (cb: (action: PlayerShortcutAction) => void): (() => void) => {
-      playerShortcutCallbacks.add(cb)
-      return () => playerShortcutCallbacks.delete(cb)
-    }
-  },
+  ...settingsApi,
   fonts: {
     listInstalled: (): Promise<string[]> => ipcRenderer.invoke('fonts:listInstalled')
   },
@@ -885,53 +797,7 @@ const api = {
     readThemeStylesheet: (stylesheetPath: string): Promise<string> =>
       ipcRenderer.invoke('extensions:readThemeStylesheet', stylesheetPath)
   },
-  desktopLyrics: {
-    toggle: (): Promise<boolean> => ipcRenderer.invoke('desktopLyrics:toggle'),
-    show: (): Promise<void> => ipcRenderer.invoke('desktopLyrics:show'),
-    hide: (): Promise<void> => ipcRenderer.invoke('desktopLyrics:hide'),
-    updateTrack: (data: DesktopLyricsTrackPayload): void => {
-      ipcRenderer.send('desktopLyrics:updateTrack', data)
-    },
-    updateTime: (time: number): void => {
-      ipcRenderer.send('desktopLyrics:updateTime', time)
-    },
-    updateSettings: (settings: DesktopLyricsSettings): void => {
-      ipcRenderer.send('desktopLyrics:updateSettings', settings)
-    },
-    onToggle: (cb: (enabled: boolean) => void): (() => void) => {
-      desktopLyricsToggleCallbacks.add(cb)
-      return () => desktopLyricsToggleCallbacks.delete(cb)
-    },
-    onInitSettings: (cb: (settings: DesktopLyricsSettings) => void): (() => void) => {
-      desktopLyricsInitSettingsCallbacks.add(cb)
-      return () => desktopLyricsInitSettingsCallbacks.delete(cb)
-    },
-    onTrackUpdate: (cb: (data: DesktopLyricsTrackPayload) => void): (() => void) => {
-      desktopLyricsTrackCallbacks.add(cb)
-      return () => desktopLyricsTrackCallbacks.delete(cb)
-    },
-    onTimeUpdate: (cb: (time: number) => void): (() => void) => {
-      desktopLyricsTimeCallbacks.add(cb)
-      return () => desktopLyricsTimeCallbacks.delete(cb)
-    },
-    onSettingsUpdate: (cb: (settings: DesktopLyricsSettings) => void): (() => void) => {
-      desktopLyricsSettingsUpdateCallbacks.add(cb)
-      return () => desktopLyricsSettingsUpdateCallbacks.delete(cb)
-    },
-    onLoadFailed: (cb: (payload: { code: number; description: string }) => void): (() => void) => {
-      desktopLyricsLoadFailedCallbacks.add(cb)
-      return () => desktopLyricsLoadFailedCallbacks.delete(cb)
-    },
-    getPosition: (): void => {
-      ipcRenderer.send('desktopLyrics:getPosition')
-    },
-    move: (x: number, y: number): void => {
-      ipcRenderer.send('desktopLyrics:move', { x, y })
-    },
-    requestClose: (): void => {
-      ipcRenderer.send('desktopLyrics:requestClose')
-    }
-  },
+  desktopLyrics: desktopLyricsApi,
   miniPlayer: miniPlayerHostApi,
   trayPlayer: trayPlayerWindowApi,
   debug: {

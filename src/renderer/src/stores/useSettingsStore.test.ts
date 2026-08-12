@@ -509,6 +509,10 @@ test('settings page exposes search, backup, cache confirmation, and isolated plu
 
 test('settings backup and shortcut status APIs are exposed to the renderer', () => {
   const preloadSource = readFileSync(new URL('../../../preload/index.ts', import.meta.url), 'utf8')
+  const settingsApiSource = readFileSync(
+    new URL('../../../preload/domains/settingsApi.ts', import.meta.url),
+    'utf8'
+  )
   const preloadTypes = readFileSync(new URL('../../../preload/types.ts', import.meta.url), 'utf8')
   const preloadDts = readFileSync(new URL('../../../preload/index.d.ts', import.meta.url), 'utf8')
   const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
@@ -519,9 +523,10 @@ test('settings backup and shortcut status APIs are exposed to the renderer', () 
     assert.match(source, /error: string \| null/)
   }
 
-  assert.match(preloadSource, /exportBackup: \(\): Promise<string>/)
-  assert.match(preloadSource, /importBackup: \(json: string\): Promise<SettingsSnapshot>/)
-  assert.match(preloadSource, /getShortcutStatuses: \(\): Promise<PlayerShortcutStatus\[]>/)
+  assert.match(settingsApiSource, /exportBackup: \(\): Promise<string>/)
+  assert.match(settingsApiSource, /importBackup: \(json: string\): Promise<SettingsSnapshot>/)
+  assert.match(settingsApiSource, /getShortcutStatuses: \(\): Promise<PlayerShortcutStatus\[]>/)
+  assert.match(preloadSource, /import \{ bindSettingsIpcEvents, settingsApi \}/)
   assert.match(storeSource, /exportSettingsBackup: \(\) => Promise<string>/)
   assert.match(storeSource, /importSettingsBackup: \(json: string\) => Promise<AppSettings>/)
   assert.match(storeSource, /getShortcutStatuses: \(\) => Promise<PlayerShortcutStatus\[]>/)
