@@ -35,7 +35,6 @@ import type {
   DuplicateDetectionReadApi,
   PlayMode,
   AudioEngineQueueItem,
-  VersionedDataEnvelope,
   VisualizationOptions,
   VisualizationData,
   AudioOutputId,
@@ -91,35 +90,12 @@ import type {
   DspStereoImageConfig,
   Vst3CatalogState
 } from './types'
-import {
-  isThemeLibraryDocument,
-  type ThemeAssetReference,
-  type ThemeAssetType,
-  type ThemeBootstrap,
-  type ThemeLibrarySnapshot,
-  type ThemeProfileV2,
-  type ThemeSelection,
-  type ThemeTone,
-  type ThemeWindowInheritance
-} from '../shared/theme.ts'
-import {
-  isRadioStationsDocument,
-  type RadioStation,
-  type RadioStationsDocument
-} from '../shared/radioStations.ts'
-import {
-  isPodcastSubscriptionsDocument,
-  type PodcastSubscription,
-  type PodcastSubscriptionsDocument
-} from '../shared/podcastSubscriptions.ts'
 import { ProviderWriteIdempotencyCoordinator } from '../shared/providerWriteIdempotency.ts'
 import { createSleepTimerEventBridge } from './sleepTimerEvents.ts'
 import { collectClosePersistenceOutcome } from './closePersistence.ts'
 import { dataApi, miniPlayerCoverDataApi } from './domains/dataApi.ts'
-import {
-  invokeOptionalVersionedDataWrite,
-  invokeVersionedDataWrite
-} from './domains/versionedData.ts'
+import { mediaSubscriptionsApi } from './domains/mediaSubscriptionsApi.ts'
+import { bindThemesIpcEvents, themesApi } from './domains/themesApi.ts'
 import { NCM_CLOUD_TRANSFER_PROGRESS_CHANNEL } from '../shared/ncmCloud.ts'
 import { PROVIDER_DOWNLOAD_CHANGED_CHANNEL } from '../shared/providerDownloads.ts'
 
@@ -157,9 +133,9 @@ const pluginChangedCallbacks = new Set<() => void>()
 const providerDownloadChangedCallbacks = new Set<
   (tasks: import('./types').ProviderDownloadTaskSnapshot[]) => void
 >()
-const themeChangedCallbacks = new Set<(snapshot: ThemeLibrarySnapshot) => void>()
-const systemThemeChangedCallbacks = new Set<(tone: ThemeTone) => void>()
 const sleepTimerEvents = createSleepTimerEventBridge()
+
+bindThemesIpcEvents()
 
 ipcRenderer.on('audioEngine:property-change', (_event, data: { name: string; data: unknown }) => {
   for (const cb of audioEngineEventCallbacks) {
@@ -267,15 +243,6 @@ ipcRenderer.on(
     }
   }
 )
-
-ipcRenderer.on('themes:changed', (_event, snapshot: ThemeLibrarySnapshot) => {
-  for (const cb of themeChangedCallbacks) cb(snapshot)
-})
-
-ipcRenderer.on('themes:systemToneChanged', (_event, tone: ThemeTone) => {
-  if (tone !== 'dark' && tone !== 'pureWhite') return
-  for (const cb of systemThemeChangedCallbacks) cb(tone)
-})
 
 ipcRenderer.on('desktopLyrics:toggleChanged', (_event, enabled: boolean) => {
   for (const cb of desktopLyricsToggleCallbacks) {
@@ -793,72 +760,7 @@ const api = {
       return () => ipcRenderer.removeListener(NCM_CLOUD_TRANSFER_PROGRESS_CHANNEL, handler)
     }
   },
-  radio: {
-    loadStations: (): Promise<VersionedDataEnvelope<RadioStationsDocument>> =>
-      ipcRenderer.invoke('radio:loadStations'),
-    saveStations: (
-      document: RadioStationsDocument,
-      expectedRevision: number
-    ): Promise<VersionedDataEnvelope<RadioStationsDocument>> =>
-      invokeVersionedDataWrite(
-        'radio:saveStations',
-        [document, expectedRevision],
-        isRadioStationsDocument
-      ),
-    importPlaylist: (payload: {
-      text: string
-      fileNameHint?: string
-      allowInsecureHttp?: boolean
-    }): Promise<RadioStation[]> => ipcRenderer.invoke('radio:importPlaylist', payload),
-    searchDirectory: (payload: {
-      query: string
-      limit?: number
-      offset?: number
-    }): Promise<
-      Array<{
-        stationuuid: string
-        name: string
-        url: string
-        urlResolved: string
-        homepage?: string
-        favicon?: string
-        tags: string[]
-        countryCode?: string
-        bitrate?: number
-        codec?: string
-        votes?: number
-      }>
-    > => ipcRenderer.invoke('radio:searchDirectory', payload)
-  },
-  podcast: {
-    loadSubscriptions: (): Promise<VersionedDataEnvelope<PodcastSubscriptionsDocument>> =>
-      ipcRenderer.invoke('podcast:loadSubscriptions'),
-    saveSubscriptions: (
-      document: PodcastSubscriptionsDocument,
-      expectedRevision: number
-    ): Promise<VersionedDataEnvelope<PodcastSubscriptionsDocument>> =>
-      invokeVersionedDataWrite(
-        'podcast:saveSubscriptions',
-        [document, expectedRevision],
-        isPodcastSubscriptionsDocument
-      ),
-    subscribe: (
-      feedUrl: string
-    ): Promise<{
-      subscription: PodcastSubscription
-      document: PodcastSubscriptionsDocument
-      revision: number
-    }> => ipcRenderer.invoke('podcast:subscribe', feedUrl),
-    refresh: (
-      subscriptionId: string
-    ): Promise<{
-      subscription: PodcastSubscription
-      document: PodcastSubscriptionsDocument
-      revision: number
-    }> => ipcRenderer.invoke('podcast:refresh', subscriptionId),
-    refreshAll: (): Promise<PodcastSubscriptionsDocument> =>
-      ipcRenderer.invoke('podcast:refreshAll')
-  },
+  ...mediaSubscriptionsApi,
   networkSources: {
     listProfiles: (): Promise<
       import('../shared/networkSources.ts').NetworkSourceProfileSummary[]
@@ -994,55 +896,7 @@ const api = {
   fonts: {
     listInstalled: (): Promise<string[]> => ipcRenderer.invoke('fonts:listInstalled')
   },
-  themes: {
-    getSystemTone: (): Promise<ThemeTone> => ipcRenderer.invoke('themes:getSystemTone'),
-    getBootstrap: (): Promise<ThemeBootstrap> => ipcRenderer.invoke('themes:getBootstrap'),
-    list: (): Promise<ThemeLibrarySnapshot> => ipcRenderer.invoke('themes:list'),
-    save: (profile: ThemeProfileV2, expectedRevision: number): Promise<ThemeLibrarySnapshot> =>
-      invokeVersionedDataWrite('themes:save', [profile, expectedRevision], isThemeLibraryDocument),
-    delete: (profileId: string, expectedRevision: number): Promise<ThemeLibrarySnapshot> =>
-      invokeVersionedDataWrite(
-        'themes:delete',
-        [profileId, expectedRevision],
-        isThemeLibraryDocument
-      ),
-    setActive: (
-      selection: ThemeSelection,
-      expectedRevision: number
-    ): Promise<ThemeLibrarySnapshot> =>
-      invokeVersionedDataWrite(
-        'themes:setActive',
-        [selection, expectedRevision],
-        isThemeLibraryDocument
-      ),
-    setWindowInheritance: (
-      inheritance: ThemeWindowInheritance,
-      expectedRevision: number
-    ): Promise<ThemeLibrarySnapshot> =>
-      invokeVersionedDataWrite(
-        'themes:setWindowInheritance',
-        [inheritance, expectedRevision],
-        isThemeLibraryDocument
-      ),
-    importTheme: (expectedRevision: number): Promise<ThemeLibrarySnapshot | null> =>
-      invokeOptionalVersionedDataWrite('themes:import', [expectedRevision], isThemeLibraryDocument),
-    exportTheme: (profileId: string): Promise<string | null> =>
-      ipcRenderer.invoke('themes:export', profileId),
-    importAsset: (profileId: string, type: ThemeAssetType): Promise<ThemeAssetReference | null> =>
-      ipcRenderer.invoke('themes:importAsset', profileId, type),
-    validateAssets: (profileId: string, assets: ThemeAssetReference[]): Promise<boolean> =>
-      ipcRenderer.invoke('themes:validateAssets', profileId, assets),
-    copyAssets: (sourceProfileId: string, targetProfileId: string): Promise<void> =>
-      ipcRenderer.invoke('themes:copyAssets', sourceProfileId, targetProfileId),
-    onChanged: (cb: (snapshot: ThemeLibrarySnapshot) => void): (() => void) => {
-      themeChangedCallbacks.add(cb)
-      return () => themeChangedCallbacks.delete(cb)
-    },
-    onSystemToneChanged: (cb: (tone: ThemeTone) => void): (() => void) => {
-      systemThemeChangedCallbacks.add(cb)
-      return () => systemThemeChangedCallbacks.delete(cb)
-    }
-  },
+  ...themesApi,
   plugins: {
     list: (): Promise<TwilightPluginDescriptor[]> => ipcRenderer.invoke('plugins:list'),
     installFromPath: (path: string): Promise<TwilightPluginInstallResult> =>
