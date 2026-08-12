@@ -1,6 +1,6 @@
-﻿# Twilight Echo — 高内聚、低耦合与可维护性提升执行方案
+# Twilight Echo — 高内聚、低耦合与可维护性提升执行方案
 
-> 定位：基于 2026-08-12 当前工作区（分支 Pxasen，Twilight Echo 1.0.5）实际代码扫描，给出针对性的架构可维护性改造路线。
+> 定位：基于 2026-08-12 当前工作区（分支 Pxasen，Twilight Echo 1.1.4）实际代码扫描，给出针对性的架构可维护性改造路线。
 > 本文档不推翻现有架构，而是把已经存在的规则补强为“机器可强制”的落地清单。
 
 ## 1. 现状：已经做得不错的方面
@@ -173,7 +173,7 @@
 
 1. `CLAUDE.md` 收敛为指针：只保留指到 AGENTS.md / docs 的入口，删掉与 AGENTS 重复的命令表格。
 2. 修正 `DEVELOPER_README.md` 过期的 Electron 版本（当前实际上是 Electron ^43，文档还写着 ^39）。
-3. 同步 `package.json` 版本与 git 历史（1.0.5 vs 已有 1.0.6 特性）。
+3. 同步 `package.json` 版本与 git 历史（已完成：当前 Pxasen 已含 1.1.4 提交与 `v1.1.4` tag，版本号已对齐到 1.1.4）。
 4. 改动行为时同步 `docs/` 权威文档，新模块/通道必须登记进 `docs/README.md` 索引。
 5. 每个季度重新跑一次规模统计（大小热点、IPC 通道数、分支数），把结果更新到 `agent-architecture-guide.md` 第 1 节。
 

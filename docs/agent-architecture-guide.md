@@ -1,7 +1,7 @@
-# Twilight Echo 架构与 AI 代理维护指南
+﻿# Twilight Echo 架构与 AI 代理维护指南
 
 > 面向后续 AI 代理（Qoder / Claude / Codex 等）的架构地图与高内聚、低耦合维护手册。
-> 调查日期：2026-08-12，基于当前工作区（分支 `Pxasen`，`TwilightEcho@1.0.5` 包版本，git 历史已包含 1.0.6 特性）。
+> 调查日期：2026-08-12，基于当前工作区（分支 `Pxasen`，`TwilightEcho@1.1.4` 包版本）。
 
 ## 0. 文档体系与优先级
 
@@ -68,7 +68,7 @@ Twilight Echo 是一款桌面 HiFi 音乐播放器：Electron + Vue 3 + TypeScri
 代理修改文档或升级依赖时，顺手核对：
 
 - `docs/DEVELOPER_README.md` 写 Electron `^39.2.6`，`package.json` 实际是 `^43.0.0`。
-- `package.json` version 为 `1.0.5`，git 历史与分支已包含 1.0.6 特性（版本号未同步）。
+- `package.json` version 已同步至 `1.1.4`，与 `v1.1.4` tag 基线一致。
 - `CLAUDE.md` 与 `AGENTS.md` 重复度高，按"单一权威"原则应瘦身为指针。
 
 ## 2. 分层架构与依赖方向（高内聚低耦合的核心）
