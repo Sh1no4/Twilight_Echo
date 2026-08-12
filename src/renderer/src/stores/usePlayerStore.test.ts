@@ -1383,16 +1383,20 @@ test('player bar exposes a HiFi console drawer instead of visualization meters',
 
 test('player bar visualization polling stays light and stops behind the full visualizer', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const pollingSource = readFileSync(new URL('./player/useVisualizationPolling.ts', import.meta.url), 'utf8')
 
-  assert.match(source, /spectrumPoints: 64/)
-  assert.match(source, /waveformPoints: 48/)
-  assert.match(source, /spectrogramFrames: 32/)
-  assert.match(source, /oscilloscopePoints: 512/)
-  assert.match(source, /if \(visualizerActive\.value\) return/)
-  assert.match(source, /let visualizationPollingGeneration = 0/)
-  assert.match(source, /const requestGeneration = visualizationPollingGeneration/)
-  assert.match(source, /if \(requestGeneration !== visualizationPollingGeneration\) return/)
-  assert.match(source, /visualizationPollingGeneration \+= 1/)
+  assert.match(pollingSource, /spectrumPoints: 64/)
+  assert.match(pollingSource, /waveformPoints: 48/)
+  assert.match(pollingSource, /spectrogramFrames: 32/)
+  assert.match(pollingSource, /oscilloscopePoints: 512/)
+  assert.match(pollingSource, /if \(options\.active\.value\) return/)
+  assert.match(pollingSource, /let pollingGeneration = 0/)
+  assert.match(pollingSource, /const generation = pollingGeneration/)
+  assert.match(pollingSource, /if \(generation !== pollingGeneration\) return/)
+  assert.match(pollingSource, /pollingGeneration \+= 1/)
+  assert.match(source, /createVisualizationPolling\(/)
+  assert.match(source, /stopVisualizationPolling\(/)
+  assert.match(source, /startVisualizationPolling\(/)
   assert.match(
     source,
     /\[isPlaying, audioEngineReady, \(\) => currentTrack\.value\?\.id, visualizerActive\]/
