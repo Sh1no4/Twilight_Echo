@@ -84,8 +84,8 @@ import {
 } from '../utils/localTrackRemovalPolicy.ts'
 import { type SleepTimerMode, type SleepTimerState } from '../../../shared/sleepTimer.ts'
 import { DEFAULT_SOFTWARE_VOLUME } from '../../../shared/audioProcessingOptions.ts'
-import { createSleepTimerController, getRestorableSleepTimerState } from './sleepTimerController.ts'
-import { createSleepTimerFadeController } from './sleepTimerFade.ts'
+import { getRestorableSleepTimerState } from './sleepTimerController.ts'
+import { createPlayerSleepTimer } from './player/usePlayerSleepTimer.ts'
 import { usePlaybackBookmarks } from './playbackBookmarks'
 import { useAppNoticeStore } from './useAppNoticeStore'
 import { claimRendererRuntime } from './playerRuntimeOwnership.ts'
@@ -215,8 +215,6 @@ const castTargetName = ref<string | null>(null)
 const castTargetUsn = ref<string | null>(null)
 const sleepTimerState = ref<SleepTimerState | null>(null)
 const sleepTimerNotice = ref<string | null>(null)
-let sleepTimerFadeController: ReturnType<typeof createSleepTimerFadeController> | null = null
-let sleepTimerController: ReturnType<typeof createSleepTimerController> | null = null
 // Queue entries are immutable playback snapshots. Keeping this as a shallow
 // array avoids proxying every nested field for a 5k/20k queue.
 const queue = shallowRef<Track[]>([])
@@ -741,9 +739,28 @@ async function stopNativeAudio(): Promise<void> {
   }
 }
 
-function clearSleepTimerIntervals(): void {
-  sleepTimerFadeController?.clear()
-}
+const playerSleepTimer = createPlayerSleepTimer({
+  volume,
+  muted,
+  isPlaying,
+  isLoading,
+  state: sleepTimerState,
+  notice: sleepTimerNotice,
+  getSettings: () => useSettingsStore().settings.value.sleepTimer,
+  getBridge: () => window.api?.sleepTimer,
+  persistSession: persistSelectedTrackSession,
+  clearCrossfade: () => clearCrossfadeTimer(),
+  stopVisualization: () => stopVisualizationPolling(true),
+  stopRendererAudio: () => stopRendererAudio(false),
+  stopNativeAudio
+})
+
+const {
+  clearIntervals: clearSleepTimerIntervals,
+  getController: getSleepTimerController,
+  configure: configureSleepTimer,
+  cancel: cancelSleepTimer
+} = playerSleepTimer
 
 function stopForSleepTimer(): void {
   clearCrossfadeTimer()
