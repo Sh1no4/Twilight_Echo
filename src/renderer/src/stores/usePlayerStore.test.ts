@@ -317,7 +317,6 @@ test('player lyric loading records local and provider lyric sources', () => {
   const commitResolvedLyrics = extractInternalFunctionBody(source, 'commitResolvedLyrics')
   const findLibraryTrackHint = extractInternalFunctionBody(source, 'findLibraryTrackHint')
   const loadAndPlay = extractInternalFunctionBody(source, 'loadAndPlay')
-  const tickRendererPlaybackClock = extractInternalFunctionBody(source, 'tickRendererPlaybackClock')
 
   assert.match(
     source,
@@ -341,8 +340,8 @@ test('player lyric loading records local and provider lyric sources', () => {
   // The store delegates fallback timing to one authority rather than keeping
   // a second independent position clock next to the lyric resolver.
   assert.match(source, /createPlaybackSessionClock/)
-  assert.match(tickRendererPlaybackClock, /playbackSessionClock\.estimate\(\)/)
-  assert.match(tickRendererPlaybackClock, /requestPlaybackClockResync\(\)/)
+  assert.match(source, /createPlaybackClock\(\{[\s\S]*onTick: \(\) => \{[\s\S]*playbackSessionClock\.estimate\(\)[\s\S]*requestPlaybackClockResync\(\)/)
+
 })
 
 test('plugin playback resume waits for plugin providers while local sessions restore immediately', () => {
@@ -708,7 +707,7 @@ test('next and previous only use native controls when the native queue is delega
   assert.match(previousBody, /controlCast\?\.\(\{ seek: 0 \}\)/)
   assert.match(
     previousBody,
-    /appSettings\.value\.previousButtonAction === 'restart' && latestPlaybackTime > 3/
+    /appSettings\.value\.previousButtonAction === 'restart' &&[\s\S]*playbackClock\.getLatestPlaybackTime\(\) > 3/
   )
 })
 
