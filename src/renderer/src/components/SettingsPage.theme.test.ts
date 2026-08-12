@@ -5,6 +5,10 @@ import assert from 'node:assert/strict'
 const styles = readFileSync(new URL('./settings-page/SettingsPage.css', import.meta.url), 'utf8')
 const baseStyles = readFileSync(new URL('../assets/base.css', import.meta.url), 'utf8')
 const pageSource = readFileSync(new URL('./SettingsPage.vue', import.meta.url), 'utf8')
+const playbackPageSource = readFileSync(
+  new URL('./settings-page/PlaybackSettingsSection.vue', import.meta.url),
+  'utf8'
+)
 const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
 const titleBarSource = readFileSync(new URL('./TitleBar.vue', import.meta.url), 'utf8')
 
@@ -111,13 +115,13 @@ test('settings uses an opaque independent backdrop without covering title contro
 })
 
 test('audio output device cards are opt-in through a closed native checkbox', () => {
-  assert.match(pageSource, /const audioOutputPanelExpanded = ref\(false\)/)
+  assert.match(playbackPageSource, /const audioOutputPanelExpanded = ref\(false\)/)
   assert.match(
-    pageSource,
+    playbackPageSource,
     /<input[\s\S]{0,260}?v-model="audioOutputPanelExpanded"[\s\S]{0,160}?type="checkbox"[\s\S]{0,200}?aria-controls="audio-output-device-panel"[\s\S]{0,160}?:aria-expanded="audioOutputPanelExpanded"/
   )
   assert.match(
-    pageSource,
+    playbackPageSource,
     /<div\s+v-if="audioOutputPanelExpanded"\s+id="audio-output-device-panel"\s+class="device-panel-content"[\s\S]{0,240}?<div class="device-grid">/
   )
   assert.match(styles, /\.device-panel-disclosure\s*\{[\s\S]*?cursor:\s*pointer/)
