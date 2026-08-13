@@ -50,3 +50,26 @@ export function isAnalyzableAudioPath(filePath: string | undefined): filePath is
   if (!filePath) return false
   return !/^[a-z][a-z\d+.-]*:\/\//i.test(filePath)
 }
+
+export function mergeTrackTransientData(nextTrack: Track, previousTrack: Track | null): Track {
+  if (!previousTrack || previousTrack.id !== nextTrack.id) return nextTrack
+  const lyrics = nextTrack.lyrics ?? previousTrack.lyrics
+  const translatedLyrics = nextTrack.translatedLyrics ?? previousTrack.translatedLyrics
+  if (lyrics === nextTrack.lyrics && translatedLyrics === nextTrack.translatedLyrics)
+    return nextTrack
+  return {
+    ...nextTrack,
+    lyrics,
+    translatedLyrics
+  }
+}
+
+export function isStreamLikeTrack(track: Track | null | undefined): boolean {
+  if (!track) return false
+  return (
+    track.source === 'radio' ||
+    track.source === 'podcast' ||
+    /^https?:\/\//i.test(track.filePath || '') ||
+    /^https?:\/\//i.test(track.streamUrl || '')
+  )
+}

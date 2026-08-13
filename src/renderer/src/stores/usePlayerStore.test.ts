@@ -110,16 +110,24 @@ test('usePlayerStore does not register reactive side effects per caller', () => 
 
 test('playback info keeps loaded lyrics when reusing the current queue track', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const trackUtilsSource = readFileSync(
+    new URL('../utils/playerTrackUtils.ts', import.meta.url),
+    'utf8'
+  )
 
-  assert.match(source, /function mergeTrackTransientData/)
+  assert.match(trackUtilsSource, /export function mergeTrackTransientData/)
   assert.match(source, /const mergedTrack = mergeTrackTransientData\(track, currentTrack\.value\)/)
   assert.match(source, /patchTrackInQueues\(updatedTrack\)/)
 })
 
 test('empty automatic lyric content remains eligible for a later provider retry', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const lyricsSource = readFileSync(new URL('../utils/lyrics.ts', import.meta.url), 'utf8')
 
-  assert.match(source, /function hasLyricContent\(value: string \| null \| undefined\): boolean/)
+  assert.match(
+    lyricsSource,
+    /export function hasLyricContent\(value: string \| null \| undefined\): boolean/
+  )
   assert.match(source, /const hasOriginal = hasLyricContent\(resolverTrack\.lyrics\)/)
   assert.match(
     source,
@@ -727,12 +735,16 @@ test('next and previous only use native controls when the native queue is delega
 
 test('applyNativePlayingState ignores stale pause events during toggle intent grace', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const playerConstantsSource = readFileSync(
+    new URL('../utils/playerConstants.ts', import.meta.url),
+    'utf8'
+  )
   const applyNativePlayingState = extractInternalFunctionBody(source, 'applyNativePlayingState')
   assert.match(applyNativePlayingState, /playing !== playbackToggleIntent\.playing/)
   assert.match(applyNativePlayingState, /return/)
   // Matching confirmations must apply UI state without immediately clearing the intent.
   assert.doesNotMatch(applyNativePlayingState, /clearPlaybackToggleIntent\(\)\s*\n\s*isPlaying/)
-  assert.match(source, /PLAYBACK_TOGGLE_INTENT_GRACE_MS = 1200/)
+  assert.match(playerConstantsSource, /PLAYBACK_TOGGLE_INTENT_GRACE_MS = 1200/)
 })
 
 test('togglePlayState and seek/volume fan out to cast when castTargetName is active', () => {
@@ -897,6 +909,10 @@ test('native queue switching guards the target track before applying playback-in
 
 test('native LIVE buffering maps sessionUnderrunCount rises onto isStreamBuffering', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const trackUtilsSource = readFileSync(
+    new URL('../utils/playerTrackUtils.ts', import.meta.url),
+    'utf8'
+  )
   const applyNativeStreamBufferingFromInfo = extractInternalFunctionBody(
     source,
     'applyNativeStreamBufferingFromInfo'
@@ -905,7 +921,7 @@ test('native LIVE buffering maps sessionUnderrunCount rises onto isStreamBufferi
     source,
     'resetNativeStreamBufferingState'
   )
-  const isStreamLikeTrack = extractInternalFunctionBody(source, 'isStreamLikeTrack')
+  const isStreamLikeTrack = extractInternalFunctionBody(trackUtilsSource, 'isStreamLikeTrack')
 
   assert.match(source, /let lastNativeSessionUnderrunCount = 0/)
   assert.match(source, /let nativeStreamBufferingClearTimer/)
@@ -1066,7 +1082,7 @@ test('playback failure tries a same-song fallback variant from the queue', () =>
 
   assert.match(
     source,
-    /import \{ findPlaybackFallbackTrack \} from '\.\.\/utils\/playbackFallback\.ts'/
+    /import \{ (?:clampProviderReliability, )?findPlaybackFallbackTrack \} from '\.\.\/utils\/playbackFallback\.ts'/
   )
   assert.match(handlePlaybackFallback, /findPlaybackFallbackTrack\(\{/)
   assert.match(handlePlaybackFallback, /failedTrack/)
@@ -1544,6 +1560,10 @@ test('audio output refresh reruns when hotplug arrives during an in-flight reque
 
 test('playback fallback ranks provider variants by playback url health', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const playbackFallbackSource = readFileSync(
+    new URL('../utils/playbackFallback.ts', import.meta.url),
+    'utf8'
+  )
   const helper = extractInternalFunctionBody(source, 'getProviderSourceReliability')
   const handlePlaybackFallback = extractInternalFunctionBody(source, 'handlePlaybackFallback')
 
@@ -1551,7 +1571,7 @@ test('playback fallback ranks provider variants by playback url health', () => {
   assert.match(helper, /provider\.health\?\.methodStats\?\.getPlaybackUrl\?\.successRate/)
   assert.match(helper, /provider\.health\?\.successRate/)
   assert.match(helper, /reliability\[provider\.id\] = clampProviderReliability/)
-  assert.match(source, /function clampProviderReliability\(/)
+  assert.match(playbackFallbackSource, /export function clampProviderReliability\(/)
   assert.match(handlePlaybackFallback, /sourceReliability: getProviderSourceReliability\(\)/)
 })
 

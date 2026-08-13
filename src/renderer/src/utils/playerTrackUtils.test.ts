@@ -8,6 +8,8 @@ import {
   hasAnalyzedBpm,
   isAnalyzableAudioPath,
   isLikelyLocalFilePath,
+  isStreamLikeTrack,
+  mergeTrackTransientData,
   nonEmptyString
 } from './playerTrackUtils.ts'
 
@@ -129,4 +131,48 @@ test('isAnalyzableAudioPath accepts local paths and rejects remote URLs', () => 
   assert.equal(isAnalyzableAudioPath('twilight-media://audio/token'), false)
   assert.equal(isAnalyzableAudioPath(''), false)
   assert.equal(isAnalyzableAudioPath(undefined), false)
+})
+
+test('mergeTrackTransientData preserves previous lyrics for the same track id', () => {
+  const current = makeTrack({ id: 'same', lyrics: null, translatedLyrics: null })
+  const previous = makeTrack({
+    id: 'same',
+    lyrics: 'Previous lyrics',
+    translatedLyrics: 'Previous translation'
+  })
+  const merged = mergeTrackTransientData(current, previous)
+  assert.equal(merged.lyrics, 'Previous lyrics')
+  assert.equal(merged.translatedLyrics, 'Previous translation')
+
+  const currentWithLyrics = makeTrack({
+    id: 'same',
+    lyrics: 'Current lyrics',
+    translatedLyrics: 'Current translation'
+  })
+  assert.equal(mergeTrackTransientData(currentWithLyrics, previous), currentWithLyrics)
+})
+
+test('mergeTrackTransientData does not inherit lyrics from a different track id', () => {
+  const current = makeTrack({ id: 'current', lyrics: null, translatedLyrics: null })
+  const previous = makeTrack({
+    id: 'previous',
+    lyrics: 'Previous lyrics',
+    translatedLyrics: 'Previous translation'
+  })
+  assert.equal(mergeTrackTransientData(current, previous), current)
+  assert.equal(mergeTrackTransientData(current, null), current)
+})
+
+test('isStreamLikeTrack identifies radio, podcast, and http stream tracks', () => {
+  assert.equal(isStreamLikeTrack(makeTrack({ source: 'radio' })), true)
+  assert.equal(isStreamLikeTrack(makeTrack({ source: 'podcast' })), true)
+  assert.equal(isStreamLikeTrack(makeTrack({ filePath: 'https://example.test/live.flac' })), true)
+  assert.equal(isStreamLikeTrack(makeTrack({ streamUrl: 'http://example.test/live.flac' })), true)
+  assert.equal(
+    isStreamLikeTrack(makeTrack({ source: 'ncm', streamUrl: 'https://example.test' })),
+    true
+  )
+  assert.equal(isStreamLikeTrack(makeTrack()), false)
+  assert.equal(isStreamLikeTrack(null), false)
+  assert.equal(isStreamLikeTrack(undefined), false)
 })

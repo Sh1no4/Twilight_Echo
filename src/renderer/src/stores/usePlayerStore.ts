@@ -31,8 +31,25 @@ import {
 } from '../../../shared/dspGraph.ts'
 import { extractDominantColor } from '../utils/colorExtractor'
 import { resolveCover } from '../utils/coverLoader'
+import { hasLyricContent } from '../utils/lyrics.ts'
 import { normalizeNativePlaybackInfo } from '../utils/playerPlaybackInfo.ts'
+import { clampSoftwareVolume, cloneAudioProcessingSettings } from '../utils/playerAudioSettings.ts'
+import {
+  HEART_MODE_REFILL_COUNT,
+  HEART_MODE_REFILL_THRESHOLD,
+  LYRICS_RETRY_DELAYS_MS,
+  NATIVE_PAUSE_CONFIRMATION_MS,
+  NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS,
+  NATIVE_PLAYBACK_INFO_POST_CONFIRMATION_GRACE_MS,
+  NATIVE_PLAYBACK_INFO_REFRESH_DELAY_MS,
+  PLAYBACK_TOGGLE_INTENT_GRACE_MS,
+  RENDERER_PLAYBACK_WATCHDOG_MS,
+  START_FILE_PLAYBACK_INFO_REFRESH_ATTEMPTS,
+  START_FILE_PLAYBACK_INFO_REFRESH_DELAY_MS
+} from '../utils/playerConstants.ts'
+import { shuffleArray } from '../utils/playerQueueUtils.ts'
 import { cloneTrackForPlaybackSession } from '../utils/playerSessionTrack.ts'
+import { formatTime, getNowMs } from '../utils/playerTime.ts'
 import {
   cachedSourceMatchesTrack,
   getTrackAudioSource,
@@ -40,6 +57,8 @@ import {
   hasAnalyzedBpm,
   isAnalyzableAudioPath,
   isLikelyLocalFilePath,
+  isStreamLikeTrack,
+  mergeTrackTransientData,
   nonEmptyString
 } from '../utils/playerTrackUtils.ts'
 import {
@@ -55,7 +74,7 @@ import {
   toPlaybackQueueSnapshot,
   toPlaybackQueueSnapshots
 } from '../utils/playbackQueueVirtualization.ts'
-import { findPlaybackFallbackTrack } from '../utils/playbackFallback.ts'
+import { clampProviderReliability, findPlaybackFallbackTrack } from '../utils/playbackFallback.ts'
 import { findProviderRematchCandidate } from '../utils/libraryRepair.ts'
 import { resolveLyricsWithSources } from '../utils/lyricSourceResolution.ts'
 import type { LyricResolverSource } from '../utils/lyricSourceResolution.ts'
@@ -148,7 +167,6 @@ const activeLyricsLoads = new Map<string, ActiveLyricsLoad>()
 const lyricsLoadGenerationByTrackId = new Map<string, number>()
 const lyricsRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const lyricsRetryAttemptsByTrackId = new Map<string, number>()
-const LYRICS_RETRY_DELAYS_MS = [750, 2_000, 5_000] as const
 
 interface AudioOutputState {
   output: AudioOutputId
@@ -238,8 +256,6 @@ const heartModeContext = ref<{ likedPlaylistId: number | null }>({ likedPlaylist
 let heartModeBaseQueue: Track[] = []
 let heartModeFetchRequest: Promise<number> | null = null
 let heartModeFetchGeneration = 0
-const HEART_MODE_REFILL_THRESHOLD = 3
-const HEART_MODE_REFILL_COUNT = 20
 // 心动模式只能在本应用内“我喜欢的音乐”流媒体歌单上下文中启用：必须是在点击
 // 收藏歌单后建立的队列（heartModeContext），且当前曲目必须是网易云流媒体。
 const heartModeAvailable = computed(
@@ -363,15 +379,6 @@ const nativeQueueRevisionFence = new NativeQueueRevisionFence()
 let activeLoadToken = 0
 let rendererFallbackInProgress = false
 let rendererPlaybackWatchdogTimer: number | null = null
-const RENDERER_PLAYBACK_WATCHDOG_MS = 220
-// Keep long enough to outlive a full audio-service Pause + GetPlaybackInfo
-// round-trip and any already-queued tick that still reports the pre-toggle state.
-const PLAYBACK_TOGGLE_INTENT_GRACE_MS = 1200
-const NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS = 2500
-const NATIVE_PLAYBACK_INFO_POST_CONFIRMATION_GRACE_MS = 500
-const NATIVE_PLAYBACK_INFO_REFRESH_DELAY_MS = 80
-const START_FILE_PLAYBACK_INFO_REFRESH_ATTEMPTS = 4
-const START_FILE_PLAYBACK_INFO_REFRESH_DELAY_MS = 120
 let playbackToggleIntent: { playing: boolean; expiresAt: number } | null = null
 let nativePlaybackInfoIntent: NativePlaybackInfoIntent | null = null
 let startFilePlaybackInfoRefreshGeneration = 0
@@ -907,13 +914,6 @@ async function refreshAudioOutputState(): Promise<void> {
   }
 }
 
-function cloneAudioProcessingSettings(settings: AudioProcessingSettings): AudioProcessingSettings {
-  return {
-    ...settings,
-    eqBands: settings.eqBands.map((band) => ({ ...band }))
-  }
-}
-
 function mergeAudioProcessingPatch(
   patch: Partial<AudioProcessingSettings>
 ): AudioProcessingSettings {
@@ -935,19 +935,6 @@ async function persistAudioProcessingFallback(
   } catch (err) {
     setAudioEngineError(err instanceof Error ? err.message : String(err))
     console.error('[audio-engine] Failed to persist audio processing fallback:', err)
-  }
-}
-
-function mergeTrackTransientData(nextTrack: Track, previousTrack: Track | null): Track {
-  if (!previousTrack || previousTrack.id !== nextTrack.id) return nextTrack
-  const lyrics = nextTrack.lyrics ?? previousTrack.lyrics
-  const translatedLyrics = nextTrack.translatedLyrics ?? previousTrack.translatedLyrics
-  if (lyrics === nextTrack.lyrics && translatedLyrics === nextTrack.translatedLyrics)
-    return nextTrack
-  return {
-    ...nextTrack,
-    lyrics,
-    translatedLyrics
   }
 }
 
@@ -1119,16 +1106,6 @@ function clearNativeStreamBufferingTimer(): void {
     clearTimeout(nativeStreamBufferingClearTimer)
     nativeStreamBufferingClearTimer = null
   }
-}
-
-function isStreamLikeTrack(track: Track | null | undefined): boolean {
-  if (!track) return false
-  return (
-    track.source === 'radio' ||
-    track.source === 'podcast' ||
-    /^https?:\/\//i.test(track.filePath || '') ||
-    /^https?:\/\//i.test(track.streamUrl || '')
-  )
 }
 
 /** Reset native underrun-derived LIVE buffering UX (load/stop/error). */
@@ -1509,11 +1486,6 @@ async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<vo
   }
 }
 
-function clampSoftwareVolume(value: number): number {
-  if (!Number.isFinite(value)) return DEFAULT_SOFTWARE_VOLUME
-  return Math.min(1, Math.max(0, Math.round(value * 1000) / 1000))
-}
-
 async function persistSoftwareVolume(val: number): Promise<void> {
   const next = clampSoftwareVolume(val)
   const saved = clampSoftwareVolume(
@@ -1702,7 +1674,6 @@ const cleanupFns: (() => void)[] = []
 let listenersSetup = false
 let crossfadeTimer: number | null = null
 let crossfadeTrackId = ''
-const NATIVE_PAUSE_CONFIRMATION_MS = 500
 let pendingNativePause: { position: number } | null = null
 let nativePauseConfirmationTimer: number | null = null
 let playbackClockResyncInFlight = false
@@ -1717,10 +1688,6 @@ let pendingLoadStartTime = 0
 let nativeQueueSyncRequest: Promise<void> | null = null
 let rendererPlayModeBoundaryPending = false
 let dominantColorRequestId = 0
-
-function getNowMs(): number {
-  return performance.now()
-}
 
 const playbackSessionClock = createPlaybackSessionClock({ now: getNowMs })
 const playbackClockSnapshot = ref<PlaybackClockSnapshot>(playbackSessionClock.snapshot())
@@ -2574,11 +2541,6 @@ function getProviderSourceReliability(): ProviderSourceReliability {
   return reliability
 }
 
-function clampProviderReliability(value: number | undefined): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return 1
-  return Math.max(0, Math.min(1, value))
-}
-
 async function handleProviderRematchFallback(
   failedTrack: Track,
   loadToken: number
@@ -2642,10 +2604,6 @@ function retryCurrentTrackLyricsIfNeeded(forceReload = false): void {
   if (failed) {
     void ensureCurrentTrackLyricsLoaded(track, true, forceReload)
   }
-}
-
-function hasLyricContent(value: string | null | undefined): boolean {
-  return typeof value === 'string' && value.trim().length > 0
 }
 
 async function refreshPlaybackInfoAfterStartFile(): Promise<void> {
@@ -4068,15 +4026,6 @@ function setupPlayerIntegrationSideEffects(): void {
   })
 }
 
-function shuffleArray<T>(arr: T[]): T[] {
-  const a = [...arr]
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[a[i], a[j]] = [a[j], a[i]]
-  }
-  return a
-}
-
 function getPersonalizedStreamEntryId(track: Track | null): string | null {
   if (!track) return null
   if (track.queueEntryId) return track.queueEntryId
@@ -5118,13 +5067,6 @@ export function usePlayerStore(): {
       console.error('[音频引擎] 卸载卷积脉冲响应失败:', err)
       await persistAudioProcessingFallback(nextSettings, err)
     }
-  }
-
-  function formatTime(seconds: number): string {
-    if (!isFinite(seconds) || seconds < 0) return '0:00'
-    const mins = Math.floor(seconds / 60)
-    const secs = Math.floor(seconds % 60)
-    return `${mins}:${secs.toString().padStart(2, '0')}`
   }
 
   async function refreshCurrentLyrics(): Promise<void> {
