@@ -1249,6 +1249,7 @@ onBeforeUnmount(() => {
   filter: blur(var(--lyric-line-blur, 0px));
   backface-visibility: hidden;
   contain: layout style;
+  contain-intrinsic-size: auto 4em;
   transition:
     color var(--te-motion-hover) ease,
     background var(--te-motion-hover) ease;

@@ -185,7 +185,10 @@ export const audioEngineApi = {
     setAudioProcessing: (
       settings: Partial<AudioProcessingSettings>
     ): Promise<AudioProcessingSettings> =>
-      ipcRenderer.invoke('audioEngine:setAudioProcessing', settings),
+      ipcRenderer.invoke(
+        'audioEngine:setAudioProcessing',
+        JSON.parse(JSON.stringify(settings))
+      ),
     getAudioProcessing: (): Promise<AudioProcessingSettings> =>
       ipcRenderer.invoke('audioEngine:getAudioProcessing'),
     getDspSceneState: (): Promise<DspSceneState> =>

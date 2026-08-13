@@ -239,6 +239,7 @@ test('now playing isolates high-frequency playhead updates from the full lyrics 
   assert.match(words, /\.animate\(/)
   assert.doesNotMatch(words, /setWordProgress|--lyric-word-progress|dataset\.progressing/)
   assert.match(words, /animation\.currentTime = target/)
+  assert.match(source, /contain-intrinsic-size: auto 4em/)
   assert.match(words, /buildKaraokeMaskPlan\(/)
   assert.match(words, /buildEmphasisAnimation\(/)
   assert.match(words, /data-word-text/)

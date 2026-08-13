@@ -77,7 +77,9 @@ export function isSafeLocalPath(path: unknown): path is string {
   if (!normalized) return false
   if (normalized.length > MAX_LOCAL_PATH_LENGTH) return false
   const hasUrlScheme = /^[a-z][a-z0-9+.-]*:/i.test(normalized)
-  const isWindowsDrivePath = /^[a-zA-Z]:[/]/.test(normalized)
+  // A drive letter reads as a URL scheme, so both native separators must be accepted here:
+  // Electron dialogs and realpath() return backslashes on Windows.
+  const isWindowsDrivePath = /^[a-zA-Z]:[\\/]/.test(normalized)
   if (hasUrlScheme && !isWindowsDrivePath) return false
   return true
 }

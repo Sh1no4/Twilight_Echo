@@ -54,6 +54,18 @@ test('cloneAudioProcessingSettings deep-copies eqBands', () => {
   assert.equal(settings.eqBands[0]!.gain, 0)
 })
 
+test('cloneAudioProcessingSettings deep-copies dsdRoute', () => {
+  const settings = makeSettings()
+  settings.dsdRoute.backend = 'asio'
+  settings.dsdRoute.device = 'asio:proxy'
+  const cloned = cloneAudioProcessingSettings(settings)
+  assert.notEqual(cloned.dsdRoute, settings.dsdRoute)
+  cloned.dsdRoute.backend = 'alsa'
+  cloned.dsdRoute.device = 'hw:0'
+  assert.equal(settings.dsdRoute.backend, 'asio')
+  assert.equal(settings.dsdRoute.device, 'asio:proxy')
+})
+
 test('clampSoftwareVolume clamps, rounds, and falls back for invalid values', () => {
   assert.equal(clampSoftwareVolume(0.5), 0.5)
   assert.equal(clampSoftwareVolume(-1), 0)

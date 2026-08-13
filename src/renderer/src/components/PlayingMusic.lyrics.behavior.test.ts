@@ -795,26 +795,30 @@ window.runPlayingMusicLyricsRuntime = async () => {
     'active line was not anchored into the upper region of the stage; top=' + activeTop
   )
 
-  // Rows outside the stage deliberately stop receiving position writes, and are
-  // flagged instead. Compare only the rows actually on screen.
-  const positioned = rows.filter((row) => row.style.getPropertyValue('--lyric-line-top') !== '')
+  // Culled rows stop painting, but they still keep a layout top so scrolling
+  // onto them cannot discover a pile at y=0.
+  const visible = rows.filter((row) => row.style.getPropertyValue('--lyric-line-in-sight') !== '0')
   expect(
-    positioned.length >= 2 && positioned.length < rows.length,
-    'expected some rows positioned and some culled; positioned=' +
-      positioned.length +
+    visible.length >= 2 && visible.length < rows.length,
+    'expected some rows visible and some culled; visible=' +
+      visible.length +
       ' of ' +
       rows.length
   )
-  const tops = positioned.map(rowTop)
+  expect(
+    rows.every((row) => row.style.getPropertyValue('--lyric-line-top') !== ''),
+    'every row should keep a layout top, including culled ones'
+  )
+  const tops = rows.map(rowTop)
   expect(
     tops.every((top, index) => index === 0 || top > tops[index - 1]),
-    'positioned rows were not stacked in reading order; tops=' + tops.join(',')
+    'rows were not stacked in reading order; tops=' + tops.join(',')
   )
   const culled = rows.find((row) => row.style.getPropertyValue('--lyric-line-in-sight') === '0')
   expect(culled, 'no row was flagged out of sight despite the stage being shorter than the timeline')
 
   // Depth now comes from per-line scale and blur, not from a scroll position.
-  const receding = positioned.find((row) => row !== activeRow)
+  const receding = visible.find((row) => row !== activeRow)
   expect(
     rowScale(activeRow) > rowScale(receding),
     'the active line did not scale above a receding one; active=' +

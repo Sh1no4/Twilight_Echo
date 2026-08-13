@@ -25,15 +25,50 @@ function readDataIpcSources(): string {
 import test from 'node:test'
 
 const {
+  isSafeLocalPath,
   normalizeFiniteNumber,
   normalizeInteger,
   normalizeIpcArray,
   normalizeIpcString,
+  normalizeLocalPath,
   normalizeOptionalIpcString,
   stringifyJsonForIpcStorage
 } = (await import(
   new URL('./ipcValidation.ts', import.meta.url).href
 )) as typeof import('./ipcValidation')
+
+test('accepts native Windows drive paths while still rejecting URL schemes', () => {
+  // Electron dialogs and realpath() hand back backslash separators on Windows. Rejecting them
+  // broke folder import, library scanning, playback and shell reveal on every drive-letter path.
+  for (const path of [
+    String.raw`D:\Music`,
+    String.raw`D:\Linux Workspace\Music`,
+    String.raw`C:\Users\Administrator\Music\track.flac`,
+    'D:/Music',
+    String.raw`\\NAS\share\Music`,
+    '/home/user/Music'
+  ]) {
+    assert.equal(isSafeLocalPath(path), true, `expected ${path} to be accepted`)
+    assert.equal(normalizeLocalPath(path, 'music folder path'), path)
+  }
+
+  for (const path of [
+    'http://example.com/track.flac',
+    'https://example.com/track.flac',
+    'file:///D:/Music',
+    'javascript:alert(1)',
+    'data:audio/flac;base64,AAAA',
+    'twilight-audio:///D:/Music'
+  ]) {
+    assert.equal(isSafeLocalPath(path), false, `expected ${path} to be rejected`)
+    assert.throws(() => normalizeLocalPath(path, 'music folder path'), /not a safe local path/)
+  }
+})
+
+test('scan and playback IPC keep using the shared local path validator', () => {
+  const validatorSource = readFileSync(new URL('./ipcValidation.ts', import.meta.url), 'utf8')
+  assert.match(validatorSource, /\/\^\[a-zA-Z\]:\[\\\\\/\]\//)
+})
 
 test('normalizes IPC strings and rejects control characters or oversized input', () => {
   assert.equal(normalizeIpcString('  ok  ', 'field'), 'ok')

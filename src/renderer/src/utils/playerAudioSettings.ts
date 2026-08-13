@@ -6,6 +6,7 @@ export function cloneAudioProcessingSettings(
 ): AudioProcessingSettings {
   return {
     ...settings,
+    dsdRoute: { ...settings.dsdRoute },
     eqBands: settings.eqBands.map((band) => ({ ...band }))
   }
 }

@@ -459,6 +459,63 @@ test('lines outside the viewport are marked so they can stop painting', async ()
 
   assert.equal(rows[0].properties.get('--lyric-line-in-sight'), undefined, 'visible by default')
   assert.equal(rows[29].properties.get('--lyric-line-in-sight'), '0', 'far lines are culled')
+  assert.ok(
+    rows[29].properties.get('--lyric-line-top'),
+    'culled lines still keep a layout top so a later browse cannot stack them at y=0'
+  )
+})
+
+test('browsing does not wait on the cascade, so lines below move with the wheel', async () => {
+  const { controller, activeIndex } = harness(10)
+  activeIndex.value = 0
+  await controller.follow(0, { mode: 'snap' })
+  const restingSeven = controller.getRowTargetTop(7) as number
+
+  controller.browseBy(80)
+  assert.ok(
+    Math.abs((controller.getRowTargetTop(7) as number) - (restingSeven - 80)) < 1e-6,
+    'a line further down must retarget immediately rather than waiting its cascade turn'
+  )
+})
+
+test('culled rows keep their last measured height so browsing cannot collapse them', async () => {
+  const { controller, rows, activeIndex } = harness(30)
+  activeIndex.value = 0
+  await controller.follow(0, { mode: 'snap' })
+
+  for (let index = 8; index < 30; index += 1) {
+    rows[index].offsetHeight = 24
+  }
+
+  controller.browseBy(400)
+  const tops = [18, 19, 20, 21].map((index) => controller.getRowTargetTop(index) as number)
+  for (let index = 1; index < tops.length; index += 1) {
+    assert.ok(
+      Math.abs(tops[index] - tops[index - 1] - ROW_HEIGHT) < 1,
+      `browsed lines must stay one row apart; gap=${tops[index] - tops[index - 1]}`
+    )
+  }
+})
+
+test('browsing expands the focus window so distant lines do not share a row', async () => {
+  const { controller, activeIndex } = harness(8, {
+    getFocusWindow: () => new Set([2, 3, 4]),
+    isPlaying: () => true
+  })
+  activeIndex.value = 3
+  await controller.follow(3, { mode: 'snap' })
+  assert.equal(
+    controller.getRowTargetTop(5),
+    controller.getRowTargetTop(7),
+    'focus mode collapses outsiders onto the same y'
+  )
+
+  controller.browseBy(40)
+  assert.ok(
+    (controller.getRowTargetTop(7) as number) - (controller.getRowTargetTop(5) as number) >
+      ROW_HEIGHT,
+    'browsing must give hidden lines their own rows'
+  )
 })
 
 test('the interlude dots position is published for the view', async () => {
