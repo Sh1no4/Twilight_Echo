@@ -42,7 +42,11 @@ const settingsAppearance = readFileSync(
   new URL('./settings-page/AppearanceSettingsSection.vue', import.meta.url),
   'utf8'
 )
-const settingsSurfaces = [settingsPage, settingsAppearance].join('\n')
+const settingsThemeControls = readFileSync(
+  new URL('./settings-page/ThemeControlsSettings.vue', import.meta.url),
+  'utf8'
+)
+const settingsSurfaces = [settingsPage, settingsAppearance, settingsThemeControls].join('\n')
 const studio = readFileSync(new URL('./ThemeStudioPage.vue', import.meta.url), 'utf8')
 const studioEditor = readFileSync(
   new URL('./theme-studio/useThemeStudioEditor.ts', import.meta.url),

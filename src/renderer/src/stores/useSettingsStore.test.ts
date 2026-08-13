@@ -131,7 +131,12 @@ function readSettingsPageSources(): string {
     'settings-page/PlaybackSettingsSection.vue',
     'settings-page/DspSettingsSection.vue',
     'settings-page/PerformanceSettingsSection.vue',
-    'settings-page/AppearanceSettingsSection.vue'
+    'settings-page/AppearanceSettingsSection.vue',
+    'settings-page/ThemeControlsSettings.vue',
+    'settings-page/BackgroundEditorSettings.vue',
+    'settings-page/PlayerBarSettings.vue',
+    'settings-page/LiquidGlassSettings.vue',
+    'settings-page/CardAppearanceSettings.vue'
   ]
     .map((relative) => readFileSync(new URL(relative, root), 'utf8'))
     .join('\n')

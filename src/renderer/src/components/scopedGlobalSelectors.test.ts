@@ -20,8 +20,11 @@ const scopedStyleFiles = [
   './TitleBar.vue',
   './streaming-page/ProviderDownloadsPanel.vue',
   './streaming-page/ProviderSidebar.vue',
+  './streaming-page/StreamingContentHeader.css',
   './streaming-page/StreamingContextMenu.vue',
   './streaming-page/StreamingPage.css',
+  './streaming-page/StreamingPlaceholder.css',
+  './streaming-page/StreamingSearchControls.css',
   './streaming-page/NcmPlaylistDialogs.vue'
 ]
 

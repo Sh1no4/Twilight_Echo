@@ -28,8 +28,10 @@ import StreamingDiscovery from './StreamingDiscovery.vue'
 import StreamingLibrary from './StreamingLibrary.vue'
 import NcmCloudPanel from './NcmCloudPanel.vue'
 import StreamingSearch from './StreamingSearch.vue'
-import AnimatedInput from './AnimatedInput.vue'
 import StreamingDetailStage from './streaming-page/StreamingDetailStage.vue'
+import StreamingContentHeader from './streaming-page/StreamingContentHeader.vue'
+import StreamingSearchControls from './streaming-page/StreamingSearchControls.vue'
+import StreamingPlaceholder from './streaming-page/StreamingPlaceholder.vue'
 import StreamingSocialStage from './streaming-page/StreamingSocialStage.vue'
 import StreamingLoadingStage from './streaming-page/StreamingLoadingStage.vue'
 import ProviderSidebar from './streaming-page/ProviderSidebar.vue'
@@ -69,11 +71,7 @@ import {
   resolveStreamingTabIndex as getStreamingTabIndex,
   timeGreeting as resolveTimeGreeting
 } from './streaming-page/streamingPageModel'
-import {
-  useStreamingSearch,
-  type SearchSource,
-  type SearchSourceOption
-} from './streaming-page/useStreamingSearch'
+import { useStreamingSearch, type SearchSourceOption } from './streaming-page/useStreamingSearch'
 import { useStreamingDiscovery } from './streaming-page/useStreamingDiscovery'
 import { useTrackMultiSelect } from './song-list/useTrackMultiSelect'
 import {
@@ -219,7 +217,6 @@ const likedTracksLoadingMore = ref(false)
 const likedTracksLoadMoreError = ref('')
 const recsLoading = ref(false)
 const recsError = ref('')
-const avatarLoadFailed = ref(false)
 const providerStore = useProviderStore()
 const settingsStore = useSettingsStore()
 const musicStore = useMusicStore()
@@ -670,7 +667,6 @@ const {
   searchOffset,
   searchLoading,
   searchError,
-  searchInputFocused,
   isSearching,
   availableSearchTypes,
   clearSearch,
@@ -697,26 +693,6 @@ const discovery = useStreamingDiscovery({
   fetchDiscoveryPlaylists,
   fetchHighQualityPlaylists
 })
-
-const sourceMenuOpen = ref(false)
-const activeSourceOption = computed(
-  () =>
-    searchSources.value.find((s) => s.id === searchSource.value) ?? searchSources.value[0] ?? null
-)
-function selectSearchSource(sourceId: SearchSource): void {
-  const source = searchSources.value.find((s) => s.id === sourceId)
-  if (!source || !source.available) return
-  searchSource.value = sourceId
-  sourceMenuOpen.value = false
-}
-
-// Close only when focus leaves the whole dropdown — a blur timeout would race
-// against keyboard activation of the (focusable) options.
-function onSourceMenuFocusOut(event: FocusEvent): void {
-  const next = event.relatedTarget as Node | null
-  const container = event.currentTarget as HTMLElement | null
-  if (!next || !container?.contains(next)) sourceMenuOpen.value = false
-}
 
 // Like button state
 const likingTracks = ref<Set<number>>(new Set())
@@ -2752,206 +2728,36 @@ onMounted(async () => {
     />
 
     <div ref="streamingContentRef" class="streaming-content" @scroll="onStreamingContentScroll">
-      <header
-        class="streaming-content-header"
-        :class="{
-          'is-detail': !!currentDetail,
-          'is-searching': isSearching && !currentDetail
-        }"
-      >
-        <div class="streaming-header-left">
-          <button
-            v-if="currentDetail || isSearching"
-            type="button"
-            class="btn-back"
-            data-te-back-button="icon"
-            title="返回"
-            @click="currentDetail ? goBack() : clearSearch()"
-          >
-            <i class="pi pi-arrow-left"></i>
-          </button>
-          <div class="streaming-header-copy">
-            <div
-              v-if="currentDetail || isSearching"
-              class="streaming-header-kicker"
-              aria-hidden="true"
-            >
-              <span class="streaming-header-kicker-mark"></span>
-              <span class="streaming-header-kicker-text">
-                {{ currentDetail ? '详情' : '搜索' }}
-              </span>
-            </div>
-            <h2 class="streaming-content-title">{{ headerTitle }}</h2>
-            <p
-              v-if="activeTab === 'home' && !currentDetail && !isSearching"
-              class="streaming-content-subtitle"
-            >
-              {{ headerSubtitle }}
-            </p>
-            <p
-              v-else-if="isExternalActive && !currentDetail && !isSearching"
-              class="streaming-content-subtitle"
-            >
-              {{ headerSubtitle }}
-            </p>
-          </div>
-        </div>
-        <div class="streaming-header-right">
-          <div
-            v-if="showUnifiedSearch"
-            class="streaming-search-box"
-            :class="{ focused: searchInputFocused }"
-          >
-            <i class="pi pi-search streaming-search-icon"></i>
-            <AnimatedInput
-              v-model="searchQuery"
-              type="text"
-              class="streaming-search-input"
-              placeholder="搜索音乐、歌手、专辑"
-              @focus="searchInputFocused = true"
-              @blur="searchInputFocused = false"
-            />
-            <i v-if="searchLoading" class="pi pi-spin pi-spinner streaming-search-spinner"></i>
-            <button
-              v-else-if="searchQuery"
-              type="button"
-              class="streaming-search-clear"
-              @click="clearSearch"
-            >
-              <i class="pi pi-times"></i>
-            </button>
-          </div>
-          <button
-            v-if="activeLoggedIn"
-            type="button"
-            class="streaming-avatar-btn"
-            title="个人资料"
-            @click="emit('login', activeProvider)"
-          >
-            <img
-              v-if="activeProfile?.avatarUrl && !avatarLoadFailed"
-              :src="activeProfile.avatarUrl"
-              alt=""
-              @error="avatarLoadFailed = true"
-            />
-            <i v-else class="pi pi-user"></i>
-          </button>
-        </div>
-      </header>
+      <StreamingContentHeader
+        :is-detail="!!currentDetail"
+        :is-searching="isSearching && !currentDetail"
+        :show-subtitle="
+          (activeTab === 'home' && !currentDetail && !isSearching) ||
+          (isExternalActive && !currentDetail && !isSearching)
+        "
+        :title="headerTitle"
+        :subtitle="headerSubtitle"
+        :show-unified-search="showUnifiedSearch"
+        :search-query="searchQuery"
+        :search-loading="searchLoading"
+        :logged-in="activeLoggedIn"
+        :profile="activeProfile"
+        @update:search-query="searchQuery = $event"
+        @back="currentDetail ? goBack() : clearSearch()"
+        @clear-search="clearSearch"
+        @login="emit('login', activeProvider)"
+      />
 
       <!-- Search Type Tabs + Source Selector -->
-      <div v-if="showUnifiedSearch && isSearching && !currentDetail" class="streaming-search-tabs">
-        <div class="search-type-group">
-          <div
-            class="search-tab-pill"
-            data-te-interactive
-            role="button"
-            :tabindex="availableSearchTypes.includes('songs') ? 0 : -1"
-            :aria-pressed="searchType === 'songs'"
-            :aria-disabled="!availableSearchTypes.includes('songs')"
-            :class="{
-              active: searchType === 'songs',
-              disabled: !availableSearchTypes.includes('songs')
-            }"
-            @click="availableSearchTypes.includes('songs') && (searchType = 'songs')"
-            @keydown.enter.prevent="
-              availableSearchTypes.includes('songs') && (searchType = 'songs')
-            "
-            @keydown.space.prevent="
-              availableSearchTypes.includes('songs') && (searchType = 'songs')
-            "
-          >
-            单曲
-          </div>
-          <div
-            class="search-tab-pill"
-            data-te-interactive
-            role="button"
-            :tabindex="availableSearchTypes.includes('playlists') ? 0 : -1"
-            :aria-pressed="searchType === 'playlists'"
-            :aria-disabled="!availableSearchTypes.includes('playlists')"
-            :class="{
-              active: searchType === 'playlists',
-              disabled: !availableSearchTypes.includes('playlists')
-            }"
-            @click="availableSearchTypes.includes('playlists') && (searchType = 'playlists')"
-            @keydown.enter.prevent="
-              availableSearchTypes.includes('playlists') && (searchType = 'playlists')
-            "
-            @keydown.space.prevent="
-              availableSearchTypes.includes('playlists') && (searchType = 'playlists')
-            "
-          >
-            歌单
-          </div>
-          <div
-            class="search-tab-pill"
-            data-te-interactive
-            role="button"
-            :tabindex="availableSearchTypes.includes('artists') ? 0 : -1"
-            :aria-pressed="searchType === 'artists'"
-            :aria-disabled="!availableSearchTypes.includes('artists')"
-            :class="{
-              active: searchType === 'artists',
-              disabled: !availableSearchTypes.includes('artists')
-            }"
-            @click="availableSearchTypes.includes('artists') && (searchType = 'artists')"
-            @keydown.enter.prevent="
-              availableSearchTypes.includes('artists') && (searchType = 'artists')
-            "
-            @keydown.space.prevent="
-              availableSearchTypes.includes('artists') && (searchType = 'artists')
-            "
-          >
-            歌手
-          </div>
-        </div>
-        <div
-          class="search-source-dropdown"
-          :class="{ open: sourceMenuOpen }"
-          @focusout="onSourceMenuFocusOut"
-          @keydown.esc.prevent="sourceMenuOpen = false"
-        >
-          <button
-            class="search-source-trigger"
-            aria-haspopup="listbox"
-            :aria-expanded="sourceMenuOpen"
-            @click="sourceMenuOpen = !sourceMenuOpen"
-          >
-            <i
-              v-if="activeSourceOption?.icon"
-              class="pi"
-              :class="activeSourceOption.icon"
-              style="font-size: 13px"
-            ></i>
-            <span>{{ activeSourceOption?.label ?? '音源' }}</span>
-            <i class="pi pi-chevron-down" style="font-size: 10px"></i>
-          </button>
-          <div v-if="sourceMenuOpen" class="search-source-menu" role="listbox" aria-label="音源">
-            <div
-              v-for="source in searchSources"
-              :key="source.id"
-              class="search-source-option"
-              role="option"
-              :tabindex="source.available ? 0 : -1"
-              :aria-selected="searchSource === source.id"
-              :aria-disabled="!source.available"
-              :class="{ active: searchSource === source.id, disabled: !source.available }"
-              @mousedown.prevent="selectSearchSource(source.id)"
-              @keydown.enter.prevent="selectSearchSource(source.id)"
-              @keydown.space.prevent="selectSearchSource(source.id)"
-            >
-              <i v-if="source.icon" class="pi" :class="source.icon" style="font-size: 13px"></i>
-              <span>{{ source.label }}</span>
-              <i
-                v-if="searchSource === source.id"
-                class="pi pi-check"
-                style="font-size: 12px; margin-left: auto"
-              ></i>
-            </div>
-          </div>
-        </div>
-      </div>
+      <StreamingSearchControls
+        v-if="showUnifiedSearch && isSearching && !currentDetail"
+        :search-type="searchType"
+        :available-search-types="availableSearchTypes"
+        :search-sources="searchSources"
+        :search-source="searchSource"
+        @update:search-type="searchType = $event"
+        @select-source="searchSource = $event"
+      />
 
       <Transition
         :name="streamingTransitionName"
@@ -2997,11 +2803,12 @@ onMounted(async () => {
           />
         </div>
         <div v-else :key="streamingViewKey" class="streaming-content-body stream-view-panel">
-          <div v-if="!hasOnlineNavigationEntries && !currentDetail" class="streaming-placeholder">
-            <i class="pi pi-plug" style="font-size: 48px; color: #ccc"></i>
-            <p class="placeholder-title">未启用可用的在线音源</p>
-            <p class="placeholder-hint">请在设置的插件页启用网易云音乐或其它音源插件。</p>
-          </div>
+          <StreamingPlaceholder
+            v-if="!hasOnlineNavigationEntries && !currentDetail"
+            title="未启用可用的在线音源"
+            hint="请在设置的插件页启用网易云音乐或其它音源插件。"
+            icon="pi pi-plug"
+          />
 
           <StreamingHome
             v-else-if="activeTab === 'home' && !currentDetail && activeProviderAvailable"
@@ -3049,60 +2856,48 @@ onMounted(async () => {
             @retry="discovery.retry"
           />
 
-          <div
+          <StreamingPlaceholder
             v-else-if="(!activeProviderAvailable || activeProviderUnavailable) && !currentDetail"
-            class="streaming-placeholder"
-          >
-            <i class="pi pi-ban" style="font-size: 48px; color: #ccc"></i>
-            <p class="placeholder-title">
-              {{ isExternalActive ? `${activeProviderLabel} 插件已停用` : '网易云音乐插件已停用' }}
-            </p>
-            <p class="placeholder-hint">
-              {{
-                activeProviderError ||
-                (isExternalActive
-                  ? `请在设置的插件页重新启用 ${activeProviderLabel}。`
-                  : '请在设置的插件页重新启用 NetEase Cloud Music。')
-              }}
-            </p>
-          </div>
+            :title="isExternalActive ? `${activeProviderLabel} 插件已停用` : '网易云音乐插件已停用'"
+            :hint="
+              activeProviderError ||
+              (isExternalActive
+                ? `请在设置的插件页重新启用 ${activeProviderLabel}。`
+                : '请在设置的插件页重新启用 NetEase Cloud Music。')
+            "
+            icon="pi pi-ban"
+          />
 
-          <div v-else-if="!activeLoggedIn && !currentDetail" class="streaming-placeholder">
-            <i class="pi pi-user" style="font-size: 48px; color: #ccc"></i>
-            <p class="placeholder-title">
-              {{ isExternalActive ? `请先登录 ${activeProviderLabel}` : '请先登录网易云音乐' }}
-            </p>
-            <p class="placeholder-hint">
-              {{
-                isExternalActive
-                  ? '登录后即可加载全部音乐库'
-                  : activeTab === 'cloud'
-                    ? '登录后即可管理音乐云盘中的歌曲和传输任务'
-                    : '登录后即可加载我收藏的歌曲和在线歌单'
-              }}
-            </p>
-            <button type="button" class="stream-action-btn" @click="emit('login', activeProvider)">
-              <i class="pi pi-user"></i>
-              <span>账号登录</span>
-            </button>
-          </div>
+          <StreamingPlaceholder
+            v-else-if="!activeLoggedIn && !currentDetail"
+            :title="isExternalActive ? `请先登录 ${activeProviderLabel}` : '请先登录网易云音乐'"
+            :hint="
+              isExternalActive
+                ? '登录后即可加载全部音乐库'
+                : activeTab === 'cloud'
+                  ? '登录后即可管理音乐云盘中的歌曲和传输任务'
+                  : '登录后即可加载我收藏的歌曲和在线歌单'
+            "
+            icon="pi pi-user"
+            action-label="账号登录"
+            action-icon="pi pi-user"
+            @action="emit('login', activeProvider)"
+          />
 
           <StreamingLoadingStage
             v-else-if="rootLoading && !currentDetail"
             :provider-label="activeProviderLabel"
           />
 
-          <div
+          <StreamingPlaceholder
             v-else-if="activeTab === 'library' && !currentDetail && activeLibraryError"
-            class="streaming-placeholder"
-          >
-            <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
-            <p class="placeholder-title">加载失败</p>
-            <p class="placeholder-hint">{{ activeLibraryError }}</p>
-            <button type="button" class="stream-action-btn" @click="retryCurrentView">
-              <span>重试</span>
-            </button>
-          </div>
+            title="加载失败"
+            :hint="activeLibraryError"
+            icon="pi pi-exclamation-triangle"
+            danger
+            action-label="重试"
+            @action="retryCurrentView"
+          />
 
           <div v-else-if="currentDetail" class="detail-view">
             <div v-if="showDetailOverlayLoading" class="detail-loading-overlay" aria-live="polite">
@@ -3112,14 +2907,16 @@ onMounted(async () => {
 
             <!-- Track playlist / rec / liked / album / recent / ranking: editorial stage -->
             <template v-if="showTrackDetailStage">
-              <div v-if="detailError" class="streaming-placeholder detail-placeholder">
-                <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
-                <p class="placeholder-title">加载失败</p>
-                <p class="placeholder-hint">{{ detailError }}</p>
-                <button type="button" class="stream-action-btn" @click="retryCurrentView">
-                  <span>重试</span>
-                </button>
-              </div>
+              <StreamingPlaceholder
+                v-if="detailError"
+                title="加载失败"
+                :hint="detailError"
+                icon="pi pi-exclamation-triangle"
+                danger
+                detail
+                action-label="重试"
+                @action="retryCurrentView"
+              />
 
               <StreamingDetailStage
                 v-else-if="detailHeaderInfo"
