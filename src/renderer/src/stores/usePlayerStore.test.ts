@@ -340,8 +340,10 @@ test('player lyric loading records local and provider lyric sources', () => {
   // The store delegates fallback timing to one authority rather than keeping
   // a second independent position clock next to the lyric resolver.
   assert.match(source, /createPlaybackSessionClock/)
-  assert.match(source, /createPlaybackClock\(\{[\s\S]*onTick: \(\) => \{[\s\S]*playbackSessionClock\.estimate\(\)[\s\S]*requestPlaybackClockResync\(\)/)
-
+  assert.match(
+    source,
+    /createPlaybackClock\(\{[\s\S]*onTick: \(\) => \{[\s\S]*playbackSessionClock\.estimate\(\)[\s\S]*requestPlaybackClockResync\(\)/
+  )
 })
 
 test('plugin playback resume waits for plugin providers while local sessions restore immediately', () => {
@@ -590,7 +592,10 @@ test('cached playback paths are validated before reuse after a cache clear', () 
 
 test('mini player switching recovers from stale unauthorized local tracks', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
-  const preloadSource = readFileSync(new URL('../../../preload/index.ts', import.meta.url), 'utf8')
+  const preloadSource = readFileSync(
+    new URL('../../../preload/domains/libraryApi.ts', import.meta.url),
+    'utf8'
+  )
   const windowSource = readFileSync(new URL('../../../main/app/window.ts', import.meta.url), 'utf8')
   const resolvePlayTarget = extractInternalFunctionBody(source, 'resolvePlayTarget')
   const handlePlaybackFallback = extractInternalFunctionBody(source, 'handlePlaybackFallback')
@@ -1382,7 +1387,10 @@ test('player bar exposes a HiFi console drawer instead of visualization meters',
 
 test('player bar visualization polling stays light and stops behind the full visualizer', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
-  const pollingSource = readFileSync(new URL('./player/useVisualizationPolling.ts', import.meta.url), 'utf8')
+  const pollingSource = readFileSync(
+    new URL('./player/useVisualizationPolling.ts', import.meta.url),
+    'utf8'
+  )
 
   assert.match(pollingSource, /spectrumPoints: 64/)
   assert.match(pollingSource, /waveformPoints: 48/)
