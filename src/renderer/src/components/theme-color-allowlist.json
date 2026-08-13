@@ -19,7 +19,7 @@
   "src/renderer/src/components/network-sources/NetworkCoverThumb.vue": 2,
   "src/renderer/src/components/NetworkSourcesPage.vue": 24,
   "src/renderer/src/components/onboarding/OnboardingWizard.css": 105,
-  "src/renderer/src/components/player-bar/HiFiSidebar.vue": 50,
+  "src/renderer/src/components/player-bar/HiFiSidebar.css": 50,
   "src/renderer/src/components/player-bar/LyricsManagerPanel.vue": 26,
   "src/renderer/src/components/player-bar/PlayerBar.css": 334,
   "src/renderer/src/components/PlayingMusic.vue": 76,
