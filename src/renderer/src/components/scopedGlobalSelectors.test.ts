@@ -7,6 +7,10 @@ import { compileStyle } from '@vue/compiler-sfc'
 const scopedStyleFiles = [
   './DspRackPage.vue',
   './EqualizerPage.vue',
+  './equalizer/OpraEqPanel.vue',
+  './equalizer/FrequencyResponseChart.vue',
+  './equalizer/FrequencyResponseToolbar.vue',
+  './equalizer/GraphicEqPanel.vue',
   './LocalDashboard.css',
   './player-bar/PlayerBar.css',
   './PlayingMusic.vue',

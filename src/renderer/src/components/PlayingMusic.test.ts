@@ -262,7 +262,7 @@ test('renderer playback consumers cannot retain a second playback state after ho
     './LocalDashboard.vue',
     './PlayingMusic.vue',
     './PlayerBar.vue',
-    './SettingsPage.vue',
+    './settings-page/PlaybackSettingsSection.vue',
     './SongList.vue',
     './StreamingPage.vue',
     './player-bar/LyricsManagerPanel.vue'

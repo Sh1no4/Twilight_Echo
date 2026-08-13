@@ -14,10 +14,35 @@ const lyricStyleVars = readFileSync(new URL('../utils/lyricsStyleVars.ts', impor
 const playerBarComponent = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
 const playerBar = readFileSync(new URL('./player-bar/PlayerBar.css', import.meta.url), 'utf8')
 const equalizer = readFileSync(new URL('./EqualizerPage.vue', import.meta.url), 'utf8')
+const equalizerOpra = readFileSync(new URL('./equalizer/OpraEqPanel.vue', import.meta.url), 'utf8')
+const equalizerChart = readFileSync(
+  new URL('./equalizer/FrequencyResponseChart.vue', import.meta.url),
+  'utf8'
+)
+const equalizerGraphic = readFileSync(
+  new URL('./equalizer/GraphicEqPanel.vue', import.meta.url),
+  'utf8'
+)
+const equalizerToolbar = readFileSync(
+  new URL('./equalizer/FrequencyResponseToolbar.vue', import.meta.url),
+  'utf8'
+)
+const equalizerSurfaces = [
+  equalizer,
+  equalizerOpra,
+  equalizerChart,
+  equalizerGraphic,
+  equalizerToolbar
+].join('\n')
 const dspRack = readFileSync(new URL('./DspRackPage.vue', import.meta.url), 'utf8')
 const app = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
 const baseStyle = readFileSync(new URL('../assets/base.css', import.meta.url), 'utf8')
 const settingsPage = readFileSync(new URL('./SettingsPage.vue', import.meta.url), 'utf8')
+const settingsAppearance = readFileSync(
+  new URL('./settings-page/AppearanceSettingsSection.vue', import.meta.url),
+  'utf8'
+)
+const settingsSurfaces = [settingsPage, settingsAppearance].join('\n')
 const studio = readFileSync(new URL('./ThemeStudioPage.vue', import.meta.url), 'utf8')
 const studioStyle = readFileSync(
   new URL('./theme-studio/ThemeStudioPage.css', import.meta.url),
@@ -61,6 +86,11 @@ const pluginThemeRuntime = readFileSync(
 )
 const playerStore = readFileSync(new URL('../stores/usePlayerStore.ts', import.meta.url), 'utf8')
 const preload = readFileSync(new URL('../../../preload/index.ts', import.meta.url), 'utf8')
+const themesApi = readFileSync(
+  new URL('../../../preload/domains/themesApi.ts', import.meta.url),
+  'utf8'
+)
+const preloadSurfaces = [preload, themesApi].join('\n')
 const themeIpc = readFileSync(new URL('../../../main/ipc/themes.ts', import.meta.url), 'utf8')
 const themeArchive = readFileSync(
   new URL('../../../main/themes/themeArchive.ts', import.meta.url),
@@ -114,7 +144,13 @@ test('every registered playback token is wired into a real playback or DSP surfa
   const playbackVariables = THEME_TOKEN_DEFINITIONS.filter(
     (definition) => definition.group === 'playback'
   ).map((definition) => definition.cssVariable)
-  const playbackSurfaces = [playingMusic, lyricStyleVars, playerBar, equalizer, dspRack].join('\n')
+  const playbackSurfaces = [
+    playingMusic,
+    lyricStyleVars,
+    playerBar,
+    equalizerSurfaces,
+    dspRack
+  ].join('\n')
   assert.ok(playbackVariables.length >= 20)
   for (const variable of playbackVariables) assert.match(playbackSurfaces, new RegExp(variable))
 })
@@ -122,7 +158,7 @@ test('every registered playback token is wired into a real playback or DSP surfa
 test('theme studio is a dedicated navigable settings surface', () => {
   assert.match(app, /ThemeStudioPage/)
   assert.match(app, /@open-theme-studio="openThemeStudioPage"/)
-  assert.match(settingsPage, /打开主题工作室/)
+  assert.match(settingsSurfaces, /打开主题工作室/)
   assert.doesNotMatch(studio, /structuredClone\(profile\)/)
   assert.match(studio, /个性化与材质/)
   assert.match(studio, /theme-domain-list/)
@@ -181,7 +217,7 @@ test('phase two runtime reuses cached cover media and supports native and timed 
   assert.match(themeStore, /resolveScheduledThemeTone/)
   assert.match(themeStore, /scheduleTimedToneRefresh/)
   assert.match(themeIpc, /nativeTheme\.on\('updated'/)
-  assert.match(preload, /themes:systemToneChanged/)
+  assert.match(preloadSurfaces, /themes:systemToneChanged/)
 })
 
 test('settings appearance choices override the active theme and provide usable density rules', () => {
@@ -270,9 +306,9 @@ test('phase four player layouts, controls, equalizer modes, and visibility stay 
   assert.match(playerBar, /data-te-player-controls='pro'/)
   assert.match(playerBar, /data-te-player-progress='spectrum'/)
   assert.match(playerBar, /data-te-visible-player-track-menu='false'/)
-  assert.match(equalizer, /data-te-equalizer-panel='glass'/)
-  assert.match(equalizer, /data-te-equalizer-spectrum='bars'/)
-  assert.match(equalizer, /data-te-visible-equalizer-spectrum='false'/)
+  assert.match(equalizerSurfaces, /data-te-equalizer-panel='glass'/)
+  assert.match(equalizerSurfaces, /data-te-equalizer-spectrum='bars'/)
+  assert.match(equalizerSurfaces, /data-te-visible-equalizer-spectrum='false'/)
   assert.match(dspRack, /data-te-equalizer-button='solid'/)
   assert.doesNotMatch(playingMusic, /usePlaybackQueueStore/)
 })
