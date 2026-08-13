@@ -51,6 +51,7 @@ import {
   type StreamingArtistNavigationRequest
 } from '../utils/streamingArtistResolution'
 import { getRecentTracks, getTopTracks } from '../stores/useListeningStatsStore'
+import { shuffleArray } from '../utils/playerQueueUtils'
 import { resolveUnifiedRecentTracks } from '../utils/unifiedRecentTracks'
 import { summarizeUnifiedFavorites } from '../utils/unifiedFavoriteTracks'
 import {
@@ -58,6 +59,16 @@ import {
   searchLocalStreamingPlaylists,
   searchLocalStreamingSongs
 } from './streaming-page/localStreamingSearch'
+import {
+  appendUniqueTracks,
+  getPersonalizedStreamKey,
+  getSharedLibraryProviderId,
+  getSidebarItemsSignature,
+  mergePlaylistSummaries,
+  resolveExternalProviderName as externalProviderName,
+  resolveStreamingTabIndex as getStreamingTabIndex,
+  timeGreeting as resolveTimeGreeting
+} from './streaming-page/streamingPageModel'
 import {
   useStreamingSearch,
   type SearchSource,
@@ -354,16 +365,6 @@ async function openRecSection(section: RecSection): Promise<void> {
   detailError.value = ''
 }
 
-function getPersonalizedStreamKey(section: RecSection | null): PersonalizedStreamKey | null {
-  if (section?.key === 'fm' || section?.key === 'radar') return section.key
-  return null
-}
-
-function appendUniqueTracks(current: readonly Track[], incoming: readonly Track[]): Track[] {
-  const seen = new Set(current.map((track) => track.id))
-  return incoming.filter((track) => track.id && !seen.has(track.id) && seen.add(track.id))
-}
-
 async function loadMorePersonalizedStream(
   key: PersonalizedStreamKey,
   session: PersonalizedStreamSession | null = null
@@ -419,11 +420,6 @@ const visibleTabs = computed(() =>
   )
 )
 const currentView = computed(() => visibleTabs.value.find((item) => item.tab === activeTab.value))
-
-function getStreamingTabIndex(key: StreamingTab): number {
-  const index = visibleTabs.value.findIndex((tab) => tab.tab === key)
-  return index === -1 ? 0 : index
-}
 
 const emit = defineEmits<{
   toggleMenu: []
@@ -801,15 +797,7 @@ const headerSubtitle = computed(() => {
   return timeGreeting.value
 })
 
-const timeGreeting = computed(() => {
-  const hour = new Date().getHours()
-  if (hour < 5) return '夜深了，放一首安静的歌'
-  if (hour < 11) return '早上好，开启美好的一天'
-  if (hour < 14) return '中午好，让音乐陪你休息'
-  if (hour < 18) return '下午好，继续享受音乐'
-  if (hour < 22) return '晚上好，放松一下'
-  return '夜深了，放一首安静的歌'
-})
+const timeGreeting = computed(() => resolveTimeGreeting(new Date().getHours()))
 const rootLoading = computed(() => {
   if (activeTab.value !== 'library' || currentDetail.value) return false
   return isExternalActive.value
@@ -1033,8 +1021,8 @@ const detailFollowButtonIcon = computed(() =>
 function selectTab(key: StreamingTab): void {
   if (isExternalActive.value && key !== 'library' && key !== 'recent') return
   if (activeTab.value !== key) {
-    const oldIndex = getStreamingTabIndex(activeTab.value)
-    const newIndex = getStreamingTabIndex(key)
+    const oldIndex = getStreamingTabIndex(visibleTabs.value, activeTab.value)
+    const newIndex = getStreamingTabIndex(visibleTabs.value, key)
     streamingTransitionName.value = newIndex > oldIndex ? 'stream-page-down' : 'stream-page-up'
     resetDetail({ animate: false })
   }
@@ -1069,13 +1057,6 @@ function isSidebarItemActive(item: SidebarItem): boolean {
   })
 }
 
-function getSharedLibraryProviderId(): string {
-  if (libraryProviders.value.some((provider) => provider.id === activeProvider.value)) {
-    return activeProvider.value
-  }
-  return libraryProviders.value[0]?.id ?? NCM_PROVIDER_ID
-}
-
 function selectSidebarItem(item: SidebarItem, options: { persistProvider?: boolean } = {}): void {
   const persistProvider = options.persistProvider !== false
   if (item.tab === 'recent') {
@@ -1084,7 +1065,11 @@ function selectSidebarItem(item: SidebarItem, options: { persistProvider?: boole
     return
   }
   if (item.tab === 'library') {
-    const provider = getSharedLibraryProviderId()
+    const provider = getSharedLibraryProviderId(
+      activeProvider.value,
+      libraryProviders.value.map((libraryProvider) => libraryProvider.id),
+      NCM_PROVIDER_ID
+    )
     if (activeProvider.value !== provider) {
       selectProvider(provider, persistProvider)
     }
@@ -1136,12 +1121,6 @@ function resetLikedTracksPaging(): void {
   likedTracksLoadMoreError.value = ''
 }
 
-function getSidebarItemsSignature(): string {
-  return sidebarItems.value
-    .map((item) => `${item.key}:${item.provider}:${item.tab ?? 'external'}`)
-    .join('|')
-}
-
 function ensureVisibleSidebarSelection(): void {
   if (!hasOnlineNavigationEntries.value) {
     fallbackProvider.value = null
@@ -1180,20 +1159,6 @@ function isActiveDetailLoad(token: number): boolean {
   return token === detailLoadToken
 }
 
-function mergePlaylistSummaries<T extends MediaProviderPlaylistSummary>(...groups: T[][]): T[] {
-  const seen = new Set<string>()
-  const merged: T[] = []
-  for (const group of groups) {
-    for (const playlist of group) {
-      const id = String(playlist.id)
-      if (seen.has(id)) continue
-      seen.add(id)
-      merged.push(playlist)
-    }
-  }
-  return merged
-}
-
 async function findArtistByUserName(user: NcmUserSummary): Promise<NcmArtistSummary | null> {
   const keyword = user.name.trim()
   if (!keyword) return null
@@ -1212,10 +1177,6 @@ async function ensureLibraryLoaded(force = false): Promise<void> {
   } catch {
     // error is already stored in libraryError
   }
-}
-
-function externalProviderName(id: string): string {
-  return providerStore.getProvider(id)?.name ?? id
 }
 
 async function refreshExternalProviderState(id: string): Promise<void> {
@@ -1247,7 +1208,7 @@ async function refreshExternalProviderState(id: string): Promise<void> {
     state.profile = null
     state.libraryError = friendlyStreamingError(
       error,
-      `${externalProviderName(id)} 登录状态检查失败`
+      `${externalProviderName(id, (providerId) => providerStore.getProvider(providerId)?.name)} 登录状态检查失败`
     )
   }
 }
@@ -1272,7 +1233,7 @@ async function ensureExternalLibraryLoaded(id: string, force = false): Promise<v
   } catch (error) {
     state.libraryError = friendlyStreamingError(
       error,
-      `加载 ${externalProviderName(id)} 音乐库失败`
+      `加载 ${externalProviderName(id, (providerId) => providerStore.getProvider(providerId)?.name)} 音乐库失败`
     )
   } finally {
     state.libraryLoading = false
@@ -2065,11 +2026,7 @@ async function playAllDetailTracks(): Promise<void> {
 async function shufflePlayDetailTracks(): Promise<void> {
   const tracks = await resolveDetailPlaybackQueue()
   if (tracks.length === 0) return
-  const shuffled = [...tracks]
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
-  }
+  const shuffled = shuffleArray(tracks)
   playStreamingTrack(shuffled[0], shuffled)
 }
 
@@ -2651,7 +2608,7 @@ watch(
 )
 
 watch(
-  getSidebarItemsSignature,
+  () => getSidebarItemsSignature(sidebarItems.value),
   () => {
     ensureVisibleSidebarSelection()
   },
