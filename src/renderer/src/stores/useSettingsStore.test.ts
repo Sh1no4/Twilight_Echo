@@ -126,7 +126,10 @@ function readSettingsPageSources(): string {
     'settings-page/types.ts',
     'settings-page/AboutSettingsSection.vue',
     'settings-page/ShortcutsSettingsSection.vue',
-    'settings-page/MiniPlayerSettingsSection.vue'
+    'settings-page/MiniPlayerSettingsSection.vue',
+    'settings-page/GeneralSettingsSection.vue',
+    'settings-page/PlaybackSettingsSection.vue',
+    'settings-page/AppearanceSettingsSection.vue'
   ]
     .map((relative) => readFileSync(new URL(relative, root), 'utf8'))
     .join('\n')
