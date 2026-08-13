@@ -150,6 +150,19 @@ export function normalizeFilterType(value: unknown): EqualizerFilterType {
   return 'peak'
 }
 
+// Per-band bypass and channel routing are optional on EqualizerBand, but they
+// must survive normalization: dropping them here silently re-enabled bypassed
+// bands on the next edit (the main-process normalizer defaults `enabled` back to
+// true), so the engine changed the audio while the editor state stayed put.
+function normalizeBandFlags(band: Partial<EqualizerBand>): Partial<EqualizerBand> {
+  const flags: Partial<EqualizerBand> = {}
+  if (band.enabled !== undefined) flags.enabled = band.enabled !== false
+  if (band.channelMask !== undefined) {
+    flags.channelMask = Math.max(0, Math.min(0xffffffff, Math.trunc(band.channelMask)))
+  }
+  return flags
+}
+
 export function normalizeAudioProcessing(
   settings?: Partial<AudioProcessingSettings>
 ): AudioProcessingSettings {
@@ -163,7 +176,8 @@ export function normalizeAudioProcessing(
             frequency: clampNumber(band.frequency, 20, 24000, defaultBand.frequency),
             gain: clampNumber(band.gain, -24, 24, 0),
             q: clampNumber(band.q, 0.1, 20, 1),
-            filterType: normalizeFilterType(band.filterType)
+            filterType: normalizeFilterType(band.filterType),
+            ...normalizeBandFlags(band)
           }
         })
       : defaultEqBands.map((defaultBand, index) => {
@@ -172,7 +186,8 @@ export function normalizeAudioProcessing(
             frequency: clampNumber(band.frequency, 20, 24000, defaultBand.frequency),
             gain: clampNumber(band.gain, -12, 12, 0),
             q: clampNumber(band.q, 0.25, 8, 1),
-            filterType: normalizeFilterType(band.filterType)
+            filterType: normalizeFilterType(band.filterType),
+            ...normalizeBandFlags(band)
           }
         })
   return {

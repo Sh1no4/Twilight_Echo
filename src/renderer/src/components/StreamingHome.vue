@@ -1868,15 +1868,326 @@ function playPersonalizedStream(section: RecSection | null): void {
     animation: none;
   }
 }
-</style>
 
-.duo-card { gap: 14px; padding: 16px; } .duo-stack { width: 80px; height: 60px; } .duo-stack-cover {
-width: 50px; height: 50px; } .duo-stack-cover-1 { left: 18px; } .duo-stack-cover-2 { left: 34px; }
-.duo-name { font-size: 17px; } .duo-sub { font-size: 11px; } .shelf-grid, .sk-tiles {
-grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 16px 12px; } .shelf-name {
-margin-top: 8px; font-size: 12px; } .shelf-count { left: 8px; bottom: 8px; font-size: 10px; padding:
-2px 7px; } .shelf-open { right: 8px; bottom: 8px; width: 30px; height: 30px; font-size: 11px; }
-.chart-row { grid-template-columns: 28px 42px minmax(0, 1fr) auto; gap: 10px; padding: 8px 8px; }
-.chart-cover { width: 42px; height: 42px; } .chart-title { font-size: 13px; } .chart-artist {
-font-size: 11px; } .chart-duration { font-size: 11px; } .section-head-copy h3 { font-size: 18px; }
-.section-head-copy p { font-size: 11px; } }
+/* ══ Liquid glass ══════════════════════════════════════════════════════
+   Same approach as the local dashboard: this page mixes its own panels from the
+   shared optical roles (--te-lg-panel-rim / --te-lg-panel-sheen in base.css)
+   instead of joining the canonical card list, because these classes are the ones
+   preset theme layouts restyle and the shared `data-card-custom='on'` block would
+   overwrite them with !important geometry.
+
+   Readability contract: every text-bearing surface keeps a veil dense enough for
+   body copy to hold 4.5:1 against the worst-case backdrop (pure black and pure
+   white), and secondary copy is pulled toward ink because a mid-grey token loses
+   roughly two stops the moment its backing turns translucent. Decorative panes
+   may be thinner; text-bearing ones may not.
+
+   These selectors must NOT wrap the ancestor in :global(). Vue rewrites only the
+   last compound of a scoped selector, so `:global(html[...]) .foo` compiles to
+   the bare ancestor and lands declarations on <html> itself.
+
+   Trade-off accepted, as on the local page: none of these classes are in
+   LIQUID_GLASS_CARD_SELECTOR, so the pointer tracker writes no
+   --te-lg-light-x/y here. They get the material and its blur/refraction with a
+   static light source rather than cursor-following specular. */
+
+html[data-te-surface-material='liquidGlass'] .home-view {
+  /* Veil roles, densest first. Text-bearing surfaces use `panel`; `soft` is for
+     decorative or already-covered areas. */
+  --home-glass-veil: 76%;
+  --home-glass-veil-soft: 34%;
+  /* Inner accents must stop being opaque slabs once their host is translucent:
+     --te-hover-bg is a fully opaque grey in light tone, which would read as a
+     solid block sitting on the glass rather than a tint in it. */
+  --home-glass-hover: color-mix(in srgb, var(--home-ink) 8%, transparent);
+  --home-glass-soft: color-mix(in srgb, var(--home-ink) 6%, transparent);
+  --home-line: color-mix(in srgb, var(--home-ink) 12%, transparent);
+  /* Secondary copy loses contrast over a translucent backing. Pulling it toward
+     ink restores it in both tones, since the neutral scale inverts in dark mode. */
+  --home-ink-soft: color-mix(in srgb, var(--te-neutral-500) 58%, var(--home-ink));
+  /* The panel's own backdrop blur already carries the page colour; a 0.5 cover
+     bloom on top of it reads as haze rather than light. */
+  --home-ambient-alpha: 0.3;
+}
+
+/* ── Shared glass recipe ──────────────────────────────────────────────── */
+
+html[data-te-surface-material='liquidGlass']
+  .home-view
+  :is(
+    .hero,
+    .duo-card,
+    .chart-grid,
+    .shelf-tile,
+    .shelf-empty,
+    .section-more,
+    .hero-invite,
+    .home-error
+  ) {
+  position: relative;
+  /* Contains the negative-z warp layer so it cannot slip behind the page. */
+  isolation: isolate;
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: var(--te-lg-panel-rim) !important;
+}
+
+html[data-te-surface-material='liquidGlass']
+  .home-view
+  :is(
+    .hero,
+    .duo-card,
+    .chart-grid,
+    .shelf-tile,
+    .shelf-empty,
+    .section-more,
+    .hero-invite,
+    .home-error
+  )::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: inherit;
+  /* Sheen first, then the legibility veil, so the veil sits under the light
+     rather than washing it out. */
+  background:
+    var(--te-lg-panel-sheen),
+    color-mix(in srgb, var(--te-card-bg) var(--home-glass-veil), transparent);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  filter: none;
+  transition:
+    backdrop-filter var(--te-motion-hover, 160ms) ease,
+    -webkit-backdrop-filter var(--te-motion-hover, 160ms) ease;
+}
+
+/* Blur and refraction are the expensive half. Idle panels keep tint + rim; the
+   full response is promoted on hover / keyboard focus, matching the canonical
+   cards so the page does not repaint its whole backdrop while scrolling. */
+html[data-te-surface-material='liquidGlass']
+  .home-view
+  :is(
+    .hero,
+    .duo-card,
+    .chart-grid,
+    .shelf-tile,
+    .shelf-empty,
+    .section-more,
+    .hero-invite,
+    .home-error
+  ):is(:hover, :focus-within)::after {
+  backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
+  -webkit-backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
+  filter: url(#te-lg-card);
+}
+
+/* Full liquid glass pins blur and refraction on. */
+html[data-te-surface-material='liquidGlass'][data-te-lg-full='on']
+  .home-view
+  :is(
+    .hero,
+    .duo-card,
+    .chart-grid,
+    .shelf-tile,
+    .shelf-empty,
+    .section-more,
+    .hero-invite,
+    .home-error
+  )::after {
+  backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
+  -webkit-backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
+  filter: url(#te-lg-card);
+}
+
+/* ── Hero ─────────────────────────────────────────────────────────────── */
+
+/* The hero already carries a full-bleed wash for its ambient art, so its own
+   veil stays thin — the wash below supplies the density where the copy sits. */
+html[data-te-surface-material='liquidGlass'] .home-view .hero::after {
+  background-color: color-mix(in srgb, var(--te-card-bg) var(--home-glass-veil-soft), transparent);
+}
+
+html[data-te-surface-material='liquidGlass'] .home-view .hero-ambient :deep(img),
+html[data-te-surface-material='liquidGlass'] .home-view .hero-ambient-img {
+  opacity: var(--home-ambient-alpha);
+}
+
+/* What would hide the glass here is this wash: a full-bleed --te-card-bg blend
+   (opaque white in light themes) painted by a child, on top of the glass.
+   Replaced with a wedge that is dense only under the copy column and clears
+   entirely over the collage, so the panel reads as glass while the type keeps a
+   real substrate. */
+html[data-te-surface-material='liquidGlass'] .home-view .hero-ambient::after {
+  background:
+    linear-gradient(
+      100deg,
+      color-mix(in srgb, var(--te-card-bg) var(--home-glass-veil), transparent) 0%,
+      color-mix(in srgb, var(--te-card-bg) var(--home-glass-veil), transparent) 36%,
+      color-mix(in srgb, var(--te-card-bg) var(--home-glass-veil-soft), transparent) 58%,
+      transparent 84%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--te-card-bg) var(--home-glass-veil-soft), transparent),
+      transparent 38%
+    );
+}
+
+/* --te-hover-bg is opaque in light tone, so the outline button would fill with a
+   grey slab over glass. */
+html[data-te-surface-material='liquidGlass'] .home-view .hero-open:hover {
+  background: var(--home-glass-hover);
+}
+
+/* ── Duo cards ────────────────────────────────────────────────────────── */
+
+/* .duo-card::before already carries the FM / radar tint, and because the warp
+   layer sits at z-index -1 that tint now paints as coloured light on the glass
+   rather than on an opaque card. Nothing to change there.
+
+   The hover shadow has to be reasserted: the recipe declares the rim with
+   !important, so the plain --home-shadow-lift declaration would be dropped and
+   the surface would lose its edge mid-hover. Lift is carried by the transform and
+   the promoted blur instead. */
+html[data-te-surface-material='liquidGlass'] .home-view .duo-card:hover {
+  box-shadow: var(--te-lg-panel-rim) !important;
+}
+
+/* A 72% card-bg pill reads as an opaque chip on glass; thin it to a tinted well
+   and let the solid ink fill arrive only on hover, where the white glyph needs it. */
+html[data-te-surface-material='liquidGlass'] .home-view .duo-arrow {
+  background: var(--home-glass-soft);
+  border-color: var(--home-line);
+}
+
+/* ── Chart ────────────────────────────────────────────────────────────── */
+
+/* One pane for the whole grid rather than glass per row: ten blurred surfaces in
+   a two-column list would be both expensive and visually noisy, and the rows read
+   as a list on a panel — the same call as the local page's figures strip. The
+   28px column gap keeps the two columns legible inside the shared pane. */
+html[data-te-surface-material='liquidGlass'] .home-view .chart-grid {
+  padding: 10px 12px;
+  border-radius: var(--home-radius-lg);
+}
+
+html[data-te-surface-material='liquidGlass'] .home-view .chart-row:hover {
+  background: var(--home-glass-hover);
+}
+
+/* ── Shelf ────────────────────────────────────────────────────────────── */
+
+/* Bare covers with captions floating on the page background is the readability
+   hole the material makes obvious. Padding the tile turns cover and caption into
+   one glass card, with the radius concentric to the cover inside it. */
+html[data-te-surface-material='liquidGlass'] .home-view .shelf-tile {
+  padding: 10px;
+  border-radius: 26px;
+}
+
+/* The recipe clears the dashed border, so the rim becomes the boundary — the same
+   result the local page's .empty-stage settled on. */
+html[data-te-surface-material='liquidGlass'] .home-view .shelf-empty {
+  border-style: solid;
+}
+
+/* ── Section controls and error state ─────────────────────────────────── */
+
+html[data-te-surface-material='liquidGlass'] .home-view .section-more:hover {
+  border-color: var(--home-line) !important;
+}
+
+html[data-te-surface-material='liquidGlass'] .home-view .home-error-retry:hover {
+  background: var(--home-glass-hover);
+}
+
+/* ── Degradation contracts ────────────────────────────────────────────── */
+
+/* Three existing contracts strip heavy effects; each must also drop the SVG
+   filter, because refraction without its blurred backdrop reads as a smeared
+   artifact rather than glass. The veil stays, so text keeps its substrate. */
+
+html[data-te-surface-material='liquidGlass']
+  body.te-no-blur
+  .home-view
+  :is(
+    .hero,
+    .duo-card,
+    .chart-grid,
+    .shelf-tile,
+    .shelf-empty,
+    .section-more,
+    .hero-invite,
+    .home-error
+  )::after {
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html[data-te-surface-material='liquidGlass'][data-te-effects-mode='reduced']
+  .home-view
+  :is(
+    .hero,
+    .duo-card,
+    .chart-grid,
+    .shelf-tile,
+    .shelf-empty,
+    .section-more,
+    .hero-invite,
+    .home-error
+  )::after {
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Transparent Linux windows cannot sample the desktop behind the window, so an
+   in-app backdrop snapshot has nothing valid to read. */
+html[data-te-surface-material='liquidGlass'][data-window-transparent='on'][data-platform='linux']
+  .home-view
+  :is(
+    .hero,
+    .duo-card,
+    .chart-grid,
+    .shelf-tile,
+    .shelf-empty,
+    .section-more,
+    .hero-invite,
+    .home-error
+  )::after {
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Blur-free modes lose the optical separation the blur provided, so the veil has
+   to carry legibility on its own. */
+html[data-te-surface-material='liquidGlass'] body.te-no-blur .home-view,
+html[data-te-surface-material='liquidGlass'][data-te-effects-mode='reduced'] .home-view,
+html[data-te-surface-material='liquidGlass'][data-window-transparent='on'][data-platform='linux']
+  .home-view {
+  --home-glass-veil: 90%;
+  --home-glass-veil-soft: 62%;
+  --home-ambient-alpha: 0.24;
+}
+
+/* Reduced / disabled motion keeps the material but pins the transition, matching
+   the canonical carve-out. */
+html[data-te-surface-material='liquidGlass']:is([data-te-motion='reduced'], [data-te-motion='off'])
+  .home-view
+  :is(
+    .hero,
+    .duo-card,
+    .chart-grid,
+    .shelf-tile,
+    .shelf-empty,
+    .section-more,
+    .hero-invite,
+    .home-error
+  )::after {
+  transition: none !important;
+}
+</style>

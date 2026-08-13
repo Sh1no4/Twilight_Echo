@@ -65,6 +65,34 @@ test('preset normalization clamps bands and modes without mutating source arrays
   assert.equal(source[0].frequency, 1)
 })
 
+test('normalization preserves per-band bypass and channel routing in both modes', () => {
+  // Dropping these silently re-enabled bypassed bands on the next edit: the
+  // main-process normalizer defaults `enabled` back to true, so the engine
+  // changed the audio while the editor state stayed unchanged.
+  const graphic = normalizeAudioProcessing({
+    eqMode: 'graphic',
+    eqBands: [makeBand({ frequency: 31, enabled: false, channelMask: 1 })]
+  })
+  assert.equal(graphic.eqBands[0].enabled, false)
+  assert.equal(graphic.eqBands[0].channelMask, 1)
+
+  const parametric = normalizeAudioProcessing({
+    eqMode: 'parametric',
+    eqBands: [makeBand({ frequency: 1000, enabled: false, channelMask: 2 })]
+  })
+  assert.equal(parametric.eqBands[0].enabled, false)
+  assert.equal(parametric.eqBands[0].channelMask, 2)
+
+  // Bands that never carried the flags must stay flag-free rather than gain a
+  // synthesized default.
+  const bare = normalizeAudioProcessing({
+    eqMode: 'graphic',
+    eqBands: [makeBand({ frequency: 31 })]
+  })
+  assert.equal('enabled' in bare.eqBands[0], false)
+  assert.equal('channelMask' in bare.eqBands[0], false)
+})
+
 test('band patches are clamped by the active mode and never mutate inputs', () => {
   const source = [makeBand({ frequency: 1000, gain: 0, q: 1 })]
   const parametric = patchBand(source, 0, { frequency: 100000, gain: 100, q: 100 }, 'parametric')

@@ -85,6 +85,8 @@ const opraError = ref('')
 let pendingBandFrame = 0
 let pendingBandIndex = -1
 let pendingBandPatch: Partial<EqualizerBand> | null = null
+let pendingPreamp: number | null = null
+let commitChain: Promise<void> = Promise.resolve()
 let applyFeedbackTimer: number | null = null
 let spectrumAnimationFrame = 0
 const SPECTRUM_ATTACK = 0.42
@@ -456,58 +458,94 @@ async function runEqApply(action: () => Promise<void>): Promise<void> {
   }
 }
 
-function stageBandPatch(index: number, patch: Partial<EqualizerBand>): void {
-  if (!audioProcessing.value.eqBands[index]) return
-  pendingBandIndex = index
-  pendingBandPatch = { ...(pendingBandPatch ?? {}), ...patch }
+// Apply the staged edit to renderer state only. The engine apply is deferred to
+// commit so a gesture issues one round trip instead of one per input event;
+// concurrent applies resolve out of order and can strand the UI (and the DSP
+// scene) on an earlier value than the one the user dragged to.
+function flushStagedEdit(): void {
+  if (pendingBandIndex < 0 && pendingPreamp === null) return
+  const bands =
+    pendingBandIndex >= 0 && pendingBandPatch
+      ? patchBand(
+          audioProcessing.value.eqBands,
+          pendingBandIndex,
+          pendingBandPatch,
+          audioProcessing.value.eqMode
+        )
+      : audioProcessing.value.eqBands
+  const preamp = pendingPreamp ?? audioProcessing.value.eqPreamp
+  pendingBandIndex = -1
+  pendingBandPatch = null
+  pendingPreamp = null
+  audioOutputDspStore.applyAudioProcessingState({
+    ...audioProcessing.value,
+    eqPreamp: preamp,
+    eqBands: bands,
+    eqEnabled: true,
+    dspEnabled: true
+  })
+  if (appSettings.value) {
+    appSettings.value = { ...appSettings.value, audioProcessing: audioProcessing.value }
+  }
+}
+
+function scheduleStagedFlush(): void {
   eqApplyFeedback.value = 'editing'
   if (pendingBandFrame !== 0) return
   pendingBandFrame = window.requestAnimationFrame(() => {
     pendingBandFrame = 0
-    if (pendingBandIndex < 0 || !pendingBandPatch) return
-    const bands = patchBand(
-      audioProcessing.value.eqBands,
-      pendingBandIndex,
-      pendingBandPatch,
-      audioProcessing.value.eqMode
-    )
-    pendingBandIndex = -1
-    pendingBandPatch = null
-    audioOutputDspStore.applyAudioProcessingState({
-      ...audioProcessing.value,
-      eqBands: bands,
-      eqEnabled: true,
-      dspEnabled: true
-    })
-    if (appSettings.value) {
-      appSettings.value = { ...appSettings.value, audioProcessing: audioProcessing.value }
-    }
+    flushStagedEdit()
   })
+}
+
+function stageBandPatch(index: number, patch: Partial<EqualizerBand>): void {
+  if (!audioProcessing.value.eqBands[index]) return
+  // Staging a different band must not retarget the patch already queued for the
+  // previous one; land it first, then start the new one.
+  if (pendingBandIndex >= 0 && pendingBandIndex !== index) {
+    if (pendingBandFrame !== 0) {
+      window.cancelAnimationFrame(pendingBandFrame)
+      pendingBandFrame = 0
+    }
+    flushStagedEdit()
+  }
+  pendingBandIndex = index
+  pendingBandPatch = { ...(pendingBandPatch ?? {}), ...patch }
+  scheduleStagedFlush()
+}
+
+function stagePreamp(value: number): void {
+  pendingPreamp = clampNumber(value, -24, 24, audioProcessing.value.eqPreamp)
+  scheduleStagedFlush()
 }
 
 async function commitStagedBands(): Promise<void> {
   if (pendingBandFrame !== 0) {
     window.cancelAnimationFrame(pendingBandFrame)
     pendingBandFrame = 0
-    if (pendingBandIndex >= 0 && pendingBandPatch) {
-      const bands = patchBand(
-        audioProcessing.value.eqBands,
-        pendingBandIndex,
-        pendingBandPatch,
-        audioProcessing.value.eqMode
-      )
-      audioOutputDspStore.applyAudioProcessingState({
-        ...audioProcessing.value,
-        eqBands: bands,
-        eqEnabled: true,
-        dspEnabled: true
-      })
-    }
-    pendingBandIndex = -1
-    pendingBandPatch = null
   }
+  flushStagedEdit()
+  // Snapshot the staged bands now, before any in-flight commit's response can
+  // overwrite the shared state. Reading them inside the chained thunk would pick
+  // up the earlier engine response and silently drop this gesture's edit.
+  // Do not pass eqPreamp: updateAudioProcessing recomputes it for auto gain
+  // compensation only when the patch omits it, and the staged value is already
+  // spread in from audioProcessing.value.
   const bands = cloneBands(audioProcessing.value.eqBands)
-  await runEqApply(() => updateAudioProcessing({ eqBands: bands }))
+  // Serialize commits. setAudioProcessing assigns the engine response straight
+  // onto the shared state, so a slow earlier response landing after a faster
+  // later one would overwrite the newer edit in both the UI and the DSP scene.
+  commitChain = commitChain
+    .then(async () => {
+      await runEqApply(() => updateAudioProcessing({ eqBands: bands }))
+    })
+    // Never leave the chain rejected: a settled failure would make every later
+    // slider release reject without ever reaching the engine.
+    .catch((error) => {
+      eqApplyFeedback.value = 'failed'
+      eqApplyError.value = error instanceof Error ? error.message : String(error)
+    })
+  await commitChain
 }
 
 async function addBand(frequency: number, gain: number): Promise<void> {
@@ -1017,8 +1055,9 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
             :preamp="audioProcessing.eqPreamp"
             :bands="audioProcessing.eqBands"
             :auto-preamp-enabled="autoPreampEnabled"
-            @update-preamp="updateAudioProcessing({ eqPreamp: $event })"
-            @update-band="updateEqBand($event.index, $event.patch)"
+            @preview-preamp="stagePreamp"
+            @preview-band="stageBandPatch"
+            @commit="commitStagedBands"
             @advanced="openAdvancedSettings"
           />
         </div>

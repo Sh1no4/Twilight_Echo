@@ -508,7 +508,12 @@ export function eqBandsEqual(left: EqualizerBand[], right: EqualizerBand[]): boo
       band.frequency === other.frequency &&
       band.gain === other.gain &&
       band.q === other.q &&
-      band.filterType === other.filterType
+      band.filterType === other.filterType &&
+      // Per-band bypass and channel routing change the rendered response, so a
+      // toggle must not compare equal or setAudioProcessing early-returns and
+      // the band keeps processing audio.
+      (band.enabled !== false) === (other.enabled !== false) &&
+      (band.channelMask ?? 0xffffffff) === (other.channelMask ?? 0xffffffff)
     )
   })
 }

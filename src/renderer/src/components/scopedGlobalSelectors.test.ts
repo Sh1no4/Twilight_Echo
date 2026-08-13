@@ -15,6 +15,7 @@ const scopedStyleFiles = [
   './player-bar/PlayerBar.css',
   './PlayingMusic.vue',
   './SideMenu.vue',
+  './StreamingHome.vue',
   './StreamingLibrary.vue',
   './StreamingSearch.vue',
   './TitleBar.vue',

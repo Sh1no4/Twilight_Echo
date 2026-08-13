@@ -3417,6 +3417,76 @@ html[data-te-surface-material='liquidGlass'][data-theme='dark'] .track-table-wra
   background: rgba(var(--te-lg-surface-rgb), calc(var(--te-lg-tint, 0.16) * 0.72)) !important;
 }
 
+/* ===== Liquid glass panel roles =====
+   Editorial pages (the local home and the streaming home) mix their own panels
+   rather than joining the canonical list above: those page classes are exactly
+   the ones preset theme layouts restyle (assets/theme-layouts/*.css), so
+   registering them upstream would let the shared `html[data-card-custom='on']`
+   block overwrite preset layouts with !important geometry.
+
+   The optics stay shared. These two roles carry the rim stack and the sheen
+   layers, so a page supplies only its own legibility veil and a change to how
+   the material looks lands on every surface at once instead of drifting between
+   copies.
+
+   Declared on the root, which forces one subtlety: custom properties substitute
+   var() at their declaration site, and the --te-lg-*-rgb roles are declared on
+   the card selector rather than on html, so each reference here must carry its
+   literal fallback. --te-lg-specular / --te-lg-tint are written onto
+   documentElement by the theme runtime and resolve normally. --te-lg-angle is
+   per-element (written by the pointer tracker onto hovered canonical cards), so
+   page panels resolve the static 135deg fallback. */
+
+html[data-te-surface-material='liquidGlass'] {
+  --te-lg-panel-rim:
+    inset 0 0 0 0.5px
+      rgba(var(--te-lg-sheen-rgb, 255, 255, 255), calc(var(--te-lg-specular, 0.44) * 0.54)),
+    inset 0 1px 0.5px
+      rgba(var(--te-lg-sheen-rgb, 255, 255, 255), calc(var(--te-lg-specular, 0.44) * 0.2)),
+    inset 0 -1px 1px rgba(var(--te-lg-shade-rgb, 15, 23, 42), 0.062),
+    0 2px 7px rgba(var(--te-lg-drop-rgb, 15, 23, 42), 0.026),
+    0 13px 32px rgba(var(--te-lg-drop-rgb, 15, 23, 42), 0.072);
+  /* Directional sheen, then top/bottom density. A page appends its veil after
+     these so the veil sits under the light rather than washing it out. */
+  --te-lg-panel-sheen:
+    linear-gradient(
+      var(--te-lg-angle, 135deg),
+      rgba(var(--te-lg-sheen-rgb, 255, 255, 255), 0) 0%,
+      rgba(var(--te-lg-sheen-rgb, 255, 255, 255), calc(var(--te-lg-specular, 0.44) * 0.12)) 34%,
+      rgba(var(--te-lg-sheen-rgb, 255, 255, 255), calc(var(--te-lg-specular, 0.44) * 0.026)) 62%,
+      transparent 100%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(var(--te-lg-sheen-rgb, 255, 255, 255), 0.055) 0%,
+      transparent 52%,
+      rgba(var(--te-lg-shade-rgb, 15, 23, 42), 0.062) 100%
+    );
+}
+
+/* The sheen stays light in dark tone — it is a specular highlight, not a fill —
+   while depth goes heavier, matching the canonical dark-card profile. Attribute
+   order is reversed from the dark-tone token block above so this cannot become
+   the anchor a test resolves for that block. */
+html[data-theme='dark'][data-te-surface-material='liquidGlass'] {
+  --te-lg-panel-rim:
+    inset 0 0 0 0.5px
+      rgba(var(--te-lg-sheen-rgb, 255, 255, 255), calc(var(--te-lg-specular, 0.38) * 0.54)),
+    inset 0 1px 0.5px
+      rgba(var(--te-lg-sheen-rgb, 255, 255, 255), calc(var(--te-lg-specular, 0.38) * 0.2)),
+    inset 0 -1px 1px rgba(var(--te-lg-shade-rgb, 0, 0, 0), 0.15),
+    0 2px 7px rgba(var(--te-lg-drop-rgb, 0, 0, 0), 0.07),
+    0 13px 32px rgba(var(--te-lg-drop-rgb, 0, 0, 0), 0.18);
+  --te-lg-panel-sheen:
+    linear-gradient(
+      var(--te-lg-angle, 135deg),
+      rgba(var(--te-lg-sheen-rgb, 255, 255, 255), 0) 0%,
+      rgba(var(--te-lg-sheen-rgb, 255, 255, 255), calc(var(--te-lg-specular, 0.38) * 0.1)) 34%,
+      transparent 100%
+    ),
+    linear-gradient(180deg, transparent 48%, rgba(var(--te-lg-shade-rgb, 0, 0, 0), 0.13) 100%);
+}
+
 /* ===== Liquid glass degradation =====
    Three existing contracts strip heavy effects. Each must also drop the SVG filter:
    refraction without its blurred backdrop reads as a smeared artifact, not glass. */

@@ -38,6 +38,37 @@ test('graphic equalizer preamp and band sliders support 0.1 dB adjustments', () 
   )
 })
 
+test('graphic sliders preview locally and commit once per gesture', () => {
+  // Applying to the engine on every @input issued overlapping async round trips
+  // (setAudioProcessing + setDspScenes). Out-of-order responses overwrote the
+  // shared state, leaving the board on an earlier gain than the user dragged to
+  // while the DSP scene kept the later one.
+  assert.match(graphic, /@input="\s*emit\('preview-band', index, \{ gain:/)
+  assert.match(graphic, /@input="emit\('preview-preamp',/)
+  assert.equal(graphic.match(/@change="emit\('commit'\)"/g)?.length, 2)
+  assert.doesNotMatch(graphic, /update-band|update-preamp/)
+
+  assert.match(page, /@preview-band="stageBandPatch"/)
+  assert.match(page, /@preview-preamp="stagePreamp"/)
+  assert.match(page, /<GraphicEqPanel[\s\S]*?@commit="commitStagedBands"/)
+
+  // The commit must snapshot bands before awaiting, or an in-flight response
+  // overwrites this gesture's edit before the patch is built.
+  assert.match(
+    page,
+    /const bands = cloneBands\(audioProcessing\.value\.eqBands\)\s*\n\s*\/\/ Serialize commits/
+  )
+  // Serialized so a slow earlier response cannot land after a faster later one.
+  assert.match(page, /commitChain = commitChain\s*\n?\s*\.then\(/)
+  // A settled rejection would make every later slider release fail.
+  assert.match(page, /\.catch\(\(error\) => \{/)
+})
+
+test('staging a different band lands the queued patch instead of retargeting it', () => {
+  assert.match(page, /if \(pendingBandIndex >= 0 && pendingBandIndex !== index\)/)
+  assert.match(page, /function flushStagedEdit\(\): void/)
+})
+
 test('theme modes change only equalizer presentation and use stable chart classes', () => {
   assert.equal(chart.match(/class="equalizer-spectrum-line"/g)?.length, 1)
   assert.equal(chart.match(/class="equalizer-spectrum-area"/g)?.length, 1)

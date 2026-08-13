@@ -12,7 +12,7 @@
   "src/renderer/src/components/equalizer/ParametricEqWorkspace.vue": 47,
   "src/renderer/src/components/EqualizerPage.vue": 50,
   "src/renderer/src/components/ImportDialog.vue": 31,
-  "src/renderer/src/components/LocalDashboard.css": 31,
+  "src/renderer/src/components/LocalDashboard.css": 14,
   "src/renderer/src/components/LocalLibraryTagManager.vue": 24,
   "src/renderer/src/components/LoginPage.vue": 0,
   "src/renderer/src/components/NcmCloudPanel.vue": 10,

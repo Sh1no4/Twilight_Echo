@@ -2509,3 +2509,53 @@
     font-size: 12.5px;
   }
 }
+
+/* ===== Liquid glass ambient backdrop =====
+   The streaming route owns a fixed, opaque backplate, so body-level ambient light
+   never reaches its cards and a translucent pane over a flat colour is
+   indistinguishable from an opaque raised block. Recreate the same restrained
+   environment the settings route uses, with the same values so the two routes read
+   as one room. The configured image stays on top; this only supplies depth when
+   the streaming background is a flat colour.
+
+   Two guards: transparent windows already substitute --te-tp-surface further up
+   this file, and the cover-blur treatment already supplies its own variation from
+   the user's blurred wallpaper. Neither should be overwritten.
+
+   Written unwrapped rather than as `:global(html[...]) .streaming-page`: Vue
+   rewrites only the last compound of a scoped selector, so the wrapped form would
+   compile to the bare ancestor and land these backgrounds on <html> itself. */
+
+html[data-theme='pureWhite'][data-te-surface-material='liquidGlass']:not(
+    [data-window-transparent='on']
+  ):not([data-te-background-treatment='cover-blur'])
+  .streaming-page {
+  background-image:
+    var(--te-streaming-bg-image, none),
+    radial-gradient(88% 74% at 8% -10%, rgba(116, 164, 245, 0.14) 0%, transparent 67%),
+    radial-gradient(72% 68% at 103% 92%, rgba(236, 164, 190, 0.09) 0%, transparent 70%),
+    linear-gradient(142deg, rgba(255, 255, 255, 0.72) 0%, rgba(241, 244, 250, 0.64) 100%),
+    linear-gradient(var(--te-streaming-bg), var(--te-streaming-bg)) !important;
+  background-position: center, center, center, center, center;
+  background-size: cover, cover, cover, cover, cover;
+  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
+  background-attachment: fixed, fixed, fixed, fixed, fixed;
+}
+
+/* Kept fixed and subdued: a scrolling light field would drag the highlight across
+   every pane, and warmer values would turn a neutral dark theme neon. */
+html[data-theme='dark'][data-te-surface-material='liquidGlass']:not(
+    [data-window-transparent='on']
+  ):not([data-te-background-treatment='cover-blur'])
+  .streaming-page {
+  background-image:
+    var(--te-streaming-bg-image, none),
+    radial-gradient(96% 82% at 6% -14%, rgba(62, 98, 168, 0.22) 0%, transparent 68%),
+    radial-gradient(82% 78% at 106% 100%, rgba(122, 63, 120, 0.14) 0%, transparent 72%),
+    linear-gradient(145deg, rgba(32, 39, 53, 0.86), rgba(16, 18, 24, 0.9)),
+    linear-gradient(var(--te-streaming-bg), var(--te-streaming-bg)) !important;
+  background-position: center, center, center, center, center;
+  background-size: cover, cover, cover, cover, cover;
+  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
+  background-attachment: fixed, fixed, fixed, fixed, fixed;
+}

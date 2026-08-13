@@ -13,9 +13,14 @@ const props = defineProps<{
   autoPreampEnabled: boolean
 }>()
 
+// Sliders preview on every input and commit once the gesture ends. Applying to
+// the engine per input event issued overlapping async round trips whose
+// out-of-order responses left the board showing an earlier gain than the one the
+// user dragged to.
 const emit = defineEmits<{
-  'update-preamp': [value: number]
-  'update-band': [payload: { index: number; patch: Partial<EqualizerBand> }]
+  'preview-preamp': [value: number]
+  'preview-band': [index: number, patch: Partial<EqualizerBand>]
+  commit: []
   advanced: [index: number]
 }>()
 </script>
@@ -36,7 +41,8 @@ const emit = defineEmits<{
           step="0.1"
           :value="props.preamp"
           :disabled="props.autoPreampEnabled"
-          @input="emit('update-preamp', Number(($event.target as HTMLInputElement).value))"
+          @input="emit('preview-preamp', Number(($event.target as HTMLInputElement).value))"
+          @change="emit('commit')"
           class="invisible-range"
         />
       </div>
@@ -58,11 +64,9 @@ const emit = defineEmits<{
           :value="band.gain"
           :disabled="isGainDisabled(band)"
           @input="
-            emit('update-band', {
-              index,
-              patch: { gain: Number(($event.target as HTMLInputElement).value) }
-            })
+            emit('preview-band', index, { gain: Number(($event.target as HTMLInputElement).value) })
           "
+          @change="emit('commit')"
           class="invisible-range"
         />
       </div>
