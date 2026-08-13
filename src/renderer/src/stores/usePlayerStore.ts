@@ -31,13 +31,11 @@ import {
 } from '../../../shared/dspGraph.ts'
 import { extractDominantColor } from '../utils/colorExtractor'
 import { resolveCover } from '../utils/coverLoader'
-import { hasLyricContent } from '../utils/lyrics.ts'
 import { normalizeNativePlaybackInfo } from '../utils/playerPlaybackInfo.ts'
 import { clampSoftwareVolume, cloneAudioProcessingSettings } from '../utils/playerAudioSettings.ts'
 import {
   HEART_MODE_REFILL_COUNT,
   HEART_MODE_REFILL_THRESHOLD,
-  LYRICS_RETRY_DELAYS_MS,
   NATIVE_PAUSE_CONFIRMATION_MS,
   NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS,
   NATIVE_PLAYBACK_INFO_POST_CONFIRMATION_GRACE_MS,
@@ -48,7 +46,6 @@ import {
   START_FILE_PLAYBACK_INFO_REFRESH_DELAY_MS
 } from '../utils/playerConstants.ts'
 import { shuffleArray } from '../utils/playerQueueUtils.ts'
-import { cloneTrackForPlaybackSession } from '../utils/playerSessionTrack.ts'
 import { formatTime, getNowMs } from '../utils/playerTime.ts'
 import {
   cachedSourceMatchesTrack,
@@ -76,11 +73,8 @@ import {
 } from '../utils/playbackQueueVirtualization.ts'
 import { clampProviderReliability, findPlaybackFallbackTrack } from '../utils/playbackFallback.ts'
 import { findProviderRematchCandidate } from '../utils/libraryRepair.ts'
-import { resolveLyricsWithSources } from '../utils/lyricSourceResolution.ts'
-import type { LyricResolverSource } from '../utils/lyricSourceResolution.ts'
-import { resolverLyricsInput } from '../utils/managedLyricsSource.ts'
-import { useLyricsManagement } from './lyricsManagement.ts'
 import { useNcmStore } from './useNcmStore.ts'
+import { useLyricsManagement } from './lyricsManagement.ts'
 import {
   getPodcastDefaultPlaybackRate,
   parsePodcastTrackId,
@@ -107,14 +101,8 @@ import {
 import { syncPluginProviders, useMediaProviders } from '../providers'
 import { useSettingsStore } from './useSettingsStore'
 import { useMusicStore } from './useMusicStore'
-import { playbackSessionWriter } from '../app/playbackSessionWriter.ts'
-import {
-  onLocalTracksUnavailable,
-  pruneUnavailableLocalTracks
-} from '../utils/localTrackRemovalPolicy.ts'
 import { type SleepTimerMode, type SleepTimerState } from '../../../shared/sleepTimer.ts'
 import { DEFAULT_SOFTWARE_VOLUME } from '../../../shared/audioProcessingOptions.ts'
-import { getRestorableSleepTimerState } from './sleepTimerController.ts'
 import { createPlayerSleepTimer } from './player/usePlayerSleepTimer.ts'
 import { usePlaybackBookmarks } from './playbackBookmarks'
 import { useAppNoticeStore } from './useAppNoticeStore'
@@ -132,6 +120,9 @@ import {
   type NativeVisualizationData
 } from './player/useVisualizationPolling.ts'
 import { createPlaybackClock } from './player/usePlaybackClock.ts'
+import { createLyricsLoader } from './player/lyricsLoaderController.ts'
+import { createPlaybackSessionController } from './player/playbackSessionController.ts'
+import { createPlaybackQueueController } from './player/playbackQueueController.ts'
 
 type NativePlaybackInfo = Awaited<ReturnType<typeof window.api.audioEngine.getPlaybackInfo>>
 type NativeOutputInfo = NativePlaybackInfo['outputInfo']
@@ -153,20 +144,6 @@ export interface PersonalizedStreamSession {
   id: number
   key: PersonalizedStreamKey
 }
-const automaticLyricsBaselines = new Map<string, Track>()
-interface ActiveLyricsLoad {
-  signature: string
-  generation: number
-  activation: number
-  controller: AbortController
-  promise: Promise<void>
-}
-
-/** One authoritative resolver per playback activation and source selection. */
-const activeLyricsLoads = new Map<string, ActiveLyricsLoad>()
-const lyricsLoadGenerationByTrackId = new Map<string, number>()
-const lyricsRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
-const lyricsRetryAttemptsByTrackId = new Map<string, number>()
 
 interface AudioOutputState {
   output: AudioOutputId
@@ -197,7 +174,14 @@ const themeCoverIdentity = ref('')
 const isPlaying = ref(false)
 const isLoading = ref(false)
 const lyricsLoadState = ref<LyricsLoadState>({ trackId: '', status: 'idle' })
-let lyricsTrackActivation = 0
+
+const lyricsLoader = createLyricsLoader({
+  currentTrack,
+  lyricsLoadState,
+  getAppSettings: () => appSettings,
+  patchTrackInQueues,
+  getLyricsManagement: useLyricsManagement
+})
 
 // A lyric request belongs to a particular playback activation, not merely to
 // a song id. Returning to the same song after switching away must never reuse
@@ -206,18 +190,7 @@ watch(
   () => currentTrack.value?.id ?? '',
   (trackId, previousTrackId) => {
     if (trackId === previousTrackId) return
-    lyricsTrackActivation += 1
-    abortInactiveLyricsLoads(trackId)
-    clearLyricsRetryTimersExcept(trackId)
-    if (!trackId) {
-      lyricsLoadState.value = { trackId: '', status: 'idle' }
-      return
-    }
-    lyricsRetryAttemptsByTrackId.delete(trackId)
-    lyricsLoadState.value = {
-      trackId,
-      status: hasLyricContent(currentTrack.value?.lyrics) ? 'ready' : 'loading'
-    }
+    lyricsLoader.onTrackChanged(trackId, previousTrackId)
   },
   { flush: 'sync' }
 )
@@ -269,7 +242,6 @@ const personalizedStreamSession = ref<PersonalizedStreamSession | null>(null)
 const personalizedStreamRemaining = ref(0)
 const personalizedStreamEntryIds = new Set<string>()
 const personalizedStreamPlayedEntryIds = new Set<string>()
-let personalizedStreamSessionSequence = 0
 const audioEngineReady = ref(false)
 const audioEngineError = ref<string | null>(null)
 const audioEngineRecoveryNotice = ref<AudioEngineRecoveryNotice | null>(null)
@@ -739,6 +711,59 @@ async function stopNativeAudio(): Promise<void> {
   }
 }
 
+const playbackSessionController = createPlaybackSessionController({
+  currentTrack,
+  queue,
+  originalQueue,
+  queueIndex,
+  playMode,
+  duration,
+  currentTime,
+  isPlaying,
+  isLoading,
+  sleepTimerState,
+  getAppSettings: () => appSettings,
+  getSleepTimerController: () => getSleepTimerController(),
+  hydratePlaybackTrack,
+  resetPlaybackRuntimeStateForRestore,
+  setPlayModeInternal,
+  loadLyricsForTrack: (track) => void lyricsLoader.ensureCurrentTrackLyricsLoaded(track),
+  clearCrossfadeTimer,
+  setCurrentTimeImmediate,
+  clearSleepTimerIntervals: () => clearSleepTimerIntervals(),
+  flushLatestCurrentTime,
+  queueNativeQueueStateSync,
+  deleteAutomaticLyricsBaseline: lyricsLoader.deleteLyricsBaseline,
+  getRestoredPlaybackPending: () => restoredPlaybackPending,
+  setRestoredPlaybackPending: (value) => {
+    restoredPlaybackPending = value
+  },
+  getRestoredPlaybackPosition: () => restoredPlaybackPosition,
+  setRestoredPlaybackPosition: (value) => {
+    restoredPlaybackPosition = value
+  },
+  getPendingLoadStartTime: () => pendingLoadStartTime,
+  setPendingLoadStartTime: (value) => {
+    pendingLoadStartTime = value
+  },
+  getAutoAdvanceInFlight: () => autoAdvanceInFlight,
+  setAutoAdvanceInFlight: (value) => {
+    autoAdvanceInFlight = value
+  },
+  getAdvancingFromEndedTrackId: () => advancingFromEndedTrackId,
+  setAdvancingFromEndedTrackId: (value) => {
+    advancingFromEndedTrackId = value
+  },
+  getNativePlaybackActive: () => nativePlaybackActive
+})
+const {
+  persistSelectedTrackSession,
+  persistPlaybackSessionAfterQueueMutation,
+  restorePlaybackSession,
+  createPlaybackSession,
+  removeUnavailableTracks
+} = playbackSessionController
+
 const playerSleepTimer = createPlayerSleepTimer({
   volume,
   muted,
@@ -1011,7 +1036,7 @@ function activateCurrentTrack(
     resetPlaybackUiForTrackSwitch(next, options.position ?? 0)
   }
   // Queue snapshots strip lyrics — always re-resolve for the active track.
-  void ensureCurrentTrackLyricsLoaded(currentTrack.value, true)
+  void lyricsLoader.ensureCurrentTrackLyricsLoaded(currentTrack.value, true)
 }
 
 /**
@@ -1223,7 +1248,7 @@ function applyNativePlaybackInfo(
       currentTrack.value = { ...hydrated }
       lastActiveTrack = currentTrack.value
       // Native gapless / delegated next skips activateCurrentTrack — still load lyrics.
-      void ensureCurrentTrackLyricsLoaded(currentTrack.value, true)
+      void lyricsLoader.ensureCurrentTrackLyricsLoaded(currentTrack.value, true)
     } else {
       currentTrack.value = mergedTrack
       lastActiveTrack = mergedTrack
@@ -1666,7 +1691,7 @@ watch(
     // Only on track identity change. Field-level watches re-entered with
     // allowProviderLookup=false after partial writes and could leave blank lyrics.
     if (id === prevId) return
-    await ensureCurrentTrackLyricsLoaded(track, true)
+    await lyricsLoader.ensureCurrentTrackLyricsLoaded(track, true)
   }
 )
 
@@ -1686,8 +1711,41 @@ let restoredPlaybackPending = false
 let restoredPlaybackPosition = 0
 let pendingLoadStartTime = 0
 let nativeQueueSyncRequest: Promise<void> | null = null
-let rendererPlayModeBoundaryPending = false
+const rendererPlayModeBoundaryPending = ref(false)
 let dominantColorRequestId = 0
+
+const playbackQueueController = createPlaybackQueueController({
+  currentTrack,
+  queue,
+  originalQueue,
+  queueIndex,
+  playMode,
+  isPlaying,
+  personalizedStreamSession,
+  personalizedStreamRemaining,
+  personalizedStreamEntryIds,
+  personalizedStreamPlayedEntryIds,
+  rendererPlayModeBoundaryPending,
+  persistPlaybackSessionAfterQueueMutation,
+  queueNativeQueueStateSync,
+  setAudioEngineError,
+  clearAutomaticLyricsBaselines: lyricsLoader.clearLyricsBaselines
+})
+const {
+  markCurrentPersonalizedStreamTrackPlayed,
+  endPersonalizedStream,
+  isPersonalizedStreamTrack,
+  startPersonalizedStream,
+  applyPendingRendererPlayModeAtBoundary,
+  enqueueTrack,
+  appendQueueTracks,
+  appendPersonalizedStreamTracks,
+  playNextTrack,
+  removeQueueItem,
+  clearQueue,
+  reorderQueue,
+  saveQueueAsPlaylist
+} = playbackQueueController
 
 const playbackSessionClock = createPlaybackSessionClock({ now: getNowMs })
 const playbackClockSnapshot = ref<PlaybackClockSnapshot>(playbackSessionClock.snapshot())
@@ -2044,349 +2102,6 @@ async function requestBpmAnalysisForTrack(track: Track): Promise<void> {
   }
 }
 
-function clearLyricsRetryTimer(trackId: string): void {
-  const timer = lyricsRetryTimers.get(trackId)
-  if (timer != null) clearTimeout(timer)
-  lyricsRetryTimers.delete(trackId)
-}
-
-function clearLyricsRetryTimersExcept(activeTrackId: string): void {
-  for (const trackId of lyricsRetryTimers.keys()) {
-    if (trackId !== activeTrackId) clearLyricsRetryTimer(trackId)
-  }
-}
-
-function abortInactiveLyricsLoads(activeTrackId: string): void {
-  for (const [trackId, request] of activeLyricsLoads) {
-    if (trackId !== activeTrackId) request.controller.abort()
-  }
-}
-
-function scheduleCurrentLyricsRetry(trackId: string, activation: number): void {
-  if (currentTrack.value?.id !== trackId || lyricsTrackActivation !== activation) return
-  const attempt = lyricsRetryAttemptsByTrackId.get(trackId) ?? 0
-  const delay = LYRICS_RETRY_DELAYS_MS[attempt]
-  if (delay == null) return
-
-  lyricsRetryAttemptsByTrackId.set(trackId, attempt + 1)
-  clearLyricsRetryTimer(trackId)
-  lyricsRetryTimers.set(
-    trackId,
-    setTimeout(() => {
-      lyricsRetryTimers.delete(trackId)
-      if (
-        currentTrack.value?.id !== trackId ||
-        lyricsTrackActivation !== activation ||
-        hasLyricContent(currentTrack.value.lyrics)
-      ) {
-        return
-      }
-      void ensureCurrentTrackLyricsLoaded(currentTrack.value, true, true)
-    }, delay)
-  )
-}
-
-function commitResolvedLyrics(
-  triggerTrack: Track,
-  resolverTrack: Track,
-  resolved: {
-    lyrics: string | null
-    translatedLyrics: string | null
-    lyricsSource: Track['lyricsSource']
-    translatedLyricsSource: Track['translatedLyricsSource']
-  }
-): void {
-  if (currentTrack.value?.id !== triggerTrack.id) return
-  const existing = currentTrack.value
-  const nextLyrics = resolved.lyrics ?? ''
-  // Prefer non-empty lyrics already on the active track (e.g. hydrate race).
-  if (
-    !nextLyrics &&
-    typeof existing?.lyrics === 'string' &&
-    existing.lyrics.length > 0 &&
-    existing.id === triggerTrack.id
-  ) {
-    return
-  }
-  const updatedTrack = {
-    ...resolverTrack,
-    ...existing,
-    lyrics: nextLyrics,
-    translatedLyrics: resolved.translatedLyrics,
-    lyricsSource: resolved.lyricsSource,
-    translatedLyricsSource: resolved.translatedLyricsSource,
-    romanizedLyrics: existing.romanizedLyrics ?? resolverTrack.romanizedLyrics ?? null,
-    romanizedLyricsSource:
-      existing.romanizedLyricsSource ?? resolverTrack.romanizedLyricsSource ?? null
-  }
-  currentTrack.value = updatedTrack
-  patchTrackInQueues(updatedTrack)
-}
-
-async function ensureCurrentTrackLyricsLoaded(
-  triggerTrack: Track | null = currentTrack.value,
-  allowProviderLookup = true,
-  forceReload = false
-): Promise<void> {
-  if (!triggerTrack || currentTrack.value?.id !== triggerTrack.id) return
-  const activation = lyricsTrackActivation
-  const lyricsManagement = useLyricsManagement()
-  try {
-    await lyricsManagement.ensureLoaded()
-  } catch {
-    // The optional management document must never prevent automatic resolution.
-  }
-  if (currentTrack.value?.id !== triggerTrack.id || lyricsTrackActivation !== activation) return
-
-  const override = lyricsManagement.entryFor(triggerTrack.id)
-  const requestedSource = override?.source ?? 'auto'
-  const layerSource = (
-    key: 'originalSelection' | 'translationSelection'
-  ): LyricResolverSource | 'manual' => {
-    const selection = override?.[key]
-    if (selection === 'local' || selection === 'provider' || selection === 'manual') {
-      return selection
-    }
-    if (requestedSource === 'local' || requestedSource === 'provider') return requestedSource
-    return 'automatic'
-  }
-  const originalLayerSource = layerSource('originalSelection')
-  const translationLayerSource = layerSource('translationSelection')
-  const resolverOriginalSource: LyricResolverSource =
-    originalLayerSource === 'manual' ? 'automatic' : originalLayerSource
-  const resolverTranslationSource: LyricResolverSource =
-    translationLayerSource === 'manual' ? 'automatic' : translationLayerSource
-  const sourceSelectionSignature = `${requestedSource}:${originalLayerSource}:${translationLayerSource}`
-
-  const requestSignature = `${sourceSelectionSignature}:${allowProviderLookup ? 'provider' : 'local'}`
-  const existingRequest = activeLyricsLoads.get(triggerTrack.id)
-  if (
-    !forceReload &&
-    existingRequest?.signature === requestSignature &&
-    existingRequest.activation === activation
-  ) {
-    await existingRequest.promise
-    return
-  }
-  existingRequest?.controller.abort()
-
-  const previousGeneration = lyricsLoadGenerationByTrackId.get(triggerTrack.id) ?? 0
-  const loadGeneration = previousGeneration + 1
-  lyricsLoadGenerationByTrackId.set(triggerTrack.id, loadGeneration)
-  clearLyricsRetryTimer(triggerTrack.id)
-  lyricsLoadState.value = { trackId: triggerTrack.id, status: 'loading' }
-
-  const request: ActiveLyricsLoad = {
-    signature: requestSignature,
-    generation: loadGeneration,
-    activation,
-    controller: new AbortController(),
-    promise: Promise.resolve()
-  }
-  const isCurrentRequest = (): boolean =>
-    activeLyricsLoads.get(triggerTrack.id) === request &&
-    lyricsLoadGenerationByTrackId.get(triggerTrack.id) === request.generation &&
-    lyricsTrackActivation === request.activation &&
-    currentTrack.value?.id === triggerTrack.id &&
-    !request.controller.signal.aborted
-  const completeIfCurrent = (status: 'ready' | 'empty' = 'ready'): void => {
-    if (isCurrentRequest()) {
-      clearLyricsRetryTimer(triggerTrack.id)
-      lyricsRetryAttemptsByTrackId.delete(triggerTrack.id)
-      lyricsLoadState.value = { trackId: triggerTrack.id, status }
-    }
-  }
-
-  const run = async (): Promise<void> => {
-    // Manual content is applied by the presentation layer. Keeping it out of
-    // the queue record means choosing Auto later can always recover
-    // the resolver result instead of treating a previous edit as embedded data.
-    if (requestedSource === 'manual') {
-      // Finish loading state on the track record: null means "still resolving".
-      // Manual text is projected from the override; empty override → 暂无歌词.
-      if (
-        currentTrack.value?.id === triggerTrack.id &&
-        currentTrack.value.lyrics == null &&
-        currentTrack.value.translatedLyrics == null
-      ) {
-        commitResolvedLyrics(triggerTrack, triggerTrack, {
-          lyrics: '',
-          translatedLyrics: null,
-          lyricsSource: null,
-          translatedLyricsSource: null
-        })
-      }
-      completeIfCurrent('empty')
-      return
-    }
-
-    if (
-      (requestedSource !== 'auto' ||
-        originalLayerSource === 'local' ||
-        originalLayerSource === 'provider' ||
-        translationLayerSource === 'local' ||
-        translationLayerSource === 'provider') &&
-      !automaticLyricsBaselines.has(triggerTrack.id)
-    ) {
-      automaticLyricsBaselines.set(triggerTrack.id, { ...triggerTrack })
-    }
-    const resolverTrack = resolverLyricsInput(
-      triggerTrack,
-      automaticLyricsBaselines.get(triggerTrack.id),
-      requestedSource
-    )
-
-    // Already have parseable lyrics (hydrated / previous resolve) — keep them and
-    // only top up missing translation via provider when allowed.
-    const hasOriginal = hasLyricContent(resolverTrack.lyrics)
-
-    const source = getTrackSource(resolverTrack)
-    const canLoadLocalLyrics =
-      source === 'local' &&
-      (resolverOriginalSource === 'local' ||
-        (resolverOriginalSource === 'automatic' && !hasOriginal)) &&
-      !!resolverTrack.dir &&
-      !!resolverTrack.fileName
-    const canLoadProviderLyrics =
-      allowProviderLookup &&
-      (resolverOriginalSource === 'provider' ||
-        resolverTranslationSource === 'provider' ||
-        (resolverOriginalSource === 'automatic' && !hasOriginal) ||
-        (resolverTranslationSource === 'automatic' &&
-          !hasLyricContent(resolverTrack.translatedLyrics)))
-    const canLoadOnlineLyrics =
-      resolverOriginalSource === 'automatic' &&
-      appSettings.value?.onlineLyricsFallback === true &&
-      !!resolverTrack.title?.trim() &&
-      !!resolverTrack.artist?.trim() &&
-      !hasOriginal
-
-    if (!canLoadLocalLyrics && !canLoadProviderLyrics && !canLoadOnlineLyrics) {
-      // Finish loading state: null means "still resolving"; '' means "confirmed empty".
-      commitResolvedLyrics(triggerTrack, resolverTrack, {
-        lyrics: hasOriginal ? resolverTrack.lyrics! : '',
-        translatedLyrics: resolverTrack.translatedLyrics ?? null,
-        lyricsSource: resolverTrack.lyricsSource ?? (hasOriginal ? 'embedded' : null),
-        translatedLyricsSource: resolverTrack.translatedLyricsSource ?? null
-      })
-      completeIfCurrent(
-        hasOriginal || hasLyricContent(resolverTrack.translatedLyrics) ? 'ready' : 'empty'
-      )
-      return
-    }
-
-    let resolved: Awaited<ReturnType<typeof resolveLyricsWithSources>>
-    try {
-      resolved = await resolveLyricsWithSources({
-        track: resolverTrack,
-        originalSource: resolverOriginalSource,
-        translationSource: resolverTranslationSource,
-        loadLocalLyrics: canLoadLocalLyrics
-          ? () =>
-              window.api.data
-                .getLyrics(resolverTrack.dir!, resolverTrack.fileName, resolverTrack.filePath)
-                .catch(() => null)
-          : undefined,
-        loadProviderLyrics: canLoadProviderLyrics
-          ? async () => {
-              await syncPluginProviders()
-              return useMediaProviders().resolveLyrics(resolverTrack, {
-                signal: request.controller.signal
-              })
-            }
-          : undefined,
-        loadOnlineLyrics: canLoadOnlineLyrics
-          ? async () => {
-              const result = await window.api.data.searchOnlineLyrics({
-                title: resolverTrack.title,
-                artist: resolverTrack.artist,
-                album: resolverTrack.album || undefined,
-                durationSeconds:
-                  typeof resolverTrack.duration === 'number' &&
-                  Number.isFinite(resolverTrack.duration)
-                    ? resolverTrack.duration
-                    : undefined
-              })
-              return result.best?.syncedLyrics ?? result.best?.plainLyrics ?? null
-            }
-          : undefined,
-        // LRCLIB does not carry translations. When the online fallback supplied
-        // the original lyrics, try the provider path once more just for the
-        // NetEase tlyric translation; a miss simply keeps the layer hidden.
-        loadOnlineTranslation: canLoadOnlineLyrics
-          ? async () => {
-              await syncPluginProviders()
-              const lyrics = await useMediaProviders().resolveLyrics(resolverTrack)
-              return lyrics?.translatedLyrics ?? null
-            }
-          : undefined
-      })
-    } catch {
-      // A failed optional source must settle the request without erasing lyrics
-      // that may already be attached to the active track.
-      resolved = {
-        lyrics: resolverTrack.lyrics ?? null,
-        translatedLyrics: resolverTrack.translatedLyrics ?? null,
-        lyricsSource: resolverTrack.lyricsSource ?? (hasOriginal ? 'embedded' : null),
-        translatedLyricsSource: resolverTrack.translatedLyricsSource ?? null,
-        failure: 'provider'
-      }
-    }
-
-    // Source selection can change while an async local/provider resolver is
-    // pending. Do not let a stale forced lookup overwrite the newer Auto (or
-    // manual) choice when it finally completes.
-    const currentOverride = lyricsManagement.entryFor(triggerTrack.id)
-    const currentRequestedSource = currentOverride?.source ?? 'auto'
-    const currentLayerSource = (
-      key: 'originalSelection' | 'translationSelection'
-    ): LyricResolverSource | 'manual' => {
-      const selection = currentOverride?.[key]
-      if (selection === 'local' || selection === 'provider' || selection === 'manual') {
-        return selection
-      }
-      if (currentRequestedSource === 'local' || currentRequestedSource === 'provider') {
-        return currentRequestedSource
-      }
-      return 'automatic'
-    }
-    if (
-      `${currentRequestedSource}:${currentLayerSource('originalSelection')}:${currentLayerSource('translationSelection')}` !==
-      sourceSelectionSignature
-    ) {
-      completeIfCurrent()
-      return
-    }
-    if (
-      resolved.failure &&
-      !hasLyricContent(resolved.lyrics) &&
-      !hasLyricContent(resolved.translatedLyrics)
-    ) {
-      if (isCurrentRequest()) {
-        lyricsLoadState.value = { trackId: triggerTrack.id, status: 'failed' }
-        scheduleCurrentLyricsRetry(triggerTrack.id, request.activation)
-      }
-      return
-    }
-    commitResolvedLyrics(triggerTrack, resolverTrack, resolved)
-    completeIfCurrent(
-      hasLyricContent(resolved.lyrics) || hasLyricContent(resolved.translatedLyrics)
-        ? 'ready'
-        : 'empty'
-    )
-  }
-
-  request.promise = Promise.resolve().then(run)
-  activeLyricsLoads.set(triggerTrack.id, request)
-  try {
-    await request.promise
-  } finally {
-    if (activeLyricsLoads.get(triggerTrack.id) === request) {
-      activeLyricsLoads.delete(triggerTrack.id)
-    }
-  }
-}
-
 /** True when a previously resolved local playback file still exists. */
 async function isUsableLocalPlaybackFile(filePath: string): Promise<boolean> {
   try {
@@ -2591,19 +2306,7 @@ async function handleProviderRematchFallback(
 }
 
 function retryCurrentTrackLyricsIfNeeded(forceReload = false): void {
-  const track = currentTrack.value
-  if (!track) return
-  const loading =
-    lyricsLoadState.value.trackId === track.id && lyricsLoadState.value.status === 'loading'
-  const failed =
-    lyricsLoadState.value.trackId === track.id && lyricsLoadState.value.status === 'failed'
-  if (!hasLyricContent(track.lyrics) || loading) {
-    void ensureCurrentTrackLyricsLoaded(track, true, forceReload)
-    return
-  }
-  if (failed) {
-    void ensureCurrentTrackLyricsLoaded(track, true, forceReload)
-  }
+  lyricsLoader.retryCurrentTrackLyricsIfNeeded(forceReload)
 }
 
 async function refreshPlaybackInfoAfterStartFile(): Promise<void> {
@@ -3682,39 +3385,6 @@ let mediaSessionHandlersBound = false
 let mediaSessionMetadataKey = ''
 let discordPlayStartTimestamp: number | null = null
 let desktopLyricsTimeThrottle = 0
-function persistSelectedTrackSession(): void {
-  const mode = appSettings.value.playbackResumeMode
-  if (mode === 'off') return
-
-  const session = createPlaybackSession(mode)
-  if (!session) return
-
-  const dataApi = window.api?.data
-  if (!dataApi) return
-
-  const write = playbackSessionWriter.save(dataApi, session)
-  void write.completion.catch((err) => {
-    console.warn('保存已选曲目播放会话失败:', err)
-  })
-}
-
-function clearPersistedSelectedTrackSession(): void {
-  const dataApi = window.api?.data
-  if (!dataApi) return
-  const write = playbackSessionWriter.clear(dataApi)
-  void write.completion.catch((error) => {
-    console.warn('清理不可用队列的播放会话失败:', error)
-  })
-}
-
-function persistPlaybackSessionAfterQueueMutation(): void {
-  if (!currentTrack.value || appSettings.value.playbackResumeMode === 'off') {
-    clearPersistedSelectedTrackSession()
-    return
-  }
-  persistSelectedTrackSession()
-}
-
 function syncDesktopLyricsSnapshot(): void {
   const desktopLyricsApi = window.api?.desktopLyrics
   if (!desktopLyricsApi) return
@@ -4026,201 +3696,6 @@ function setupPlayerIntegrationSideEffects(): void {
   })
 }
 
-function getPersonalizedStreamEntryId(track: Track | null): string | null {
-  if (!track) return null
-  if (track.queueEntryId) return track.queueEntryId
-  const queued = queue.value[queueIndex.value]
-  if (queued?.id === track.id && queued.queueEntryId) return queued.queueEntryId
-  return queue.value.find((candidate) => candidate.id === track.id)?.queueEntryId ?? null
-}
-
-function refreshPersonalizedStreamRemaining(): void {
-  if (!personalizedStreamSession.value) {
-    personalizedStreamRemaining.value = 0
-    return
-  }
-  let remaining = 0
-  for (const entryId of personalizedStreamEntryIds) {
-    if (!personalizedStreamPlayedEntryIds.has(entryId)) remaining += 1
-  }
-  personalizedStreamRemaining.value = remaining
-}
-
-function markCurrentPersonalizedStreamTrackPlayed(): void {
-  if (!personalizedStreamSession.value) return
-  const entryId = getPersonalizedStreamEntryId(currentTrack.value)
-  if (!entryId || !personalizedStreamEntryIds.has(entryId)) return
-  personalizedStreamPlayedEntryIds.add(entryId)
-  refreshPersonalizedStreamRemaining()
-}
-
-function endPersonalizedStream(): void {
-  personalizedStreamSession.value = null
-  personalizedStreamEntryIds.clear()
-  personalizedStreamPlayedEntryIds.clear()
-  personalizedStreamRemaining.value = 0
-}
-
-function isPersonalizedStreamTrack(track: Track): boolean {
-  if (!personalizedStreamSession.value) return false
-  if (track.queueEntryId) return personalizedStreamEntryIds.has(track.queueEntryId)
-  return queue.value.some(
-    (candidate) =>
-      candidate.id === track.id &&
-      !!candidate.queueEntryId &&
-      personalizedStreamEntryIds.has(candidate.queueEntryId)
-  )
-}
-
-function startPersonalizedStream(key: PersonalizedStreamKey): PersonalizedStreamSession {
-  personalizedStreamEntryIds.clear()
-  personalizedStreamPlayedEntryIds.clear()
-  for (const track of queue.value) {
-    if (track.queueEntryId) personalizedStreamEntryIds.add(track.queueEntryId)
-  }
-  const session = { id: ++personalizedStreamSessionSequence, key }
-  personalizedStreamSession.value = session
-  markCurrentPersonalizedStreamTrackPlayed()
-  refreshPersonalizedStreamRemaining()
-  return session
-}
-
-function isPersonalizedStreamSessionCurrent(session: PersonalizedStreamSession): boolean {
-  const active = personalizedStreamSession.value
-  return active?.id === session.id && active.key === session.key
-}
-
-function applyPendingRendererPlayModeAtBoundary(): void {
-  if (!rendererPlayModeBoundaryPending) return
-  rendererPlayModeBoundaryPending = false
-  if (playMode.value === 'heart') return
-  const current = currentTrack.value
-  if (!current || originalQueue.value.length === 0) return
-
-  if (playMode.value === 'shuffle') {
-    const queueEntryIndex = current.queueEntryId
-      ? originalQueue.value.findIndex((track) => track.queueEntryId === current.queueEntryId)
-      : -1
-    const currentOriginalIndex =
-      queueEntryIndex >= 0
-        ? queueEntryIndex
-        : originalQueue.value.findIndex((track) => track.id === current.id)
-    const remaining = originalQueue.value.filter((_, index) => index !== currentOriginalIndex)
-    queue.value = [current, ...shuffleArray(remaining)]
-    queueIndex.value = 0
-    return
-  }
-
-  queue.value = [...originalQueue.value]
-  queueIndex.value = queue.value.findIndex((track) => track.id === current.id)
-  if (queueIndex.value === -1) queueIndex.value = 0
-}
-
-function commitQueueEdit(nextQueue: readonly Track[], nextIndex: number): void {
-  endPersonalizedStream()
-  const snapshots = toPlaybackQueueSnapshots(nextQueue)
-  queue.value = snapshots
-  originalQueue.value = [...snapshots]
-  queueIndex.value =
-    snapshots.length === 0 ? -1 : Math.max(0, Math.min(nextIndex, snapshots.length - 1))
-  persistPlaybackSessionAfterQueueMutation()
-  void queueNativeQueueStateSync().catch((error) => {
-    setAudioEngineError(error instanceof Error ? error.message : String(error))
-  })
-}
-
-function enqueueTrack(track: Track): void {
-  const next = [...queue.value, track]
-  commitQueueEdit(next, queueIndex.value)
-}
-
-function appendQueueTracks(tracks: readonly Track[]): void {
-  if (tracks.length === 0) return
-  endPersonalizedStream()
-  const additions = toPlaybackQueueSnapshots(tracks)
-  originalQueue.value = [...originalQueue.value, ...additions]
-  queue.value = [
-    ...queue.value,
-    ...(playMode.value === 'shuffle' ? shuffleArray(additions) : additions)
-  ]
-  persistPlaybackSessionAfterQueueMutation()
-  void queueNativeQueueStateSync().catch((error) => {
-    setAudioEngineError(error instanceof Error ? error.message : String(error))
-  })
-}
-
-function appendPersonalizedStreamTracks(
-  session: PersonalizedStreamSession,
-  tracks: readonly Track[]
-): boolean {
-  if (tracks.length === 0 || !isPersonalizedStreamSessionCurrent(session)) return false
-  const additions = toPlaybackQueueSnapshots(tracks)
-  for (const track of additions) {
-    if (track.queueEntryId) personalizedStreamEntryIds.add(track.queueEntryId)
-  }
-  originalQueue.value = [...originalQueue.value, ...additions]
-  queue.value = [
-    ...queue.value,
-    ...(playMode.value === 'shuffle' ? shuffleArray(additions) : additions)
-  ]
-  refreshPersonalizedStreamRemaining()
-  persistPlaybackSessionAfterQueueMutation()
-  void queueNativeQueueStateSync().catch((error) => {
-    setAudioEngineError(error instanceof Error ? error.message : String(error))
-  })
-  return true
-}
-
-function playNextTrack(track: Track): void {
-  const insertAt = queueIndex.value >= 0 ? queueIndex.value + 1 : 0
-  const next = [...queue.value]
-  next.splice(insertAt, 0, track)
-  commitQueueEdit(next, queueIndex.value)
-}
-
-function removeQueueItem(index: number): void {
-  if (!Number.isInteger(index) || index < 0 || index >= queue.value.length) return
-  const next = [...queue.value]
-  next.splice(index, 1)
-  const nextIndex = index < queueIndex.value ? queueIndex.value - 1 : queueIndex.value
-  commitQueueEdit(next, nextIndex)
-}
-
-function clearQueue(): void {
-  commitQueueEdit([], -1)
-  currentTrack.value = null
-  isPlaying.value = false
-  automaticLyricsBaselines.clear()
-}
-
-function reorderQueue(fromIndex: number, toIndex: number): void {
-  if (
-    !Number.isInteger(fromIndex) ||
-    !Number.isInteger(toIndex) ||
-    fromIndex < 0 ||
-    toIndex < 0 ||
-    fromIndex >= queue.value.length ||
-    toIndex >= queue.value.length ||
-    fromIndex === toIndex
-  )
-    return
-  const next = [...queue.value]
-  const [moved] = next.splice(fromIndex, 1)
-  next.splice(toIndex, 0, moved)
-  let nextIndex = queueIndex.value
-  if (queueIndex.value === fromIndex) nextIndex = toIndex
-  else if (fromIndex < queueIndex.value && toIndex >= queueIndex.value) nextIndex--
-  else if (fromIndex > queueIndex.value && toIndex <= queueIndex.value) nextIndex++
-  commitQueueEdit(next, nextIndex)
-}
-
-function saveQueueAsPlaylist(
-  name: string,
-  createPlaylistWithTracks: (name: string, tracks: Track[]) => string
-): string {
-  return createPlaylistWithTracks(name, [...queue.value])
-}
-
 function cyclePlayMode(): void {
   const modes: PlayMode[] = ['sequential', 'listLoop', 'repeat', 'shuffle', 'heart']
   const cycleModes = heartModeAvailable.value ? modes : modes.filter((mode) => mode !== 'heart')
@@ -4271,7 +3746,7 @@ function enterHeartMode(options: { persist?: boolean } = {}): void {
   heartModeFetchGeneration += 1
   const generation = heartModeFetchGeneration
   playMode.value = 'heart'
-  rendererPlayModeBoundaryPending = false
+  rendererPlayModeBoundaryPending.value = false
   commitHeartQueue([seed])
   void refillHeartQueue(seed).then((added) => {
     if (generation !== heartModeFetchGeneration || playMode.value !== 'heart') return
@@ -4287,7 +3762,7 @@ function exitHeartModeToSequential(): void {
   heartModeFetchGeneration += 1
   heartModeFetchRequest = null
   playMode.value = 'sequential'
-  rendererPlayModeBoundaryPending = false
+  rendererPlayModeBoundaryPending.value = false
   if (heartModeBaseQueue.length > 0) {
     const restored = toPlaybackQueueSnapshots(heartModeBaseQueue)
     queue.value = restored
@@ -4307,7 +3782,7 @@ function exitHeartModeForManualQueueReplacement(): void {
   heartModeFetchGeneration += 1
   heartModeFetchRequest = null
   playMode.value = 'sequential'
-  rendererPlayModeBoundaryPending = false
+  rendererPlayModeBoundaryPending.value = false
   heartModeBaseQueue = []
 }
 
@@ -4396,7 +3871,7 @@ function setPlayModeInternal(mode: PlayMode, options: { persist?: boolean } = {}
   playMode.value = mode
   // Preserve the active track, position and queue identity. Renderer fallback
   // applies the new ordering only when next/EOF reaches a track boundary.
-  rendererPlayModeBoundaryPending = true
+  rendererPlayModeBoundaryPending.value = true
   // 心动模式分支在上面提前返回，因此这里只会持久化常规播放模式。
   if (options.persist !== false) {
     void updateSettings({ playMode: mode }).catch((err) => {
@@ -4413,122 +3888,6 @@ const progress = computed(() => {
   if (duration.value <= 0) return 0
   return (currentTime.value / duration.value) * 100
 })
-
-function restorePlaybackSession(session: PlaybackSession): void {
-  const track = hydratePlaybackTrack(cloneTrackForPlaybackSession(session.track))
-  const position =
-    session.mode === 'trackAndPosition' ? clampCuePlaybackPosition(track, session.position) : 0
-
-  resetPlaybackRuntimeStateForRestore()
-  clearCrossfadeTimer()
-  if (session.playMode) {
-    setPlayModeInternal(session.playMode, { persist: false })
-  }
-  currentTrack.value = { ...track }
-
-  // 恢复完整播放队列，而非只恢复当前一首歌
-  const savedQueue =
-    Array.isArray(session.queue) && session.queue.length > 0
-      ? session.queue.map(cloneTrackForPlaybackSession)
-      : [track]
-  const rawIndex = session.queueIndex
-  const savedIndex =
-    typeof rawIndex === 'number' &&
-    Number.isFinite(rawIndex) &&
-    rawIndex >= 0 &&
-    rawIndex < savedQueue.length
-      ? rawIndex
-      : 0
-  queue.value = toPlaybackQueueSnapshots(savedQueue)
-  originalQueue.value = [...queue.value]
-  queueIndex.value = savedIndex
-
-  duration.value = cueDuration(track)
-  isPlaying.value = false
-  isLoading.value = false
-  restoredPlaybackPending = true
-  restoredPlaybackPosition = position
-  pendingLoadStartTime = 0
-  autoAdvanceInFlight = false
-  advancingFromEndedTrackId = ''
-  setCurrentTimeImmediate(position)
-  clearSleepTimerIntervals()
-  const sleepTimer = getRestorableSleepTimerState(session.sleepTimer)
-  if (sleepTimer) {
-    getSleepTimerController().applyAuthoritativeState(sleepTimer)
-    void window.api.sleepTimer?.configure(sleepTimer).catch(() => {})
-  }
-  void ensureCurrentTrackLyricsLoaded(track)
-}
-
-function createPlaybackSession(mode: PlaybackResumeMode): PlaybackSession | null {
-  const track = currentTrack.value
-  if (!track || mode === 'off') return null
-
-  flushLatestCurrentTime()
-  const rawPosition =
-    mode === 'trackAndPosition'
-      ? Math.max(0, Number.isFinite(currentTime.value) ? currentTime.value : 0)
-      : 0
-  const position =
-    duration.value > 0 ? Math.min(rawPosition, Math.max(0, duration.value - 1)) : rawPosition
-
-  return {
-    version: 1,
-    savedAt: new Date().toISOString(),
-    mode,
-    // 心动模式依赖登录态与收藏歌单上下文，恢复会话时统一回退到顺序播放。
-    playMode: playMode.value === 'heart' ? 'sequential' : playMode.value,
-    track: cloneTrackForPlaybackSession(track),
-    position,
-    queue: queue.value.map(cloneTrackForPlaybackSession),
-    queueIndex: queueIndex.value,
-    ...(sleepTimerState.value?.active ? { sleepTimer: sleepTimerState.value } : {})
-  }
-}
-
-function removeUnavailableTracks(trackIds: string[], filePaths: string[]): void {
-  for (const trackId of trackIds) automaticLyricsBaselines.delete(trackId)
-  const nextState = pruneUnavailableLocalTracks(
-    {
-      currentTrack: currentTrack.value,
-      queue: queue.value,
-      originalQueue: originalQueue.value,
-      queueIndex: queueIndex.value
-    },
-    trackIds,
-    filePaths
-  )
-  const queueChanged =
-    nextState.queue.length !== queue.value.length ||
-    nextState.originalQueue.length !== originalQueue.value.length ||
-    nextState.queueIndex !== queueIndex.value
-
-  queue.value = nextState.queue
-  originalQueue.value = nextState.originalQueue
-  queueIndex.value = nextState.queueIndex
-  if (nextState.activeTrackRemoved) {
-    clearCrossfadeTimer()
-    resetPlaybackRuntimeStateForRestore()
-    currentTrack.value = null
-    isPlaying.value = false
-    isLoading.value = false
-    duration.value = 0
-    setCurrentTimeImmediate(0)
-    clearPersistedSelectedTrackSession()
-    return
-  }
-
-  currentTrack.value = nextState.currentTrack
-  if (queueChanged) persistPlaybackSessionAfterQueueMutation()
-  if (nativePlaybackActive) {
-    void queueNativeQueueStateSync().catch((error) => {
-      console.warn('[audio-engine] Failed to synchronize queue after library removal:', error)
-    })
-  }
-}
-
-onLocalTracksUnavailable(removeUnavailableTracks)
 
 async function castCurrentTrackToDevice(usn: string): Promise<void> {
   const track = currentTrack.value
@@ -5070,7 +4429,7 @@ export function usePlayerStore(): {
   }
 
   async function refreshCurrentLyrics(): Promise<void> {
-    await ensureCurrentTrackLyricsLoaded(currentTrack.value, true, true)
+    await lyricsLoader.ensureCurrentTrackLyricsLoaded(currentTrack.value, true, true)
   }
 
   return {

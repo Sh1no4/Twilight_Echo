@@ -121,7 +121,10 @@ test('playback info keeps loaded lyrics when reusing the current queue track', (
 })
 
 test('empty automatic lyric content remains eligible for a later provider retry', () => {
-  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const source = readFileSync(
+    new URL('./player/lyricsLoaderController.ts', import.meta.url),
+    'utf8'
+  )
   const lyricsSource = readFileSync(new URL('../utils/lyrics.ts', import.meta.url), 'utf8')
 
   assert.match(
@@ -324,17 +327,24 @@ test('desktop lyrics html supports bilingual original+translation layout', () =>
 
 test('player lyric loading records local and provider lyric sources', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const lyricsLoaderSource = readFileSync(
+    new URL('./player/lyricsLoaderController.ts', import.meta.url),
+    'utf8'
+  )
   const ensureCurrentTrackLyricsLoaded = extractInternalFunctionBody(
-    source,
+    lyricsLoaderSource,
     'ensureCurrentTrackLyricsLoaded'
   )
-  const commitResolvedLyrics = extractInternalFunctionBody(source, 'commitResolvedLyrics')
+  const commitResolvedLyrics = extractInternalFunctionBody(
+    lyricsLoaderSource,
+    'commitResolvedLyrics'
+  )
   const findLibraryTrackHint = extractInternalFunctionBody(source, 'findLibraryTrackHint')
   const loadAndPlay = extractInternalFunctionBody(source, 'loadAndPlay')
 
   assert.match(
-    source,
-    /import \{ resolveLyricsWithSources \} from '\.\.\/utils\/lyricSourceResolution\.ts'/
+    lyricsLoaderSource,
+    /import \{[\s\S]*resolveLyricsWithSources[\s\S]*\} from '\.\.\/\.\.\/utils\/lyricSourceResolution\.ts'/
   )
   assert.match(ensureCurrentTrackLyricsLoaded, /resolveLyricsWithSources\(\{/)
   assert.match(ensureCurrentTrackLyricsLoaded, /loadLocalLyrics:/)
@@ -436,13 +446,20 @@ test('playback session autosaves while playback changes instead of only on windo
 
 test('player state persists a selected track before shell-level autosave is available', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const sessionSource = readFileSync(
+    new URL('./player/playbackSessionController.ts', import.meta.url),
+    'utf8'
+  )
   const setupSideEffects = extractInternalFunctionBody(source, 'setupPlayerIntegrationSideEffects')
   const persistSelectedTrackSession = extractInternalFunctionBody(
-    source,
+    sessionSource,
     'persistSelectedTrackSession'
   )
 
-  assert.match(persistSelectedTrackSession, /const mode = appSettings\.value\.playbackResumeMode/)
+  assert.match(
+    persistSelectedTrackSession,
+    /const mode = options\.getAppSettings\(\)\.value\.playbackResumeMode/
+  )
   assert.match(persistSelectedTrackSession, /playbackSessionWriter\.save\(dataApi, session\)/)
   assert.match(
     setupSideEffects,
@@ -451,14 +468,20 @@ test('player state persists a selected track before shell-level autosave is avai
 })
 
 test('removing a non-current local queue item persists the pruned restart session', () => {
-  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
-  const removeUnavailableTracks = extractInternalFunctionBody(source, 'removeUnavailableTracks')
+  const sessionSource = readFileSync(
+    new URL('./player/playbackSessionController.ts', import.meta.url),
+    'utf8'
+  )
+  const removeUnavailableTracks = extractInternalFunctionBody(
+    sessionSource,
+    'removeUnavailableTracks'
+  )
   const persistAfterMutation = extractInternalFunctionBody(
-    source,
+    sessionSource,
     'persistPlaybackSessionAfterQueueMutation'
   )
   const clearPersistedSession = extractInternalFunctionBody(
-    source,
+    sessionSource,
     'clearPersistedSelectedTrackSession'
   )
 
@@ -635,13 +658,20 @@ test('provider queues use native for resolved current targets without native que
   const syncNativeQueueState = extractInternalFunctionBody(source, 'syncNativeQueueState')
   const loadAndPlay = source.match(/async function loadAndPlay[\s\S]*?function next\(\)/)?.[0] ?? ''
   const isNativeQueueDelegated = extractInternalFunctionBody(source, 'isNativeQueueDelegated')
-  const restorePlaybackSession = extractInternalFunctionBody(source, 'restorePlaybackSession')
+  const sessionSource = readFileSync(
+    new URL('./player/playbackSessionController.ts', import.meta.url),
+    'utf8'
+  )
+  const restorePlaybackSession = extractInternalFunctionBody(
+    sessionSource,
+    'restorePlaybackSession'
+  )
   const resetPlaybackRuntimeStateForRestore = extractInternalFunctionBody(
     source,
     'resetPlaybackRuntimeStateForRestore'
   )
 
-  assert.match(restorePlaybackSession, /resetPlaybackRuntimeStateForRestore\(\)/)
+  assert.match(restorePlaybackSession, /options\.resetPlaybackRuntimeStateForRestore\(\)/)
   assert.match(resetPlaybackRuntimeStateForRestore, /nativePlaybackActive = false/)
   assert.match(resetPlaybackRuntimeStateForRestore, /loadedTrackId = ''/)
   assert.match(resetPlaybackRuntimeStateForRestore, /stopRendererAudio\(true\)/)
@@ -787,8 +817,12 @@ test('native queue switching guards the target track before applying playback-in
     source,
     'refreshPlaybackAfterRendererResume'
   )
+  const lyricsLoaderSource = readFileSync(
+    new URL('./player/lyricsLoaderController.ts', import.meta.url),
+    'utf8'
+  )
   const retryCurrentTrackLyricsIfNeeded = extractInternalFunctionBody(
-    source,
+    lyricsLoaderSource,
     'retryCurrentTrackLyricsIfNeeded'
   )
   const advanceAfterPlaybackEnded = extractInternalFunctionBody(source, 'advanceAfterPlaybackEnded')
@@ -1019,7 +1053,10 @@ test('local dashboard keeps the restored editorial masthead in Chinese', () => {
 })
 
 test('playback session strips transient provider stream URLs before restore', () => {
-  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const sessionSource = readFileSync(
+    new URL('./player/playbackSessionController.ts', import.meta.url),
+    'utf8'
+  )
   const sessionTrackSource = readFileSync(
     new URL('../utils/playerSessionTrack.ts', import.meta.url),
     'utf8'
@@ -1039,8 +1076,8 @@ test('playback session strips transient provider stream URLs before restore', ()
   assert.match(sessionTrackSource, /bpm: track\.bpm/)
   assert.match(sessionTrackSource, /bpmAnalysis: track\.bpmAnalysis/)
   assert.match(
-    source,
-    /const track = hydratePlaybackTrack\(cloneTrackForPlaybackSession\(session\.track\)\)/
+    sessionSource,
+    /const track = options\.hydratePlaybackTrack\(cloneTrackForPlaybackSession\(session\.track\)\)/
   )
 })
 
@@ -1618,6 +1655,10 @@ test('missing local playback searches provider results instead of stopping at th
 
 test('play mode is persisted in settings and restored on launch', () => {
   const playerSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const queueSource = readFileSync(
+    new URL('./player/playbackQueueController.ts', import.meta.url),
+    'utf8'
+  )
   const settingsTypes = readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8')
   const settingsStoreSource = readFileSync(
     new URL('./useSettingsStore.ts', import.meta.url),
@@ -1649,7 +1690,7 @@ test('play mode is persisted in settings and restored on launch', () => {
     'queueNativePlayModeSync'
   )
   const applyPendingRendererPlayModeAtBoundary = extractInternalFunctionBody(
-    playerSource,
+    queueSource,
     'applyPendingRendererPlayModeAtBoundary'
   )
   const next = extractInternalFunctionBody(playerSource, 'next')
@@ -1658,7 +1699,7 @@ test('play mode is persisted in settings and restored on launch', () => {
     playerSource.match(/async function loadAndPlay[\s\S]*?function next\(\)/)?.[0] ?? ''
 
   assert.match(setPlayModeInternal, /if \(mode === playMode\.value\) return/)
-  assert.match(setPlayModeInternal, /rendererPlayModeBoundaryPending = true/)
+  assert.match(setPlayModeInternal, /rendererPlayModeBoundaryPending\.value = true/)
   assert.match(setPlayModeInternal, /void updateSettings\(\{ playMode: mode \}\)/)
   assert.match(setPlayModeInternal, /queueNativePlayModeSync\(mode\)/)
   assert.doesNotMatch(setPlayModeInternal, /queueNativeQueueStateSync\(/)
@@ -1670,7 +1711,10 @@ test('play mode is persisted in settings and restored on launch', () => {
   )
   assert.match(queueNativePlayModeSync, /window\.api\.audioEngine\.setPlayMode\(nativePlayMode\)/)
   assert.doesNotMatch(queueNativePlayModeSync, /loadQueue\(/)
-  assert.match(applyPendingRendererPlayModeAtBoundary, /rendererPlayModeBoundaryPending = false/)
+  assert.match(
+    applyPendingRendererPlayModeAtBoundary,
+    /rendererPlayModeBoundaryPending\.value = false/
+  )
   assert.match(
     applyPendingRendererPlayModeAtBoundary,
     /track\.queueEntryId === current\.queueEntryId/
@@ -1822,14 +1866,23 @@ test('ordinary queue playback ends a personalized stream without adding a play m
 })
 
 test('playback session carries play mode for quit-time restore', () => {
-  const playerSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const sessionSource = readFileSync(
+    new URL('./player/playbackSessionController.ts', import.meta.url),
+    'utf8'
+  )
   const musicTypes = readFileSync(new URL('../types/music.ts', import.meta.url), 'utf8')
-  const restorePlaybackSession = extractInternalFunctionBody(playerSource, 'restorePlaybackSession')
-  const createPlaybackSession = extractInternalFunctionBody(playerSource, 'createPlaybackSession')
+  const restorePlaybackSession = extractInternalFunctionBody(
+    sessionSource,
+    'restorePlaybackSession'
+  )
+  const createPlaybackSession = extractInternalFunctionBody(sessionSource, 'createPlaybackSession')
 
   assert.match(musicTypes, /import type \{ PlaybackResumeMode, PlayMode \} from '\.\/settings'/)
   assert.match(musicTypes, /playMode\?: PlayMode/)
-  assert.match(createPlaybackSession, /playMode: playMode\.value/)
+  assert.match(
+    createPlaybackSession,
+    /playMode: options\.playMode\.value === 'heart' \? 'sequential' : options\.playMode\.value/
+  )
   assert.match(restorePlaybackSession, /if \(session\.playMode\) \{/)
   assert.match(
     restorePlaybackSession,
@@ -1838,7 +1891,10 @@ test('playback session carries play mode for quit-time restore', () => {
 })
 
 test('queue editing commands commit snapshots, persistence, and revision-fenced native synchronization', () => {
-  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const source = readFileSync(
+    new URL('./player/playbackQueueController.ts', import.meta.url),
+    'utf8'
+  )
   const commit = extractInternalFunctionBody(source, 'commitQueueEdit')
   const enqueue = extractInternalFunctionBody(source, 'enqueueTrack')
   const append = extractInternalFunctionBody(source, 'appendQueueTracks')
@@ -1854,26 +1910,32 @@ test('queue editing commands commit snapshots, persistence, and revision-fenced 
   assert.match(commit, /originalQueue\.value = \[\.\.\.snapshots\]/)
   assert.match(commit, /persistPlaybackSessionAfterQueueMutation\(\)/)
   assert.match(commit, /queueNativeQueueStateSync\(\)/)
-  assert.match(enqueue, /\[\.\.\.queue\.value, track\]/)
+  assert.match(enqueue, /\[\.\.\.options\.queue\.value, track\]/)
   assert.match(append, /toPlaybackQueueSnapshots\(tracks\)/)
-  assert.match(append, /originalQueue\.value = \[\.\.\.originalQueue\.value, \.\.\.additions\]/)
+  assert.match(
+    append,
+    /originalQueue\.value = \[\.\.\.options\.originalQueue\.value, \.\.\.additions\]/
+  )
   assert.match(append, /endPersonalizedStream\(\)/)
   assert.match(append, /persistPlaybackSessionAfterQueueMutation\(\)/)
   assert.match(append, /queueNativeQueueStateSync\(\)/)
-  assert.match(startPersonalized, /personalizedStreamEntryIds\.clear\(\)/)
-  assert.match(startPersonalized, /personalizedStreamPlayedEntryIds\.clear\(\)/)
+  assert.match(startPersonalized, /options\.personalizedStreamEntryIds\.clear\(\)/)
+  assert.match(startPersonalized, /options\.personalizedStreamPlayedEntryIds\.clear\(\)/)
   assert.match(startPersonalized, /markCurrentPersonalizedStreamTrackPlayed\(\)/)
   assert.match(appendPersonalized, /!isPersonalizedStreamSessionCurrent\(session\)/)
-  assert.match(appendPersonalized, /personalizedStreamEntryIds\.add\(track\.queueEntryId\)/)
+  assert.match(
+    appendPersonalized,
+    /options\.personalizedStreamEntryIds\.add\(track\.queueEntryId\)/
+  )
   assert.match(
     appendPersonalized,
     /playMode\.value === 'shuffle' \? shuffleArray\(additions\) : additions/
   )
-  assert.match(endPersonalized, /personalizedStreamSession\.value = null/)
+  assert.match(endPersonalized, /options\.personalizedStreamSession\.value = null/)
   assert.match(source, /function markCurrentPersonalizedStreamTrackPlayed\(\)/)
   assert.match(
     source,
-    /personalizedStreamPlayedEntryIds\.add\(entryId\)[\s\S]*refreshPersonalizedStreamRemaining\(\)/
+    /options\.personalizedStreamPlayedEntryIds\.add\(entryId\)[\s\S]*refreshPersonalizedStreamRemaining\(\)/
   )
   assert.match(playNext, /next\.splice\(insertAt, 0, track\)/)
   assert.match(remove, /next\.splice\(index, 1\)/)
@@ -1883,7 +1945,7 @@ test('queue editing commands commit snapshots, persistence, and revision-fenced 
   assert.match(reorder, /queueIndex\.value === fromIndex/)
   assert.match(
     source,
-    /function saveQueueAsPlaylist[\s\S]*createPlaylistWithTracks\(name, \[\.\.\.queue\.value\]\)/
+    /function saveQueueAsPlaylist[\s\S]*createPlaylistWithTracks\(name, \[\.\.\.options\.queue\.value\]\)/
   )
 })
 
