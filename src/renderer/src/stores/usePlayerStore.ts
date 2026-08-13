@@ -75,12 +75,13 @@ import { clampProviderReliability, findPlaybackFallbackTrack } from '../utils/pl
 import { findProviderRematchCandidate } from '../utils/libraryRepair.ts'
 import { useNcmStore } from './useNcmStore.ts'
 import { useLyricsManagement } from './lyricsManagement.ts'
+import { usePlaybackBookmarks } from './playbackBookmarks'
 import {
   getPodcastDefaultPlaybackRate,
-  parsePodcastTrackId,
   setPodcastDefaultPlaybackRate,
   usePodcastStore
 } from './usePodcastStore.ts'
+import { createPlaybackHistoryController } from './player/playbackHistoryController.ts'
 import { toggleVolumeMute } from '../utils/volumeMute.ts'
 import { createDebouncedVolumePersistence } from '../utils/volumePersistence.ts'
 import { configurePlayerStoreHmr } from './playerStoreHmr.ts'
@@ -100,7 +101,6 @@ import { useMusicStore } from './useMusicStore'
 import { type SleepTimerMode, type SleepTimerState } from '../../../shared/sleepTimer.ts'
 import { DEFAULT_SOFTWARE_VOLUME } from '../../../shared/audioProcessingOptions.ts'
 import { createPlayerSleepTimer } from './player/usePlayerSleepTimer.ts'
-import { usePlaybackBookmarks } from './playbackBookmarks'
 import { useAppNoticeStore } from './useAppNoticeStore'
 import { claimRendererRuntime } from './playerRuntimeOwnership.ts'
 import {
@@ -205,8 +205,6 @@ const playbackRate = ref(1)
 /** A-B loop points in seconds relative to the logical track start. Null = unset. */
 const abLoopA = ref<number | null>(null)
 const abLoopB = ref<number | null>(null)
-/** Offer to resume a long track from a saved resume bookmark. */
-const resumeOffer = ref<{ trackId: string; positionSeconds: number; label: string } | null>(null)
 const lastAudibleVolume = ref(DEFAULT_SOFTWARE_VOLUME)
 let suppressVolumePersist = false
 /** Active cast target display name (null when not casting). */
@@ -1611,35 +1609,6 @@ async function setPlaybackRate(rate: number): Promise<void> {
   updateMediaSessionPositionState()
 }
 
-/** Persist podcast episode progress (throttled disk writes via store CAS). */
-let lastPodcastProgressWriteAt = 0
-let lastPodcastProgressTrackId = ''
-let lastPodcastProgressSeconds = -1
-
-function flushPodcastEpisodeProgress(force = false): void {
-  const track = currentTrack.value
-  if (!track || track.source !== 'podcast') return
-  const parsed = parsePodcastTrackId(track.id)
-  if (!parsed) return
-  const seconds = Math.max(0, Math.floor(getLatestPlaybackTime() || currentTime.value || 0))
-  if (seconds < 1 && !force) return
-  const now = Date.now()
-  const sameTrack = lastPodcastProgressTrackId === track.id
-  if (
-    !force &&
-    sameTrack &&
-    Math.abs(seconds - lastPodcastProgressSeconds) < 2 &&
-    now - lastPodcastProgressWriteAt < 8_000
-  ) {
-    return
-  }
-  if (!force && sameTrack && now - lastPodcastProgressWriteAt < 4_000) return
-  lastPodcastProgressWriteAt = now
-  lastPodcastProgressTrackId = track.id
-  lastPodcastProgressSeconds = seconds
-  void usePodcastStore().updateEpisodeProgress(parsed.subscriptionId, parsed.episodeGuid, seconds)
-}
-
 watch(
   [
     () => currentTrack.value?.id,
@@ -1769,6 +1738,18 @@ const {
   reorderQueue,
   saveQueueAsPlaylist
 } = playbackQueueController
+
+const playbackHistoryController = createPlaybackHistoryController({
+  currentTrack,
+  currentTime,
+  getLatestPlaybackTime,
+  seekPlayback,
+  getPlaybackBookmarks: usePlaybackBookmarks,
+  getPodcastStore: usePodcastStore,
+  now: Date.now
+})
+const { resumeOffer, acceptResumeOffer, dismissResumeOffer, addManualBookmarkAtCurrentTime } =
+  playbackHistoryController
 
 function publishAudioEngineRecoveryNotice(notice: AudioEngineRecoveryNotice): void {
   audioEngineRecoveryNotice.value = notice
@@ -2514,6 +2495,7 @@ function disposePlayerStoreRuntime(): void {
   clearRendererPlaybackWatchdog()
   clearNativeStreamBufferingTimer()
   disposePlaybackClock()
+  playbackHistoryController.dispose()
   clearCrossfadeTimer()
   stopVisualizationPolling(false)
 }
@@ -2595,65 +2577,6 @@ function scheduleCrossfadeIfNeeded(): void {
   )
 }
 
-function maybeRecordResumeBookmark(track: Track | null | undefined, position: number): void {
-  if (!track) return
-  const bookmarks = usePlaybackBookmarks()
-  void bookmarks.ensureLoaded().then(() => {
-    if (!bookmarks.shouldOfferLongTrackResume(track)) return
-    if (!Number.isFinite(position) || position < 15) return
-    const dur = track.duration
-    if (typeof dur === 'number' && Number.isFinite(dur) && position > dur - 10) return
-    void bookmarks.addBookmark(track, position, { kind: 'resume' }).catch(() => {})
-  })
-}
-
-function dismissResumeOffer(): void {
-  resumeOffer.value = null
-}
-
-function acceptResumeOffer(): void {
-  const offer = resumeOffer.value
-  if (!offer) return
-  const track = currentTrack.value
-  if (!track || track.id !== offer.trackId) {
-    resumeOffer.value = null
-    return
-  }
-  resumeOffer.value = null
-  seekPlayback(offer.positionSeconds)
-}
-
-function addManualBookmarkAtCurrentTime(): void {
-  const track = currentTrack.value
-  if (!track) return
-  const position = getLatestPlaybackTime() > 0 ? getLatestPlaybackTime() : currentTime.value
-  void usePlaybackBookmarks()
-    .addBookmark(track, position, { kind: 'manual' })
-    .catch(() => {})
-}
-
-function maybeOfferResumeForTrack(track: Track, normalizedStartTime: number): void {
-  if (normalizedStartTime > 5) {
-    if (resumeOffer.value?.trackId === track.id) resumeOffer.value = null
-    return
-  }
-  void usePlaybackBookmarks()
-    .ensureLoaded()
-    .then(() => {
-      if (currentTrack.value?.id !== track.id) return
-      const bm = usePlaybackBookmarks()
-      if (!bm.shouldOfferLongTrackResume(track)) return
-      const resume = bm.resumeBookmarkFor(track)
-      if (!resume || resume.positionSeconds < 15) return
-      resumeOffer.value = {
-        trackId: track.id,
-        positionSeconds: resume.positionSeconds,
-        label: resume.label
-      }
-    })
-    .catch(() => {})
-}
-
 async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
   // Capture previous playback identity before this load mutates state.
   // Callers (playTrack / next / previous) often set currentTrack and even replace
@@ -2665,25 +2588,9 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         ? currentTrack.value
         : null
   if (previousTrack && previousTrack.id !== track.id) {
-    maybeRecordResumeBookmark(previousTrack, getLatestPlaybackTime())
-    // Force-write podcast progress for the track we are leaving.
-    if (previousTrack.source === 'podcast') {
-      const prevParsed = parsePodcastTrackId(previousTrack.id)
-      if (prevParsed) {
-        const seconds = Math.max(0, Math.floor(getLatestPlaybackTime() || 0))
-        if (seconds >= 1) {
-          void usePodcastStore().updateEpisodeProgress(
-            prevParsed.subscriptionId,
-            prevParsed.episodeGuid,
-            seconds
-          )
-        }
-      }
-    }
+    playbackHistoryController.recordTrackDeparture(previousTrack)
   }
-  if (resumeOffer.value && resumeOffer.value.trackId !== track.id) {
-    resumeOffer.value = null
-  }
+  playbackHistoryController.clearResumeOfferForOtherTrack(track)
 
   const normalizedStartTime = clampCuePlaybackPosition(track, startTime)
   const loadToken = ++activeLoadToken
@@ -2910,7 +2817,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
     isLoading.value = false
     isPlaying.value = true
     startVisualizationPolling()
-    maybeOfferResumeForTrack(track, resumeAt)
+    playbackHistoryController.maybeOfferResumeForTrack(track, resumeAt)
   } catch (err) {
     if (!isActiveLoad(loadToken, track)) {
       releaseLoadIfOwned()
@@ -3032,8 +2939,8 @@ async function togglePlayState(): Promise<void> {
       // Local engine stays paused while casting; only mirror transport to the device.
       const nextPlaying = !isPlaying.value
       if (isPlaying.value && !nextPlaying) {
-        maybeRecordResumeBookmark(track, getLatestPlaybackTime())
-        flushPodcastEpisodeProgress(true)
+        playbackHistoryController.maybeRecordResumeBookmark(track, getLatestPlaybackTime())
+        playbackHistoryController.flushPodcastEpisodeProgress(true)
       }
       isPlaying.value = nextPlaying
       void window.api.remote
@@ -3044,8 +2951,8 @@ async function togglePlayState(): Promise<void> {
     if (nativePlaybackActive) {
       const nextPlaying = !isPlaying.value
       if (isPlaying.value && !nextPlaying) {
-        maybeRecordResumeBookmark(track, getLatestPlaybackTime())
-        flushPodcastEpisodeProgress(true)
+        playbackHistoryController.maybeRecordResumeBookmark(track, getLatestPlaybackTime())
+        playbackHistoryController.flushPodcastEpisodeProgress(true)
       }
       isPlaying.value = nextPlaying
       setPlaybackToggleIntent(nextPlaying)
@@ -3062,8 +2969,8 @@ async function togglePlayState(): Promise<void> {
         await stopNativeAudio()
         await audio.play()
       } else {
-        maybeRecordResumeBookmark(track, getLatestPlaybackTime())
-        flushPodcastEpisodeProgress(true)
+        playbackHistoryController.maybeRecordResumeBookmark(track, getLatestPlaybackTime())
+        playbackHistoryController.flushPodcastEpisodeProgress(true)
         audio.pause()
       }
     }
@@ -3448,7 +3355,7 @@ function setupPlayerIntegrationSideEffects(): void {
       if (!isPlaying.value) {
         discordPlayStartTimestamp = null
         // Pause/stop is a good moment to flush podcast progress.
-        flushPodcastEpisodeProgress(true)
+        playbackHistoryController.flushPodcastEpisodeProgress(true)
       }
       updateDiscordActivity()
     },
@@ -3459,7 +3366,7 @@ function setupPlayerIntegrationSideEffects(): void {
   watch(currentTime, () => {
     if (!isPlaying.value) return
     if (currentTrack.value?.source !== 'podcast') return
-    flushPodcastEpisodeProgress(false)
+    playbackHistoryController.flushPodcastEpisodeProgress(false)
   })
 
   watch([currentTime, duration], () => {

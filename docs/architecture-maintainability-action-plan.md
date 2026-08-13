@@ -11,7 +11,7 @@
 - `SettingsPage.vue` 已拆为 `components/settings-page/` 的 13 个分区组件，当前约 62KB，作为页面编排入口。
 - `DspRackPage.vue` / `EqualizerPage.vue` 已抽领域子组件：`components/dsp-rack/`（DspScenePane、DspGraphCanvas、DspNodeEditor）、`components/equalizer/`（OpraEqPanel、FrequencyResponseChart、FrequencyResponseToolbar、GraphicEqPanel），并抽出 `utils/dspNodeParams.ts`、`utils/equalizerPageLogic.ts`。
 - `StreamingPage.vue` 已拆出：`streaming-page/ProviderSidebar.vue`、`NcmPlaylistDialogs.vue`、`ProviderDownloadsPanel.vue`、`StreamingContextMenu.vue`、`streamingDownloads.ts`、`streaming-page/streamingPageModel.ts`、`StreamingContentHeader.vue/.css`、`StreamingSearchControls.vue/.css`、`StreamingPlaceholder.vue/.css`；页面约 112KB，继续列为拆分候选。
-- `usePlayerStore.ts` 约 150KB，纯函数已抽到 `utils/playerTime.ts`、`playerAudioSettings.ts`、`playerQueueUtils.ts`、`playerConstants.ts` 及既有 `utils/player*`；Round 3/4 已把队列、会话、歌词、播放时钟控制器抽到 `stores/player/`（`playbackQueueController.ts`、`playbackSessionController.ts`、`lyricsLoaderController.ts`、`playbackClockController.ts`）；仍列为最大 store 候选。
+- `usePlayerStore.ts` 约 147KB，纯函数已抽到 `utils/playerTime.ts`、`playerAudioSettings.ts`、`playerQueueUtils.ts`、`playerConstants.ts` 及既有 `utils/player*`；Round 3/4/5 已把队列、会话、歌词、播放时钟、播放历史控制器抽到 `stores/player/`（新增 `playbackHistoryController.ts`，约 6KB）；仍列为最大 store 候选。
 - `shared/theme.ts` 主题目录已迁到 `shared/themeCatalog.ts`（re-export barrel），数据拆为 `themeTokens.ts`（约 34KB）与 `themePresets.ts`（约 58KB），`theme.ts` 降到约 48KB。
 - `src/main/plugins/manager.ts` 已把 provider 路由/幂等/安全助手迁回插件域模块，当前约 68KB。
 - preload 已按域拆分到 `src/preload/domains/`，`src/main/ipc/data.ts` 已收敛为按域聚合入口，不再承担 52KB 级持久化注册。
@@ -37,6 +37,13 @@
 - `usePlayerStore.ts` 已把播放时钟、原生暂停补偿、pending pause 确认与 resync 状态抽到 `stores/player/playbackClockController.ts`（约 8KB），store 降至约 150KB，对外导出与行为不变。
 - 源码契约测试已同步新归属：`usePlayerStore.test.ts` 的播放时钟契约改读 `playbackClockController.ts`。
 - 验证：`test:app` 257 pass、`test:themes` 153 pass、`test:playback-routing` 397 pass、`test:cross-cutting-regressions` 23 pass、typecheck 通过。
+
+### Round 5（2026-08-13）
+
+- `usePlayerStore.ts` 已把恢复书签、手动书签、播客进度节流/强制回写抽到 `stores/player/playbackHistoryController.ts`（约 6KB），store 降至约 147KB；播客倍速策略仍由 store 保持，公共 API 和播放加载顺序不变。
+- 控制器通过注入的书签/podcast 服务工作，持有独立 `resumeOffer` ref，并提供 `dispose()` 与异步 generation guard，避免 HMR/runtime 替换后的过期回调写入状态。
+- 新增 `playbackHistoryController.test.ts` 并纳入 `test:playback-routing`；源码契约测试同步确认控制器归属和 store façade API。
+- 验证：聚焦控制器/store 测试 71 pass、`test:playback-routing` 403 pass、typecheck 通过。
 
 ## 1. 现状：已经做得不错的方面
 
@@ -90,7 +97,7 @@
 
 | 文件 | 大小 | 建议 |
 |---|---|---|
-| src/renderer/src/stores/usePlayerStore.ts | 150 KB | 继续按输出/统计拆 composable；队列/会话/歌词/播放时钟已抽到 stores/player/ |
+| src/renderer/src/stores/usePlayerStore.ts | 147 KB | 继续按输出/统计拆 composable；队列/会话/歌词/播放时钟/播放历史已抽到 stores/player/ |
 | src/shared/themePresets.ts | 58 KB | 主题目录预设数据，后续继续按数据域收敛 |
 | src/renderer/src/stores/useMusicStore.ts | 72 KB | 数据助手已抽到 library/musicStoreData.ts（11 KB），继续按库操作领域拆 |
 | src/main/plugins/manager.ts | 68 KB | provider 路由/幂等/安全助手已迁到插件域模块，继续按子域拆 |
@@ -177,10 +184,10 @@
 - 已按 `settings-page/` 目录拆成 13 个分区组件，`SettingsPage.vue` 当前约 62KB，作为页面级编排入口。
 - 后续持续按验收目标收敛：每个子组件尽量 < 60KB，`SettingsPage.vue` 从当前约 62KB 继续降低；UI 行为无变化。
 
-#### B2 再拆 usePlayerStore.ts（部分完成，Round 3/4 已抽控制器）
+#### B2 再拆 usePlayerStore.ts（部分完成，Round 3/4/5 已抽控制器）
 
-- 已把纯函数抽到 `utils/playerTime.ts`、`utils/playerAudioSettings.ts`、`utils/playerQueueUtils.ts`、`utils/playerConstants.ts` 及既有 `utils/playerPlaybackInfo.ts`、`playerSessionTrack.ts`、`playerTrackUtils.ts`；文件降至约 150KB。
-- Round 3/4 已按域抽 composable：`stores/player/playbackQueueController.ts`、`playbackSessionController.ts`、`lyricsLoaderController.ts`、`playbackClockController.ts`；不一次性重写 store 对外 API。
+- 已把纯函数抽到 `utils/playerTime.ts`、`utils/playerAudioSettings.ts`、`utils/playerQueueUtils.ts`、`utils/playerConstants.ts` 及既有 `utils/playerPlaybackInfo.ts`、`playerSessionTrack.ts`、`playerTrackUtils.ts`；文件降至约 147KB。
+- Round 3/4/5 已按域抽 composable：`stores/player/playbackQueueController.ts`、`playbackSessionController.ts`、`lyricsLoaderController.ts`、`playbackClockController.ts`、`playbackHistoryController.ts`；不一次性重写 store 对外 API。
 - 继续拆输出、统计等域；验收：文件降到 < 80 KB；对外 action 和状态名不变；现有 `usePlayerStore.test.ts` 全通过。
 
 #### B3 再拆 StreamingPage.vue / DspRackPage.vue / EqualizerPage.vue（部分完成，Round 3 已拆头部/搜索/占位）

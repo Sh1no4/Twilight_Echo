@@ -325,6 +325,52 @@ test('desktop lyrics html supports bilingual original+translation layout', () =>
   )
 })
 
+test('playback history behavior lives in its injected controller while the store keeps its API', () => {
+  const storeSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const historySource = readFileSync(
+    new URL('./player/playbackHistoryController.ts', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(historySource, /export interface PlaybackHistoryControllerOptions/)
+  assert.match(historySource, /getPlaybackBookmarks: \(\) => PlaybackBookmarksService/)
+  assert.match(historySource, /getPodcastStore: \(\) => PodcastProgressService/)
+  assert.match(historySource, /position < 15/)
+  assert.match(historySource, /position > dur - 10/)
+  assert.match(historySource, /Math\.abs\(seconds - lastPodcastProgressSeconds\) < 2/)
+  assert.match(historySource, /now - lastPodcastProgressWriteAt < 4_000/)
+  assert.match(historySource, /updateEpisodeProgress\(/)
+  assert.match(historySource, /const resumeOffer = ref<PlaybackResumeOffer \| null>\(null\)/)
+  assert.match(historySource, /function dispose\(\): void/)
+  assert.match(historySource, /generation \+= 1/)
+  assert.doesNotMatch(
+    historySource,
+    /PlaybackRate|getPodcastDefaultPlaybackRate|setPodcastDefaultPlaybackRate/
+  )
+  assert.match(storeSource, /createPlaybackHistoryController\(\{/)
+  assert.match(storeSource, /playbackHistoryController\.recordTrackDeparture\(previousTrack\)/)
+  assert.match(
+    storeSource,
+    /playbackHistoryController\.maybeOfferResumeForTrack\(track, resumeAt\)/
+  )
+  assert.match(storeSource, /playbackHistoryController\.flushPodcastEpisodeProgress\(false\)/)
+  assert.match(storeSource, /const \{ resumeOffer, acceptResumeOffer, dismissResumeOffer/)
+  assert.match(
+    storeSource,
+    /if \(currentTrack\.value\?\.source === 'podcast'\) \{[\s\S]*setPodcastDefaultPlaybackRate\(rounded\)/
+  )
+  assert.match(
+    storeSource,
+    /if \(track\.source === 'podcast'\) \{[\s\S]*getPodcastDefaultPlaybackRate\(\)/
+  )
+  assert.match(storeSource, /acceptResumeOffer: \(\) => void/)
+  assert.match(storeSource, /dismissResumeOffer: \(\) => void/)
+  assert.match(storeSource, /addManualBookmarkAtCurrentTime: \(\) => void/)
+  assert.match(storeSource, /playbackHistoryController\.dispose\(\)/)
+  assert.doesNotMatch(storeSource, /let lastPodcastProgressWriteAt = 0/)
+  assert.doesNotMatch(storeSource, /function maybeOfferResumeForTrack\(/)
+})
+
 test('player lyric loading records local and provider lyric sources', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const clockControllerSource = readFileSync(
