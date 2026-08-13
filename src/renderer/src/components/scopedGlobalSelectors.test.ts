@@ -18,7 +18,11 @@ const scopedStyleFiles = [
   './StreamingLibrary.vue',
   './StreamingSearch.vue',
   './TitleBar.vue',
-  './streaming-page/StreamingPage.css'
+  './streaming-page/ProviderDownloadsPanel.vue',
+  './streaming-page/ProviderSidebar.vue',
+  './streaming-page/StreamingContextMenu.vue',
+  './streaming-page/StreamingPage.css',
+  './streaming-page/NcmPlaylistDialogs.vue'
 ]
 
 test('scoped component styles keep descendants inside global theme selectors', () => {
