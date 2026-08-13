@@ -22,7 +22,7 @@
 - 同一主题只保留一份权威文档；被替换的草稿、路线图、重复指南应删除。
 - 临时实施计划放 Issue / PR，不落库；完成后的事实由代码、测试和权威文档承载。
 - 新增文档必须在 `docs/README.md` 登记索引。
-- `CLAUDE.md` 与 `AGENTS.md` 内容高度重复；按单一权威原则，Claude 侧只应保留指针，事实源在 `AGENTS.md`。
+- `CLAUDE.md` 已收敛为指针：只保留权威来源清单和少量工作规则，事实源在 `AGENTS.md` 与 `docs/`。
 
 ## 1. 项目现状调查（2026-08-12）
 
@@ -43,16 +43,16 @@ Twilight Echo 是一款桌面 HiFi 音乐播放器：Electron + Vue 3 + TypeScri
 
 | 指标 | 数值 |
 |---|---|
-| `.ts` 文件 | 573 |
-| `.vue` 组件 | 59 |
-| main 进程源文件（含测试） | 约 240（25 个目录） |
-| renderer 源文件（含测试） | 约 370（stores 39、utils 113、components 58 + 子目录） |
-| `src/shared` 契约文件 | 57 |
-| `src/preload` | 7 |
-| `scripts/` 工具脚本 | 69 |
-| IPC 通道 | 约 150 个唯一通道，分布在约 31 个域；`ipcMain` 注册点 233 处 |
-| preload `window.api` 域 | 30 个 |
-| 测试脚本（`test:*`） | 约 30 个 |
+| `.ts` 文件 | 609（生产 569、测试 40） |
+| `.vue` 组件 | 80 |
+| main 进程源文件（含测试） | 269（生产 166、测试 103；20 个目录） |
+| renderer 源文件（含测试） | 263（生产 139、测试 124；stores 43、utils 123、components 顶层 34 + 子目录 41） |
+| `src/shared` 契约文件 | 59 |
+| `src/preload` | 18 |
+| `scripts/` 工具脚本 | 70（`cjs` 64、`ts` 5、`mjs` 1） |
+| IPC 通道 | `ipcMain.handle` 220 + `ipcMain.on` 17，31 个 main 域；preload 对应 invoke 220、send 9、事件监听 39；renderer 唯一 `domain.action` 188 个 |
+| preload `window.api` 域 | renderer 实际使用 28 个 |
+| 测试脚本（`test:*`） | 29 个 |
 | 代码卫生 | `src` 下 0 个 TODO/FIXME/HACK |
 
 ### 1.3 活跃度与仓库卫生
@@ -69,7 +69,7 @@ Twilight Echo 是一款桌面 HiFi 音乐播放器：Electron + Vue 3 + TypeScri
 
 - `docs/DEVELOPER_README.md` 写 Electron `^39.2.6`，`package.json` 实际是 `^43.0.0`。
 - `package.json` version 已同步至 `1.1.4`，与 `v1.1.4` tag 基线一致。
-- `CLAUDE.md` 与 `AGENTS.md` 重复度高，按"单一权威"原则应瘦身为指针。
+- `CLAUDE.md` 已瘦身为指针，不再与 `AGENTS.md` 重复命令表格与长规则。
 
 ## 2. 分层架构与依赖方向（高内聚低耦合的核心）
 
@@ -143,7 +143,7 @@ Twilight Echo 是一款桌面 HiFi 音乐播放器：Electron + Vue 3 + TypeScri
 |---|---|---|---|
 | `app/` | 生命周期、窗口、更新 | `lifecycle.ts`、`window.ts`、`appUpdateService.ts` | `app:*`、`window:*` |
 | `core/` | 设置、运行时、快捷键类型 | `settings.ts`、`types.ts`（PLAYER_SHORTCUTS）、`runtime.ts` | `settings:*` |
-| `ipc/` | IPC 通道注册 | `data.ts`（大数据持久化）、`plugins.ts`、`themes.ts`、`fonts.ts`、`opra.ts` | `data:*`、`plugins:*`、`themes:*`、`fonts:*` |
+| `ipc/` | IPC 通道注册 | `data.ts`（按域聚合入口）、`persistenceIpc.ts`、`libraryIpc.ts`、`plugins.ts`、`themes.ts`、`fonts.ts`、`opra.ts` | `data:*`、`plugins:*`、`themes:*`、`fonts:*` |
 | `audio/` | 引擎 IPC、播放控制、DSP 编排、输出路由、响度 | `engineIpc.ts`、`playbackController.ts`、`outputRouter.ts`、`dspOrchestrator.ts`、`loudness*` | `audioEngine:*`、`loudnessAnalysis:*` |
 | `bpm/` | BPM 离线分析管理 | `bpmAnalysisManager.ts`、`pcmBpmAnalyzer.ts` | `bpmAnalysis:*` |
 | `library/` | 本地库扫描、索引、CUE、查重、标签写入 | `libraryIndexCoordinator.ts`、`libraryScanService.ts`、`scanPlanner.ts`、`watcher.ts`、`duplicateDetection.ts`、`tagWriteService.ts` | `library:*`、`fs:*` |
@@ -178,7 +178,7 @@ Twilight Echo 是一款桌面 HiFi 音乐播放器：Electron + Vue 3 + TypeScri
 
 | store | 拥有状态 | 要点 |
 |---|---|---|
-| `usePlayerStore.ts`（约 189KB，最大 store） | 播放队列、当前曲目、播放状态、音频输出、会话恢复 | 播放 tick/统计用 `shallowRef` + `triggerRef`；不要整表复制 |
+| `usePlayerStore.ts`（约 181KB，最大 store） | 播放队列、当前曲目、播放状态、音频输出、会话恢复 | 播放 tick/统计用 `shallowRef` + `triggerRef`；不要整表复制；纯逻辑已抽到 `utils/player*` |
 | `useMusicStore.ts`（81KB） | 本地曲库、艺术家/专辑/文件夹派生、歌单、收藏 | 非响应式 `trackById`/`trackByPath` 索引；只能走 store 替换路径，否则缓存不失效 |
 | `useSettingsStore.ts` | 设置快照 | 与 main `core/settings.ts` 对应 |
 | `useProviderStore.ts` | 插件 provider 注册与健康度 | |
@@ -194,7 +194,7 @@ Twilight Echo 是一款桌面 HiFi 音乐播放器：Electron + Vue 3 + TypeScri
 
 ### 4.4 components（页面即组件）
 
-顶层组件即页面：`LocalDashboard`、`SongList`（虚拟滚动）、`PlayingMusic`、`StreamingPage`、`RadioPodcastPage`、`NetworkSourcesPage`、`LoginPage`、`SettingsPage`、`ThemeStudioPage`、`EqualizerPage`、`DspRackPage`、`PluginPage`、`SideMenu`、`TitleBar` 等。子目录按领域聚合：`player-bar/`、`song-list/`、`streaming-page/`、`settings-page/`、`onboarding/`、`equalizer/`、`theme-studio/`、`network-sources/`、`icons/`。
+顶层组件即页面：`LocalDashboard`、`SongList`（虚拟滚动）、`PlayingMusic`、`StreamingPage`、`RadioPodcastPage`、`NetworkSourcesPage`、`LoginPage`、`SettingsPage`、`ThemeStudioPage`、`EqualizerPage`、`DspRackPage`、`PluginPage`、`SideMenu`、`TitleBar` 等。子目录按领域聚合：`player-bar/`、`song-list/`、`streaming-page/`、`settings-page/`、`onboarding/`、`equalizer/`、`dsp-rack/`、`theme-studio/`、`network-sources/`、`icons/`。`SettingsPage`、`DspRackPage`、`EqualizerPage` 现在是编排入口，各分区/领域面板收敛到对应子目录。
 
 ### 4.5 独立窗口
 
@@ -203,7 +203,7 @@ Twilight Echo 是一款桌面 HiFi 音乐播放器：Electron + Vue 3 + TypeScri
 
 ### 4.6 utils（纯逻辑层）
 
-`src/renderer/src/utils/` 113 个文件（57 个非测试）是 renderer 的纯逻辑层：播放路由、逻辑曲目、歌词时间线、主题性能、流媒体搜索、书签等。规则：
+`src/renderer/src/utils/` 123 个文件（63 个非测试）是 renderer 的纯逻辑层：播放路由、逻辑曲目、歌词时间线、主题性能、流媒体搜索、书签、播放器纯函数（`playerPlaybackInfo.ts`、`playerSessionTrack.ts`、`playerTrackUtils.ts`）、DSP/均衡器逻辑（`dspNodeParams.ts`、`equalizerPageLogic.ts`）等。规则：
 
 - utils 不依赖 `window.api`、不操作 DOM；有这些需求的放组件/composable。
 - 热路径（搜索、统计、播放 tick）遵循性能红线：Map/Set 索引、二分查找、页面级物化，见 AGENTS.md 的 Renderer 性能约束。
@@ -211,7 +211,7 @@ Twilight Echo 是一款桌面 HiFi 音乐播放器：Electron + Vue 3 + TypeScri
 
 ## 5. shared 契约层（`src/shared/`）
 
-双端共享的类型与纯逻辑都放这里（57 个文件），包括：`theme.ts`（141KB，最大契约）、`dspGraph.ts`、`cue.ts`、`miniPlayer.ts`、`lyricsAppearance.ts`、`sleepTimer.ts`、`remoteControl.ts`、`audioProcessingOptions.ts`、`versionedPersistence.ts` 等。
+双端共享的类型与纯逻辑都放这里（59 个文件），包括：`theme.ts`（约 48KB）、`themeCatalog.ts`（约 92KB，主题目录数据）、`dspGraph.ts`、`cue.ts`、`miniPlayer.ts`、`lyricsAppearance.ts`、`sleepTimer.ts`、`remoteControl.ts`、`audioProcessingOptions.ts`、`versionedPersistence.ts` 等。
 
 纪律：
 
@@ -223,7 +223,7 @@ Twilight Echo 是一款桌面 HiFi 音乐播放器：Electron + Vue 3 + TypeScri
 
 ### 6.1 preload 唯一桥
 
-`src/preload/index.ts` 通过 `contextBridge.exposeInMainWorld('api', ...)` 暴露 `window.api`，共 30 个域：`sleepTimer`、`window`、`dialog`、`shell`、`discord`、`library`、`fs`、`audioEngine`、`bpmAnalysis`、`loudnessAnalysis`、`opra`、`app`、`ncm`、`ncmCloud`、`radio`、`podcast`、`networkSources`、`remote`、`data`、`settings`、`fonts`、`themes`、`plugins`、`providers`、`providerDownloads`、`extensions`、`desktopLyrics`、`miniPlayer`、`trayPlayer`、`debug`。类型定义在 `src/preload/types.ts` + `index.d.ts`。
+`src/preload/index.ts` 通过 `contextBridge.exposeInMainWorld('api', ...)` 暴露 `window.api`；主窗口 28 个实际使用域，独立窗口按 `desktop-lyrics` / `mini-player` / `tray-player` 暴露最小子集。域实现已拆到 `src/preload/domains/`（`audioEngineApi.ts`、`dataApi.ts`、`settingsApi.ts`、`themesApi.ts`、`pluginsApi.ts`、`systemApi.ts` 等），`index.ts` 负责汇总与独立窗口分支；另有 `sleepTimerEvents.ts`、`closePersistence.ts`。类型定义在 `src/preload/types.ts` + `index.d.ts`。
 
 事件模式：preload 维护回调 Set（如 `audioEngineReadyCallbacks`），`onXxx(cb)` 返回 unsubscribe 函数；renderer 用完必须清理，防止泄漏。
 
@@ -296,16 +296,18 @@ BPM/响度只走 `audioAnalysisService` 的有界优先级队列（aging 防饥�
 
 | 文件 | 大小 | 建议 |
 |---|---|---|
-| `components/SettingsPage.vue` | 约 241KB（持续拆分中） | 页面级巨型组件，按 SettingsSection 拆分；已有 8 个分区组件 |
-| `stores/usePlayerStore.ts` | 约 189KB | 按领域（队列/会话/输出/统计）拆 composable |
-| `shared/theme.ts` | 约 139KB（已开始拆分） | 契约层大而全，谨慎改（双端依赖广）；2026-08-12 已把主题配色/字体纯数据拆到 `shared/themeData.ts`，后续按 themeData 模式继续拆 token/仓库/profile 运行时 |
-| `components/StreamingPage.vue` | 约 134KB | 页面级，按子页面拆分 |
-| `components/DspRackPage.vue` / `EqualizerPage.vue` | 115KB / 100KB | DSP 领域组件，考虑子组件化 |
-| `components/player-bar/HiFiSidebar.vue` | 95KB | 组件化拆分 |
-| `components/SongList.vue` | 91KB | 已虚拟化，逻辑再抽 utils |
-| `components/ThemeStudioPage.vue` | 90KB | 按 domain 拆分 |
-| `stores/useMusicStore.ts` | 81KB | 按库操作领域拆分 |
-| `main/plugins/manager.ts` | 80KB | 插件管理器大文件，按子域拆分 |
+| `components/StreamingPage.vue` | 约 121KB | 仍是大型编排页面；已拆出 `ProviderSidebar`、`NcmPlaylistDialogs`、`ProviderDownloadsPanel`、`StreamingContextMenu`、`streamingDownloads.ts`，继续按子页/逻辑拆 |
+| `stores/usePlayerStore.ts` | 约 181KB | 仍是最大 store；纯逻辑已抽到 `utils/playerPlaybackInfo.ts`、`playerSessionTrack.ts`、`playerTrackUtils.ts`，继续按队列/会话/输出/统计拆 composable |
+| `shared/themeCatalog.ts` | 约 92KB | 主题目录数据（2026-08-13 从 `theme.ts` 迁出） |
+| `components/player-bar/HiFiSidebar.vue` | 约 97KB | 组件化拆分 |
+| `components/SongList.vue` | 约 93KB | 已虚拟化，逻辑再抽 utils |
+| `components/ThemeStudioPage.vue` | 约 92KB | 按 domain 拆分 |
+| `stores/useMusicStore.ts` | 约 83KB | 按库操作领域拆分 |
+| `components/settings-page/AppearanceSettingsSection.vue` | 约 74KB | 设置分区中最大的子组件，继续按区块拆 |
+| `main/plugins/manager.ts` | 约 68KB | provider 路由/幂等/安全助手已迁到插件域模块，后续继续按子域收敛 |
+| `components/SettingsPage.vue` | 约 62KB | 已拆为 13 个 `settings-page/` 分区组件，当前为编排入口 |
+| `components/EqualizerPage.vue` | 约 54KB | 已拆出 `equalizer/` 面板与频率响应组件，当前为编排入口 |
+| `shared/theme.ts` | 约 48KB | 主题目录已迁至 `themeCatalog.ts`，保留结构化运行时；双端依赖广，谨慎改 |
 
 红线建议：单个 `.vue` 超过 ~150KB、单个 `.ts` 超过 ~100KB 时，新改动先拆分再动手；`utils` 里超过 ~300 行的文件按主题继续拆分。拆分原则：**内聚不变量在同一文件，跨主题再拆**。
 
@@ -384,9 +386,9 @@ BPM/响度只走 `audioAnalysisService` 的有界优先级队列（aging 防饥�
 
 | 风险 | 现状 | 处置建议 |
 |---|---|---|
-| 巨型组件/store | SettingsPage 约 241KB（拆分中）、usePlayerStore 约 189KB 等 | 9.2 拆分红线，大改前先拆 |
+| 巨型组件/store | StreamingPage 约 121KB、usePlayerStore 约 181KB 等；SettingsPage/DspRack/Equalizer/theme/plugin manager 已拆 | 9.2 拆分红线，大改前先拆 |
 | 分支膨胀 | 本地 20+ 历史分支 | 合入后删除；发布以 tag/远端 release 分支为准 |
-| 文档重复/过期 | CLAUDE.md 与 AGENTS.md 重复；DEVELOPER_README 的 Electron 版本过期；package.json 版本号滞后 | 按单一权威原则收敛；升级依赖/发版时顺手同步 |
+| 文档重复/过期 | CLAUDE.md 已收敛为指针；DEVELOPER_README 的 Electron 版本曾过期；package.json 版本号需随发版核对 | 保持单一权威原则；升级依赖/发版时顺手同步 |
 | 原生工具链复杂 | MinGW 主路径、MSVC VST3/SMTC/ASIO 分路径、clean-room ASIO | 改动 `audio-engine/output/` 时按 AGENTS.md 的 Windows 工具链要求验证；macOS/Linux 后端未发布级验证 |
 | 发布安全门禁 | 依赖闭包、strip、大小预算、品牌、SHA-256 全部失败关闭 | 发布只走 `gate:release:win`，别绕行 |
 | 性能红线 | 大曲库 + 高频播放 tick | 见 AGENTS.md Renderer 性能约束，改动热路径必跑 `test:local-perf` / `test:playback-routing` |

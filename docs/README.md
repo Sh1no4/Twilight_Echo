@@ -11,6 +11,8 @@
 - [音频引擎 API](./audio-engine-api.md)
 - [安全加固边界](./security-hardening.md)
 - [UI、歌词与播放时钟重构审计](./ui-playback-refactor-audit.md)
+- [安全 / UI 阴影与错位 / 交互逻辑审查（2026-08-01）](./audit-security-ui-ux-2026-08-01.md)
+- [音量重启恢复问题交接（2026-08-09）](./volume-restore-handoff-2026-08-09.md)
 
 ## 音频、设备与发布
 
@@ -40,6 +42,13 @@
 - [标签与重复歌曲检测](./duplicate-detection.md)
 - [睡眠定时器与静音](./sleep-timer-and-mute.md)
 - [持久化基准](./persistence-benchmark.md)
+- [多协议网络音乐源施工文档](./network-music-sources.md)
+- [网络音乐源真机验证清单](./network-music-sources-verification.md)
+
+## 设计、Provider 与网络音源
+
+- [Apple Music Inspired HiFi Player 设计系统](./apple-music-inspired-hifi-player-design-system.md)
+- [Apple Music Provider 实施与安全计划](./apple-music-provider-plan.md)
 
 ## 法律与验证证据
 
