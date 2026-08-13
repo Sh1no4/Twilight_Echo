@@ -6750,8 +6750,16 @@ test('loudnorm status event, library RG queue fields, and cancel IPC are wired e
     new URL('../renderer/src/components/SettingsPage.vue', import.meta.url),
     'utf8'
   )
+  const dspSettingsSource = readFileSync(
+    new URL('../renderer/src/components/settings-page/DspSettingsSection.vue', import.meta.url),
+    'utf8'
+  )
   const playerStoreSource = readFileSync(
     new URL('../renderer/src/stores/usePlayerStore.ts', import.meta.url),
+    'utf8'
+  )
+  const playerSessionTrackSource = readFileSync(
+    new URL('../renderer/src/utils/playerSessionTrack.ts', import.meta.url),
     'utf8'
   )
   const dspStoreSource = readFileSync(
@@ -6802,12 +6810,12 @@ test('loudnorm status event, library RG queue fields, and cancel IPC are wired e
   assert.ok(preloadSource.includes('loudnessAnalysis:cancel'))
   assert.ok(playerStoreSource.includes('loudnormStatus'))
   assert.ok(playerStoreSource.includes('onLoudnormStatus'))
-  assert.ok(playerStoreSource.includes('replayGainTrackGainDb'))
+  assert.ok(playerSessionTrackSource.includes('replayGainTrackGainDb'))
   assert.ok(dspStoreSource.includes('loudnormStatus: player.loudnormStatus'))
   assert.ok(hifiSource.includes('loudnormStatusCopy'))
   assert.ok(hifiSource.includes('loudnormStatusText'))
-  assert.ok(settingsSource.includes('loudnormStatusCopy'))
-  assert.ok(settingsSource.includes('settings-loudnorm-status'))
+  assert.ok(dspSettingsSource.includes('loudnormStatusCopy'))
+  assert.ok(dspSettingsSource.includes('settings-loudnorm-status'))
   assert.ok(settingsSource.includes('确认清理 Loudnorm'))
   assert.ok(preloadDtsSource.includes('replayGainTrackGainDb'))
   assert.ok(preloadDtsSource.includes('r128AlbumGainDb'))
