@@ -178,7 +178,7 @@ Twilight Echo 是一款桌面 HiFi 音乐播放器：Electron + Vue 3 + TypeScri
 
 | store | 拥有状态 | 要点 |
 |---|---|---|
-| `usePlayerStore.ts`（约 155KB，最大 store） | 播放队列、当前曲目、播放状态、音频输出、会话恢复 | 播放 tick/统计用 `shallowRef` + `triggerRef`；不要整表复制；纯逻辑已抽到 `utils/playerTime.ts`、`playerAudioSettings.ts`、`playerQueueUtils.ts`、`playerConstants.ts` 及既有 `utils/player*`；队列/会话/歌词控制器在 `stores/player/` |
+| `usePlayerStore.ts`（约 150KB，最大 store） | 播放队列、当前曲目、播放状态、音频输出、会话恢复 | 播放 tick/统计用 `shallowRef` + `triggerRef`；不要整表复制；纯逻辑已抽到 `utils/playerTime.ts`、`playerAudioSettings.ts`、`playerQueueUtils.ts`、`playerConstants.ts` 及既有 `utils/player*`；队列/会话/歌词/播放时钟控制器在 `stores/player/` |
 | `useMusicStore.ts`（约 72KB） | 本地曲库、艺术家/专辑/文件夹派生、歌单、收藏 | 非响应式 `trackById`/`trackByPath` 索引；只能走 store 替换路径，否则缓存不失效；数据助手在 `stores/library/musicStoreData.ts` |
 | `useSettingsStore.ts` | 设置快照 | 与 main `core/settings.ts` 对应 |
 | `useProviderStore.ts` | 插件 provider 注册与健康度 | |
@@ -297,7 +297,7 @@ BPM/响度只走 `audioAnalysisService` 的有界优先级队列（aging 防饥�
 | 文件 | 大小 | 建议 |
 |---|---|---|
 | `components/StreamingPage.vue` | 约 112KB | 大型编排页面；已拆出 `ProviderSidebar`、`NcmPlaylistDialogs`、`ProviderDownloadsPanel`、`StreamingContextMenu`、`streamingDownloads.ts`、`streaming-page/streamingPageModel.ts`、`StreamingContentHeader`、`StreamingSearchControls`、`StreamingPlaceholder`，继续按子页/逻辑拆 |
-| `stores/usePlayerStore.ts` | 约 155KB | 最大 store；纯逻辑已抽到 `utils/playerTime.ts`、`playerAudioSettings.ts`、`playerQueueUtils.ts`、`playerConstants.ts` 及既有 `utils/player*`；Round 3 已抽队列/会话/歌词控制器到 `stores/player/`，继续按输出/统计拆 composable |
+| `stores/usePlayerStore.ts` | 约 150KB | 最大 store；纯逻辑已抽到 `utils/playerTime.ts`、`playerAudioSettings.ts`、`playerQueueUtils.ts`、`playerConstants.ts` 及既有 `utils/player*`；Round 3/4 已抽队列/会话/歌词/播放时钟控制器到 `stores/player/`，继续按输出/统计拆 composable |
 | `shared/themePresets.ts` | 约 58KB | 主题目录预设数据（2026-08-13 从 `themeCatalog.ts` 拆出），继续按数据域收敛 |
 | `shared/themeTokens.ts` | 约 34KB | 主题 token 定义（2026-08-13 从 `themeCatalog.ts` 拆出） |
 | `components/player-bar/HiFiSidebar.vue` | 约 67KB | 样式已抽到 `HiFiSidebar.css`（约 30KB），组件继续按功能区块拆 |
@@ -387,7 +387,7 @@ BPM/响度只走 `audioAnalysisService` 的有界优先级队列（aging 防饥�
 
 | 风险 | 现状 | 处置建议 |
 |---|---|---|
-| 巨型组件/store | StreamingPage 约 112KB、usePlayerStore 约 155KB 等；SettingsPage/DspRack/Equalizer/theme/plugin manager 已拆；Round 2 完成 player store 纯函数、ThemeStudio、HiFi、streaming model、playback controller 抽取，Round 3 完成 usePlayerStore 队列/会话/歌词、StreamingPage 头部/搜索/占位、AppearanceSettingsSection 区块拆分 | 9.2 拆分红线，大改前先拆 |
+| 巨型组件/store | StreamingPage 约 112KB、usePlayerStore 约 150KB 等；SettingsPage/DspRack/Equalizer/theme/plugin manager 已拆；Round 2 完成 player store 纯函数、ThemeStudio、HiFi、streaming model、playback controller 抽取，Round 3 完成 usePlayerStore 队列/会话/歌词、StreamingPage 头部/搜索/占位、AppearanceSettingsSection 区块拆分，Round 4 完成 usePlayerStore 播放时钟控制器抽取 | 9.2 拆分红线，大改前先拆 |
 | 分支膨胀 | 本地 20+ 历史分支 | 合入后删除；发布以 tag/远端 release 分支为准 |
 | 文档重复/过期 | CLAUDE.md 已收敛为指针；DEVELOPER_README 的 Electron 版本曾过期；package.json 版本号需随发版核对 | 保持单一权威原则；升级依赖/发版时顺手同步 |
 | 原生工具链复杂 | MinGW 主路径、MSVC VST3/SMTC/ASIO 分路径、clean-room ASIO | 改动 `audio-engine/output/` 时按 AGENTS.md 的 Windows 工具链要求验证；macOS/Linux 后端未发布级验证 |

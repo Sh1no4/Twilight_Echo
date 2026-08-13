@@ -327,6 +327,10 @@ test('desktop lyrics html supports bilingual original+translation layout', () =>
 
 test('player lyric loading records local and provider lyric sources', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const clockControllerSource = readFileSync(
+    new URL('./player/playbackClockController.ts', import.meta.url),
+    'utf8'
+  )
   const lyricsLoaderSource = readFileSync(
     new URL('./player/lyricsLoaderController.ts', import.meta.url),
     'utf8'
@@ -363,9 +367,9 @@ test('player lyric loading records local and provider lyric sources', () => {
   assert.match(loadAndPlay, /if \(loadToken === activeLoadToken\) isLoading\.value = false/)
   // The store delegates fallback timing to one authority rather than keeping
   // a second independent position clock next to the lyric resolver.
-  assert.match(source, /createPlaybackSessionClock/)
+  assert.match(clockControllerSource, /createPlaybackSessionClock/)
   assert.match(
-    source,
+    clockControllerSource,
     /createPlaybackClock\(\{[\s\S]*onTick: \(\) => \{[\s\S]*playbackSessionClock\.estimate\(\)[\s\S]*requestPlaybackClockResync\(\)/
   )
 })
@@ -759,7 +763,7 @@ test('next and previous only use native controls when the native queue is delega
   assert.match(previousBody, /controlCast\?\.\(\{ seek: 0 \}\)/)
   assert.match(
     previousBody,
-    /appSettings\.value\.previousButtonAction === 'restart' &&[\s\S]*playbackClock\.getLatestPlaybackTime\(\) > 3/
+    /appSettings\.value\.previousButtonAction === 'restart' &&[\s\S]*getLatestPlaybackTime\(\) > 3/
   )
 })
 
@@ -802,6 +806,10 @@ test('togglePlayState and seek/volume fan out to cast when castTargetName is act
 
 test('native queue switching guards the target track before applying playback-info events', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const clockControllerSource = readFileSync(
+    new URL('./player/playbackClockController.ts', import.meta.url),
+    'utf8'
+  )
   const playbackSessionClockSource = readFileSync(
     new URL('../utils/playbackSessionClock.ts', import.meta.url),
     'utf8'
@@ -881,9 +889,9 @@ test('native queue switching guards the target track before applying playback-in
     source,
     /async function loadAndPlay[\s\S]*beginPlaybackPositionTransition\(normalizedStartTime, \{ keepRendererClockAlive: true \}\)[\s\S]*function next\(/
   )
-  assert.match(source, /function applyPlaybackPositionSample/)
-  assert.match(source, /playbackSessionClock\.ingest\(\{/)
-  assert.match(source, /playbackSessionClock\.estimate\(\)/)
+  assert.match(clockControllerSource, /function applyPlaybackPositionSample/)
+  assert.match(clockControllerSource, /playbackSessionClock\.ingest\(\{/)
+  assert.match(clockControllerSource, /playbackSessionClock\.estimate\(\)/)
   assert.match(playbackSessionClockSource, /maxPredictionGapMs/)
   assert.match(playbackSessionClockSource, /needsResync: true/)
   assert.match(source, /restoredPlaybackPending &&\s*Number\.isFinite\(restoredPlaybackPosition\)/)

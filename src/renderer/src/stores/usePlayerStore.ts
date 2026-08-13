@@ -36,7 +36,6 @@ import { clampSoftwareVolume, cloneAudioProcessingSettings } from '../utils/play
 import {
   HEART_MODE_REFILL_COUNT,
   HEART_MODE_REFILL_THRESHOLD,
-  NATIVE_PAUSE_CONFIRMATION_MS,
   NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS,
   NATIVE_PLAYBACK_INFO_POST_CONFIRMATION_GRACE_MS,
   NATIVE_PLAYBACK_INFO_REFRESH_DELAY_MS,
@@ -47,6 +46,7 @@ import {
 } from '../utils/playerConstants.ts'
 import { shuffleArray } from '../utils/playerQueueUtils.ts'
 import { formatTime, getNowMs } from '../utils/playerTime.ts'
+import type { PlaybackClockSnapshot } from '../utils/playbackSessionClock.ts'
 import {
   cachedSourceMatchesTrack,
   getTrackAudioSource,
@@ -83,10 +83,6 @@ import {
 } from './usePodcastStore.ts'
 import { toggleVolumeMute } from '../utils/volumeMute.ts'
 import { createDebouncedVolumePersistence } from '../utils/volumePersistence.ts'
-import {
-  createPlaybackSessionClock,
-  type PlaybackClockSnapshot
-} from '../utils/playbackSessionClock.ts'
 import { configurePlayerStoreHmr } from './playerStoreHmr.ts'
 import {
   clampCuePlaybackPosition,
@@ -119,7 +115,7 @@ import {
   createVisualizationPolling,
   type NativeVisualizationData
 } from './player/useVisualizationPolling.ts'
-import { createPlaybackClock } from './player/usePlaybackClock.ts'
+import { createPlaybackClockController } from './player/playbackClockController.ts'
 import { createLyricsLoader } from './player/lyricsLoaderController.ts'
 import { createPlaybackSessionController } from './player/playbackSessionController.ts'
 import { createPlaybackQueueController } from './player/playbackQueueController.ts'
@@ -497,7 +493,7 @@ function applyNativePlayingState(playing: boolean, pausePosition: number | null 
   if (playing) {
     clearPendingNativePause()
     isPlaying.value = true
-    publishPlaybackClockSnapshot(playbackSessionClock.setTransport('playing', playbackRate.value))
+    publishPlaybackClockTransport('playing', playbackRate.value)
     return
   }
 
@@ -513,7 +509,7 @@ function applyNativePlayingState(playing: boolean, pausePosition: number | null 
 
   clearPendingNativePause()
   isPlaying.value = playing
-  publishPlaybackClockSnapshot(playbackSessionClock.setTransport('paused', playbackRate.value))
+  publishPlaybackClockTransport('paused', playbackRate.value)
 }
 
 function scheduleRendererPlaybackWatchdog(track: Track, loadToken: number): void {
@@ -549,7 +545,7 @@ function getPlaybackAudio(): HTMLAudioElement {
     } else if (Number.isFinite(audio.duration) && audio.duration > 0) {
       duration.value = audio.duration
     }
-    publishPlaybackClockSnapshot(playbackSessionClock.setDuration(duration.value))
+    publishPlaybackClockDuration(duration.value)
   })
 
   audio.addEventListener('timeupdate', () => {
@@ -670,7 +666,7 @@ function resetPlaybackRuntimeStateForRestore(): void {
   playbackInfo.value = null
   clearNativePlaybackInfoIntent()
   clearPlaybackToggleIntent()
-  publishPlaybackClockSnapshot(playbackSessionClock.reset())
+  resetPlaybackClock()
   resetNativeStreamBufferingState()
   stopVisualizationPolling(true)
   stopRendererAudio(true)
@@ -710,6 +706,41 @@ async function stopNativeAudio(): Promise<void> {
     // The renderer audio fallback can still continue if the native bridge is unavailable.
   }
 }
+
+const playbackClockController = createPlaybackClockController({
+  currentTrack,
+  currentTime,
+  duration,
+  playbackRate,
+  isPlaying,
+  isLoading,
+  abLoopA,
+  abLoopB,
+  playMode,
+  getNow: getNowMs,
+  getPlaybackToggleIntent: () => playbackToggleIntent,
+  getAbLoopNativeActive: () => abLoopNativeActive,
+  enforceAbLoop,
+  isCurrentTrackLiveStream,
+  applyNativePlaybackInfo
+})
+const {
+  playbackClockSnapshot,
+  clearPendingNativePause,
+  deferNativePause,
+  setCurrentTimeImmediate,
+  anchorRendererPlaybackClock,
+  beginPlaybackPositionTransition,
+  applyPlaybackPositionSample,
+  estimatePlaybackClockPosition,
+  flushLatestCurrentTime,
+  startRendererPlaybackClock,
+  getLatestPlaybackTime,
+  setTransport: publishPlaybackClockTransport,
+  setDuration: publishPlaybackClockDuration,
+  resetPlaybackClock,
+  dispose: disposePlaybackClock
+} = playbackClockController
 
 const playbackSessionController = createPlaybackSessionController({
   currentTrack,
@@ -1267,7 +1298,7 @@ function applyNativePlaybackInfo(
     ? Math.max(0, info.position)
     : switchedTrack
       ? 0
-      : playbackClock.getLatestPlaybackTime()
+      : getLatestPlaybackTime()
 
   if (switchedTrack) {
     // Native gapless / queue next does not go through loadAndPlay — clear A-B and
@@ -1570,9 +1601,7 @@ async function setPlaybackRate(rate: number): Promise<void> {
   const rounded = Math.round(clamped * 1000) / 1000
   if (Object.is(rounded, playbackRate.value)) return
   playbackRate.value = rounded
-  publishPlaybackClockSnapshot(
-    playbackSessionClock.setTransport(playbackSessionClock.snapshot().state, rounded)
-  )
+  publishPlaybackClockTransport(playbackClockSnapshot.value.state, rounded)
   if (playbackAudio) applyPlaybackRateToHtmlAudio(playbackAudio, rounded)
   window.api.audioEngine.setPlaybackRate(rounded).catch(() => {})
   // Remember podcast speed preference when the user changes rate while on a podcast.
@@ -1592,10 +1621,7 @@ function flushPodcastEpisodeProgress(force = false): void {
   if (!track || track.source !== 'podcast') return
   const parsed = parsePodcastTrackId(track.id)
   if (!parsed) return
-  const seconds = Math.max(
-    0,
-    Math.floor(playbackClock.getLatestPlaybackTime() || currentTime.value || 0)
-  )
+  const seconds = Math.max(0, Math.floor(getLatestPlaybackTime() || currentTime.value || 0))
   if (seconds < 1 && !force) return
   const now = Date.now()
   const sameTrack = lastPodcastProgressTrackId === track.id
@@ -1699,9 +1725,6 @@ const cleanupFns: (() => void)[] = []
 let listenersSetup = false
 let crossfadeTimer: number | null = null
 let crossfadeTrackId = ''
-let pendingNativePause: { position: number } | null = null
-let nativePauseConfirmationTimer: number | null = null
-let playbackClockResyncInFlight = false
 let advancingFromEndedTrackId = ''
 let autoAdvanceInFlight = false
 let loadedTrackId = ''
@@ -1746,168 +1769,6 @@ const {
   reorderQueue,
   saveQueueAsPlaylist
 } = playbackQueueController
-
-const playbackSessionClock = createPlaybackSessionClock({ now: getNowMs })
-const playbackClockSnapshot = ref<PlaybackClockSnapshot>(playbackSessionClock.snapshot())
-
-function publishPlaybackClockSnapshot(
-  snapshot = playbackSessionClock.snapshot()
-): PlaybackClockSnapshot {
-  playbackClockSnapshot.value = snapshot
-  return snapshot
-}
-
-const playbackClock = createPlaybackClock({
-  currentTime,
-  getNow: getNowMs,
-  enforceAbLoop,
-  onTick: () => {
-    if (isCurrentTrackLiveStream()) return
-    const estimated = playbackSessionClock.estimate()
-    if (estimated?.needsResync) {
-      void requestPlaybackClockResync()
-      return
-    }
-    if (estimated !== null) {
-      publishPlaybackClockSnapshot(estimated)
-      playbackClock.publishCurrentTime(estimated.position)
-    }
-  }
-})
-
-function clearPendingNativePause(): void {
-  pendingNativePause = null
-  if (nativePauseConfirmationTimer !== null) {
-    window.clearTimeout(nativePauseConfirmationTimer)
-    nativePauseConfirmationTimer = null
-  }
-}
-
-function deferNativePause(position: number): void {
-  pendingNativePause = {
-    position: Math.max(
-      0,
-      Number.isFinite(position) ? position : playbackClock.getLatestPlaybackTime()
-    )
-  }
-  if (nativePauseConfirmationTimer !== null) return
-  nativePauseConfirmationTimer = window.setTimeout(() => {
-    nativePauseConfirmationTimer = null
-    if (pendingNativePause) isPlaying.value = false
-  }, NATIVE_PAUSE_CONFIRMATION_MS)
-}
-
-function recoverFromStaleNativePause(position: number): void {
-  const pendingPause = pendingNativePause
-  if (
-    !pendingPause ||
-    position <= pendingPause.position + 0.01 ||
-    playbackToggleIntent?.playing === false
-  ) {
-    return
-  }
-  clearPendingNativePause()
-  isPlaying.value = true
-}
-
-function setCurrentTimeImmediate(time: number, clockAlreadyUpdated = false): void {
-  playbackClock.cancelScheduledPublish()
-  if (!clockAlreadyUpdated)
-    publishPlaybackClockSnapshot(playbackSessionClock.setPosition(time, 'intent'))
-  playbackClock.publishCurrentTime(time)
-}
-
-function anchorRendererPlaybackClock(time: number): void {
-  publishPlaybackClockSnapshot(playbackSessionClock.setPosition(time, 'intent'))
-}
-
-function beginPlaybackPositionTransition(
-  time: number,
-  options: { keepRendererClockAlive?: boolean } = {}
-): void {
-  clearPendingNativePause()
-  const position = publishPlaybackClockSnapshot(
-    playbackSessionClock.begin({
-      trackId: currentTrack.value?.id ?? '',
-      position: time,
-      duration: duration.value,
-      rate: playbackRate.value,
-      state: isPlaying.value || options.keepRendererClockAlive ? 'playing' : 'loading'
-    })
-  ).position
-  setCurrentTimeImmediate(position, true)
-}
-
-function applyPlaybackPositionSample(
-  time: number,
-  source: 'native-time-pos' | 'native-info' | 'html-audio' = 'native-info'
-): boolean {
-  const position = Math.max(0, Number.isFinite(time) ? time : 0)
-  const delta = position - playbackSessionClock.snapshot().position
-  const expectedRewind =
-    delta < 0 &&
-    (abLoopNativeActive ||
-      (abLoopA.value != null && abLoopB.value != null) ||
-      playMode.value === 'repeat' ||
-      (position <= 0.05 && duration.value > 0 && currentTime.value >= duration.value - 1))
-  const decision = playbackSessionClock.ingest({
-    trackId: currentTrack.value?.id ?? '',
-    epoch: playbackSessionClock.epoch(),
-    position,
-    expectedRewind,
-    duration: duration.value,
-    rate: playbackRate.value,
-    source,
-    state: isPlaying.value ? 'playing' : isLoading.value ? 'loading' : 'paused'
-  })
-  if (!decision.accepted) return false
-  publishPlaybackClockSnapshot(decision.snapshot)
-  if (decision.advanced) recoverFromStaleNativePause(position)
-
-  if (expectedRewind || decision.snapshot.position + 0.5 < currentTime.value) {
-    setCurrentTimeImmediate(decision.snapshot.position, true)
-  } else {
-    setCurrentTimeThrottled(decision.snapshot.position, true)
-  }
-  return true
-}
-
-function estimatePlaybackClockPosition(at = getNowMs()): number {
-  return playbackSessionClock.positionAt(at)
-}
-
-async function requestPlaybackClockResync(): Promise<void> {
-  if (playbackClockResyncInFlight || !currentTrack.value) return
-  const api = window.api?.audioEngine
-  if (!api?.getPlaybackInfo) return
-  playbackClockResyncInFlight = true
-  try {
-    const info = await api.getPlaybackInfo()
-    applyNativePlaybackInfo(info, { applyTrackWhenInactive: true })
-  } catch {
-    // The next renderer tick retries while the clock remains stalled.
-  } finally {
-    playbackClockResyncInFlight = false
-  }
-}
-
-function setCurrentTimeThrottled(time: number, clockAlreadyUpdated = false): void {
-  if (!clockAlreadyUpdated)
-    publishPlaybackClockSnapshot(playbackSessionClock.setPosition(time, 'intent'))
-  playbackClock.setCurrentTimeThrottled(time)
-}
-
-function flushLatestCurrentTime(): void {
-  playbackClock.flushLatestCurrentTime()
-}
-
-function clearPendingTimePublish(): void {
-  playbackClock.cancelScheduledPublish()
-}
-
-function startRendererPlaybackClock(): void {
-  playbackClock.startRendererClock()
-}
 
 function publishAudioEngineRecoveryNotice(notice: AudioEngineRecoveryNotice): void {
   audioEngineRecoveryNotice.value = notice
@@ -2398,10 +2259,7 @@ function setupAudioEngineListeners(): void {
           ) {
             break
           }
-          applyNativePlayingState(
-            !data,
-            data === true ? playbackClock.getLatestPlaybackTime() : null
-          )
+          applyNativePlayingState(!data, data === true ? getLatestPlaybackTime() : null)
           flushLatestCurrentTime()
           break
         case 'eof-reached':
@@ -2655,11 +2513,9 @@ function disposePlayerStoreRuntime(): void {
   playerIntegrationSideEffectsSetup = false
   clearRendererPlaybackWatchdog()
   clearNativeStreamBufferingTimer()
-  clearPendingNativePause()
-  clearPendingTimePublish()
+  disposePlaybackClock()
   clearCrossfadeTimer()
   stopVisualizationPolling(false)
-  playbackClock.stopRendererClock()
 }
 
 // Claim before registering listeners. A Vite replacement invokes the previous
@@ -2722,7 +2578,7 @@ function scheduleCrossfadeIfNeeded(): void {
   if (queue.value.length <= 1) return
   if (queueIndex.value + 1 >= queue.value.length) return
 
-  const remaining = duration.value - playbackClock.getLatestPlaybackTime()
+  const remaining = duration.value - getLatestPlaybackTime()
   if (remaining > seconds || remaining < 0) {
     if (crossfadeTrackId !== track.id) clearCrossfadeTimer()
     return
@@ -2770,10 +2626,7 @@ function acceptResumeOffer(): void {
 function addManualBookmarkAtCurrentTime(): void {
   const track = currentTrack.value
   if (!track) return
-  const position =
-    playbackClock.getLatestPlaybackTime() > 0
-      ? playbackClock.getLatestPlaybackTime()
-      : currentTime.value
+  const position = getLatestPlaybackTime() > 0 ? getLatestPlaybackTime() : currentTime.value
   void usePlaybackBookmarks()
     .addBookmark(track, position, { kind: 'manual' })
     .catch(() => {})
@@ -2812,12 +2665,12 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         ? currentTrack.value
         : null
   if (previousTrack && previousTrack.id !== track.id) {
-    maybeRecordResumeBookmark(previousTrack, playbackClock.getLatestPlaybackTime())
+    maybeRecordResumeBookmark(previousTrack, getLatestPlaybackTime())
     // Force-write podcast progress for the track we are leaving.
     if (previousTrack.source === 'podcast') {
       const prevParsed = parsePodcastTrackId(previousTrack.id)
       if (prevParsed) {
-        const seconds = Math.max(0, Math.floor(playbackClock.getLatestPlaybackTime() || 0))
+        const seconds = Math.max(0, Math.floor(getLatestPlaybackTime() || 0))
         if (seconds >= 1) {
           void usePodcastStore().updateEpisodeProgress(
             prevParsed.subscriptionId,
@@ -3179,7 +3032,7 @@ async function togglePlayState(): Promise<void> {
       // Local engine stays paused while casting; only mirror transport to the device.
       const nextPlaying = !isPlaying.value
       if (isPlaying.value && !nextPlaying) {
-        maybeRecordResumeBookmark(track, playbackClock.getLatestPlaybackTime())
+        maybeRecordResumeBookmark(track, getLatestPlaybackTime())
         flushPodcastEpisodeProgress(true)
       }
       isPlaying.value = nextPlaying
@@ -3191,7 +3044,7 @@ async function togglePlayState(): Promise<void> {
     if (nativePlaybackActive) {
       const nextPlaying = !isPlaying.value
       if (isPlaying.value && !nextPlaying) {
-        maybeRecordResumeBookmark(track, playbackClock.getLatestPlaybackTime())
+        maybeRecordResumeBookmark(track, getLatestPlaybackTime())
         flushPodcastEpisodeProgress(true)
       }
       isPlaying.value = nextPlaying
@@ -3209,7 +3062,7 @@ async function togglePlayState(): Promise<void> {
         await stopNativeAudio()
         await audio.play()
       } else {
-        maybeRecordResumeBookmark(track, playbackClock.getLatestPlaybackTime())
+        maybeRecordResumeBookmark(track, getLatestPlaybackTime())
         flushPodcastEpisodeProgress(true)
         audio.pause()
       }
@@ -3226,10 +3079,7 @@ async function togglePlayState(): Promise<void> {
 function previous(): void {
   if (queue.value.length === 0) return
   clearCrossfadeTimer()
-  if (
-    appSettings.value.previousButtonAction === 'restart' &&
-    playbackClock.getLatestPlaybackTime() > 3
-  ) {
+  if (appSettings.value.previousButtonAction === 'restart' && getLatestPlaybackTime() > 3) {
     const track = currentTrack.value
     beginPlaybackPositionTransition(0)
     if (track && loadedTrackId !== track.id) {
@@ -3327,7 +3177,7 @@ function isCurrentTrackLiveStream(): boolean {
   )
 }
 
-function setAbLoopPoint(point: 'a' | 'b', time = playbackClock.getLatestPlaybackTime()): void {
+function setAbLoopPoint(point: 'a' | 'b', time = getLatestPlaybackTime()): void {
   if (isCurrentTrackLiveStream()) return
   const position = Math.max(0, Number.isFinite(time) ? time : 0)
   if (point === 'a') {
