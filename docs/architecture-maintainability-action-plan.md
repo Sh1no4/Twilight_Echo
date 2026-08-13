@@ -1,6 +1,6 @@
 # Twilight Echo — 高内聚、低耦合与可维护性提升执行方案
 
-> 定位：基于 2026-08-12 当前工作区（分支 Pxasen，Twilight Echo 1.1.4）实际代码扫描，给出针对性的架构可维护性改造路线。
+> 定位：基于 2026-08-13 当前工作区（分支 Pxasen，Twilight Echo 1.1.4）实际代码扫描，给出针对性的架构可维护性改造路线。
 > 本文档不推翻现有架构，而是把已经存在的规则补强为“机器可强制”的落地清单。
 
 ## 执行状态（2026-08-13）
@@ -10,11 +10,19 @@
 - A1/A2 边界与 IPC 通道清单已落地：`scripts/architecture-boundaries.test.cjs`、`scripts/ipc-channel-report.cjs` 存在并纳入仓库校验体系。
 - `SettingsPage.vue` 已拆为 `components/settings-page/` 的 13 个分区组件，当前约 62KB，作为页面编排入口。
 - `DspRackPage.vue` / `EqualizerPage.vue` 已抽领域子组件：`components/dsp-rack/`（DspScenePane、DspGraphCanvas、DspNodeEditor）、`components/equalizer/`（OpraEqPanel、FrequencyResponseChart、FrequencyResponseToolbar、GraphicEqPanel），并抽出 `utils/dspNodeParams.ts`、`utils/equalizerPageLogic.ts`。
-- `StreamingPage.vue` 已部分拆分：`streaming-page/ProviderSidebar.vue`、`NcmPlaylistDialogs.vue`、`ProviderDownloadsPanel.vue`、`StreamingContextMenu.vue`、`streamingDownloads.ts`；页面仍约 121KB，继续列为拆分候选。
-- `usePlayerStore.ts` 仍约 181KB，纯函数已抽到 `utils/playerPlaybackInfo.ts`、`utils/playerSessionTrack.ts`、`utils/playerTrackUtils.ts`；仍列为最大 store 候选。
-- `shared/theme.ts` 主题目录已迁到 `shared/themeCatalog.ts`（约 92KB），`theme.ts` 降到约 48KB。
+- `StreamingPage.vue` 已部分拆分：`streaming-page/ProviderSidebar.vue`、`NcmPlaylistDialogs.vue`、`ProviderDownloadsPanel.vue`、`StreamingContextMenu.vue`、`streamingDownloads.ts`、`streaming-page/streamingPageModel.ts`；页面约 120KB，继续列为拆分候选。
+- `usePlayerStore.ts` 约 179KB，纯函数已抽到 `utils/playerTime.ts`、`playerAudioSettings.ts`、`playerQueueUtils.ts`、`playerConstants.ts` 及既有 `utils/player*`；仍列为最大 store 候选。
+- `shared/theme.ts` 主题目录已迁到 `shared/themeCatalog.ts`（re-export barrel），数据拆为 `themeTokens.ts`（约 34KB）与 `themePresets.ts`（约 58KB），`theme.ts` 降到约 48KB。
 - `src/main/plugins/manager.ts` 已把 provider 路由/幂等/安全助手迁回插件域模块，当前约 68KB。
 - preload 已按域拆分到 `src/preload/domains/`，`src/main/ipc/data.ts` 已收敛为按域聚合入口，不再承担 52KB 级持久化注册。
+
+### Round 2（2026-08-13）
+
+- `shared/themeCatalog.ts` 已拆为 `shared/themeTokens.ts`（约 34KB）与 `shared/themePresets.ts`（约 58KB），`themeCatalog.ts` 降为 re-export barrel（396 B）。
+- `useMusicStore.ts` 数据助手已抽到 `stores/library/musicStoreData.ts`（约 11KB），store 降至约 72KB；`usePlayerStore.ts` 纯函数已抽到 `utils/playerTime.ts` / `playerAudioSettings.ts` / `playerQueueUtils.ts` / `playerConstants.ts`，store 降至约 179KB。
+- `ThemeStudioPage.vue` 编辑逻辑已抽到 `theme-studio/useThemeStudioEditor.ts`（约 47KB），页面降至约 51KB；`HiFiSidebar.vue` 样式外置到 `player-bar/HiFiSidebar.css`（约 30KB），组件降至约 67KB；`StreamingPage.vue` 抽出 `streaming-page/streamingPageModel.ts`（约 2KB），页面降至约 120KB。
+- `playbackController.ts` 的常量/控制助手已迁到 `audio/audioEngineHelpers.ts`（约 45KB），控制器降至约 56KB。
+- 验证：`test:themes` 153 pass、`test:playback-routing` 397 pass、`test:audio-manager` 268 pass、`test:app` 257 pass、`test:local-perf` 145 pass / 2 skip、`test:playlist-lifecycle` 17 pass；typecheck、lint、feature gates 通过。
 
 ## 1. 现状：已经做得不错的方面
 
@@ -27,7 +35,7 @@
 
 ### 1.2 shared 契约层有效
 
-- `src/shared/` 59 个文件承担双端类型与纯算法。
+- `src/shared/` 61 个文件承担双端类型与纯算法。
 - 已有 `scripts/tsconfig-shared-boundary.test.cjs` 强制 shared 不依赖 main/preload/renderer。
 - 已有 preload 边界测试 `src/preload/sandboxBoundary.test.ts`。
 - 这比大多数 Electron 项目“两端各维护一份类型”强很多。
@@ -38,15 +46,15 @@
 - `docs/windows-release-gate.md` 已规定发布门禁。
 - 这说明团队已经有“不是靠感觉，而是靠文档和门禁”的意图。
 
-## 2. 实际扫描数据（2026-08-12 工作区）
+## 2. 实际扫描数据（2026-08-13 工作区）
 
 ### 2.1 规模
 
 | 指标 | 数值 |
 |---|---|
-| .ts 文件 | 609（生产 569、测试 40） |
+| .ts 文件 | 624（生产 369、测试 255） |
 | .vue 组件 | 80 |
-| renderer utils 文件 | 123（63 个非测试） |
+| renderer utils 文件 | 131（67 个非测试） |
 | window.api 基 | 28（主窗口实际使用） |
 | IPC 相关调用点 | main `handle` 220 + `on` 17；preload invoke 220 + send 9 + 事件监听 39 |
 | docs 文件 | 34 |
@@ -55,10 +63,10 @@
 
 | 文件 | 大小 | 建议 |
 |---|---|---|
-| src/renderer/src/components/StreamingPage.vue | 121 KB | 仍是大型编排页面；继续按子页面拆 |
-| src/renderer/src/components/player-bar/HiFiSidebar.vue | 97 KB | 按功能区块拆 |
+| src/renderer/src/components/StreamingPage.vue | 120 KB | 仍是大型编排页面；继续按子页面/逻辑拆 |
+| src/renderer/src/components/player-bar/HiFiSidebar.vue | 67 KB | 样式已抽到 HiFiSidebar.css（30 KB），继续按功能区块拆 |
 | src/renderer/src/components/SongList.vue | 93 KB | 继续抽纯逻辑到 utils |
-| src/renderer/src/components/ThemeStudioPage.vue | 92 KB | 按 domain 拆 |
+| src/renderer/src/components/ThemeStudioPage.vue | 51 KB | 编辑逻辑已抽到 theme-studio/useThemeStudioEditor.ts（47 KB），当前为编排入口 |
 | src/renderer/src/components/settings-page/AppearanceSettingsSection.vue | 74 KB | 设置分区中最大的子组件，继续按区块拆 |
 | src/renderer/src/components/SettingsPage.vue | 62 KB | 已拆为 13 个分区组件，当前为编排入口 |
 | src/renderer/src/components/EqualizerPage.vue | 54 KB | 已拆出 equalizer 领域组件，当前为编排入口 |
@@ -68,12 +76,13 @@
 
 | 文件 | 大小 | 建议 |
 |---|---|---|
-| src/renderer/src/stores/usePlayerStore.ts | 181 KB | 继续按队列/会话/输出/统计拆 composable；纯逻辑已抽到 utils/player* |
-| src/shared/themeCatalog.ts | 92 KB | 主题目录数据，后续继续按数据域拆分 |
-| src/renderer/src/stores/useMusicStore.ts | 83 KB | 按库操作领域拆内部模块 |
+| src/renderer/src/stores/usePlayerStore.ts | 179 KB | 继续按队列/会话/输出/统计拆 composable；纯逻辑已抽到 utils/player* |
+| src/shared/themePresets.ts | 58 KB | 主题目录预设数据，后续继续按数据域收敛 |
+| src/renderer/src/stores/useMusicStore.ts | 72 KB | 数据助手已抽到 library/musicStoreData.ts（11 KB），继续按库操作领域拆 |
 | src/main/plugins/manager.ts | 68 KB | provider 路由/幂等/安全助手已迁到插件域模块，继续按子域拆 |
 | src/shared/theme.ts | 48 KB | 保留结构化运行时，谨慎改 |
-| src/main/audio/playbackController.ts | 57 KB | 按职责拆控制步进/状态 |
+| src/shared/themeTokens.ts | 34 KB | 主题 token 定义，后续继续按数据域收敛 |
+| src/main/audio/playbackController.ts | 56 KB | 控制步进/状态助手已抽到 audioEngineHelpers.ts（45 KB），继续按职责收敛 |
 | src/main/audioEngineManager.ts | 49 KB | 保持编排核心，拆分回调到 helpers |
 | src/preload/index.ts | 7 KB | 已按域拆到 src/preload/domains/，index 只汇总暴露 |
 
@@ -154,20 +163,20 @@
 - 已按 `settings-page/` 目录拆成 13 个分区组件，`SettingsPage.vue` 当前约 62KB，作为页面级编排入口。
 - 后续持续按验收目标收敛：每个子组件尽量 < 60KB，`SettingsPage.vue` 从当前约 62KB 继续降低；UI 行为无变化。
 
-#### B2 再拆 usePlayerStore.ts（部分完成）
+#### B2 再拆 usePlayerStore.ts（部分完成，Round 2 已收敛纯函数）
 
-- 已把纯函数抽到 `utils/playerPlaybackInfo.ts`、`utils/playerSessionTrack.ts`、`utils/playerTrackUtils.ts`；文件仍约 181KB。
+- 已把纯函数抽到 `utils/playerTime.ts`、`utils/playerAudioSettings.ts`、`utils/playerQueueUtils.ts`、`utils/playerConstants.ts` 及既有 `utils/playerPlaybackInfo.ts`、`playerSessionTrack.ts`、`playerTrackUtils.ts`；文件降至约 179KB。
 - 继续按域拆 composable：队列、会话、输出、统计；不一次性重写 store 对外 API。
 - 验收：文件降到 < 80 KB；对外 action 和状态名不变；现有 `usePlayerStore.test.ts` 全通过。
 
-#### B3 再拆 StreamingPage.vue / DspRackPage.vue / EqualizerPage.vue（部分完成）
+#### B3 再拆 StreamingPage.vue / DspRackPage.vue / EqualizerPage.vue（部分完成，Round 2 已抽页面模型）
 
-- StreamingPage（121 KB）：继续按 `streaming-home`、`streaming-library`、`streaming-discovery`、`streaming-search` 拆子组件；已新增 `ProviderSidebar.vue`、`NcmPlaylistDialogs.vue`、`ProviderDownloadsPanel.vue`、`StreamingContextMenu.vue`、`streamingDownloads.ts`。
+- StreamingPage（120 KB）：继续按 `streaming-home`、`streaming-library`、`streaming-discovery`、`streaming-search` 拆子组件；已新增 `ProviderSidebar.vue`、`NcmPlaylistDialogs.vue`、`ProviderDownloadsPanel.vue`、`StreamingContextMenu.vue`、`streamingDownloads.ts`、`streamingPageModel.ts`。
 - DspRackPage / EqualizerPage 已抽到 `dsp-rack/`、`equalizer/` 子目录，当前均为编排入口。
 
-#### B4 最后拆 shared/theme.ts 与 main/plugins/manager.ts（部分完成）
+#### B4 最后拆 shared/theme.ts 与 main/plugins/manager.ts（部分完成，Round 2 已拆主题目录数据）
 
-- 主题目录已迁到 `shared/themeCatalog.ts`（约 92KB），`theme.ts` 降到约 48KB；继续拆 token、archive validation、repository、runtime。
+- 主题目录已从 `shared/theme.ts` 迁到 `shared/themeCatalog.ts`，Round 2 再拆为 `shared/themeTokens.ts`（约 34KB）与 `shared/themePresets.ts`（约 58KB），`themeCatalog.ts` 降为 re-export barrel，`theme.ts` 约 48KB；继续收敛 archive validation、repository、runtime。
 - `main/plugins/manager.ts`（约 68KB）已把 provider 路由/幂等/安全助手迁回插件域模块，继续按 manifest 解析、索引、生命周期、rpc 协调收敛。
 
 ### 阶段 C：收敛 IPC 与 preload（可维护性核心）
