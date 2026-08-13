@@ -8,20 +8,6 @@ const test = require('node:test')
 
 const ROOT = path.join(__dirname, '..')
 
-const UTILS_DOM_EXEMPT = new Set([
-  'src/renderer/src/utils/animationFrameFallback.ts',
-  'src/renderer/src/utils/autoHideScrollbars.ts',
-  'src/renderer/src/utils/colorExtractor.ts',
-  'src/renderer/src/utils/liquidGlassDisplacement.ts',
-  'src/renderer/src/utils/lyricViewportController.ts',
-  'src/renderer/src/utils/themePreviewScheduler.ts',
-  'src/renderer/src/utils/useSmoothedValue.ts',
-  'src/renderer/src/utils/coverLoader.ts',
-  'src/renderer/src/utils/playbackQueueVirtualization.ts',
-  'src/renderer/src/utils/playlistFileValidation.ts'
-])
-
-
 test('IPC channels are consistently registered in main and exposed through preload', () => {
   const sorted = (values) => [...new Set(values)].sort()
   const mainHandle = []
@@ -44,7 +30,7 @@ test('IPC channels are consistently registered in main and exposed through prelo
       const candidate = m[0].replace(/[\s]+$/, '')
       if (/^[a-zA-Z][\w.-]*:[\w.-]*$/.test(candidate)) preloadChannels.push(candidate)
     }
-    for (const m of source.matchAll(/['\"]([\w.-]+:[\w.-]+)['\"]/g)) {
+    for (const m of source.matchAll(/['"]([\w.-]+:[\w.-]+)['"]/g)) {
       preloadChannels.push(m[1])
     }
   }
