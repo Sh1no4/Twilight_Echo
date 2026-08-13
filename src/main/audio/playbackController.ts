@@ -17,6 +17,7 @@ import {
   PLAYBACK_INFO_CACHE_TTL_MS,
   UPCOMING_TRACK_CACHE_TTL_MS,
   VISUALIZATION_CACHE_TTL_MS,
+  advanceSoftPlaybackPosition,
   clampNumber,
   clampQueueItemPosition,
   createFallbackVisualizationData,
@@ -24,17 +25,17 @@ import {
   createPlaybackInfoFanoutSignature,
   getAlsaPlaybackDeviceCandidates,
   inferCodec,
+  nativePlayMode,
   normalizeDsdState,
   normalizeVisualizationData,
   normalizeVisualizationOptions,
   parseNativeJson,
+  resolveQueueIndexForSource,
   sourceLooksDsd,
   withPrecomputedVisualizerBars
 } from './audioEngineHelpers.ts'
 import { rendererFallbackAllowed } from './nativeBinding.ts'
 import type { DspGraphConfig } from '../../shared/dspGraph.ts'
-
-const MAX_SOFT_PLAYBACK_CLOCK_GAP_SECONDS = 1.5
 
 export interface PlaybackControllerHost {
   getNative(): NativeAudioBinding | null
@@ -633,7 +634,7 @@ export class PlaybackController {
     const playModeSynced = await this.callNativeMaybeAsync(
       '加载队列后同步播放模式',
       'SetPlayMode',
-      this.nativePlayMode(this.playbackInfo.playMode)
+      nativePlayMode(this.playbackInfo.playMode)
     )
     if (!playModeSynced) {
       throw new Error(`原生播放模式同步失败：${this.lastNativeError || '原生音频引擎不可用'}`)
@@ -729,10 +730,6 @@ export class PlaybackController {
     await this.play(this.queue[nextIndex].source, 0)
   }
 
-  private nativePlayMode(mode: PlayMode): 'sequential' | 'repeat' | 'shuffle' {
-    return mode === 'repeat' || mode === 'shuffle' ? mode : 'sequential'
-  }
-
   async setPlayMode(mode: PlayMode): Promise<void> {
     if (mode === this.playbackInfo.playMode) return
     // Native QueueManager anchors the current queue item while rebuilding shuffle
@@ -740,7 +737,7 @@ export class PlaybackController {
     const playModeSynced = await this.callNativeMaybeAsync(
       '切换播放模式',
       'SetPlayMode',
-      this.nativePlayMode(mode)
+      nativePlayMode(mode)
     )
     if (!playModeSynced) {
       throw new Error(`原生播放模式切换失败：${this.lastNativeError || '原生音频引擎不可用'}`)
@@ -967,7 +964,7 @@ export class PlaybackController {
     const waitingForNativePosition = this.pendingNativePositionTarget !== null
 
     if (!this.pendingNativeSource) {
-      return this.withQueueIndexForSource({
+      return resolveQueueIndexForSource(this.queue, {
         ...this.playbackInfo,
         ...nativeInfo,
         state: waitingForNativePosition ? this.playbackInfo.state : nativeInfo.state,
@@ -982,7 +979,7 @@ export class PlaybackController {
 
     if (nativeInfo.source === this.pendingNativeSource) {
       this.pendingNativeSource = null
-      return this.withQueueIndexForSource({
+      return resolveQueueIndexForSource(this.queue, {
         ...this.playbackInfo,
         ...nativeInfo,
         state: waitingForNativePosition ? this.playbackInfo.state : nativeInfo.state,
@@ -1009,18 +1006,6 @@ export class PlaybackController {
       appliedConfigRevision: nativeInfo.appliedConfigRevision,
       outputInfo: nativeInfo.outputInfo,
       nativePlaybackActive: this.nativePlaybackActive
-    }
-  }
-
-  private withQueueIndexForSource(info: PlaybackInfo): PlaybackInfo {
-    if (!info.source) return info
-    const indexed = this.queue[info.queueIndex]
-    if (indexed?.source === info.source) return info
-    const sourceQueueIndex = this.queue.findIndex((item) => item.source === info.source)
-    if (sourceQueueIndex < 0 || sourceQueueIndex === info.queueIndex) return info
-    return {
-      ...info,
-      queueIndex: sourceQueueIndex
     }
   }
 
@@ -1311,15 +1296,15 @@ export class PlaybackController {
       const previousQueueIndex = this.playbackInfo.queueIndex
       const previousPosition = this.playbackInfo.position
       const now = this.scheduler.now()
-      const elapsed = Math.max(0, (now - this.lastTick) / 1000)
-      const softElapsed = elapsed > MAX_SOFT_PLAYBACK_CLOCK_GAP_SECONDS ? 0 : elapsed
+      const elapsed = (now - this.lastTick) / 1000
       const rate = this.playbackInfo.playbackRate ?? 1
-      if (this.playbackInfo.state === 'playing' && softElapsed > 0) {
-        const estimatedPosition = previousPosition + softElapsed * rate
-        this.playbackInfo.position =
-          this.playbackInfo.duration > 0
-            ? Math.min(estimatedPosition, this.playbackInfo.duration)
-            : estimatedPosition
+      if (this.playbackInfo.state === 'playing') {
+        this.playbackInfo.position = advanceSoftPlaybackPosition(
+          previousPosition,
+          elapsed,
+          rate,
+          this.playbackInfo.duration
+        )
       }
       this.lastTick = now
 
@@ -1382,8 +1367,12 @@ export class PlaybackController {
     const now = this.scheduler.now()
     const elapsed = (now - this.lastTick) / 1000
     this.lastTick = now
-    const softElapsed = elapsed > MAX_SOFT_PLAYBACK_CLOCK_GAP_SECONDS ? 0 : Math.max(0, elapsed)
-    this.playbackInfo.position += softElapsed * (this.playbackInfo.playbackRate ?? 1)
+    this.playbackInfo.position = advanceSoftPlaybackPosition(
+      this.playbackInfo.position,
+      elapsed,
+      this.playbackInfo.playbackRate ?? 1,
+      this.playbackInfo.duration
+    )
     if (
       this.playbackInfo.duration > 0 &&
       this.playbackInfo.position >= this.playbackInfo.duration
