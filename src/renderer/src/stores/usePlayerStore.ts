@@ -31,6 +31,17 @@ import {
 } from '../../../shared/dspGraph.ts'
 import { extractDominantColor } from '../utils/colorExtractor'
 import { resolveCover } from '../utils/coverLoader'
+import { normalizeNativePlaybackInfo } from '../utils/playerPlaybackInfo.ts'
+import { cloneTrackForPlaybackSession } from '../utils/playerSessionTrack.ts'
+import {
+  cachedSourceMatchesTrack,
+  getTrackAudioSource,
+  getTrackSource,
+  hasAnalyzedBpm,
+  isAnalyzableAudioPath,
+  isLikelyLocalFilePath,
+  nonEmptyString
+} from '../utils/playerTrackUtils.ts'
 import {
   shouldReuseResolvedStreamUrl,
   shouldUseNativePlaybackTarget
@@ -927,106 +938,6 @@ async function persistAudioProcessingFallback(
   }
 }
 
-function normalizeDsdState(
-  canonicalOutput?: Partial<NativeOutputInfo> | null,
-  mirror?: Partial<NativePlaybackInfo> | null
-): { isDsd: boolean; dsdMode: string; dsdRate: number } {
-  const canonicalMode =
-    typeof canonicalOutput?.dsdMode === 'string' ? canonicalOutput.dsdMode.trim() : ''
-  const mirrorMode = typeof mirror?.dsdMode === 'string' ? mirror.dsdMode.trim() : ''
-  const canonicalHasMode = canonicalMode.length > 0
-  const modeIndicatesDsd = (mode: string): boolean =>
-    mode === 'native' || mode === 'dop' || mode === 'unsupported'
-  const canonicalIsDsd =
-    typeof canonicalOutput?.isDsd === 'boolean'
-      ? canonicalOutput.isDsd
-      : canonicalHasMode
-        ? modeIndicatesDsd(canonicalMode)
-        : undefined
-  const isDsd = canonicalIsDsd ?? (mirror?.isDsd === true || modeIndicatesDsd(mirrorMode))
-  const rawMode = canonicalHasMode ? canonicalMode : mirrorMode
-  const dsdMode = isDsd ? rawMode || 'unsupported' : 'pcm'
-  const dsdRate = isDsd ? (canonicalOutput?.dsdRate ?? mirror?.dsdRate ?? 0) : 0
-  return { isDsd, dsdMode, dsdRate }
-}
-
-function normalizeNativePlaybackInfo(info: NativePlaybackInfo): NativePlaybackInfo {
-  const canonicalOutput = info.outputInfo
-  const sourceExact = canonicalOutput?.sourceExact === true
-  const outputPerfect = canonicalOutput?.outputPerfect === true
-  const pcmPassthrough = canonicalOutput
-    ? canonicalOutput.pcmPassthrough === true
-    : info.pcmPassthrough === true
-  const perfectReason = canonicalOutput?.perfectReason || ''
-  const perfectReasonCode = canonicalOutput?.perfectReasonCode || ''
-  const capabilityReason = canonicalOutput?.capabilityReason || ''
-  const { isDsd, dsdMode, dsdRate } = normalizeDsdState(canonicalOutput, info)
-  return {
-    ...info,
-    outputInfo: {
-      ...canonicalOutput,
-      actualBackend: canonicalOutput?.actualBackend || info.actualBackend || '',
-      accessMode: canonicalOutput?.accessMode || info.accessMode || '',
-      devicePathKind: canonicalOutput?.devicePathKind || info.devicePathKind || '',
-      actualOutputFormat: canonicalOutput?.actualOutputFormat || info.actualOutputFormat || '',
-      actualSampleRate: canonicalOutput?.actualSampleRate ?? info.actualSampleRate ?? 0,
-      actualBitDepth: canonicalOutput?.actualBitDepth ?? info.actualBitDepth ?? 0,
-      actualChannels: canonicalOutput?.actualChannels ?? info.actualChannels ?? 0,
-      bufferSizeFrames: canonicalOutput?.bufferSizeFrames ?? info.bufferSizeFrames ?? 0,
-      latencyFrames: canonicalOutput?.latencyFrames ?? info.latencyFrames ?? 0,
-      latencyMs: canonicalOutput?.latencyMs ?? info.latencyMs ?? 0,
-      latencyInfo: canonicalOutput?.latencyInfo ?? info.latencyInfo,
-      channelRoutingMode: canonicalOutput?.channelRoutingMode || info.channelRoutingMode || 'auto',
-      supportsOutputPerfect: canonicalOutput?.supportsOutputPerfect === true,
-      sourceExact,
-      diagnostics: canonicalOutput?.diagnostics ?? info.diagnostics,
-      deviceRecovered: canonicalOutput?.deviceRecovered === true || info.deviceRecovered === true,
-      recoveryCount: canonicalOutput?.recoveryCount ?? info.recoveryCount ?? 0,
-      outputSampleRate: canonicalOutput?.outputSampleRate ?? info.outputSampleRate ?? 0,
-      outputBitDepth: canonicalOutput?.outputBitDepth ?? info.outputBitDepth ?? 0,
-      outputPerfect,
-      pcmPassthrough,
-      perfectReason,
-      perfectReasonCode,
-      capabilityReason,
-      isDsd,
-      dsdMode,
-      dsdRate: isDsd ? dsdRate : 0
-    },
-    actualBackend: canonicalOutput?.actualBackend || info.actualBackend || '',
-    accessMode: canonicalOutput?.accessMode || info.accessMode || '',
-    devicePathKind: canonicalOutput?.devicePathKind || info.devicePathKind || '',
-    actualOutputFormat: canonicalOutput?.actualOutputFormat || info.actualOutputFormat || '',
-    actualSampleRate: canonicalOutput?.actualSampleRate ?? info.actualSampleRate ?? 0,
-    actualBitDepth: canonicalOutput?.actualBitDepth ?? info.actualBitDepth ?? 0,
-    actualChannels: canonicalOutput?.actualChannels ?? info.actualChannels ?? 0,
-    bufferSizeFrames: canonicalOutput?.bufferSizeFrames ?? info.bufferSizeFrames ?? 0,
-    latencyFrames: canonicalOutput?.latencyFrames ?? info.latencyFrames ?? 0,
-    latencyMs: canonicalOutput?.latencyMs ?? info.latencyMs ?? 0,
-    latencyInfo: canonicalOutput?.latencyInfo ?? info.latencyInfo,
-    channelRoutingMode: canonicalOutput?.channelRoutingMode || info.channelRoutingMode || 'auto',
-    supportsOutputPerfect: canonicalOutput?.supportsOutputPerfect === true,
-    sourceExact,
-    diagnostics: canonicalOutput?.diagnostics ?? info.diagnostics,
-    deviceRecovered: canonicalOutput?.deviceRecovered === true || info.deviceRecovered === true,
-    recoveryCount: canonicalOutput?.recoveryCount ?? info.recoveryCount ?? 0,
-    outputSampleRate: canonicalOutput?.outputSampleRate ?? info.outputSampleRate ?? 0,
-    outputBitDepth: canonicalOutput?.outputBitDepth ?? info.outputBitDepth ?? 0,
-    outputPerfect,
-    pcmPassthrough,
-    perfectReason,
-    perfectReasonCode,
-    capabilityReason,
-    isDsd,
-    dsdMode,
-    dsdRate
-  }
-}
-
-function getTrackAudioSource(track: Track): string {
-  return track.cueRange ? track.filePath : track.subTrack || track.streamUrl || track.filePath
-}
-
 function mergeTrackTransientData(nextTrack: Track, previousTrack: Track | null): Track {
   if (!previousTrack || previousTrack.id !== nextTrack.id) return nextTrack
   const lyrics = nextTrack.lyrics ?? previousTrack.lyrics
@@ -1046,10 +957,6 @@ function findLibraryTrackHint(track: Track, _libraryHint?: Track | null): Track 
   // forever (queue snapshots intentionally strip lyrics). O(1) via trackById —
   // never linear-scan tracks on the switch hot path (freezes PlayingMusic).
   return useMusicStore().getTrackById(track.id) ?? null
-}
-
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
 /**
@@ -1205,22 +1112,6 @@ function findTrackIndexFromPlaybackInfo(info: NativePlaybackInfo): number {
       getTrackAudioSource(track) === info.source ||
       cachedSourceMatchesTrack(track, info.source)
   )
-}
-
-/**
- * 原生引擎在授权/缓存层会把 twilight-media 源解析成磁盘缓存文件
- * （如 music-cache\ncm-cache\1996755298.flac）。渲染层队列条目持有的是
- * 逻辑 id（ncm:1996755298）或流 URL，直接比对会失配，导致原生自动切歌后
- * queueIndex/currentTrack 无法同步（歌单高亮不动、进度条卡住）。这里从缓存
- * 文件名提取纯数字 id，与逻辑 id 的数字段比对。
- */
-function cachedSourceMatchesTrack(track: Track, source: string): boolean {
-  const normalized = source.replace(/\\/g, '/')
-  const fileName = normalized.slice(normalized.lastIndexOf('/') + 1)
-  const numericId = fileName.replace(/\.[^.]+$/, '')
-  if (!/^\d+$/.test(numericId)) return false
-  const idSuffix = `:${numericId}`
-  return track.id === numericId || track.id.endsWith(idSuffix)
 }
 
 function clearNativeStreamBufferingTimer(): void {
@@ -2109,25 +2000,8 @@ function handleNativePlaybackEnded(): void {
   void handlePlaybackEnded()
 }
 
-function getTrackSource(track: Track): string {
-  if (track.source) return track.source
-  if (/^[a-zA-Z]:[\\/]/.test(track.id) || /^[\\/]/.test(track.id)) return 'local'
-  const separatorIndex = track.id.indexOf(':')
-  return separatorIndex > 0 ? track.id.slice(0, separatorIndex) : 'local'
-}
-
-function hasAnalyzedBpm(track: Track): boolean {
-  const bpm = track.bpmAnalysis?.bpm
-  return typeof bpm === 'number' && Number.isFinite(bpm) && bpm > 0
-}
-
 function isAutoBpmAnalysisEnabled(): boolean {
   return useSettingsStore().settings.value.autoAnalyzeBpm !== false
-}
-
-function isAnalyzableAudioPath(filePath: string | undefined): filePath is string {
-  if (!filePath) return false
-  return !/^[a-z][a-z\d+.-]*:\/\//i.test(filePath)
 }
 
 function applyBpmAnalysisToTrack(
@@ -2544,16 +2418,6 @@ async function ensureCurrentTrackLyricsLoaded(
       activeLyricsLoads.delete(triggerTrack.id)
     }
   }
-}
-
-const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[a-zA-Z]:[\\/]/
-const URI_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z0-9+.-]*:/
-
-function isLikelyLocalFilePath(target: string): boolean {
-  if (!target) return false
-  if (WINDOWS_ABSOLUTE_PATH_PATTERN.test(target)) return true
-  if (URI_SCHEME_PATTERN.test(target)) return false
-  return target.includes('\\') || target.includes('/')
 }
 
 /** True when a previously resolved local playback file still exists. */
@@ -3292,10 +3156,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
     if (previousTrack.source === 'podcast') {
       const prevParsed = parsePodcastTrackId(previousTrack.id)
       if (prevParsed) {
-        const seconds = Math.max(
-          0,
-          Math.floor(playbackClock.getLatestPlaybackTime() || 0)
-        )
+        const seconds = Math.max(0, Math.floor(playbackClock.getLatestPlaybackTime() || 0))
         if (seconds >= 1) {
           void usePodcastStore().updateEpisodeProgress(
             prevParsed.subscriptionId,
@@ -4603,47 +4464,6 @@ const progress = computed(() => {
   if (duration.value <= 0) return 0
   return (currentTime.value / duration.value) * 100
 })
-
-function cloneTrackForPlaybackSession(track: Track): Track {
-  // Shallow copy — strip lyrics/translatedLyrics to avoid massive memory usage
-  // when the entire queue is cloned for session persistence
-  const source = getTrackSource(track)
-  const cloned: Track = {
-    id: track.id,
-    queueEntryId: track.queueEntryId,
-    title: track.title,
-    artist: track.artist,
-    album: track.album,
-    filePath: track.filePath,
-    fileName: track.fileName,
-    dir: track.dir,
-    subTrack: track.subTrack,
-    cueRange: track.cueRange ? { ...track.cueRange } : undefined,
-    cueSheetPath: track.cueSheetPath,
-    cueEncoding: track.cueEncoding,
-    duration: track.duration,
-    size: track.size,
-    cover: track.cover,
-    coverSource: track.coverSource ?? null,
-    lyrics: null,
-    source: track.source,
-    ncmSongId: track.ncmSongId,
-    streamUrl: source === 'local' ? track.streamUrl : null,
-    format: track.format,
-    sampleRate: track.sampleRate,
-    bitrate: track.bitrate,
-    bitDepth: track.bitDepth,
-    bpm: track.bpm,
-    bpmAnalysis: track.bpmAnalysis,
-    replayGainTrackGainDb: track.replayGainTrackGainDb,
-    replayGainAlbumGainDb: track.replayGainAlbumGainDb,
-    replayGainTrackPeak: track.replayGainTrackPeak,
-    replayGainAlbumPeak: track.replayGainAlbumPeak,
-    r128TrackGainDb: track.r128TrackGainDb,
-    r128AlbumGainDb: track.r128AlbumGainDb
-  }
-  return cloned
-}
 
 function restorePlaybackSession(session: PlaybackSession): void {
   const track = hydratePlaybackTrack(cloneTrackForPlaybackSession(session.track))

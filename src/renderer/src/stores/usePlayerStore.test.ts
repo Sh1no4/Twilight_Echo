@@ -48,7 +48,10 @@ test('native output-perfect facts stay canonical from store normalization to Pla
     new URL('../components/PlayerBar.vue', import.meta.url),
     'utf8'
   )
-  const normalize = extractInternalFunctionBody(storeSource, 'normalizeNativePlaybackInfo')
+  const playbackInfoSource = readFileSync(
+    new URL('../utils/playerPlaybackInfo.ts', import.meta.url),
+    'utf8'
+  )
   const apply = extractInternalFunctionBody(storeSource, 'applyNativePlaybackInfo')
   const canonicalSourceExact = extractInternalFunctionBody(playerBarSource, 'canonicalSourceExact')
   const canonicalOutputPerfect = extractInternalFunctionBody(
@@ -56,18 +59,21 @@ test('native output-perfect facts stay canonical from store normalization to Pla
     'canonicalOutputPerfect'
   )
 
-  assert.match(normalize, /const canonicalOutput = info\.outputInfo/)
-  assert.match(normalize, /const sourceExact = canonicalOutput\?\.sourceExact === true/)
-  assert.match(normalize, /const outputPerfect = canonicalOutput\?\.outputPerfect === true/)
+  assert.match(playbackInfoSource, /const canonicalOutput = info\.outputInfo/)
+  assert.match(playbackInfoSource, /const sourceExact = canonicalOutput\?\.sourceExact === true/)
   assert.match(
-    normalize,
+    playbackInfoSource,
+    /const outputPerfect = canonicalOutput\?\.outputPerfect === true/
+  )
+  assert.match(
+    playbackInfoSource,
     /const pcmPassthrough = canonicalOutput\s*\? canonicalOutput\.pcmPassthrough === true\s*:\s*info\.pcmPassthrough === true/
   )
   assert.match(
-    normalize,
+    playbackInfoSource,
     /outputInfo:\s*\{[\s\S]*sourceExact,[\s\S]*outputPerfect,[\s\S]*pcmPassthrough/
   )
-  assert.match(normalize, /sourceExact,[\s\S]*outputPerfect,[\s\S]*pcmPassthrough/)
+  assert.match(playbackInfoSource, /sourceExact,[\s\S]*outputPerfect,[\s\S]*pcmPassthrough/)
   assert.match(apply, /const normalizedInfo = normalizeNativePlaybackInfo\(info\)/)
   assert.match(apply, /playbackInfo\.value = normalizedInfo/)
   assert.match(
@@ -614,9 +620,12 @@ test('mini player switching recovers from stale unauthorized local tracks', () =
 
 test('provider queues use native for resolved current targets without native queue delegation', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const trackUtilsSource = readFileSync(
+    new URL('../utils/playerTrackUtils.ts', import.meta.url),
+    'utf8'
+  )
   const syncNativeQueueState = extractInternalFunctionBody(source, 'syncNativeQueueState')
   const loadAndPlay = source.match(/async function loadAndPlay[\s\S]*?function next\(\)/)?.[0] ?? ''
-  const getTrackSource = extractInternalFunctionBody(source, 'getTrackSource')
   const isNativeQueueDelegated = extractInternalFunctionBody(source, 'isNativeQueueDelegated')
   const restorePlaybackSession = extractInternalFunctionBody(source, 'restorePlaybackSession')
   const resetPlaybackRuntimeStateForRestore = extractInternalFunctionBody(
@@ -630,7 +639,7 @@ test('provider queues use native for resolved current targets without native que
   assert.match(resetPlaybackRuntimeStateForRestore, /stopRendererAudio\(true\)/)
   assert.match(resetPlaybackRuntimeStateForRestore, /void stopNativeAudio\(\)/)
   assert.match(
-    getTrackSource,
+    trackUtilsSource,
     /\^\[a-zA-Z\]:\[\\\\\/\]/,
     'legacy local tracks whose id is a Windows path must not be mistaken for a provider prefix'
   )
@@ -995,41 +1004,48 @@ test('local dashboard keeps the restored editorial masthead in Chinese', () => {
 
 test('playback session strips transient provider stream URLs before restore', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
-  const cloneTrackForPlaybackSession = extractInternalFunctionBody(
-    source,
-    'cloneTrackForPlaybackSession'
+  const sessionTrackSource = readFileSync(
+    new URL('../utils/playerSessionTrack.ts', import.meta.url),
+    'utf8'
   )
 
   assert.equal(
-    /streamUrl: track\.source === 'ncm' \? null : track\.streamUrl/.test(
-      cloneTrackForPlaybackSession
-    ),
+    /streamUrl: track\.source === 'ncm' \? null : track\.streamUrl/.test(sessionTrackSource),
     false,
     'provider URL stripping must not be limited to the built-in ncm provider'
   )
-  assert.match(cloneTrackForPlaybackSession, /const source = getTrackSource\(track\)/)
+  assert.match(sessionTrackSource, /const source = getTrackSource\(track\)/)
   assert.match(
-    cloneTrackForPlaybackSession,
+    sessionTrackSource,
     /streamUrl: source === 'local' \? track\.streamUrl : null/,
     'restored provider playback should resolve a fresh stream URL instead of reusing a stale proxy URL'
   )
-  assert.match(cloneTrackForPlaybackSession, /bpm: track\.bpm/)
-  assert.match(cloneTrackForPlaybackSession, /bpmAnalysis: track\.bpmAnalysis/)
+  assert.match(sessionTrackSource, /bpm: track\.bpm/)
+  assert.match(sessionTrackSource, /bpmAnalysis: track\.bpmAnalysis/)
+  assert.match(
+    source,
+    /const track = hydratePlaybackTrack\(cloneTrackForPlaybackSession\(session\.track\)\)/
+  )
 })
 
 test('player store requests background BPM analysis and merges completed results', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const trackUtilsSource = readFileSync(
+    new URL('../utils/playerTrackUtils.ts', import.meta.url),
+    'utf8'
+  )
   const setupSideEffects = extractInternalFunctionBody(source, 'setupPlayerIntegrationSideEffects')
   const requestBpmAnalysis = extractInternalFunctionBody(source, 'requestBpmAnalysisForTrack')
   const applyBpmAnalysis = extractInternalFunctionBody(source, 'applyBpmAnalysisToTrack')
   const clearBpmAnalysis = extractInternalFunctionBody(source, 'clearBpmAnalysisFromPlaybackState')
 
-  assert.match(source, /function hasAnalyzedBpm\(/)
+  assert.match(trackUtilsSource, /export function hasAnalyzedBpm\(/)
   assert.match(source, /function isAutoBpmAnalysisEnabled\(/)
-  assert.match(source, /function isAnalyzableAudioPath\(/)
+  assert.match(trackUtilsSource, /export function isAnalyzableAudioPath\(/)
   assert.match(requestBpmAnalysis, /window\.api\?\.bpmAnalysis\?\.request/)
   assert.match(requestBpmAnalysis, /!isAutoBpmAnalysisEnabled\(\)/)
   assert.match(requestBpmAnalysis, /hasAnalyzedBpm\(track\)/)
+  assert.match(requestBpmAnalysis, /!isAnalyzableAudioPath\(track\.filePath\)/)
   assert.match(requestBpmAnalysis, /referenceBpm: track\.bpm/)
   assert.match(applyBpmAnalysis, /currentTrack\.value = updatedTrack/)
   assert.match(applyBpmAnalysis, /patchTrackInQueues\(updatedTrack\)/)
