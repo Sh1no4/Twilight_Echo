@@ -5,6 +5,7 @@ import {
   LIQUID_GLASS_CARD_CLASSES,
   LIQUID_GLASS_CARD_SELECTOR,
   LIQUID_GLASS_CARD_FILTER_ID,
+  LIQUID_GLASS_HOME_CARD_FILTER_ID,
   LIQUID_GLASS_PLAYBAR_FILTER_ID
 } from '../../../shared/liquidGlass.ts'
 
@@ -18,6 +19,8 @@ const settingsPageStyle = readFileSync(
   new URL('./settings-page/SettingsPage.css', import.meta.url),
   'utf8'
 )
+const localDashboardStyle = readFileSync(new URL('./LocalDashboard.css', import.meta.url), 'utf8')
+const playerBarSource = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
 
 const MATERIAL_ATTRIBUTE = "html[data-te-surface-material='liquidGlass']"
 /** Scrolls horizontally, so an inset:0 warp layer would scroll out of view. */
@@ -118,6 +121,24 @@ test('the displacement filter runs on every non-scroll card surface', () => {
     ),
     'liquid glass must not put the displacement filter on ::before'
   )
+})
+
+test('the SVG filters do not keep a zero-offset copy stage', () => {
+  assert.doesNotMatch(defs, /<feOffset\s+in="SourceGraphic"\s+dx="0"\s+dy="0"/)
+  assert.equal((defs.match(/in="SourceGraphic" in2="INVERTED_MASK"/g) ?? []).length, 3)
+})
+
+test('offscreen liquid glass surfaces drop their expensive filter layers', () => {
+  const selector = "html[data-te-surface-material='liquidGlass'] .te-liquid-glass-offscreen::after"
+  const start = baseStyle.indexOf(selector)
+  assert.notEqual(start, -1, 'offscreen glass rule is missing')
+  const open = baseStyle.indexOf('{', start)
+  const rule = baseStyle.slice(open, baseStyle.indexOf('}', open))
+  assert.match(rule, /filter:\s*none\s*!important/)
+  assert.match(rule, /backdrop-filter:\s*none\s*!important/)
+  assert.match(rule, /-webkit-backdrop-filter:\s*none\s*!important/)
+  assert.match(defs, /new IntersectionObserver/)
+  assert.match(defs, /rootMargin:\s*'128px 0px'/)
 })
 
 /**
@@ -232,14 +253,31 @@ test('reduced and disabled motion both pin the surface', () => {
   assert.notEqual(index, -1, 'motion preference must be honoured by the material')
 })
 
-test('both filter ids are defined once and referenced by the stylesheet', () => {
-  for (const id of [LIQUID_GLASS_CARD_FILTER_ID, LIQUID_GLASS_PLAYBAR_FILTER_ID]) {
+test('all filter ids are defined once and referenced by their surface stylesheets', () => {
+  for (const id of [
+    LIQUID_GLASS_CARD_FILTER_ID,
+    LIQUID_GLASS_HOME_CARD_FILTER_ID,
+    LIQUID_GLASS_PLAYBAR_FILTER_ID
+  ]) {
     assert.ok(defs.includes(id), `${id} must be declared in LiquidGlassDefs`)
   }
   assert.ok(
     baseStyle.includes(`url(#${LIQUID_GLASS_CARD_FILTER_ID})`),
     'card filter must be referenced from CSS'
   )
+  assert.ok(
+    localDashboardStyle.includes(`url(#${LIQUID_GLASS_HOME_CARD_FILTER_ID})`),
+    'homepage filter must be referenced from CSS'
+  )
+})
+
+test('homepage cards use their independently tuned variables and filter', () => {
+  assert.match(localDashboardStyle, /data-te-home-liquid-glass='on'/)
+  assert.match(localDashboardStyle, /--home-lg-blur: var\(--te-home-lg-blur/)
+  assert.match(localDashboardStyle, /--home-lg-saturate: var\(--te-home-lg-saturate/)
+  assert.match(localDashboardStyle, /--home-lg-filter: url\(#te-lg-home-card\)/)
+  assert.match(localDashboardStyle, /filter: var\(--home-lg-filter\)/)
+  assert.match(localDashboardStyle, /\.home\s+\.te-liquid-glass-offscreen::after/)
 })
 
 test('filter attributes are bound, not hardcoded, since SVG cannot read CSS vars', () => {
@@ -256,23 +294,26 @@ test('both filters clip refraction back to the source so corners stay rounded', 
   // band by SourceGraphic, refracted pixels fill the square corner wedges outside
   // a rounded element's arc and the surface reads as having right angles.
   const clipCount = (defs.match(/result="EDGE_ABERRATION_CLIPPED"/g) ?? []).length
-  assert.equal(clipCount, 2, 'card and playbar filters must both clip the refraction band')
+  assert.equal(clipCount, 3, 'card, homepage, and playbar filters must clip the refraction band')
   const clipSteps = (
     defs.match(
       /<feComposite[\s\S]{0,220}?in2="SourceGraphic"[\s\S]{0,80}?operator="in"[\s\S]{0,80}?result="EDGE_ABERRATION_CLIPPED"/g
     ) ?? []
   ).length
-  assert.equal(clipSteps, 2, 'each aberration pass must be composited with SourceGraphic')
+  assert.equal(clipSteps, 3, 'each aberration pass must be composited with SourceGraphic')
   assert.equal(
     (defs.match(/in="EDGE_ABERRATION_CLIPPED" in2="CENTER_CLEAN" operator="over"/g) ?? []).length,
-    2,
+    3,
     'the final composite must use the corner-clipped aberration'
   )
 })
 
 test('the defs component is mounted once by the app shell', () => {
   assert.match(app, /<LiquidGlassDefs/)
-  assert.match(app, /:active="settings\.surfaceMaterial === 'liquidGlass'"/)
+  assert.match(app, /settings\.liquidGlass\.homeCards\.enabled/)
+  assert.match(app, /settings\.liquidGlass\.playbarEnabled/)
+  assert.match(app, /settings\.liquidGlass\.settingsNavigationEnabled/)
+  assert.match(app, /settings\.surfaceMaterial === 'liquidGlass'/)
   assert.match(app, /:follow-pointer="settings\.liquidGlass\.followPointer"/)
 })
 
@@ -344,12 +385,23 @@ test('pointer tracking lights only the hovered card without repeated hit tests o
   assert.ok(perElementWrites >= 1, 'variables must be written onto the hovered element')
 })
 
-test('the material attribute is emitted on every theme runtime return path', () => {
+test('all material target attributes are emitted on every theme runtime return path', () => {
   const returns = (themeStore.match(/'data-te-surface-material': surfaceMaterial/g) ?? []).length
   // The main path plus the plugin-theme-unavailable early return. The attribute is
   // never removed by the managed-attribute sweep, so a path that omitted it would
   // leave a stale material applied.
   assert.equal(returns, 2, `expected 2 emit sites, found ${returns}`)
+  for (const attribute of [
+    'data-te-home-liquid-glass',
+    'data-te-playbar-liquid-glass',
+    'data-te-settings-navigation-liquid-glass'
+  ]) {
+    assert.equal(
+      (themeStore.match(new RegExp(`'${attribute}':`, 'g')) ?? []).length,
+      2,
+      `${attribute} must be emitted on both return paths`
+    )
+  }
 })
 
 test('liquid glass has no hover or full-mode gate', () => {
@@ -360,8 +412,11 @@ test('liquid glass has no hover or full-mode gate', () => {
   assert.doesNotMatch(themeStore, /data-te-lg-full/)
 })
 
-test('tuning variables are only emitted while the material is active', () => {
-  assert.match(themeStore, /if \(surfaceMaterial !== 'liquidGlass'\) return/)
+test('shared tuning variables are emitted for global or independent shared targets', () => {
+  assert.match(themeStore, /function usesSharedLiquidGlassProfile\(\): boolean/)
+  assert.match(themeStore, /liquidGlass\.playbarEnabled/)
+  assert.match(themeStore, /liquidGlass\.settingsNavigationEnabled/)
+  assert.match(playerBarSource, /settings\.value\.liquidGlass\.playbarEnabled/)
   assert.match(themeStore, /applyLiquidGlassVariables\(tone, variables\)/)
 })
 

@@ -179,7 +179,7 @@ test('lines depart in sequence rather than as one block, which is the cascade', 
   )
 })
 
-test('an underdamped line overshoots its target and settles back', async () => {
+test('line movement reaches its target without bouncing back', async () => {
   const { controller, manual, activeIndex } = harness(10)
   activeIndex.value = 8
   await controller.follow(8, { mode: 'snap' })
@@ -188,15 +188,25 @@ test('an underdamped line overshoots its target and settles back', async () => {
   await controller.follow(0)
 
   const target = controller.getRowTargetTop(0) as number
-  let overshot = false
+  let bouncedBack = false
   for (let frame = 0; frame < 200; frame += 1) {
     manual.runFrame()
     const top = controller.getRowTop(0) as number
-    if (top > target + 0.5) overshot = true
+    if (top > target + 0.01) bouncedBack = true
   }
 
-  assert.ok(overshot, 'scrollTop could never do this; a per-line spring can')
+  assert.ok(!bouncedBack, 'a lyric line must not reverse past its target')
   assert.ok(Math.abs((controller.getRowTop(0) as number) - target) < 1, 'it still settles')
+})
+
+test('the first lyric layout snaps into place instead of falling from the top', async () => {
+  const { controller, manual, activeIndex } = harness(8)
+  activeIndex.value = 4
+
+  await controller.follow(4)
+
+  assert.equal(manual.pendingFrames(), 0, 'the first layout must not animate from the row default')
+  assert.equal(controller.getRowTop(4), controller.getRowTargetTop(4))
 })
 
 test('scale trails position, so the motion is not perfectly rigid', async () => {

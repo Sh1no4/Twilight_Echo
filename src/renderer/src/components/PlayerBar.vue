@@ -178,7 +178,10 @@ const playerBarButtons = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'playerBarButton')
 )
 const { settings, updateSettings } = useSettingsStore()
-const liquidGlassActive = computed(() => settings.value.surfaceMaterial === 'liquidGlass')
+const liquidGlassActive = computed(
+  () =>
+    settings.value.surfaceMaterial === 'liquidGlass' || settings.value.liquidGlass.playbarEnabled
+)
 const lyricsManagement = useLyricsManagement()
 const desktopLyricsOn = ref(settings.value.desktopLyrics.enabled)
 const miniPlayerOpening = ref(false)

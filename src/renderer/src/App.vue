@@ -692,8 +692,14 @@ const titleSurface = computed<TitleSurface>(() => {
 <template>
   <div class="app-shell">
     <LiquidGlassDefs
-      :active="settings.surfaceMaterial === 'liquidGlass'"
+      :active="
+        settings.surfaceMaterial === 'liquidGlass' ||
+        settings.liquidGlass.homeCards.enabled ||
+        settings.liquidGlass.playbarEnabled ||
+        settings.liquidGlass.settingsNavigationEnabled
+      "
       :follow-pointer="settings.liquidGlass.followPointer"
+      :home-cards-active="settings.liquidGlass.homeCards.enabled"
     />
     <div class="app-shell-title">
       <TitleBar

@@ -33,6 +33,12 @@ test('now playing lyrics never reveal the global auto-hide scrollbar', () => {
   assert.match(webkitThumb, /background: transparent !important/)
 })
 
+test('now playing lyrics have no page-entry animation', () => {
+  const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+
+  assert.doesNotMatch(source, /te-playing-lyrics-arrive/)
+})
+
 test('visualizer mode does not keep the heavy blurred backdrop mounted', () => {
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
 

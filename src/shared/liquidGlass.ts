@@ -18,13 +18,15 @@ export const SURFACE_MATERIALS: readonly SurfaceMaterial[] = ['standard', 'liqui
 
 /** Filter ids referenced from CSS. Cards and the playbar differ in aspect ratio. */
 export const LIQUID_GLASS_CARD_FILTER_ID = 'te-lg-card'
+export const LIQUID_GLASS_HOME_CARD_FILTER_ID = 'te-lg-home-card'
 export const LIQUID_GLASS_PLAYBAR_FILTER_ID = 'te-lg-playbar'
 export const LIQUID_GLASS_TUNING_CHANGED_EVENT = 'twilight:liquid-glass-tuning-changed'
+export const LIQUID_GLASS_OFFSCREEN_CLASS = 'te-liquid-glass-offscreen'
 
 /**
- * Class names that receive the liquid glass card surface. Kept in sync with the
- * selector list in `base.css`; the surfaces test asserts parity so the pointer
- * tracker and the stylesheet can never drift apart.
+ * Class names that receive the canonical liquid-glass card surface. Kept in sync
+ * with the selector list in `base.css`; dashboard-only surfaces have their own
+ * selector below because their material recipe is intentionally local.
  */
 export const LIQUID_GLASS_CARD_CLASSES = [
   'artist-card',
@@ -70,10 +72,27 @@ export const LIQUID_GLASS_CARD_CLASSES = [
   'background-accordion-panel'
 ] as const
 
-/** Selector used by the pointer tracker to resolve the hovered card surface. */
-export const LIQUID_GLASS_CARD_SELECTOR = LIQUID_GLASS_CARD_CLASSES.map(
+const LIQUID_GLASS_BASE_CARD_SELECTOR = LIQUID_GLASS_CARD_CLASSES.map(
   (className) => `.${className}`
 ).join(',')
+
+/** Dashboard-only surfaces use their own material recipe and filter profile. */
+export const LIQUID_GLASS_HOME_CARD_SELECTOR = [
+  '.home .feature-card',
+  '.home .signal-card',
+  '.home .chart-panel',
+  '.home .cal-panel',
+  '.home .empty-stage',
+  '.home .figures',
+  '.home .masthead-shuffle',
+  '.home .block-more'
+].join(',')
+
+/** Selector used by the pointer tracker and visibility observer. */
+export const LIQUID_GLASS_CARD_SELECTOR = [
+  LIQUID_GLASS_BASE_CARD_SELECTOR,
+  LIQUID_GLASS_HOME_CARD_SELECTOR
+].join(',')
 
 export interface LiquidGlassTheme {
   /** Displacement magnitude in px fed to feDisplacementMap. */
@@ -96,6 +115,20 @@ export interface LiquidGlassSettings {
   /** Highlight gradient angle follows the pointer (rAF-throttled). */
   followPointer: boolean
   /** Tint the glass dark on light backgrounds for visibility ("Over Light"). */
+  overLight: boolean
+  light: LiquidGlassTheme
+  dark: LiquidGlassTheme
+  /** Enables the playbar independently while reusing the global glass profile. */
+  playbarEnabled: boolean
+  /** Enables the settings navigation independently while reusing the global profile. */
+  settingsNavigationEnabled: boolean
+  /** Optional liquid-glass profile applied only to the local dashboard cards. */
+  homeCards: LiquidGlassHomeCardsSettings
+}
+
+export interface LiquidGlassHomeCardsSettings {
+  enabled: boolean
+  /** Tint the homepage dark profile over a light background for legibility. */
   overLight: boolean
   light: LiquidGlassTheme
   dark: LiquidGlassTheme
@@ -136,11 +169,21 @@ export const DEFAULT_LIQUID_GLASS_DARK: LiquidGlassTheme = {
   tintOpacity: 17
 }
 
+export const DEFAULT_LIQUID_GLASS_HOME_CARDS: LiquidGlassHomeCardsSettings = {
+  enabled: false,
+  overLight: false,
+  light: { ...DEFAULT_LIQUID_GLASS_LIGHT },
+  dark: { ...DEFAULT_LIQUID_GLASS_DARK }
+}
+
 export const DEFAULT_LIQUID_GLASS: LiquidGlassSettings = {
   followPointer: true,
   overLight: false,
   light: DEFAULT_LIQUID_GLASS_LIGHT,
-  dark: DEFAULT_LIQUID_GLASS_DARK
+  dark: DEFAULT_LIQUID_GLASS_DARK,
+  playbarEnabled: false,
+  settingsNavigationEnabled: false,
+  homeCards: DEFAULT_LIQUID_GLASS_HOME_CARDS
 }
 
 function clamp(value: unknown, bound: Bound, fallback: number): number {
@@ -182,11 +225,22 @@ export function normalizeLiquidGlassTheme(
 
 export function normalizeLiquidGlass(raw: unknown): LiquidGlassSettings {
   const value = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+  const homeCards = (
+    typeof value.homeCards === 'object' && value.homeCards !== null ? value.homeCards : {}
+  ) as Record<string, unknown>
   return {
     followPointer: value.followPointer !== false,
     overLight: value.overLight === true,
     light: normalizeLiquidGlassTheme(value.light, DEFAULT_LIQUID_GLASS_LIGHT),
-    dark: normalizeLiquidGlassTheme(value.dark, DEFAULT_LIQUID_GLASS_DARK)
+    dark: normalizeLiquidGlassTheme(value.dark, DEFAULT_LIQUID_GLASS_DARK),
+    playbarEnabled: value.playbarEnabled === true,
+    settingsNavigationEnabled: value.settingsNavigationEnabled === true,
+    homeCards: {
+      enabled: homeCards.enabled === true,
+      overLight: homeCards.overLight === true,
+      light: normalizeLiquidGlassTheme(homeCards.light, DEFAULT_LIQUID_GLASS_HOME_CARDS.light),
+      dark: normalizeLiquidGlassTheme(homeCards.dark, DEFAULT_LIQUID_GLASS_HOME_CARDS.dark)
+    }
   }
 }
 
@@ -221,13 +275,25 @@ export function resolveAberrationBlur(aberrationIntensity: number): number {
 }
 
 export function liquidGlassCssVariables(theme: LiquidGlassTheme): Record<string, string> {
+  return liquidGlassCssVariablesWithPrefix(theme, '--te-lg')
+}
+
+/** Homepage cards keep an independent profile while reusing the same shader contract. */
+export function liquidGlassHomeCardCssVariables(theme: LiquidGlassTheme): Record<string, string> {
+  return liquidGlassCssVariablesWithPrefix(theme, '--te-home-lg')
+}
+
+function liquidGlassCssVariablesWithPrefix(
+  theme: LiquidGlassTheme,
+  prefix: '--te-lg' | '--te-home-lg'
+): Record<string, string> {
   return {
-    '--te-lg-displacement': String(theme.displacementScale),
-    '--te-lg-blur': `${theme.blurAmount}px`,
-    '--te-lg-saturate': `${theme.saturation}%`,
-    '--te-lg-aberration': String(theme.aberrationIntensity),
-    '--te-lg-elasticity': String(theme.elasticity),
-    '--te-lg-specular': (theme.specularOpacity / 100).toFixed(3),
-    '--te-lg-tint': (theme.tintOpacity / 100).toFixed(3)
+    [`${prefix}-displacement`]: String(theme.displacementScale),
+    [`${prefix}-blur`]: `${theme.blurAmount}px`,
+    [`${prefix}-saturate`]: `${theme.saturation}%`,
+    [`${prefix}-aberration`]: String(theme.aberrationIntensity),
+    [`${prefix}-elasticity`]: String(theme.elasticity),
+    [`${prefix}-specular`]: (theme.specularOpacity / 100).toFixed(3),
+    [`${prefix}-tint`]: (theme.tintOpacity / 100).toFixed(3)
   }
 }

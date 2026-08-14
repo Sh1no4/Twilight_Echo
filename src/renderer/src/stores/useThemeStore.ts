@@ -40,6 +40,7 @@ import {
   DEFAULT_LIQUID_GLASS,
   LIQUID_GLASS_TUNING_CHANGED_EVENT,
   liquidGlassCssVariables,
+  liquidGlassHomeCardCssVariables,
   normalizeSurfaceMaterial,
   type LiquidGlassSettings,
   type SurfaceMaterial
@@ -94,6 +95,9 @@ let liquidGlass: LiquidGlassSettings = DEFAULT_LIQUID_GLASS
 const LIQUID_GLASS_RUNTIME_VARIABLES = Object.keys(
   liquidGlassCssVariables(DEFAULT_LIQUID_GLASS.light)
 )
+const HOME_LIQUID_GLASS_RUNTIME_VARIABLES = Object.keys(
+  liquidGlassHomeCardCssVariables(DEFAULT_LIQUID_GLASS.homeCards.light)
+)
 
 function resolveTone(): ThemeTone {
   return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'pureWhite'
@@ -142,13 +146,31 @@ export function syncThemeSettingsAppearance(settings: SettingsAppearanceInput): 
 function applyLiquidGlassRuntimeVariables(tone: ThemeTone): void {
   const root = document.documentElement
   for (const name of LIQUID_GLASS_RUNTIME_VARIABLES) root.style.removeProperty(name)
-  if (surfaceMaterial === 'liquidGlass') {
+  for (const name of HOME_LIQUID_GLASS_RUNTIME_VARIABLES) root.style.removeProperty(name)
+  if (usesSharedLiquidGlassProfile()) {
     const theme = tone === 'dark' || liquidGlass.overLight ? liquidGlass.dark : liquidGlass.light
     for (const [name, value] of Object.entries(liquidGlassCssVariables(theme))) {
       root.style.setProperty(name, value, 'important')
     }
   }
+  if (liquidGlass.homeCards.enabled) {
+    const theme =
+      tone === 'dark' || liquidGlass.homeCards.overLight
+        ? liquidGlass.homeCards.dark
+        : liquidGlass.homeCards.light
+    for (const [name, value] of Object.entries(liquidGlassHomeCardCssVariables(theme))) {
+      root.style.setProperty(name, value, 'important')
+    }
+  }
   window.dispatchEvent(new Event(LIQUID_GLASS_TUNING_CHANGED_EVENT))
+}
+
+function usesSharedLiquidGlassProfile(): boolean {
+  return (
+    surfaceMaterial === 'liquidGlass' ||
+    liquidGlass.playbarEnabled ||
+    liquidGlass.settingsNavigationEnabled
+  )
 }
 
 function resolveSettingsAccentColor(color: string): string {
@@ -322,7 +344,12 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
           css: '',
           dataAttributes: {
             ...themeModesToDataAttributes(resolveThemeProfileModes(null)),
-            'data-te-surface-material': surfaceMaterial
+            'data-te-surface-material': surfaceMaterial,
+            'data-te-home-liquid-glass': liquidGlass.homeCards.enabled ? 'on' : 'off',
+            'data-te-playbar-liquid-glass': liquidGlass.playbarEnabled ? 'on' : 'off',
+            'data-te-settings-navigation-liquid-glass': liquidGlass.settingsNavigationEnabled
+              ? 'on'
+              : 'off'
           },
           activeTheme: TWILIGHT_DEFAULT_THEME_ID,
           presetLayout: presetLayoutKey(TWILIGHT_DEFAULT_THEME_ID),
@@ -367,7 +394,12 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
       ...themeModesToDataAttributes(modes),
       ...themeShellLayoutToDataAttributes(shellLayout),
       // Settings-owned, so it wins over anything a theme profile declares.
-      'data-te-surface-material': surfaceMaterial
+      'data-te-surface-material': surfaceMaterial,
+      'data-te-home-liquid-glass': liquidGlass.homeCards.enabled ? 'on' : 'off',
+      'data-te-playbar-liquid-glass': liquidGlass.playbarEnabled ? 'on' : 'off',
+      'data-te-settings-navigation-liquid-glass': liquidGlass.settingsNavigationEnabled
+        ? 'on'
+        : 'off'
     },
     activeTheme: activeThemeKey(selection),
     presetLayout: resolvePresetLayout(selection, selectedProfile),
@@ -378,15 +410,20 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
 }
 
 /**
- * Emits the `--te-lg-*` tuning variables when liquid glass is the active material.
- * The stylesheet keys its rules on `data-te-surface-material`, so the variables are
- * only meaningful in that state; skipping them otherwise keeps the payload small.
+ * Emits shared and homepage-card glass variables only for their active scopes.
  */
 function applyLiquidGlassVariables(tone: ThemeTone, variables: Record<string, string>): void {
-  if (surfaceMaterial !== 'liquidGlass') return
-  // "Over Light" tints the glass dark on bright backgrounds so it stays visible.
-  const theme = tone === 'dark' || liquidGlass.overLight ? liquidGlass.dark : liquidGlass.light
-  Object.assign(variables, liquidGlassCssVariables(theme))
+  if (usesSharedLiquidGlassProfile()) {
+    const theme = tone === 'dark' || liquidGlass.overLight ? liquidGlass.dark : liquidGlass.light
+    Object.assign(variables, liquidGlassCssVariables(theme))
+  }
+  if (liquidGlass.homeCards.enabled) {
+    const theme =
+      tone === 'dark' || liquidGlass.homeCards.overLight
+        ? liquidGlass.homeCards.dark
+        : liquidGlass.homeCards.light
+    Object.assign(variables, liquidGlassHomeCardCssVariables(theme))
+  }
 }
 
 function applyAppBackgroundVariables(tone: ThemeTone, variables: Record<string, string>): void {

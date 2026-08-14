@@ -22,7 +22,7 @@ import {
  * which forced every line to share one position and made Apple's cascade
  * mathematically impossible: a single scalar cannot express lines arriving at
  * different times. `scrollTop` also clamps at both ends and quantises to whole
- * pixels, so a spring driving it could never overshoot.
+ * pixels, so it could not give each line an independent target.
  *
  * Here each line is absolutely positioned and owns a `posY` and a `scale` spring.
  * One rAF loop advances them all. Manual browsing moves a `scrollOffset` that
@@ -129,6 +129,7 @@ export function createLyricViewportController(options: LyricViewportControllerOp
   let cancelResize: (() => void) | null = null
   let lastFrameNow: number | null = null
   let interludeDotsTop: number | null = null
+  let hasCommittedLayout = false
 
   const scheduler = options.frameScheduler
   const springEnabled = (): boolean => options.isSpringEnabled?.() ?? true
@@ -216,7 +217,7 @@ export function createLyricViewportController(options: LyricViewportControllerOp
     interludeDotsTop = result.interludeDotsTop
     options.onInterludeDotsTop?.(interludeDotsTop)
 
-    const snap = force || !springEnabled() || isDocumentHidden()
+    const snap = force || !hasCommittedLayout || !springEnabled() || isDocumentHidden()
 
     for (const target of result.lines) {
       const row = rows.get(target.index)
@@ -234,8 +235,10 @@ export function createLyricViewportController(options: LyricViewportControllerOp
       writeRowStatics(row, target.opacity, target.blur)
     }
 
-    if (snap) commitRows()
-    else scheduleFrame()
+    if (snap) {
+      commitRows()
+      hasCommittedLayout = true
+    } else scheduleFrame()
   }
 
   function writeRowStatics(row: RowState, opacity: number, blur: number): void {
@@ -335,6 +338,7 @@ export function createLyricViewportController(options: LyricViewportControllerOp
     clearManualBrowseTimer()
     rows.clear()
     scrollOffset = 0
+    hasCommittedLayout = false
     activeTrackId = trackId
     setManualBrowse(false)
   }

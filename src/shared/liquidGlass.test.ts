@@ -3,11 +3,13 @@ import test from 'node:test'
 import {
   DEFAULT_LIQUID_GLASS,
   DEFAULT_LIQUID_GLASS_DARK,
+  DEFAULT_LIQUID_GLASS_HOME_CARDS,
   DEFAULT_LIQUID_GLASS_LIGHT,
   LIQUID_GLASS_BOUNDS,
   LIQUID_GLASS_CARD_CLASSES,
   LIQUID_GLASS_CARD_SELECTOR,
   liquidGlassCssVariables,
+  liquidGlassHomeCardCssVariables,
   normalizeLiquidGlass,
   normalizeLiquidGlassTheme,
   normalizeSurfaceMaterial,
@@ -91,6 +93,9 @@ test('settings normalization defaults followPointer on and keeps both tones', ()
   assert.equal(normalized.followPointer, true)
   assert.deepEqual(normalized.light, DEFAULT_LIQUID_GLASS_LIGHT)
   assert.deepEqual(normalized.dark, DEFAULT_LIQUID_GLASS_DARK)
+  assert.deepEqual(normalized.homeCards, DEFAULT_LIQUID_GLASS_HOME_CARDS)
+  assert.equal(normalized.playbarEnabled, false)
+  assert.equal(normalized.settingsNavigationEnabled, false)
 
   assert.equal(normalizeLiquidGlass({ followPointer: false }).followPointer, false)
   // only an explicit false disables it
@@ -112,6 +117,7 @@ test('normalization never aliases the exported default objects', () => {
   assert.equal(DEFAULT_LIQUID_GLASS.light.blurAmount, 14)
   assert.equal(DEFAULT_LIQUID_GLASS.dark.elasticity, 7)
   assert.equal(DEFAULT_LIQUID_GLASS.overLight, false)
+  assert.equal(DEFAULT_LIQUID_GLASS.homeCards.enabled, false)
 })
 
 test('channel scales trail red to produce aberration and never invert', () => {
@@ -161,6 +167,42 @@ test('css variables carry units the stylesheet expects', () => {
   // opacities are emitted as 0-1 ratios for direct use in color functions
   assert.equal(vars['--te-lg-specular'], '0.550')
   assert.equal(vars['--te-lg-tint'], '0.120')
+})
+
+test('homepage cards normalize independently and emit their own variables', () => {
+  const normalized = normalizeLiquidGlass({
+    homeCards: {
+      enabled: true,
+      overLight: true,
+      light: { blurAmount: 22, tintOpacity: 31 }
+    }
+  })
+  assert.equal(normalized.homeCards.enabled, true)
+  assert.equal(normalized.homeCards.overLight, true)
+  assert.equal(normalized.homeCards.light.blurAmount, 22)
+  assert.equal(normalized.homeCards.light.tintOpacity, 31)
+  assert.notEqual(normalized.homeCards.light, DEFAULT_LIQUID_GLASS_HOME_CARDS.light)
+
+  const variables = liquidGlassHomeCardCssVariables(normalized.homeCards.light)
+  assert.equal(variables['--te-home-lg-blur'], '22px')
+  assert.equal(variables['--te-home-lg-tint'], '0.310')
+  assert.equal(variables['--te-home-lg-displacement'], '58')
+})
+
+test('independent shared targets normalize to strict booleans', () => {
+  const enabled = normalizeLiquidGlass({
+    playbarEnabled: true,
+    settingsNavigationEnabled: true
+  })
+  assert.equal(enabled.playbarEnabled, true)
+  assert.equal(enabled.settingsNavigationEnabled, true)
+
+  const invalid = normalizeLiquidGlass({
+    playbarEnabled: 1,
+    settingsNavigationEnabled: 'yes'
+  })
+  assert.equal(invalid.playbarEnabled, false)
+  assert.equal(invalid.settingsNavigationEnabled, false)
 })
 
 test('new tuning fields normalize and clamp to their bounds', () => {

@@ -3306,6 +3306,14 @@ html[data-te-surface-material='liquidGlass'][data-theme='dark'] .track-table-wra
   background: rgba(var(--te-lg-surface-rgb), calc(var(--te-lg-tint, 0.16) * 0.72)) !important;
 }
 
+/* The observer keeps a small warm-up margin around the viewport so this only
+   affects surfaces that cannot contribute to the current frame. */
+html[data-te-surface-material='liquidGlass'] .te-liquid-glass-offscreen::after {
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
 /* ===== Liquid glass degradation =====
    Three existing contracts strip heavy effects. Each must also drop the SVG filter:
    refraction without its blurred backdrop reads as a smeared artifact, not glass. */

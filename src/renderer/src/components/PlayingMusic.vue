@@ -1072,17 +1072,6 @@ onBeforeUnmount(() => {
   transform: translateX(var(--te-lyric-offset-x, 0px));
 }
 
-:global(html[data-te-motion='full'] .lyrics-column) {
-  animation: te-playing-lyrics-arrive var(--te-motion-page) var(--te-ease-spring) 64ms both;
-}
-
-@keyframes te-playing-lyrics-arrive {
-  from {
-    opacity: 0;
-    translate: 18px 0;
-  }
-}
-
 .lyrics-column--pending {
   pointer-events: none;
 }
@@ -1119,8 +1108,8 @@ onBeforeUnmount(() => {
 
 /*
  * The stage no longer scrolls. Rows are absolutely positioned and moved by their
- * own springs, which is what allows lines to arrive at different times and to
- * overshoot; `scrollTop` clamps and quantises and could do neither. Keeping it
+ * own springs, which is what allows lines to arrive at different times;
+ * `scrollTop` clamps and quantises and could not do that. Keeping it
  * `hidden` also means the wheel listener never has to call preventDefault.
  */
 .lyrics-scroll {

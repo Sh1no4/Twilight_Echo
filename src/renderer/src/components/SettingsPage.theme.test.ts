@@ -11,6 +11,10 @@ const playbackPageSource = readFileSync(
 )
 const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
 const titleBarSource = readFileSync(new URL('./TitleBar.vue', import.meta.url), 'utf8')
+const liquidGlassSettingsSource = readFileSync(
+  new URL('./settings-page/LiquidGlassSettings.vue', import.meta.url),
+  'utf8'
+)
 
 test('settings option bars define dark-mode container and active option surfaces', () => {
   assert.match(
@@ -21,6 +25,31 @@ test('settings option bars define dark-mode container and active option surfaces
     styles,
     /html\[data-theme='dark'\] \.segmented-control button\.active,[\s\S]*?background:\s*var\(--te-card-bg\)/
   )
+})
+
+test('liquid glass settings navigation has its own readable surface layer', () => {
+  assert.match(
+    styles,
+    /\[data-te-settings-navigation-liquid-glass='on'\][\s\S]{0,160}\.settings-preview-nav\s*\{[\s\S]*?isolation:\s*isolate[\s\S]*?background:\s*transparent/
+  )
+  assert.match(
+    styles,
+    /\[data-te-settings-navigation-liquid-glass='on'\][\s\S]{0,240}\.settings-preview-nav::after\s*\{[\s\S]*?backdrop-filter:\s*blur\(var\(--te-lg-blur, 16px\)\)[\s\S]*?filter:\s*url\(#te-lg-card\)/
+  )
+  assert.match(
+    styles,
+    /\[data-te-settings-navigation-liquid-glass='on'\][\s\S]{0,280}\.settings-preview-nav\s+\.preview-nav-item\s*\{[\s\S]*?color:\s*var\(--te-settings-text\)/
+  )
+})
+
+test('liquid glass settings expose unified and independent targets', () => {
+  assert.match(liquidGlassSettingsSource, /全局液态玻璃/)
+  assert.match(liquidGlassSettingsSource, /播放栏液态玻璃/)
+  assert.match(liquidGlassSettingsSource, /设置导航液态玻璃/)
+  assert.match(liquidGlassSettingsSource, /首页卡片液态玻璃/)
+  assert.match(liquidGlassSettingsSource, /playbarEnabled/)
+  assert.match(liquidGlassSettingsSource, /settingsNavigationEnabled/)
+  assert.match(liquidGlassSettingsSource, /activeLiquidGlassTheme/)
 })
 
 test('dark settings folder controls and switches avoid light fixed-color surfaces', () => {

@@ -898,22 +898,70 @@ async function exportAudioDiagnostics(): Promise<void> {
   }
 }
 
+const SETTINGS_SECTION_SCROLL_OFFSET = 24
+let programmaticScrollUntil = 0
+let programmaticScrollRaf = 0
+
+function scrollPageToElement(
+  target: HTMLElement,
+  options: { block?: 'start' | 'center'; behavior?: ScrollBehavior } = {}
+): void {
+  const page = pageRef.value
+  if (!page) return
+
+  const block = options.block ?? 'start'
+  const behavior = options.behavior ?? 'smooth'
+  const pageRect = page.getBoundingClientRect()
+  const targetRect = target.getBoundingClientRect()
+  const targetTop = targetRect.top - pageRect.top + page.scrollTop
+  const maxScrollTop = Math.max(0, page.scrollHeight - page.clientHeight)
+  const nextTop =
+    block === 'center'
+      ? targetTop - Math.max(0, (page.clientHeight - targetRect.height) / 2)
+      : targetTop - SETTINGS_SECTION_SCROLL_OFFSET
+
+  programmaticScrollUntil = performance.now() + (behavior === 'smooth' ? 700 : 0)
+  if (programmaticScrollRaf) {
+    window.cancelAnimationFrame(programmaticScrollRaf)
+    programmaticScrollRaf = 0
+  }
+  if (behavior === 'smooth') {
+    const clearWhenSettled = (): void => {
+      if (performance.now() >= programmaticScrollUntil) {
+        programmaticScrollRaf = 0
+        updateActiveSection()
+        return
+      }
+      programmaticScrollRaf = window.requestAnimationFrame(clearWhenSettled)
+    }
+    programmaticScrollRaf = window.requestAnimationFrame(clearWhenSettled)
+  }
+
+  page.scrollTo({
+    top: Math.max(0, Math.min(maxScrollTop, nextTop)),
+    behavior
+  })
+}
+
 function scrollToSection(section: SectionKey): void {
   activeSection.value = section
-  document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  const el = document.getElementById(section)
+  if (!el) return
+  scrollPageToElement(el, { block: 'start' })
 }
 
 function scrollToSearchResult(entry: SettingsSearchEntry): void {
   settingsSearchQuery.value = ''
-  scrollToSection(entry.section)
-  // 定位到具体的设置项
+  activeSection.value = entry.section
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       const sectionEl = document.getElementById(entry.section)
       if (!sectionEl) return
-      const target = findSettingItem(sectionEl, entry)
-      target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      highlightSettingItem(target)
+      const target = findSettingItem(sectionEl, entry) ?? sectionEl
+      scrollPageToElement(target, {
+        block: target === sectionEl ? 'start' : 'center'
+      })
+      highlightSettingItem(target === sectionEl ? null : target)
     })
   })
 }
@@ -996,6 +1044,7 @@ async function refreshShortcutStatuses(): Promise<void> {
 }
 
 function updateActiveSection(): void {
+  if (performance.now() < programmaticScrollUntil) return
   const page = pageRef.value
   if (!page) return
   const pageTop = page.getBoundingClientRect().top
@@ -1004,7 +1053,9 @@ function updateActiveSection(): void {
   for (const section of sections) {
     const el = document.getElementById(section.key)
     if (!el) continue
-    const distance = Math.abs(el.getBoundingClientRect().top - pageTop - 24)
+    const distance = Math.abs(
+      el.getBoundingClientRect().top - pageTop - SETTINGS_SECTION_SCROLL_OFFSET
+    )
     if (distance < closestDistance) {
       closest = section.key
       closestDistance = distance
@@ -1035,6 +1086,11 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   pageRef.value?.removeEventListener('scroll', updateActiveSection)
+  if (programmaticScrollRaf) {
+    window.cancelAnimationFrame(programmaticScrollRaf)
+    programmaticScrollRaf = 0
+  }
+  programmaticScrollUntil = 0
   if (libraryWatcherStatusTimer !== null) {
     window.clearInterval(libraryWatcherStatusTimer)
     libraryWatcherStatusTimer = null
