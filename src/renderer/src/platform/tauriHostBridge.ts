@@ -2,6 +2,12 @@ import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open } from '@tauri-apps/plugin-dialog'
 import { openPath, openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
+import {
+  TWILIGHT_DEFAULT_THEME,
+  createDefaultThemeLibraryDocument,
+  type ThemeLibrarySnapshot,
+  type ThemeTone
+} from '../../../shared/theme.ts'
 import type {
   LocalLibraryScanStatus,
   LocalLibraryScanUpdate
@@ -33,6 +39,21 @@ const noopScanUpdate: LocalLibraryScanUpdate = {
   removedFilePaths: [],
   parsedFileCount: 0,
   skippedUnchanged: 0
+}
+
+const epochIso = new Date(0).toISOString()
+
+function emptyThemeLibrarySnapshot(): ThemeLibrarySnapshot {
+  return {
+    version: 2,
+    revision: 0,
+    savedAt: epochIso,
+    data: createDefaultThemeLibraryDocument()
+  }
+}
+
+function resolveSystemTone(): ThemeTone {
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'pureWhite'
 }
 
 export function installTauriHostBridge(): void {
@@ -98,6 +119,58 @@ export function installTauriHostBridge(): void {
       clearCache: async () => 0,
       getShortcutStatuses: async () => [],
       onPlayerShortcut: () => () => {}
+    },
+    themes: {
+      getSystemTone: async (): Promise<ThemeTone> => resolveSystemTone(),
+      getBootstrap: async () => ({
+        library: emptyThemeLibrarySnapshot(),
+        defaultTheme: TWILIGHT_DEFAULT_THEME
+      }),
+      list: async () => emptyThemeLibrarySnapshot(),
+      save: async () => emptyThemeLibrarySnapshot(),
+      delete: async () => emptyThemeLibrarySnapshot(),
+      setActive: async () => emptyThemeLibrarySnapshot(),
+      setWindowInheritance: async () => emptyThemeLibrarySnapshot(),
+      importTheme: async () => null,
+      exportTheme: async () => null,
+      importAsset: async () => null,
+      validateAssets: async () => true,
+      copyAssets: async () => undefined,
+      onChanged: () => () => {},
+      onSystemToneChanged: () => () => {}
+    },
+    ncmCloud: {
+      chooseUploadFiles: async () => [],
+      upload: async () => ({ transferId: '', handle: '', fileName: '', accepted: true }),
+      download: async () => ({ transferId: '', fileName: '', accepted: false, cancelled: false }),
+      cancel: async () => true,
+      onProgress: () => () => {}
+    },
+    miniPlayer: {
+      open: async () => null,
+      getBootstrap: async () => null,
+      command: () => {},
+      updateSettings: async (patch) => patch,
+      chooseBackgroundImage: async () => null,
+      minimize: () => {},
+      returnToMain: () => {},
+      publishState: () => {},
+      onState: () => () => {},
+      onSettings: () => () => {},
+      onMotionPreference: () => () => {},
+      onCommand: () => () => {}
+    },
+    providers: {
+      list: async () => [],
+      call: async () => {
+        throw new Error('Provider 未启用')
+      },
+      cancel: () => {}
+    },
+    extensions: {
+      list: async () => [],
+      executeCommand: async () => undefined,
+      readThemeStylesheet: async () => ''
     },
     data: {
       ...existing?.data,
