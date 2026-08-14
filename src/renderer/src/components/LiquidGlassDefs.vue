@@ -18,6 +18,7 @@ import {
   LIQUID_GLASS_CARD_FILTER_ID,
   LIQUID_GLASS_CARD_SELECTOR,
   LIQUID_GLASS_PLAYBAR_FILTER_ID,
+  LIQUID_GLASS_TUNING_CHANGED_EVENT,
   resolveAberrationBlur,
   resolveChannelScales
 } from '../../../shared/liquidGlass.ts'
@@ -76,6 +77,10 @@ function syncFilterInputs(): void {
     DEFAULT_LIQUID_GLASS_LIGHT.aberrationIntensity
   )
   pointerElasticity = readNumericVariable('--te-lg-elasticity', 0)
+}
+
+function onTuningChanged(): void {
+  syncFilterInputs()
 }
 
 function ensureMaps(): void {
@@ -294,6 +299,7 @@ onMounted(() => {
   syncFilterInputs()
   writePointerVariables(staticPointerCssVariables(), document.documentElement)
   syncPointerTracking()
+  window.addEventListener(LIQUID_GLASS_TUNING_CHANGED_EVENT, onTuningChanged)
 
   // The theme runtime rewrites its stylesheet and `data-te-*` attributes on tone or
   // profile change; both can move the tuning values and the motion mode.
@@ -308,6 +314,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener(LIQUID_GLASS_TUNING_CHANGED_EVENT, onTuningChanged)
   detachPointer()
   motionObserver?.disconnect()
   motionObserver = null

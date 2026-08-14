@@ -19,6 +19,7 @@ export const SURFACE_MATERIALS: readonly SurfaceMaterial[] = ['standard', 'liqui
 /** Filter ids referenced from CSS. Cards and the playbar differ in aspect ratio. */
 export const LIQUID_GLASS_CARD_FILTER_ID = 'te-lg-card'
 export const LIQUID_GLASS_PLAYBAR_FILTER_ID = 'te-lg-playbar'
+export const LIQUID_GLASS_TUNING_CHANGED_EVENT = 'twilight:liquid-glass-tuning-changed'
 
 /**
  * Class names that receive the liquid glass card surface. Kept in sync with the
@@ -96,12 +97,6 @@ export interface LiquidGlassSettings {
   followPointer: boolean
   /** Tint the glass dark on light backgrounds for visibility ("Over Light"). */
   overLight: boolean
-  /**
-   * Keep backdrop blur active at all times instead of only on hover/focus.
-   * Disables the performance carve-out that strips idle blur to protect scroll
-   * grids; intended for users who prefer the full wet-glass look on capable GPUs.
-   */
-  fullGlass: boolean
   light: LiquidGlassTheme
   dark: LiquidGlassTheme
 }
@@ -122,8 +117,6 @@ export const LIQUID_GLASS_BOUNDS: Readonly<Record<keyof LiquidGlassTheme, Bound>
 }
 
 export const DEFAULT_LIQUID_GLASS_LIGHT: LiquidGlassTheme = {
-  // Blur and refraction remain interaction-only in CSS, so these values improve
-  // hover fidelity without making a full scrolling card grid expensive at rest.
   displacementScale: 58,
   blurAmount: 14,
   saturation: 132,
@@ -146,7 +139,6 @@ export const DEFAULT_LIQUID_GLASS_DARK: LiquidGlassTheme = {
 export const DEFAULT_LIQUID_GLASS: LiquidGlassSettings = {
   followPointer: true,
   overLight: false,
-  fullGlass: true,
   light: DEFAULT_LIQUID_GLASS_LIGHT,
   dark: DEFAULT_LIQUID_GLASS_DARK
 }
@@ -193,7 +185,6 @@ export function normalizeLiquidGlass(raw: unknown): LiquidGlassSettings {
   return {
     followPointer: value.followPointer !== false,
     overLight: value.overLight === true,
-    fullGlass: value.fullGlass !== false,
     light: normalizeLiquidGlassTheme(value.light, DEFAULT_LIQUID_GLASS_LIGHT),
     dark: normalizeLiquidGlassTheme(value.dark, DEFAULT_LIQUID_GLASS_DARK)
   }

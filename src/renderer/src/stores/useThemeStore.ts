@@ -38,6 +38,7 @@ import {
 import type { AppBackgroundColorPair, AppBackgroundPage, AppSettings } from '../types/settings'
 import {
   DEFAULT_LIQUID_GLASS,
+  LIQUID_GLASS_TUNING_CHANGED_EVENT,
   liquidGlassCssVariables,
   normalizeSurfaceMaterial,
   type LiquidGlassSettings,
@@ -90,6 +91,9 @@ let themePreference: AppSettings['theme'] = 'system'
 let appBackground: AppSettings['appBackground'] | null = null
 let surfaceMaterial: SurfaceMaterial = 'standard'
 let liquidGlass: LiquidGlassSettings = DEFAULT_LIQUID_GLASS
+const LIQUID_GLASS_RUNTIME_VARIABLES = Object.keys(
+  liquidGlassCssVariables(DEFAULT_LIQUID_GLASS.light)
+)
 
 function resolveTone(): ThemeTone {
   return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'pureWhite'
@@ -131,7 +135,20 @@ function cacheSettingsAppearance(settings: SettingsAppearanceInput): void {
 
 export function syncThemeSettingsAppearance(settings: SettingsAppearanceInput): void {
   cacheSettingsAppearance(settings)
+  applyLiquidGlassRuntimeVariables(resolveTone())
   if (loaded.value) queueMicrotask(() => void applyActiveTheme(false))
+}
+
+function applyLiquidGlassRuntimeVariables(tone: ThemeTone): void {
+  const root = document.documentElement
+  for (const name of LIQUID_GLASS_RUNTIME_VARIABLES) root.style.removeProperty(name)
+  if (surfaceMaterial === 'liquidGlass') {
+    const theme = tone === 'dark' || liquidGlass.overLight ? liquidGlass.dark : liquidGlass.light
+    for (const [name, value] of Object.entries(liquidGlassCssVariables(theme))) {
+      root.style.setProperty(name, value, 'important')
+    }
+  }
+  window.dispatchEvent(new Event(LIQUID_GLASS_TUNING_CHANGED_EVENT))
 }
 
 function resolveSettingsAccentColor(color: string): string {
@@ -305,8 +322,7 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
           css: '',
           dataAttributes: {
             ...themeModesToDataAttributes(resolveThemeProfileModes(null)),
-            'data-te-surface-material': surfaceMaterial,
-            'data-te-lg-full': surfaceMaterial === 'liquidGlass' && liquidGlass.fullGlass ? 'on' : 'off'
+            'data-te-surface-material': surfaceMaterial
           },
           activeTheme: TWILIGHT_DEFAULT_THEME_ID,
           presetLayout: presetLayoutKey(TWILIGHT_DEFAULT_THEME_ID),
@@ -351,8 +367,7 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
       ...themeModesToDataAttributes(modes),
       ...themeShellLayoutToDataAttributes(shellLayout),
       // Settings-owned, so it wins over anything a theme profile declares.
-      'data-te-surface-material': surfaceMaterial,
-      'data-te-lg-full': surfaceMaterial === 'liquidGlass' && liquidGlass.fullGlass ? 'on' : 'off'
+      'data-te-surface-material': surfaceMaterial
     },
     activeTheme: activeThemeKey(selection),
     presetLayout: resolvePresetLayout(selection, selectedProfile),
@@ -695,6 +710,7 @@ export async function applyActiveTheme(
     lastAppliedTone = state.tone
     document.documentElement.dataset.theme = state.tone
     document.documentElement.style.colorScheme = state.tone === 'dark' ? 'dark' : 'light'
+    applyLiquidGlassRuntimeVariables(state.tone)
     document.documentElement.dataset.activeTheme = state.activeTheme
     document.documentElement.dataset.tePresetLayout = state.presetLayout
     error.value = ''

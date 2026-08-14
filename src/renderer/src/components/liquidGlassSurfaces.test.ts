@@ -11,6 +11,7 @@ import {
 const baseStyle = readFileSync(new URL('../assets/base.css', import.meta.url), 'utf8')
 const defs = readFileSync(new URL('./LiquidGlassDefs.vue', import.meta.url), 'utf8')
 const app = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
+const streamingHome = readFileSync(new URL('./StreamingHome.vue', import.meta.url), 'utf8')
 const themeStore = readFileSync(new URL('../stores/useThemeStore.ts', import.meta.url), 'utf8')
 const playerBarStyle = readFileSync(new URL('./player-bar/PlayerBar.css', import.meta.url), 'utf8')
 const settingsPageStyle = readFileSync(
@@ -66,7 +67,8 @@ test('the pointer tracker shares the stylesheet card list', () => {
 test('flat light settings pages supply ambient variation behind liquid glass', () => {
   // The settings route is a fixed, opaque page layer. Its backdrop must carry the
   // light field itself; a body-only gradient would never be visible through cards.
-  const selector = "html[data-theme='pureWhite'][data-te-surface-material='liquidGlass'] .settings-preview-page"
+  const selector =
+    "html[data-theme='pureWhite'][data-te-surface-material='liquidGlass'] .settings-preview-page"
   const start = settingsPageStyle.indexOf(selector)
   assert.notEqual(start, -1, 'light liquid-glass settings backdrop rule is missing')
   const open = settingsPageStyle.indexOf('{', start)
@@ -81,7 +83,8 @@ test('flat dark settings pages supply restrained ambient variation behind liquid
   // A flat charcoal page makes a translucent dark pane indistinguishable from an
   // opaque raised block. Keep this fixed and subdued so scroll does not move the
   // lighting field and the theme does not turn neon.
-  const selector = "html[data-theme='dark'][data-te-surface-material='liquidGlass'] .settings-preview-page"
+  const selector =
+    "html[data-theme='dark'][data-te-surface-material='liquidGlass'] .settings-preview-page"
   const start = settingsPageStyle.indexOf(selector)
   assert.notEqual(start, -1, 'dark liquid-glass settings backdrop rule is missing')
   const open = settingsPageStyle.indexOf('{', start)
@@ -105,16 +108,10 @@ test('dark broad glass surfaces retain a thin rim instead of a heavy raised shad
   assert.match(rule, /--te-lg-drop-alpha:\s*0\.18/)
 })
 
-test('the displacement filter runs only on an interacted ::after layer', () => {
-  // Five of these classes already use ::before for hover glows and layers; claiming
-  // it would silently break them. Keeping SVG displacement off idle cards also
-  // prevents a full grid of filter passes during scroll.
-  const warpBlocks = baseStyle.match(
-    /\):is\(:hover, :focus-within\)::after \{[^}]*filter: url\(#te-lg-card\)[^}]*\}/g
-  )
-  assert.ok(warpBlocks && warpBlocks.length > 0, 'no interactive ::after warp layer found')
-  const interactiveRule = warpBlocks?.[0] ?? ''
-  assert.match(interactiveRule, /backdrop-filter: blur\(var\(--te-lg-blur, 16px\)\)/)
+test('the displacement filter runs on every non-scroll card surface', () => {
+  const warpRule = baseWarpRuleBody()
+  assert.match(warpRule, /backdrop-filter: blur\(var\(--te-lg-blur, 16px\)\)/)
+  assert.match(warpRule, /filter: url\(#te-lg-card\)/)
   assert.ok(
     !/data-te-surface-material='liquidGlass'[\s\S]{0,4000}?\)::before \{[^}]*filter: url\(/.test(
       baseStyle
@@ -149,8 +146,7 @@ function warpRuleIndex(): number {
 }
 
 function baseWarpRuleBody(): string {
-  const index = baseStyle.indexOf('filter: none;', sectionStart())
-  assert.notEqual(index, -1, 'idle card warp layer must skip SVG displacement')
+  const index = warpRuleIndex()
   const open = baseStyle.lastIndexOf('{', index)
   return baseStyle.slice(open, baseStyle.indexOf('}', open))
 }
@@ -194,19 +190,12 @@ test('continuously scrolling surfaces keep only the lightweight glass layer', ()
   assert.doesNotMatch(tableRule, /blur\(/)
 })
 
-test('the player promotes blur and refraction only while it is interacted with', () => {
-  const idleWarp =
+test('the player applies blur and refraction without an interaction gate', () => {
+  const warp =
     playerBarStyle.match(/\.player-bar-liquid \.player-bar-warp\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
-  assert.match(idleWarp, /backdrop-filter:\s*none/)
-  assert.match(idleWarp, /-webkit-backdrop-filter:\s*none/)
-  assert.match(idleWarp, /filter:\s*none/)
-
-  const interactiveWarp =
-    playerBarStyle.match(
-      /\.player-bar-liquid:is\(:hover, :focus-within\) \.player-bar-warp\s*\{([\s\S]*?)\n\}/
-    )?.[1] ?? ''
-  assert.match(interactiveWarp, /backdrop-filter:\s*blur\(var\(--te-lg-blur, 16px\)\)/)
-  assert.match(interactiveWarp, /filter:\s*url\(#te-lg-playbar\)/)
+  assert.match(warp, /backdrop-filter:\s*blur\(var\(--te-lg-blur, 16px\)\)/)
+  assert.match(warp, /-webkit-backdrop-filter:\s*blur\(var\(--te-lg-blur, 16px\)\)/)
+  assert.match(warp, /filter:\s*url\(#te-lg-playbar\)/)
 })
 
 test('content stays sharp: the warp layer sits behind content in an isolated context', () => {
@@ -220,8 +209,8 @@ test('content stays sharp: the warp layer sits behind content in an isolated con
   assert.match(warpRule, /position: absolute/)
   assert.match(warpRule, /inset: 0/)
   assert.match(warpRule, /pointer-events: none/)
-  assert.match(warpRule, /backdrop-filter: none/)
-  assert.match(warpRule, /filter: none/)
+  assert.match(warpRule, /backdrop-filter: blur\(var\(--te-lg-blur, 16px\)\)/)
+  assert.match(warpRule, /filter: url\(#te-lg-card\)/)
 })
 
 test('all three degradation contracts drop the displacement filter', () => {
@@ -363,7 +352,33 @@ test('the material attribute is emitted on every theme runtime return path', () 
   assert.equal(returns, 2, `expected 2 emit sites, found ${returns}`)
 })
 
+test('liquid glass has no hover or full-mode gate', () => {
+  assert.doesNotMatch(baseStyle, /data-te-lg-full/)
+  assert.doesNotMatch(playerBarStyle, /data-te-lg-full/)
+  assert.doesNotMatch(baseStyle, /\):is\(:hover, :focus-within\)::after/)
+  assert.doesNotMatch(playerBarStyle, /\.player-bar-liquid:is\(:hover, :focus-within\)/)
+  assert.doesNotMatch(themeStore, /data-te-lg-full/)
+})
+
 test('tuning variables are only emitted while the material is active', () => {
   assert.match(themeStore, /if \(surfaceMaterial !== 'liquidGlass'\) return/)
   assert.match(themeStore, /applyLiquidGlassVariables\(tone, variables\)/)
+})
+
+test('runtime tuning changes refresh SVG filter inputs', () => {
+  assert.match(themeStore, /LIQUID_GLASS_TUNING_CHANGED_EVENT/)
+  assert.match(themeStore, /root\.style\.setProperty\(name, value, 'important'\)/)
+  assert.match(themeStore, /applyLiquidGlassRuntimeVariables\(resolveTone\(\)\)/)
+  assert.match(themeStore, /applyLiquidGlassRuntimeVariables\(state\.tone\)/)
+  assert.match(themeStore, /dispatchEvent\(new Event\(LIQUID_GLASS_TUNING_CHANGED_EVENT\)\)/)
+  assert.match(defs, /addEventListener\(LIQUID_GLASS_TUNING_CHANGED_EVENT, onTuningChanged\)/)
+  assert.match(defs, /removeEventListener\(LIQUID_GLASS_TUNING_CHANGED_EVENT, onTuningChanged\)/)
+})
+
+test('streaming home consumes liquid-glass tuning variables', () => {
+  assert.match(streamingHome, /var\(--te-lg-specular, 0\.44\)/)
+  assert.match(streamingHome, /var\(--te-lg-tint, 0\.12\)/)
+  assert.match(streamingHome, /var\(--te-lg-blur, 16px\)/)
+  assert.match(streamingHome, /var\(--te-lg-saturate, 140%\)/)
+  assert.match(streamingHome, /filter: url\(#te-lg-card\)/)
 })

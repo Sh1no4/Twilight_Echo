@@ -14,7 +14,6 @@ function cloneLiquidGlass(): LiquidGlassSettings {
   return {
     followPointer: lg.followPointer,
     overLight: lg.overLight,
-    fullGlass: lg.fullGlass,
     light: { ...lg.light },
     dark: { ...lg.dark }
   }
@@ -29,12 +28,6 @@ function toggleLiquidGlass(): void {
 function toggleLiquidGlassPointer(): void {
   const liquidGlass = cloneLiquidGlass()
   liquidGlass.followPointer = !liquidGlass.followPointer
-  void updateSettings({ liquidGlass })
-}
-
-function toggleLiquidGlassFull(): void {
-  const liquidGlass = cloneLiquidGlass()
-  liquidGlass.fullGlass = !liquidGlass.fullGlass
   void updateSettings({ liquidGlass })
 }
 
@@ -90,20 +83,6 @@ function setLiquidGlassField<K extends keyof LiquidGlassTheme>(
           role="switch"
           :aria-checked="settings.liquidGlass.followPointer"
           @click="toggleLiquidGlassPointer"
-        ></span>
-      </div>
-      <hr />
-      <div class="setting-item">
-        <div class="setting-copy">
-          <strong>完整液态玻璃</strong>
-          <span>始终启用背景模糊与边缘折射；关闭后仅悬停时启动，可降低滚动功耗。</span>
-        </div>
-        <span
-          class="toggle-switch"
-          :class="{ active: settings.liquidGlass.fullGlass }"
-          role="switch"
-          :aria-checked="settings.liquidGlass.fullGlass"
-          @click="toggleLiquidGlassFull"
         ></span>
       </div>
       <hr />
