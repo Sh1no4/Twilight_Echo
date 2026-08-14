@@ -146,7 +146,7 @@ jobs:
         run: pnpm run test:cross-cutting-regressions
 
       - name: Production build
-        run: pnpm run build
+        run: pnpm run build:electron
 
   native-audio:
     name: Native Audio (${{ matrix.os }})

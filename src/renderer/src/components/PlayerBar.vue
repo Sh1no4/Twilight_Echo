@@ -1406,8 +1406,8 @@ onBeforeUnmount(() => {
       @pointerenter="onBarPointerEnter"
       @pointermove="onGlassPointerMove"
       @pointerleave="
-        (e) => {
-          onBarPointerLeave(e)
+        () => {
+          onBarPointerLeave()
           onGlassPointerLeave()
         }
       "

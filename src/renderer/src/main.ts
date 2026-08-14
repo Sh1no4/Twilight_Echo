@@ -5,6 +5,9 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import { bootstrapThemeRuntime } from './stores/useThemeStore'
 import { installAutoHideScrollbars } from './utils/autoHideScrollbars'
+import { installTauriHostBridge } from './platform/tauriHostBridge'
+
+installTauriHostBridge()
 
 const query = new URLSearchParams(window.location.search)
 const windowKind = query.get('window')

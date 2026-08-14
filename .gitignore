@@ -17,6 +17,11 @@ release-builds/
 *.blockmap
 *.yml.sig
 
+# Tauri / Rust build artifacts
+src-tauri/target/
+src-tauri/gen/apple/
+src-tauri/gen/android/
+
 # Native audio engine / CMake output
 audio-engine/build/
 audio-engine/out/

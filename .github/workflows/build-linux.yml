@@ -74,7 +74,7 @@ jobs:
 
       - name: Build renderer and package Linux targets
         run: |
-          pnpm run build
+          pnpm run build:electron
           pnpm exec electron-builder --linux --config electron-builder.yml --publish never
 
       - name: Verify staged native engine in the unpacked app
