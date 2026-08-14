@@ -7,6 +7,8 @@ on:
       - main
     paths:
       - 'src-tauri/**'
+      - 'src/renderer/**'
+      - 'src/shared/**'
       - 'vite.config.ts'
       - 'package.json'
       - 'pnpm-lock.yaml'
