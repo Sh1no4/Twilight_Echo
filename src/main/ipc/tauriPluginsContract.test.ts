@@ -24,8 +24,9 @@ test('Tauri registers the list + Stage 5A lifecycle commands and the Rust module
   assert.match(libSource, /mod plugins;/)
   assert.match(
     libSource,
-    /plugins::plugins_list,\s*\n\s*plugins::plugins_enable,\s*\n\s*plugins::plugins_disable,\s*\n\s*plugins::plugins_uninstall,\s*\n\s*plugins::plugins_get_log,\s*\n\s*plugins::plugins_open_log,\s*\n\s*plugins::providers_list,\s*\n\s*plugins::extensions_list/
+    /plugins::plugins_list,\s*\n\s*plugins::plugins_enable,\s*\n\s*plugins::plugins_disable,\s*\n\s*plugins::plugins_uninstall,\s*\n\s*plugins::plugins_get_log,\s*\n\s*plugins::plugins_open_log,\s*\n\s*plugins::providers_list,\s*\n\s*plugins::providers_call,\s*\n\s*plugins::providers_cancel,\s*\n\s*plugins::extensions_list/
   )
+  assert.match(libSource, /\.manage\(plugins::ProviderCallRegistry::default\(\)\)/)
   assert.match(
     pluginsSource,
     /#\[tauri::command\]\s*pub fn plugins_list\(app: AppHandle\) -> Value/
@@ -55,6 +56,14 @@ test('Tauri registers the list + Stage 5A lifecycle commands and the Rust module
     /#\[tauri::command\]\s*pub fn providers_list\(app: AppHandle\) -> Value/
   )
   assert.match(pluginsSource, /#\[tauri::command\]\s*pub fn extensions_list\(\) -> Value/)
+  assert.match(
+    pluginsSource,
+    /#\[tauri::command\]\s*pub fn providers_call\(\s*app: AppHandle,\s*registry: State<'_, ProviderCallRegistry>,\s*provider_id: String,\s*method: String,\s*args: Option<Value>,\s*options: Option<Value>,\s*\) -> Result<Value, String>/
+  )
+  assert.match(
+    pluginsSource,
+    /#\[tauri::command\]\s*pub fn providers_cancel\(\s*registry: State<'_, ProviderCallRegistry>,\s*request_id: String,\s*\) -> Result<\(\), String>/
+  )
 })
 
 test('Rust plugins_list reads real plugin.json manifests instead of returning empty arrays', () => {
@@ -118,6 +127,77 @@ test('Rust set_plugin_enabled mirrors Electron setEnabled and rejects bundled un
   assert.match(pluginsSource, /自带插件不能卸载；如需关闭，请在插件页停用/)
 })
 
+test('Rust provider RPC mirrors Electron normalization and timeout tiers', () => {
+  // Contract constants mirror src/main/ipc/plugins.ts.
+  assert.match(pluginsSource, /const MAX_PROVIDER_ID_LENGTH: usize = 128;/)
+  assert.match(pluginsSource, /const MAX_PROVIDER_ARGS: usize = 16;/)
+  assert.match(pluginsSource, /const MAX_PROVIDER_ARGS_BYTES: usize = 512 \* 1024;/)
+  assert.match(pluginsSource, /const TWILIGHT_MEDIA_PROVIDER_METHODS: \[&str; 56\]/)
+  assert.match(
+    pluginsSource,
+    /const HOST_ONLY_PROVIDER_METHODS: \[&str; 4\] = \[\s*"createDownload",\s*"getDownloadStatus",\s*"getDownloadFile",\s*"cancelDownload",\s*\]/
+  )
+  // Timeout tiers mirror manager.ts getProviderCallTimeoutMs.
+  assert.match(pluginsSource, /const PLUGIN_PROVIDER_DEFAULT_TIMEOUT_MS: u32 = 15000;/)
+  assert.match(pluginsSource, /const PLUGIN_PROVIDER_MEDIUM_TIMEOUT_MS: u32 = 30000;/)
+  assert.match(pluginsSource, /const PLUGIN_PROVIDER_SLOW_TIMEOUT_MS: u32 = 120000;/)
+  assert.match(pluginsSource, /const PROVIDER_SLOW_TIMEOUT_METHODS: \[&str; 18\]/)
+  assert.match(pluginsSource, /const PROVIDER_MEDIUM_TIMEOUT_METHODS: \[&str; 8\]/)
+  // Normalization helpers mirror normalizeProviderId / normalizeProviderMethod /
+  // normalizePluginIpcArgs / normalizeProviderCallOptions.
+  assert.match(pluginsSource, /fn normalize_provider_id\(value: &str\) -> Result<String, String>/)
+  assert.match(
+    pluginsSource,
+    /fn normalize_provider_method\(value: &str\) -> Result<String, String>/
+  )
+  assert.match(
+    pluginsSource,
+    /fn normalize_provider_args\(value: Option<Value>\) -> Result<Value, String>/
+  )
+  assert.match(
+    pluginsSource,
+    /fn normalize_provider_call_options\(\s*value: Option<Value>,\s*\) -> Result<\(Option<String>, Option<String>\), String>/
+  )
+  assert.match(pluginsSource, /fn get_provider_call_timeout_ms\(method: &str\) -> u32/)
+})
+
+test('Rust persists provider health and merges it into providers_list', () => {
+  assert.match(
+    pluginsSource,
+    /fn provider_health_path\(policy: &path_policy::PathPolicy\) -> PathBuf/
+  )
+  assert.match(
+    pluginsSource,
+    /categorized_app_path\(\s*policy,\s*"plugins",\s*&\["provider-health\.json"\],\s*"provider-health\.json",\s*\)/
+  )
+  assert.match(
+    pluginsSource,
+    /fn read_provider_health\(policy: &path_policy::PathPolicy\) -> Value/
+  )
+  assert.match(
+    pluginsSource,
+    /fn write_provider_health\(policy: &path_policy::PathPolicy, health: &Value\)/
+  )
+  assert.match(pluginsSource, /fn record_provider_call\(/)
+  assert.match(
+    pluginsSource,
+    /fn provider_health_descriptor\(record: Option<&Value>, plugin_status: &str\) -> Value/
+  )
+  // providers_list now merges the persisted health descriptor into the bundled
+  // NCM registration instead of returning a bare static descriptor.
+  assert.match(pluginsSource, /provider_health_descriptor\(record, "enabled"\)/)
+})
+
+test('Rust providers_call gates on plugin enabled state and persists a health failure for gateway-unavailable dispatch', () => {
+  assert.match(pluginsSource, /fn dispatch_ncm_provider_call\(/)
+  assert.match(pluginsSource, /内置网易云网关在 Tauri 运行时不可用/)
+  assert.match(pluginsSource, /Provider 未启用：\{provider_id\}/)
+  assert.match(
+    pluginsSource,
+    /record_provider_call\(&policy, &provider_id, &method, false, Some\(&error\)\)/
+  )
+})
+
 test('bundled NCM plugin is packaged into the Tauri resources', () => {
   assert.match(tauriConf, /"resources": \{/)
   assert.match(tauriConf, /"\.\.\/resources\/plugins\/ncm-provider": "plugins\/ncm-provider"/)
@@ -164,7 +244,11 @@ test('tauriHostBridge wires list + lifecycle commands to invoke() and keeps inst
   )
   assert.match(
     bridgeSource,
-    /call: \(\) =>\s*Promise\.reject\(\s*capabilityError\('providers', 'Provider 未启用：当前运行时不支持在线音源'\)\s*\)/
+    /call: \(\s*providerId: string,\s*method: string,\s*args: unknown\[\] = \[\],\s*options\?: \{ idempotencyKey\?: string; requestId\?: string \}\s*\) => invoke\('providers_call', \{ providerId, method, args, options \}\)/
+  )
+  assert.match(
+    bridgeSource,
+    /cancel: \(requestId: string\) => invoke\('providers_cancel', \{ requestId \}\)/
   )
   assert.match(
     bridgeSource,
@@ -184,7 +268,7 @@ test('Tauri capability matrix marks plugins/providers/extensions partial and fon
   )
   assert.match(
     capabilitiesSource,
-    /providers: partial\('providers', '已支持在线音源列表；调用与登录待迁移'\)/
+    /providers: partial\('providers', '已支持调用\/取消与健康记录；网易云网关在 Tauri 不可用'\)/
   )
   assert.match(
     capabilitiesSource,

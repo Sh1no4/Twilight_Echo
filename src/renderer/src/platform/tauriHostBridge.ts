@@ -550,9 +550,13 @@ export function installTauriHostBridge(): void {
     },
     providers: {
       list: () => invoke('providers_list'),
-      call: () =>
-        Promise.reject(capabilityError('providers', 'Provider 未启用：当前运行时不支持在线音源')),
-      cancel: () => {}
+      call: (
+        providerId: string,
+        method: string,
+        args: unknown[] = [],
+        options?: { idempotencyKey?: string; requestId?: string }
+      ) => invoke('providers_call', { providerId, method, args, options }),
+      cancel: (requestId: string) => invoke('providers_cancel', { requestId })
     },
     extensions: {
       list: () => invoke('extensions_list'),

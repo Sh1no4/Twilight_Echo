@@ -1,4 +1,4 @@
-//! Tauri 插件 / Provider / Extension 能力（Stage 4 只读列表 + Stage 5A 生命周期）。
+//! Tauri 插件 / Provider / Extension 能力（Stage 4 只读列表 + Stage 5A 生命周期 + Stage 5B Provider RPC）。
 //!
 //! 架构决策：Rust 原生 descriptor 读取与插件状态管理，不引入 Node sidecar，也不实现
 //! Rust 插件宿主（插件不在 Tauri 侧执行）。
@@ -11,16 +11,25 @@
 //!   20KB 截断与资源管理器定位语义）。
 //! - `providers_list`：Tauri 不运行插件，唯一真实 Provider 是内置 NCM 插件启用时静态
 //!   注册的 descriptor（`resources/plugins/ncm-provider/index.mjs` `activate()`），
-//!   以真实 `plugin.json` 存在 **且持久化状态为启用** 为门控。不返回 health。
+//!   以真实 `plugin.json` 存在 **且持久化状态为启用** 为门控；叠加 `provider-health.json`
+//!   持久化记录合成 `health`（镜像 Electron `getProviderHealth`）。
+//! - `providers_call` / `providers_cancel`：镜像 Electron `providers:call` /
+//!   `providers:cancel` 的参数校验（provider id / method 白名单 / args 上限 / options
+//!   白名单 / requestId），并保留超时分层与按 requestId 的中止注册表契约面。实际 NCM
+//!   调用在 Tauri 下不可用（网易云网关是 Node-only HTTP 服务，离线 crate 又不携带
+//!   TLS 与 WEAPI 加密），因此 dispatch 统一返回结构化的"网关不可用"错误，并在健康记录
+//!   中记一次失败（与 Electron 调用失败即记录一致）。
 //! - `extensions_list`：全部来自插件 manifest 的 `contributes` 声明，当前无任何声明，
 //!   返回真实空数组。
 //!
-//! 仍未实现的操作（.tep 安装、插件市场索引、Provider RPC / extension command）由
+//! 仍未实现的操作（.tep 安装、插件市场索引、extension command 执行）由
 //! `tauriHostBridge.ts` 以 `RuntimeCapabilityError` 明确拒绝。
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
+use std::sync::Mutex;
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
@@ -33,6 +42,129 @@ pub const BUNDLED_PLUGIN_ID: &str = "com.twilightecho.provider.ncm";
 const BUNDLED_NCM_PROVIDER_ID: &str = "ncm";
 /// 当前应用版本（与 `tauri.conf.json` / Electron `appVersion` 对齐）。
 const APP_VERSION: &str = "1.0.5";
+
+// ── Provider RPC 契约常量（镜像 `src/main/ipc/plugins.ts`）──────────────────────────
+
+/// Provider id 上限（Electron `MAX_PROVIDER_ID_LENGTH`）。
+const MAX_PROVIDER_ID_LENGTH: usize = 128;
+/// Provider method 上限（Electron `normalizeProviderMethod` 使用 80）。
+const MAX_PROVIDER_METHOD_LENGTH: usize = 80;
+/// Provider 调用参数数量上限（Electron `MAX_PROVIDER_ARGS`）。
+const MAX_PROVIDER_ARGS: usize = 16;
+/// Provider 调用参数序列化后的字节上限（Electron `MAX_PLUGIN_IPC_ARGS_BYTES`）。
+const MAX_PROVIDER_ARGS_BYTES: usize = 512 * 1024;
+/// Provider idempotency key 上限（Electron `MAX_PROVIDER_IDEMPOTENCY_KEY_LENGTH`）。
+const MAX_PROVIDER_IDEMPOTENCY_KEY_LENGTH: usize = 128;
+/// Provider request id 上限（Electron `normalizeProviderRequestId` 使用 128）。
+const MAX_PROVIDER_REQUEST_ID_LENGTH: usize = 128;
+
+/// Provider 调用超时分层（镜像 `manager.ts` 的 `getProviderCallTimeoutMs`）。
+const PLUGIN_PROVIDER_DEFAULT_TIMEOUT_MS: u32 = 15000;
+const PLUGIN_PROVIDER_MEDIUM_TIMEOUT_MS: u32 = 30000;
+const PLUGIN_PROVIDER_SLOW_TIMEOUT_MS: u32 = 120000;
+
+/// 慢超时层的方法（120s，镜像 Electron SLOW 列表，18 个）。
+const PROVIDER_SLOW_TIMEOUT_METHODS: [&str; 18] = [
+    "fetchPlaylistTracks",
+    "fetchLikedTracks",
+    "fetchLikedTracksPage",
+    "fetchCloudSongsPage",
+    "fetchUserLibrary",
+    "fetchRecommendSongs",
+    "fetchRecommendPlaylists",
+    "fetchPersonalFm",
+    "fetchPrivateContent",
+    "fetchArtistTopSongs",
+    "fetchArtistAlbums",
+    "fetchAlbumTracks",
+    "fetchArtistPlaylists",
+    "fetchUserPlaylistsByUid",
+    "fetchUserFollows",
+    "fetchUserFolloweds",
+    "fetchPlayRecords",
+    "fetchRecentSongs",
+];
+
+/// 中速超时层的方法（30s，镜像 Electron MEDIUM 列表，8 个）。
+const PROVIDER_MEDIUM_TIMEOUT_METHODS: [&str; 8] = [
+    "getPlaybackUrl",
+    "getLyrics",
+    "searchSongs",
+    "searchPlaylists",
+    "searchArtists",
+    "fetchPlaylistCategories",
+    "fetchDiscoveryPlaylists",
+    "fetchHighQualityPlaylists",
+];
+
+/// 全部 Twilight Media Provider 方法（镜像 `providerRouting.ts`
+/// `TWILIGHT_MEDIA_PROVIDER_METHODS`，56 个）。
+const TWILIGHT_MEDIA_PROVIDER_METHODS: [&str; 56] = [
+    "getPlaybackUrl",
+    "getLyrics",
+    "searchSongs",
+    "searchPlaylists",
+    "searchArtists",
+    "fetchPlaylistTracks",
+    "createDownload",
+    "getDownloadStatus",
+    "getDownloadFile",
+    "cancelDownload",
+    "checkLogin",
+    "getProfile",
+    "logout",
+    "openOfficialLogin",
+    "sendCaptcha",
+    "loginByPhonePassword",
+    "loginByPhoneCaptcha",
+    "loginByEmailPassword",
+    "getQrLogin",
+    "getQrKey",
+    "getQrImage",
+    "checkQrLogin",
+    "fetchUserLibrary",
+    "fetchLikedTracks",
+    "fetchLikedTracksPage",
+    "fetchCloudSongsPage",
+    "prepareCloudUpload",
+    "completeCloudUpload",
+    "getCloudDownloadUrl",
+    "fetchRecommendSongs",
+    "fetchRecommendPlaylists",
+    "fetchPlaylistCategories",
+    "fetchDiscoveryPlaylists",
+    "fetchHighQualityPlaylists",
+    "fetchPersonalFm",
+    "fetchPrivateContent",
+    "fetchArtistTopSongs",
+    "fetchArtistAlbums",
+    "fetchArtistIntro",
+    "fetchArtistFollowState",
+    "fetchAlbumTracks",
+    "fetchArtistPlaylists",
+    "fetchUserPlaylistsByUid",
+    "fetchUserFollows",
+    "fetchUserFolloweds",
+    "fetchPlayRecords",
+    "fetchRecentSongs",
+    "fetchIntelligenceList",
+    "followArtist",
+    "followUser",
+    "likeTrack",
+    "isTrackLiked",
+    "createPlaylist",
+    "deletePlaylist",
+    "addTracksToPlaylist",
+    "removeTracksFromPlaylist",
+];
+
+/// 仅宿主可调用的方法（镜像 Electron `HOST_ONLY_PROVIDER_METHODS`）。
+const HOST_ONLY_PROVIDER_METHODS: [&str; 4] = [
+    "createDownload",
+    "getDownloadStatus",
+    "getDownloadFile",
+    "cancelDownload",
+];
 
 fn plugins_root_path(policy: &path_policy::PathPolicy) -> PathBuf {
     path_policy::categorized_app_path(policy, "plugins", &[], "plugins")
@@ -73,11 +205,472 @@ fn write_plugin_state(policy: &path_policy::PathPolicy, state: &Value) {
     let _ = fs::write(backup, &serialized);
 }
 
+/// Provider 健康记录文件：与 `plugin-state.json` 同目录，portable 下位于
+/// `data/plugins/provider-health.json`，standard/fallback 下位于 `{standardRoot}/provider-health.json`。
+fn provider_health_path(policy: &path_policy::PathPolicy) -> PathBuf {
+    path_policy::categorized_app_path(
+        policy,
+        "plugins",
+        &["provider-health.json"],
+        "provider-health.json",
+    )
+}
+
+fn read_provider_health(policy: &path_policy::PathPolicy) -> Value {
+    fs::read_to_string(provider_health_path(policy))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| json!({}))
+}
+
+/// 写入 Provider 健康记录；同时写 `.bak` 备份（与 `write_plugin_state` 双文件布局一致）。
+fn write_provider_health(policy: &path_policy::PathPolicy, health: &Value) {
+    let path = provider_health_path(policy);
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let serialized = serde_json::to_vec_pretty(health).expect("serialize provider health");
+    let _ = fs::write(&path, &serialized);
+    let backup = path.with_extension("json.bak");
+    let _ = fs::write(backup, &serialized);
+}
+
 /// 当前 UTC 时间，ISO-8601（与 Electron `new Date().toISOString()` 对齐）。
 fn now_iso8601() -> String {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+}
+
+// ── Provider RPC 参数归一化（镜像 `src/main/ipc/plugins.ts`）────────────────────────
+
+/// Provider id 首字符与整体长度检查：`[a-z0-9]` 开头，后续 `[a-z0-9._:-]`，
+/// 总长 1..=128（镜像 `PROVIDER_ID_PATTERN`）。
+fn is_valid_provider_id(id: &str) -> bool {
+    let mut chars = id.chars();
+    let valid_first = chars
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+    valid_first
+        && id.len() <= MAX_PROVIDER_ID_LENGTH
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "._:-".contains(c))
+}
+
+/// request id / idempotency key 检查：`[A-Za-z0-9]` 开头，后续 `[A-Za-z0-9._:-]`，
+/// 总长 1..=128（镜像 `PROVIDER_REQUEST_ID_PATTERN` / `PROVIDER_IDEMPOTENCY_KEY_PATTERN`）。
+fn is_valid_provider_request_id(id: &str) -> bool {
+    let mut chars = id.chars();
+    let valid_first = chars.next().is_some_and(|c| c.is_ascii_alphanumeric());
+    valid_first
+        && id.len() <= MAX_PROVIDER_REQUEST_ID_LENGTH
+        && chars.all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
+}
+
+/// 归一化 provider id：trim + 小写 + 模式校验（镜像 `normalizeProviderId`）。
+fn normalize_provider_id(value: &str) -> Result<String, String> {
+    let id = value.trim().to_lowercase();
+    if !is_valid_provider_id(&id) {
+        return Err("provider id is invalid".to_string());
+    }
+    Ok(id)
+}
+
+/// 归一化 provider method：白名单 + host-only 门控（镜像 `normalizeProviderMethod`）。
+fn normalize_provider_method(value: &str) -> Result<String, String> {
+    let method = value.trim();
+    if method.len() > MAX_PROVIDER_METHOD_LENGTH || !TWILIGHT_MEDIA_PROVIDER_METHODS.contains(&method) {
+        return Err("provider method is invalid".to_string());
+    }
+    if HOST_ONLY_PROVIDER_METHODS.contains(&method) {
+        return Err("provider download methods are host-only".to_string());
+    }
+    Ok(method.to_string())
+}
+
+/// 归一化 request id（镜像 `normalizeProviderRequestId`）。
+fn normalize_provider_request_id(value: &str) -> Result<String, String> {
+    let request_id = value.trim();
+    if !is_valid_provider_request_id(request_id) {
+        return Err("provider request id is invalid".to_string());
+    }
+    Ok(request_id.to_string())
+}
+
+/// 归一化 idempotency key（镜像 `normalizeProviderCallOptions` 的 key 分支）。
+fn normalize_provider_idempotency_key(value: &str) -> Result<String, String> {
+    let key = value.trim();
+    if key.len() > MAX_PROVIDER_IDEMPOTENCY_KEY_LENGTH
+        || !is_valid_provider_request_id(key)
+    {
+        return Err("provider idempotency key is invalid".to_string());
+    }
+    Ok(key.to_string())
+}
+
+/// 归一化 Provider 调用参数：非数组视为空数组，切片到 `MAX_PROVIDER_ARGS` 项，
+/// 并校验序列化字节数（镜像 `normalizePluginIpcArgs` + `stringifyJsonForIpcStorage`）。
+fn normalize_provider_args(value: Option<Value>) -> Result<Value, String> {
+    let args = match value {
+        Some(Value::Array(items)) => {
+            Value::Array(items.into_iter().take(MAX_PROVIDER_ARGS).collect())
+        }
+        _ => Value::Array(vec![]),
+    };
+    let serialized = serde_json::to_string(&args).expect("serialize provider call args");
+    if serialized.len() > MAX_PROVIDER_ARGS_BYTES {
+        return Err("provider call args is too large".to_string());
+    }
+    Ok(args)
+}
+
+/// 归一化 Provider 调用 options：仅允许 `idempotencyKey` / `requestId` 两个键
+/// （镜像 `normalizeProviderCallOptions`）。返回 `(request_id, idempotency_key)`。
+fn normalize_provider_call_options(
+    value: Option<Value>,
+) -> Result<(Option<String>, Option<String>), String> {
+    let Some(value) = value else {
+        return Ok((None, None));
+    };
+    let object = value
+        .as_object()
+        .ok_or_else(|| "provider call options must be an object".to_string())?;
+    for key in object.keys() {
+        if key != "idempotencyKey" && key != "requestId" {
+            return Err("provider call options contain unsupported fields".to_string());
+        }
+    }
+    let request_id = match object.get("requestId") {
+        Some(Value::Null) | None => None,
+        Some(value) => Some(normalize_provider_request_id(
+            value
+                .as_str()
+                .ok_or_else(|| "provider request id is invalid".to_string())?,
+        )?),
+    };
+    let idempotency_key = match object.get("idempotencyKey") {
+        None => None,
+        Some(value) => Some(normalize_provider_idempotency_key(
+            value
+                .as_str()
+                .ok_or_else(|| "provider idempotency key is invalid".to_string())?,
+        )?),
+    };
+    Ok((request_id, idempotency_key))
+}
+
+/// Provider 调用超时分层（镜像 `manager.ts` `getProviderCallTimeoutMs`）。
+fn get_provider_call_timeout_ms(method: &str) -> u32 {
+    if PROVIDER_SLOW_TIMEOUT_METHODS.contains(&method) {
+        return PLUGIN_PROVIDER_SLOW_TIMEOUT_MS;
+    }
+    if PROVIDER_MEDIUM_TIMEOUT_METHODS.contains(&method) {
+        return PLUGIN_PROVIDER_MEDIUM_TIMEOUT_MS;
+    }
+    PLUGIN_PROVIDER_DEFAULT_TIMEOUT_MS
+}
+
+// ── Provider 健康记录（镜像 `manager.ts` 的 health 机械）────────────────────────────
+
+/// 进行中的 Provider 调用注册表（requestId → providerId）。Tauri 下 dispatch 同步
+/// 完成，请求注册后随即注销，因此 `providers_cancel` 通常命中不到活动条目；该注册表
+/// 保留 cancel 契约面，网关迁移为异步后即可真正中断活动请求。
+#[derive(Default)]
+pub struct ProviderCallRegistry(pub Mutex<HashMap<String, String>>);
+
+/// 取某个 Provider 的持久化健康记录；无记录时返回默认形状。
+fn provider_health_record(health: &Value, provider_id: &str) -> Value {
+    health.get(provider_id).cloned().unwrap_or_else(|| {
+        json!({
+            "providerId": provider_id,
+            "pluginId": BUNDLED_PLUGIN_ID,
+            "totalCalls": 0,
+            "successfulCalls": 0,
+            "failedCalls": 0,
+            "methodStats": {},
+            "lastError": null,
+            "lastCheckedAt": null
+        })
+    })
+}
+
+/// 记录一次 Provider 调用结果（镜像 Electron `recordProviderCallSuccess` /
+/// `recordProviderCallFailure`）：success 时 `successfulCalls+1`、`lastError=null`，
+/// failure 时 `failedCalls+1`、`lastError=message`；两者都刷新 `lastCheckedAt` 并
+/// 同步更新 `methodStats` 子记录。
+fn record_provider_call(
+    policy: &path_policy::PathPolicy,
+    provider_id: &str,
+    method: &str,
+    success: bool,
+    error_message: Option<&str>,
+) {
+    let now = now_iso8601();
+    let mut health = read_provider_health(policy);
+    let mut record = provider_health_record(&health, provider_id);
+    let object = record.as_object_mut().expect("health record is object");
+    let total_calls = object.get("totalCalls").and_then(Value::as_u64).unwrap_or(0);
+    let successful_calls = object
+        .get("successfulCalls")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let failed_calls = object.get("failedCalls").and_then(Value::as_u64).unwrap_or(0);
+    object.insert("totalCalls".to_string(), json!(total_calls + 1));
+    object.insert(
+        "successfulCalls".to_string(),
+        json!(if success { successful_calls + 1 } else { successful_calls }),
+    );
+    object.insert(
+        "failedCalls".to_string(),
+        json!(if success { failed_calls } else { failed_calls + 1 }),
+    );
+    object.insert(
+        "lastError".to_string(),
+        if success {
+            Value::Null
+        } else {
+            json!(error_message)
+        },
+    );
+    object.insert("lastCheckedAt".to_string(), json!(now.clone()));
+
+    let mut method_stats = object
+        .get("methodStats")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let mut method_record = method_stats.get(method).cloned().unwrap_or_else(|| {
+        json!({
+            "totalCalls": 0,
+            "successfulCalls": 0,
+            "failedCalls": 0,
+            "lastError": null,
+            "lastCheckedAt": null
+        })
+    });
+    let method_object = method_record
+        .as_object_mut()
+        .expect("method stats is object");
+    let method_total = method_object
+        .get("totalCalls")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let method_successful = method_object
+        .get("successfulCalls")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let method_failed = method_object
+        .get("failedCalls")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    method_object.insert("totalCalls".to_string(), json!(method_total + 1));
+    method_object.insert(
+        "successfulCalls".to_string(),
+        json!(if success {
+            method_successful + 1
+        } else {
+            method_successful
+        }),
+    );
+    method_object.insert(
+        "failedCalls".to_string(),
+        json!(if success { method_failed } else { method_failed + 1 }),
+    );
+    method_object.insert(
+        "lastError".to_string(),
+        if success {
+            Value::Null
+        } else {
+            json!(error_message)
+        },
+    );
+    method_object.insert("lastCheckedAt".to_string(), json!(now));
+    method_stats.insert(method.to_string(), method_record);
+    object.insert("methodStats".to_string(), Value::Object(method_stats));
+
+    if let Some(health_object) = health.as_object_mut() {
+        health_object.insert(provider_id.to_string(), record);
+    }
+    write_provider_health(policy, &health);
+}
+
+/// 由持久化健康记录合成 provider 的 `health` descriptor（镜像 Electron
+/// `getProviderHealth` + `getProviderMethodStats`）。
+fn provider_health_descriptor(record: Option<&Value>, plugin_status: &str) -> Value {
+    let record = record.cloned().unwrap_or_else(|| json!({}));
+    let total_calls = record.get("totalCalls").and_then(Value::as_u64).unwrap_or(0);
+    let successful_calls = record
+        .get("successfulCalls")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let failed_calls = record.get("failedCalls").and_then(Value::as_u64).unwrap_or(0);
+    let last_error = record.get("lastError").and_then(Value::as_str).map(String::from);
+    let last_checked_at = record
+        .get("lastCheckedAt")
+        .and_then(Value::as_str)
+        .map(String::from);
+    let available = plugin_status == "enabled"
+        && (last_error.is_none() || failed_calls == 0 || successful_calls > 0);
+    let success_rate = if total_calls > 0 {
+        successful_calls as f64 / total_calls as f64
+    } else {
+        1.0
+    };
+
+    let mut method_stats = serde_json::Map::new();
+    if let Some(stats) = record.get("methodStats").and_then(Value::as_object) {
+        for (method, stat) in stats {
+            let method_total = stat
+                .get("totalCalls")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let method_successful = stat
+                .get("successfulCalls")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let method_failed = stat.get("failedCalls").and_then(Value::as_u64).unwrap_or(0);
+            method_stats.insert(
+                method.clone(),
+                json!({
+                    "totalCalls": method_total,
+                    "successfulCalls": method_successful,
+                    "failedCalls": method_failed,
+                    "successRate": if method_total > 0 {
+                        method_successful as f64 / method_total as f64
+                    } else {
+                        1.0
+                    },
+                    "lastError": stat.get("lastError").cloned().unwrap_or(Value::Null),
+                    "lastCheckedAt": stat.get("lastCheckedAt").cloned().unwrap_or(Value::Null)
+                }),
+            );
+        }
+    }
+
+    json!({
+        "providerId": record.get("providerId").and_then(Value::as_str).unwrap_or(BUNDLED_NCM_PROVIDER_ID),
+        "pluginId": record.get("pluginId").and_then(Value::as_str).unwrap_or(BUNDLED_PLUGIN_ID),
+        "pluginStatus": plugin_status,
+        "available": available,
+        "totalCalls": total_calls,
+        "successfulCalls": successful_calls,
+        "failedCalls": failed_calls,
+        "successRate": success_rate,
+        "methodStats": Value::Object(method_stats),
+        "lastError": last_error.map(|message| json!(message)).unwrap_or(Value::Null),
+        "lastCheckedAt": last_checked_at.map(|stamp| json!(stamp)).unwrap_or(Value::Null)
+    })
+}
+
+/// 分派 NCM Provider 调用。
+///
+/// Electron 侧的网易云网关是 Node HTTP 服务（`serveNcmApi`），只能在 Electron 主进程
+/// 运行；Tauri 侧离线 crate 不携带 TLS 与 WEAPI 加密能力，无法直连 `music.163.com`。
+/// 因此这里不真正发起网络请求，而是返回结构化的"网关不可用"错误，由 `providers_call`
+/// 记录一次健康失败（与 Electron 调用失败即记录一致）。超时分层已计算，作为网关迁移
+/// 为异步执行时的契约面保留。
+fn dispatch_ncm_provider_call(
+    provider_id: &str,
+    method: &str,
+    _args: &Value,
+    _idempotency_key: Option<&str>,
+    timeout_ms: u32,
+) -> Result<Value, String> {
+    Err(format!(
+        "内置网易云网关在 Tauri 运行时不可用（{provider_id}.{method}，超时 {timeout_ms}ms）"
+    ))
+}
+
+/// `providers.call`：校验并分派 Provider 调用。
+///
+/// 参数校验镜像 Electron `providers:call`（provider id / method 白名单 / args 上限 /
+/// options 仅允许 idempotencyKey+requestId / requestId 模式）；Provider 未启用或内置
+/// manifest 缺失时返回 `Provider 未启用`（不记录健康）。实际 NCM 调用在 Tauri 运行时
+/// 不可用，dispatch 统一返回"网关不可用"错误并记录一次健康失败。
+#[tauri::command]
+pub fn providers_call(
+    app: AppHandle,
+    registry: State<'_, ProviderCallRegistry>,
+    provider_id: String,
+    method: String,
+    args: Option<Value>,
+    options: Option<Value>,
+) -> Result<Value, String> {
+    let provider_id = normalize_provider_id(&provider_id)?;
+    let method = normalize_provider_method(&method)?;
+    let args = normalize_provider_args(args)?;
+    let (request_id, idempotency_key) = normalize_provider_call_options(options)?;
+    let timeout_ms = get_provider_call_timeout_ms(&method);
+
+    // 与 `providers_list` 相同的门控：内置插件启用且 manifest 可读，否则 Provider 不可用。
+    let policy = path_policy::get_path_policy(&app);
+    let state = read_plugin_state(&policy);
+    let enabled = state
+        .get(BUNDLED_PLUGIN_ID)
+        .and_then(|record| record.get("enabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    if !enabled {
+        return Err(format!("Provider 未启用：{provider_id}"));
+    }
+    let manifest_ok = bundled_plugin_root(&app)
+        .and_then(|bundled_root| read_manifest(&bundled_root).ok())
+        .is_some_and(|manifest| {
+            manifest.get("id").and_then(Value::as_str) == Some(BUNDLED_PLUGIN_ID)
+        });
+    if !manifest_ok {
+        return Err(format!("Provider 未启用：{provider_id}"));
+    }
+
+    if let Some(request_id) = &request_id {
+        registry
+            .0
+            .lock()
+            .expect("provider call registry lock")
+            .insert(request_id.clone(), provider_id.clone());
+    }
+    let result = dispatch_ncm_provider_call(
+        &provider_id,
+        &method,
+        &args,
+        idempotency_key.as_deref(),
+        timeout_ms,
+    );
+    if let Some(request_id) = &request_id {
+        registry
+            .0
+            .lock()
+            .expect("provider call registry lock")
+            .remove(request_id);
+    }
+
+    match result {
+        Ok(value) => {
+            record_provider_call(&policy, &provider_id, &method, true, None);
+            Ok(value)
+        }
+        Err(error) => {
+            record_provider_call(&policy, &provider_id, &method, false, Some(&error));
+            Err(error)
+        }
+    }
+}
+
+/// `providers.cancel`：校验 requestId 并中止活动调用。
+///
+/// Tauri 下调用同步完成、注册表在请求结束时即清空，因此通常命中不到活动条目；该命令
+/// 保证 requestId 校验与注册表契约面存在，网关迁移为异步后即可真正中断活动请求。
+#[tauri::command]
+pub fn providers_cancel(
+    registry: State<'_, ProviderCallRegistry>,
+    request_id: String,
+) -> Result<(), String> {
+    let request_id = normalize_provider_request_id(&request_id)?;
+    registry
+        .0
+        .lock()
+        .expect("provider call registry lock")
+        .remove(&request_id);
+    Ok(())
 }
 
 fn read_manifest(root: &Path) -> Result<Value, String> {
@@ -656,8 +1249,9 @@ pub fn plugins_open_log(app: AppHandle, id: String) -> Result<(), String> {
         .map_err(|error| format!("打开插件日志目录失败：{error}"))
 }
 
-/// `providers.list`：返回内置 NCM Provider 的静态注册（无 health），以真实
-/// `plugin.json` 存在 **且持久化状态为启用** 为门控；资源缺失或已停用时返回真实空数组。
+/// `providers.list`：返回内置 NCM Provider 的静态注册，叠加 `provider-health.json`
+/// 持久化记录合成 `health`（镜像 Electron `getProviderHealth`），以真实 `plugin.json`
+/// 存在 **且持久化状态为启用** 为门控；资源缺失或已停用时返回真实空数组。
 #[tauri::command]
 pub fn providers_list(app: AppHandle) -> Value {
     let policy = path_policy::get_path_policy(&app);
@@ -675,7 +1269,16 @@ pub fn providers_list(app: AppHandle) -> Value {
     };
     match read_manifest(&bundled_root) {
         Ok(manifest) if manifest.get("id").and_then(Value::as_str) == Some(BUNDLED_PLUGIN_ID) => {
-            Value::Array(vec![bundled_ncm_provider_registration()])
+            let mut provider = bundled_ncm_provider_registration();
+            if let Some(object) = provider.as_object_mut() {
+                let health = read_provider_health(&policy);
+                let record = health.get(BUNDLED_NCM_PROVIDER_ID);
+                object.insert(
+                    "health".to_string(),
+                    provider_health_descriptor(record, "enabled"),
+                );
+            }
+            Value::Array(vec![provider])
         }
         _ => Value::Array(vec![]),
     }
@@ -748,5 +1351,111 @@ mod tests {
             "应写入 .bak 备份"
         );
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn provider_health_roundtrips_with_backup() {
+        let root = std::env::temp_dir().join("twilight-provider-health-test-roundtrip");
+        let _ = fs::remove_dir_all(&root);
+        let policy = standard_policy(&root);
+        let health = json!({
+            "ncm": {
+                "providerId": "ncm",
+                "pluginId": BUNDLED_PLUGIN_ID,
+                "totalCalls": 1,
+                "successfulCalls": 0,
+                "failedCalls": 1,
+                "methodStats": {},
+                "lastError": "boom",
+                "lastCheckedAt": "2026-08-15T00:00:00Z"
+            }
+        });
+        write_provider_health(&policy, &health);
+        assert_eq!(read_provider_health(&policy), health);
+        assert!(
+            root.join("provider-health.json.bak").is_file(),
+            "应写入 .bak 备份"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn record_provider_call_updates_counters_and_method_stats() {
+        let root = std::env::temp_dir().join("twilight-provider-health-test-record");
+        let _ = fs::remove_dir_all(&root);
+        let policy = standard_policy(&root);
+
+        record_provider_call(&policy, "ncm", "searchSongs", false, Some("网关不可用"));
+        record_provider_call(&policy, "ncm", "searchSongs", true, None);
+
+        let health = read_provider_health(&policy);
+        let record = provider_health_record(&health, "ncm");
+        assert_eq!(record.get("totalCalls").and_then(Value::as_u64), Some(2));
+        assert_eq!(
+            record.get("successfulCalls").and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(record.get("failedCalls").and_then(Value::as_u64), Some(1));
+        assert_eq!(record.get("lastError"), Some(&Value::Null));
+        assert!(
+            record
+                .get("lastCheckedAt")
+                .and_then(Value::as_str)
+                .is_some_and(|stamp| stamp.ends_with('Z'))
+        );
+        let method = &record.get("methodStats").unwrap()["searchSongs"];
+        assert_eq!(method.get("totalCalls").and_then(Value::as_u64), Some(2));
+        assert_eq!(method.get("successfulCalls").and_then(Value::as_u64), Some(1));
+        assert_eq!(method.get("failedCalls").and_then(Value::as_u64), Some(1));
+
+        // 最近一次成功应把 lastError 清空，且 descriptor 仍按成功记录合成。
+        let descriptor = provider_health_descriptor(Some(&record), "enabled");
+        assert_eq!(descriptor.get("pluginStatus").and_then(Value::as_str), Some("enabled"));
+        assert_eq!(descriptor.get("available").and_then(Value::as_bool), Some(true));
+        assert_eq!(descriptor.get("successRate").and_then(Value::as_f64), Some(0.5));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn provider_health_descriptor_defaults_when_no_record() {
+        let descriptor = provider_health_descriptor(None, "enabled");
+        assert_eq!(descriptor.get("providerId").and_then(Value::as_str), Some("ncm"));
+        assert_eq!(descriptor.get("pluginId").and_then(Value::as_str), Some(BUNDLED_PLUGIN_ID));
+        assert_eq!(descriptor.get("totalCalls").and_then(Value::as_u64), Some(0));
+        assert_eq!(descriptor.get("successRate").and_then(Value::as_f64), Some(1.0));
+        assert_eq!(descriptor.get("available").and_then(Value::as_bool), Some(true));
+        // 无记录时 pluginStatus 仍反映当前启用态。
+        let disabled = provider_health_descriptor(None, "disabled");
+        assert_eq!(disabled.get("available").and_then(Value::as_bool), Some(false));
+    }
+
+    #[test]
+    fn provider_arg_normalization_mirrors_electron() {
+        assert_eq!(normalize_provider_id("  NCM  ").unwrap(), "ncm");
+        assert!(normalize_provider_id("-bad").is_err());
+        assert!(normalize_provider_id("").is_err());
+        assert_eq!(
+            normalize_provider_method("searchSongs").unwrap(),
+            "searchSongs"
+        );
+        assert!(normalize_provider_method("notAMethod").is_err());
+        assert!(normalize_provider_method("createDownload").is_err());
+        assert_eq!(normalize_provider_request_id("abc-123:ok").unwrap(), "abc-123:ok");
+        assert!(normalize_provider_request_id("").is_err());
+        assert_eq!(
+            normalize_provider_args(Some(json!([1, 2, 3, 4]))).unwrap(),
+            json!([1, 2, 3, 4])
+        );
+        assert_eq!(normalize_provider_args(Some(json!({"a": 1}))).unwrap(), json!([]));
+        assert_eq!(normalize_provider_call_options(None).unwrap(), (None, None));
+        assert_eq!(
+            normalize_provider_call_options(Some(json!({ "requestId": "req-1", "idempotencyKey": "k-1" })))
+                .unwrap(),
+            (Some("req-1".to_string()), Some("k-1".to_string()))
+        );
+        assert!(normalize_provider_call_options(Some(json!({ "bogus": 1 }))).is_err());
+        assert_eq!(get_provider_call_timeout_ms("fetchUserLibrary"), PLUGIN_PROVIDER_SLOW_TIMEOUT_MS);
+        assert_eq!(get_provider_call_timeout_ms("getLyrics"), PLUGIN_PROVIDER_MEDIUM_TIMEOUT_MS);
+        assert_eq!(get_provider_call_timeout_ms("followArtist"), PLUGIN_PROVIDER_DEFAULT_TIMEOUT_MS);
     }
 }

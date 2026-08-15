@@ -143,7 +143,7 @@ test('Tauri bridge wires plugin lifecycle commands and rejects the remaining ins
   }
 })
 
-test('Tauri bridge wires list commands while fonts and provider/extensions calls reject', () => {
+test('Tauri bridge wires provider call/cancel commands while fonts and extension execution reject', () => {
   const source = readFileSync(new URL('./tauriHostBridge.ts', import.meta.url), 'utf8')
   assert.match(
     source,
@@ -162,8 +162,13 @@ test('Tauri bridge wires list commands while fonts and provider/extensions calls
   )
   assert.match(
     source,
-    /providers: \{\s*list: \(\) => invoke\('providers_list'\)[\s\S]*?call: \(\) =>\s*Promise\.reject\(\s*capabilityError\('providers', 'Provider 未启用：当前运行时不支持在线音源'\)/,
-    'providers.call must reject with a message compatible with the Provider 未启用 regex'
+    /providers: \{\s*list: \(\) => invoke\('providers_list'\)[\s\S]*?call: \(\s*providerId: string,\s*method: string,\s*args: unknown\[\] = \[\],\s*options\?: \{ idempotencyKey\?: string; requestId\?: string \}\s*\) => invoke\('providers_call', \{ providerId, method, args, options \}\)/,
+    'providers.call must invoke the real providers_call command'
+  )
+  assert.match(
+    source,
+    /cancel: \(requestId: string\) => invoke\('providers_cancel', \{ requestId \}\)/,
+    'providers.cancel must invoke the real providers_cancel command'
   )
   assert.match(
     source,

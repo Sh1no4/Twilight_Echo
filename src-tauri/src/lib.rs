@@ -110,6 +110,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(path_policy::PathPolicyState(Mutex::new(None)))
+        .manage(plugins::ProviderCallRegistry::default())
         .invoke_handler(tauri::generate_handler![
             relaunch,
             settings_get,
@@ -123,6 +124,8 @@ pub fn run() {
             plugins::plugins_get_log,
             plugins::plugins_open_log,
             plugins::providers_list,
+            plugins::providers_call,
+            plugins::providers_cancel,
             plugins::extensions_list
         ])
         .on_page_load(|webview, _| {
