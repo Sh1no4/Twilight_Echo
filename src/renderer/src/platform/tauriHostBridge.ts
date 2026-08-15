@@ -452,7 +452,7 @@ export function installTauriHostBridge(): void {
       openExternal: async (url) => openUrl(url)
     },
     fs: {
-      scanMusicFiles: async () => [],
+      scanMusicFiles: (folderPath: string) => invoke('fs_scan_music_files', { folderPath }),
       readAudioFile: async () => ({ buffer: new ArrayBuffer(0), mimeType: '' }),
       getAudioFileUrl: async () => '',
       isAudioFileAuthorized: async () => false,

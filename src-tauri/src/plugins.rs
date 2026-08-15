@@ -244,6 +244,42 @@ fn write_provider_health(policy: &path_policy::PathPolicy, health: &Value) {
     let _ = fs::write(backup, &serialized);
 }
 
+/// Provider cookie 记录文件（登录态）：与 `provider-health.json` 同目录双文件布局，
+/// portable 下位于 `data/plugins/provider-cookie.json`。
+fn provider_cookie_path(policy: &path_policy::PathPolicy) -> PathBuf {
+    path_policy::categorized_app_path(
+        policy,
+        "plugins",
+        &["provider-cookie.json"],
+        "provider-cookie.json",
+    )
+}
+
+fn read_provider_cookie(policy: &path_policy::PathPolicy) -> Option<String> {
+    fs::read_to_string(provider_cookie_path(policy))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|value| {
+            value
+                .get("cookie")
+                .and_then(Value::as_str)
+                .map(|cookie| cookie.to_string())
+        })
+}
+
+/// 写入 Provider cookie；同时写 `.bak` 备份（与 `write_provider_health` 双文件布局一致）。
+fn write_provider_cookie(policy: &path_policy::PathPolicy, cookie: &str) {
+    let value = json!({ "cookie": cookie, "updatedAt": now_iso8601() });
+    let path = provider_cookie_path(policy);
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let serialized = serde_json::to_vec_pretty(&value).expect("serialize provider cookie");
+    let _ = fs::write(&path, &serialized);
+    let backup = path.with_extension("json.bak");
+    let _ = fs::write(backup, &serialized);
+}
+
 /// 当前 UTC 时间，ISO-8601（与 Electron `new Date().toISOString()` 对齐）。
 pub(crate) fn now_iso8601() -> String {
     OffsetDateTime::now_utc()
@@ -575,34 +611,654 @@ fn provider_health_descriptor(record: Option<&Value>, plugin_status: &str) -> Va
 /// Electron 侧的网易云网关是 Node HTTP 服务（`serveNcmApi`），只能在 Node 环境运行；
 /// Tauri 侧离线 crate 不携带 TLS 与 WEAPI 加密能力，无法直连 `music.163.com`。因此这里
 /// 经 `crate::ncm_gateway::proxy_json_call` 把请求代理到由本进程 spawn 的本地网关，
-/// 拿到真实网易云 JSON。目前只映射零鉴权方法 `getQrKey`（→ `/login/qr/key`）验证链路；
-/// 其余方法返回结构化的"原型未映射"错误，由 `providers_call` 记录一次健康失败。
+/// 拿到真实网易云 JSON。方法→网关路径映射与 `resources/plugins/ncm-provider/index.mjs`
+/// 保持一致：`getQrKey` → `/login/qr/key`（零鉴权）；`getQrImage`/`getQrLogin`/`checkQrLogin`
+/// 覆盖扫码登录闭环；`checkLogin`/`getProfile`/`logout` 维护登录态；`searchSongs` 在线搜索；
+/// `getPlaybackUrl` 按 quality 降级取播放地址。登录后方法把 `provider-cookie.json` 中的
+/// cookie 作为 `Cookie` 头传给网关（镜像 provider 的 `requestOptionalAuth`/`requestAuthed`）。
+/// 未映射方法返回结构化的"原型未映射"错误，由 `providers_call` 记录一次健康失败。
 async fn dispatch_ncm_provider_call(
     provider_id: &str,
     method: &str,
-    _args: &Value,
+    args: &Value,
     idempotency_key: Option<&str>,
     timeout_ms: u32,
+    policy: &path_policy::PathPolicy,
 ) -> Result<Value, String> {
-    let base_path = match method {
-        "getQrKey" => "/login/qr/key".to_string(),
-        _ => {
-            return Err(format!(
-                "原型尚未映射 NCM 方法 {method} 到网关路径（{provider_id}）"
-            ))
+    match method {
+        // `"getQrKey" => "/login/qr/key"`：零鉴权，取 `data.unikey` 字符串（镜像
+        // index.mjs getQrKey：`data.code === 200 && data.data?.unikey ? ... : null`）。
+        "getQrKey" => {
+            let path = ncm_path("/login/qr/key", &[]);
+            let resp = proxy_ncm(policy, &path, idempotency_key, timeout_ms, false).await?;
+            let unikey = resp
+                .pointer("/data/unikey")
+                .and_then(Value::as_str)
+                .map(|key| json!(key));
+            Ok(unikey.unwrap_or(Value::Null))
         }
-    };
-    let sep = if base_path.contains('?') { '&' } else { '?' };
+        // 两步扫码：先拿 unikey，再创建二维码（镜像 index.mjs getQrLogin）。
+        "getQrLogin" => {
+            let key_path = ncm_path("/login/qr/key", &[]);
+            let key_resp =
+                proxy_ncm(policy, &key_path, idempotency_key, timeout_ms, false).await?;
+            let key = key_resp
+                .pointer("/data/unikey")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "NCM getQrLogin 未取得 unikey".to_string())?;
+            let qr_path = ncm_path(
+                "/login/qr/create",
+                &[("key", key), ("platform", "web"), ("qrimg", "true"), ("ua", "pc")],
+            );
+            let qr_resp =
+                proxy_ncm(policy, &qr_path, idempotency_key, timeout_ms, false).await?;
+            Ok(json!({ "key": key, "imageDataUrl": extract_qr_image_data_url(&qr_resp) }))
+        }
+        // 取二维码图片（镜像 index.mjs getQrImage）。
+        "getQrImage" => {
+            let key =
+                arg_string(args, 0).ok_or_else(|| "NCM getQrImage 缺少参数 key".to_string())?;
+            let path = ncm_path(
+                "/login/qr/create",
+                &[("key", &key), ("platform", "web"), ("qrimg", "true"), ("ua", "pc")],
+            );
+            let resp = proxy_ncm(policy, &path, idempotency_key, timeout_ms, false).await?;
+            Ok(extract_qr_image_data_url(&resp))
+        }
+        // 轮询扫码状态：502 重试一次并追加 noCookie=true；803 确认成功并保存 cookie
+        // （镜像 index.mjs checkQrLogin / saveCookie）。
+        "checkQrLogin" => {
+            let key =
+                arg_string(args, 0).ok_or_else(|| "NCM checkQrLogin 缺少参数 key".to_string())?;
+            let mut path = ncm_path("/login/qr/check", &[("key", &key), ("ua", "pc")]);
+            let mut resp = proxy_ncm(policy, &path, idempotency_key, timeout_ms, false).await?;
+            if resp.get("code").and_then(Value::as_i64) == Some(502) {
+                path = format!("{path}&noCookie=true");
+                resp = proxy_ncm(policy, &path, idempotency_key, timeout_ms, false).await?;
+            }
+            if resp.get("code").and_then(Value::as_i64) == Some(803) {
+                if let Some(cookie) = resp.get("cookie").and_then(Value::as_str) {
+                    // 仅当新 cookie 带 `MUSIC_U=`（会话令牌）时才落盘；803 响应若只返回
+                    // 局部 set-cookie（如仅 NMTID），不能覆盖已有有效登录态。
+                    if cookie.contains("MUSIC_U=") {
+                        write_provider_cookie(policy, cookie);
+                    }
+                }
+            }
+            Ok(json!({
+                "code": resp.get("code").cloned().unwrap_or(Value::Null),
+                "message": resp.get("message").cloned().unwrap_or(Value::Null)
+            }))
+        }
+        // 登录态检查（镜像 index.mjs checkLogin）：无 cookie → 未登录；网关失败 → 未登录。
+        "checkLogin" => ncm_login_status(policy, idempotency_key, timeout_ms).await,
+        // 当前用户资料（镜像 index.mjs getProfile：= checkLogin().profile）。
+        "getProfile" => {
+            let status = ncm_login_status(policy, idempotency_key, timeout_ms).await?;
+            Ok(status.get("profile").cloned().unwrap_or(Value::Null))
+        }
+        // 退出登录：清除本地 cookie（镜像 index.mjs logout：saveCookie('')）。
+        "logout" => {
+            write_provider_cookie(policy, "");
+            Ok(Value::Null)
+        }
+        // 在线搜索（镜像 index.mjs searchSongs）：`/cloudsearch`，type=1。
+        "searchSongs" => {
+            let keywords = arg_string(args, 0)
+                .ok_or_else(|| "NCM searchSongs 缺少参数 keywords".to_string())?;
+            let limit = arg_u64(args, 1).unwrap_or(30);
+            let offset = arg_u64(args, 2).unwrap_or(0);
+            let path = ncm_path(
+                "/cloudsearch",
+                &[
+                    ("keywords", &keywords),
+                    ("type", "1"),
+                    ("limit", &limit.to_string()),
+                    ("offset", &offset.to_string()),
+                ],
+            );
+            let resp = proxy_ncm(policy, &path, idempotency_key, timeout_ms, true).await?;
+            Ok(ncm_search_result(&resp))
+        }
+        // 播放地址（镜像 index.mjs getPlaybackUrl）：登录态必需，按 quality 降级取流。
+        "getPlaybackUrl" => {
+            let song_id = args
+                .get(0)
+                .and_then(ncm_track_song_id)
+                .ok_or_else(|| "NCM getPlaybackUrl 无法解析 track 的 ncmSongId".to_string())?;
+            if read_provider_cookie(policy).as_deref().unwrap_or("").is_empty() {
+                return Err("请先登录网易云音乐".to_string());
+            }
+            let quality = args
+                .get(1)
+                .and_then(|options| options.get("quality"))
+                .and_then(Value::as_str)
+                .unwrap_or("auto");
+            match ncm_playback_url(song_id, quality, idempotency_key, timeout_ms, policy).await? {
+                Some(url) => Ok(json!(url)),
+                None => Ok(Value::Null),
+            }
+        }
+        // 短信验证码（镜像 index.mjs sendCaptcha）：`/captcha/sent`，返回 `{code, message}`。
+        // 失败也以 Ok 返回（渲染层按 `code === 200` 判断），与 provider 一致不记健康失败。
+        "sendCaptcha" => {
+            let phone = arg_string(args, 0)
+                .ok_or_else(|| "NCM sendCaptcha 缺少参数 phone".to_string())?;
+            let countrycode = ncm_country_code(arg_string(args, 1));
+            let path = ncm_path(
+                "/captcha/sent",
+                &[("phone", &phone), ("ctcode", &countrycode)],
+            );
+            let resp = proxy_ncm(policy, &path, idempotency_key, timeout_ms, false).await?;
+            let code = resp.get("code").and_then(Value::as_i64).unwrap_or(-1);
+            let message = if code == 200 {
+                ncm_fallback_message(&resp, "验证码已发送")
+            } else {
+                ncm_login_error_message(code, &resp)
+            };
+            Ok(json!({ "code": code, "message": message }))
+        }
+        // 手机号 + 验证码登录（镜像 index.mjs loginByPhoneCaptcha + finishAccountLogin）。
+        "loginByPhoneCaptcha" => {
+            let phone = arg_string(args, 0)
+                .ok_or_else(|| "NCM loginByPhoneCaptcha 缺少参数 phone".to_string())?;
+            let captcha = arg_string(args, 1)
+                .ok_or_else(|| "NCM loginByPhoneCaptcha 缺少参数 captcha".to_string())?;
+            let countrycode = ncm_country_code(arg_string(args, 2));
+            let path = ncm_path(
+                "/login/cellphone",
+                &[
+                    ("phone", &phone),
+                    ("captcha", &captcha),
+                    ("countrycode", &countrycode),
+                ],
+            );
+            let resp = proxy_ncm(policy, &path, idempotency_key, timeout_ms, false).await?;
+            ncm_account_login_response(policy, resp, idempotency_key, timeout_ms).await
+        }
+        // 手机号 + 密码登录（镜像 index.mjs loginByPhonePassword + finishAccountLogin）。
+        "loginByPhonePassword" => {
+            let phone = arg_string(args, 0)
+                .ok_or_else(|| "NCM loginByPhonePassword 缺少参数 phone".to_string())?;
+            let password = arg_string(args, 1)
+                .ok_or_else(|| "NCM loginByPhonePassword 缺少参数 password".to_string())?;
+            let countrycode = ncm_country_code(arg_string(args, 2));
+            let path = ncm_path(
+                "/login/cellphone",
+                &[
+                    ("phone", &phone),
+                    ("password", &password),
+                    ("countrycode", &countrycode),
+                ],
+            );
+            let resp = proxy_ncm(policy, &path, idempotency_key, timeout_ms, false).await?;
+            ncm_account_login_response(policy, resp, idempotency_key, timeout_ms).await
+        }
+        // 邮箱 + 密码登录（镜像 index.mjs loginByEmailPassword + finishAccountLogin）。
+        "loginByEmailPassword" => {
+            let email = arg_string(args, 0)
+                .ok_or_else(|| "NCM loginByEmailPassword 缺少参数 email".to_string())?;
+            let password = arg_string(args, 1)
+                .ok_or_else(|| "NCM loginByEmailPassword 缺少参数 password".to_string())?;
+            let path = ncm_path("/login", &[("email", &email), ("password", &password)]);
+            let resp = proxy_ncm(policy, &path, idempotency_key, timeout_ms, false).await?;
+            ncm_account_login_response(policy, resp, idempotency_key, timeout_ms).await
+        }
+        _ => Err(format!(
+            "原型尚未映射 NCM 方法 {method} 到网关路径（{provider_id}）"
+        )),
+    }
+}
+
+/// 百分号编码查询参数值（镜像 `encodeURIComponent`；`url` crate 已在 Cargo.toml）。
+fn url_encode(value: &str) -> String {
+    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
+}
+
+/// 构造网关路径：追加查询参数（值百分号编码）与 `timestamp`（镜像 Electron
+/// `requestNcmApi` 的统一时间戳，与原始原型行为一致）。
+fn ncm_path(base_path: &str, params: &[(&str, &str)]) -> String {
+    let mut query: Vec<String> = params
+        .iter()
+        .map(|(key, value)| format!("{key}={}", url_encode(value)))
+        .collect();
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    let path = format!("{base_path}{sep}timestamp={now_ms}");
+    query.push(format!("timestamp={now_ms}"));
+    let sep = if base_path.contains('?') { '&' } else { '?' };
+    format!("{base_path}{sep}{}", query.join("&"))
+}
+
+/// 代理单个网关请求。`authed` 为真时把 `provider-cookie.json` 的 cookie 作为
+/// `Cookie` 头传给网关（镜像 provider 的 `requestOptionalAuth`：有登录态才带）。
+async fn proxy_ncm(
+    policy: &path_policy::PathPolicy,
+    path: &str,
+    idempotency_key: Option<&str>,
+    timeout_ms: u32,
+    authed: bool,
+) -> Result<Value, String> {
     let mut headers: Vec<(String, String)> = Vec::new();
     if let Some(key) = idempotency_key {
         headers.push(("X-Twilight-Idempotency-Key".to_string(), key.to_string()));
     }
-    crate::ncm_gateway::proxy_json_call(&path, headers, Duration::from_millis(timeout_ms as u64)).await
+    if authed {
+        if let Some(cookie) = read_provider_cookie(policy) {
+            if !cookie.is_empty() {
+                headers.push(("Cookie".to_string(), cookie));
+            }
+        }
+    }
+    crate::ncm_gateway::proxy_json_call(path, headers, Duration::from_millis(timeout_ms as u64)).await
+}
+
+/// 取参数数组第 `index` 项：字符串原样、数字转字符串，否则 None。
+fn arg_string(args: &Value, index: usize) -> Option<String> {
+    match args.get(index) {
+        Some(Value::String(s)) => Some(s.clone()),
+        Some(Value::Number(n)) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+/// 取参数数组第 `index` 项为 u64（数字或可解析字符串），否则 None。
+fn arg_u64(args: &Value, index: usize) -> Option<u64> {
+    match args.get(index) {
+        Some(Value::Number(n)) => n.as_u64(),
+        Some(Value::String(s)) => s.parse().ok(),
+        _ => None,
+    }
+}
+
+/// 提取二维码图片 data URL（镜像 index.mjs getQrImage：`data.data.qrimg`，
+/// 缺 `data:` 前缀时补 `data:image/png;base64,`）。
+fn extract_qr_image_data_url(resp: &Value) -> Value {
+    let qrimg = resp
+        .pointer("/data/qrimg")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if qrimg.is_empty() {
+        Value::Null
+    } else if qrimg.starts_with("data:") {
+        json!(qrimg)
+    } else {
+        json!(format!("data:image/png;base64,{qrimg}"))
+    }
+}
+
+/// 登录态检查（镜像 index.mjs checkLogin）：无 cookie 或网关失败 → `{loggedIn:false,
+/// profile:null}`；`/login/status` code 200 且有 profile → 归一化后的资料。
+async fn ncm_login_status(
+    policy: &path_policy::PathPolicy,
+    idempotency_key: Option<&str>,
+    timeout_ms: u32,
+) -> Result<Value, String> {
+    if read_provider_cookie(policy).as_deref().unwrap_or("").is_empty() {
+        return Ok(json!({ "loggedIn": false, "profile": Value::Null }));
+    }
+    let path = ncm_path("/login/status", &[]);
+    match proxy_ncm(policy, &path, idempotency_key, timeout_ms, true).await {
+        Ok(resp) => {
+            let top_code = resp.get("code").and_then(Value::as_i64).unwrap_or(0);
+            let data_code = resp.pointer("/data/code").and_then(Value::as_i64).unwrap_or(0);
+            match resp.pointer("/data/profile") {
+                Some(profile)
+                    if profile.is_object() && (top_code == 200 || data_code == 200) =>
+                {
+                    Ok(json!({
+                        "loggedIn": true,
+                        "profile": ncm_profile_value(profile)
+                    }))
+                }
+                _ => {
+                    // 仅显式无效会话（301）时清空登录态；瞬时未同步 / 风控等失败保留
+                    // cookie，避免扫码 803 落盘后立即被 checkLogin 的竞态清空（对应
+                    // provider checkLogin 的 catch 分支：网络失败不清 cookie）。
+                    if top_code == 301 || data_code == 301 {
+                        write_provider_cookie(policy, "");
+                    }
+                    Ok(json!({ "loggedIn": false, "profile": Value::Null }))
+                }
+            }
+        }
+        Err(_) => Ok(json!({ "loggedIn": false, "profile": Value::Null })),
+    }
+}
+
+/// 归一化网易云用户资料（镜像 index.mjs buildProfile / normalizeRemoteAssetUrl）。
+fn ncm_profile_value(profile: &Value) -> Value {
+    let avatar_url = profile
+        .get("avatarUrl")
+        .and_then(Value::as_str)
+        .map(|value| {
+            if value.starts_with("//") {
+                format!("https:{value}")
+            } else {
+                value.to_string()
+            }
+        })
+        .unwrap_or_default();
+    json!({
+        "userId": profile.get("userId").cloned().unwrap_or(Value::Null),
+        "nickname": profile.get("nickname").cloned().unwrap_or(Value::Null),
+        "avatarUrl": if avatar_url.is_empty() { Value::Null } else { json!(avatar_url) },
+        "signature": profile.get("signature").cloned().unwrap_or(Value::Null),
+        "follows": profile.get("follows").cloned().unwrap_or(Value::Null),
+        "followeds": profile.get("followeds").cloned().unwrap_or(Value::Null)
+    })
+}
+
+/// 归一化国家区号（镜像 index.mjs normalizeCountryCode：仅 `[0-9]{1,6}` 合法，否则 86）。
+fn ncm_country_code(value: Option<String>) -> String {
+    let value = value.unwrap_or_default().trim().to_string();
+    if value.is_empty() || value.len() > 6 || !value.chars().all(|c| c.is_ascii_digit()) {
+        "86".to_string()
+    } else {
+        value
+    }
+}
+
+/// 从响应提取服务端消息（镜像 index.mjs normalizeApiMessage）。
+fn ncm_api_message(resp: &Value) -> String {
+    resp.get("message")
+        .and_then(Value::as_str)
+        .or_else(|| resp.get("msg").and_then(Value::as_str))
+        .or_else(|| resp.pointer("/data/message").and_then(Value::as_str))
+        .map(|message| message.trim())
+        .filter(|message| !message.is_empty())
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// 取服务端消息，空时用 fallback（镜像 normalizeApiMessage 的 fallback 参数）。
+fn ncm_fallback_message(resp: &Value, fallback: &str) -> String {
+    let message = ncm_api_message(resp);
+    if message.is_empty() {
+        fallback.to_string()
+    } else {
+        message
+    }
+}
+
+/// 登录错误消息（镜像 index.mjs describeApiError 的常用分支）。
+fn ncm_login_error_message(code: i64, resp: &Value) -> String {
+    match code {
+        301 => "网易云登录态无效或接口缓存了未登录结果，请重新登录或等待 2 分钟后重试。".to_string(),
+        400 => ncm_fallback_message(resp, "网易云登录参数无效，请检查账号、密码或验证码。"),
+        502 => "网易云二维码状态检查失败，已尝试无 Cookie 模式，请刷新二维码后重试。".to_string(),
+        503 => "网易云登录接口触发高频/风控限制，请等待几分钟后再试。".to_string(),
+        460 => "网易云限制了当前网络环境，请切换到国内网络或稍后重试。".to_string(),
+        _ => ncm_fallback_message(resp, "NetEase API request failed"),
+    }
+}
+
+/// 账号登录收尾（镜像 index.mjs finishAccountLogin）：成功响应带 `MUSIC_U=` cookie 时
+/// 保存登录态并返回 `checkLogin()` 结果；否则报登录错误。
+async fn ncm_account_login_response(
+    policy: &path_policy::PathPolicy,
+    resp: Value,
+    idempotency_key: Option<&str>,
+    timeout_ms: u32,
+) -> Result<Value, String> {
+    let code = resp.get("code").and_then(Value::as_i64).unwrap_or(-1);
+    let cookie = resp.get("cookie").and_then(Value::as_str).map(String::from);
+    if code == 200
+        && cookie
+            .as_deref()
+            .is_some_and(|cookie| cookie.contains("MUSIC_U="))
+    {
+        if let Some(cookie) = cookie {
+            write_provider_cookie(policy, &cookie);
+        }
+        ncm_login_status(policy, idempotency_key, timeout_ms).await
+    } else {
+        Err(ncm_login_error_message(code, &resp))
+    }
+}
+
+/// 在线搜索结果（镜像 index.mjs searchSongs）：`{ items, total }`。
+fn ncm_search_result(resp: &Value) -> Value {
+    let result = resp
+        .pointer("/result")
+        .or_else(|| resp.pointer("/data/result"))
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let songs = result
+        .get("songs")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let total = result
+        .get("songCount")
+        .and_then(Value::as_u64)
+        .map(|count| json!(count))
+        .unwrap_or_else(|| json!(songs.len()));
+    let items = Value::Array(songs.iter().map(ncm_normalize_track).collect());
+    json!({ "items": items, "total": total })
+}
+
+/// 归一化单曲（镜像 index.mjs normalizeTrack / formatDuration / getSongAudioMeta /
+/// normalizeRemoteAssetUrl）。
+fn ncm_normalize_track(song: &Value) -> Value {
+    let song_id = song.get("id").and_then(Value::as_u64).unwrap_or(0);
+    let title = song.get("name").and_then(Value::as_str).unwrap_or("");
+    let artist = song
+        .get("ar")
+        .and_then(Value::as_array)
+        .map(|artists| {
+            artists
+                .iter()
+                .filter_map(|artist| artist.get("name").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join(" / ")
+        })
+        .unwrap_or_default();
+    let album = song
+        .pointer("/al/name")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let duration = song
+        .get("dt")
+        .and_then(Value::as_u64)
+        .map(|dt| if dt > 1000 { dt / 1000 } else { dt });
+    let meta = ncm_song_audio_meta(song);
+    json!({
+        "id": format!("ncm:{song_id}"),
+        "title": title,
+        "artist": artist,
+        "album": album,
+        "filePath": format!("ncm:{song_id}"),
+        "fileName": format!("{artist} - {title}"),
+        "duration": duration.map(|sec| json!(sec)).unwrap_or(Value::Null),
+        "size": meta.get("size").cloned().unwrap_or(Value::Null),
+        "cover": song
+            .pointer("/al/picUrl")
+            .and_then(Value::as_str)
+            .map(normalize_remote_asset_url)
+            .unwrap_or(Value::Null),
+        "lyrics": Value::Null,
+        "translatedLyrics": Value::Null,
+        "source": "ncm",
+        "ncmSongId": song_id,
+        "streamUrl": Value::Null,
+        "format": meta.get("format").cloned().unwrap_or(Value::Null),
+        "sampleRate": meta.get("sampleRate").cloned().unwrap_or(Value::Null),
+        "bitrate": meta.get("bitrate").cloned().unwrap_or(Value::Null)
+    })
+}
+
+/// 镜像 index.mjs normalizeRemoteAssetUrl：`//` 补 `https:`，空串 → null。
+fn normalize_remote_asset_url(value: &str) -> Value {
+    if value.is_empty() {
+        Value::Null
+    } else if value.starts_with("//") {
+        json!(format!("https:{value}"))
+    } else {
+        json!(value)
+    }
+}
+
+/// 镜像 index.mjs getSongAudioMeta：按清晰度候选取第一份含 br/bitrate 的音频元信息。
+fn ncm_song_audio_meta(song: &Value) -> Value {
+    for key in ["sq", "hr", "h", "m", "l"] {
+        if let Some(item) = song.get(key) {
+            let has_bitrate = item.get("br").is_some() || item.get("bitrate").is_some();
+            if !item.is_null() && has_bitrate {
+                return json!({
+                    "bitrate": item.get("br").or_else(|| item.get("bitrate"))
+                        .and_then(Value::as_u64).unwrap_or(0),
+                    "sampleRate": item.get("sr").and_then(Value::as_u64).unwrap_or(0),
+                    "size": item.get("size").and_then(Value::as_u64).unwrap_or(0),
+                    "format": item.get("type").or_else(|| item.get("encodeType"))
+                        .and_then(Value::as_str).unwrap_or("")
+                });
+            }
+        }
+    }
+    json!({})
+}
+
+/// 解析 track 的网易云歌曲 id（镜像 index.mjs getSongIdFromTrack）：
+/// 优先 `ncmSongId`，否则取 `id`（去掉 `ncm:` 前缀），需 > 0。
+fn ncm_track_song_id(track: &Value) -> Option<u64> {
+    if let Some(id) = track.get("ncmSongId").and_then(Value::as_u64) {
+        if id > 0 {
+            return Some(id);
+        }
+    }
+    match track.get("id") {
+        Some(Value::Number(n)) => n.as_u64().filter(|&id| id > 0),
+        Some(Value::String(raw)) => {
+            let cleaned = raw.strip_prefix("ncm:").unwrap_or(raw);
+            cleaned.parse::<u64>().ok().filter(|&id| id > 0)
+        }
+        _ => None,
+    }
+}
+
+/// 镜像 index.mjs NCM_PLAYBACK_QUALITY_FALLBACKS：偏好质量 → 降级链。
+fn ncm_playback_levels(quality: &str) -> &'static [&'static str] {
+    match quality {
+        "hires" => &["hires", "lossless", "exhigh", "standard"],
+        "lossless" => &["lossless", "exhigh", "standard"],
+        "exhigh" => &["exhigh", "standard"],
+        "standard" => &["standard"],
+        _ => &["hires", "lossless", "exhigh", "standard"],
+    }
+}
+
+/// 播放地址（镜像 index.mjs getPlaybackUrl）：level 路径 → 码率路径 → 反解兜底
+/// 依次尝试，返回第一个可用 URL（未登录已由调用方拦截）。
+async fn ncm_playback_url(
+    song_id: u64,
+    quality: &str,
+    idempotency_key: Option<&str>,
+    timeout_ms: u32,
+    policy: &path_policy::PathPolicy,
+) -> Result<Option<String>, String> {
+    for level in ncm_playback_levels(quality) {
+        let path = ncm_path(
+            "/song/url/v1",
+            &[
+                ("id", &song_id.to_string()),
+                ("level", level),
+                ("encodeType", "flac"),
+            ],
+        );
+        if let Ok(resp) = proxy_ncm(policy, &path, idempotency_key, timeout_ms, true).await {
+            if let Some(url) = ncm_official_playback_url(&resp) {
+                return Ok(Some(url));
+            }
+        }
+    }
+    for br in ["999000", "320000", "128000"] {
+        let path = ncm_path("/song/url", &[("id", &song_id.to_string()), ("br", br)]);
+        if let Ok(resp) = proxy_ncm(policy, &path, idempotency_key, timeout_ms, true).await {
+            if let Some(url) = ncm_official_playback_url(&resp) {
+                return Ok(Some(url));
+            }
+        }
+    }
+    let match_path = ncm_path("/song/url/match", &[("id", &song_id.to_string())]);
+    if let Ok(resp) = proxy_ncm(policy, &match_path, idempotency_key, timeout_ms, true).await {
+        if let Some(url) = ncm_unblocked_playback_url(&resp) {
+            return Ok(Some(url));
+        }
+    }
+    Ok(None)
+}
+
+/// 镜像 index.mjs getPlaybackStreamItems + getOfficialPlaybackUrl +
+/// normalizePlaybackStreamUrl：取第一个 code==200 的流 URL。
+fn ncm_official_playback_url(data: &Value) -> Option<String> {
+    let items: Vec<&Value> = if let Some(array) = data.get("data").and_then(Value::as_array) {
+        array.iter().collect()
+    } else if let Some(array) = data.get("urls").and_then(Value::as_array) {
+        array.iter().collect()
+    } else if data.get("url").is_some() {
+        vec![data]
+    } else {
+        Vec::new()
+    };
+    let top_code = data.get("code").and_then(Value::as_u64);
+    for item in items {
+        let item_code = item.get("code").and_then(Value::as_u64);
+        if let Some(code) = item_code {
+            if code != 200 {
+                continue;
+            }
+        }
+        if let Some(top) = top_code {
+            if top != 200 && item_code.is_none() {
+                continue;
+            }
+        }
+        if let Some(url) = item.get("url").and_then(Value::as_str) {
+            if let Some(normalized) = normalize_playback_stream_url(url) {
+                return Some(normalized);
+            }
+        }
+    }
+    None
+}
+
+/// 镜像 index.mjs normalizePlaybackStreamUrl：`//` → `https:`，非 http(s) 返回 None。
+fn normalize_playback_stream_url(url: &str) -> Option<String> {
+    let normalized = if let Some(rest) = url.strip_prefix("//") {
+        format!("https:{rest}")
+    } else {
+        url.to_string()
+    };
+    if normalized.starts_with("https://") || normalized.starts_with("http://") {
+        Some(normalized)
+    } else {
+        None
+    }
+}
+
+/// 镜像 index.mjs getUnblockedPlaybackUrl：反解兜底，`data.code === 200` 时取候选字段。
+fn ncm_unblocked_playback_url(data: &Value) -> Option<String> {
+    if data.get("code").and_then(Value::as_u64) != Some(200) {
+        return None;
+    }
+    let candidates: [Option<&Value>; 6] = [
+        data.get("data"),
+        data.pointer("/data/url"),
+        data.pointer("/body/data"),
+        data.pointer("/body/data/url"),
+        data.get("proxyUrl"),
+        data.pointer("/body/proxyUrl"),
+    ];
+    for candidate in candidates.into_iter().flatten() {
+        if let Some(url) = candidate.as_str() {
+            if let Some(normalized) = normalize_playback_stream_url(url) {
+                return Some(normalized);
+            }
+        }
+    }
+    None
 }
 
 /// `providers.call`：校验并分派 Provider 调用。
@@ -659,6 +1315,7 @@ pub async fn providers_call(
         &args,
         idempotency_key.as_deref(),
         timeout_ms,
+        &policy,
     )
     .await;
     if let Some(request_id) = &request_id {

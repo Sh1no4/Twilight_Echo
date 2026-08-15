@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
+mod local_fs;
 mod ncm_gateway;
 mod path_policy;
 mod plugin_index_gateway;
@@ -123,6 +124,7 @@ pub fn run() {
             settings_update,
             data_load_music_library,
             data_save_music_library,
+            local_fs::fs_scan_music_files,
             plugins::plugins_list,
             plugins::plugins_enable,
             plugins::plugins_disable,
