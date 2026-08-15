@@ -147,33 +147,62 @@ export function syncThemeSettingsAppearance(settings: SettingsAppearanceInput): 
   if (loaded.value) queueMicrotask(() => void applyActiveTheme(false))
 }
 
+/**
+ * Adaptive tone: the environment analysis samples the page backdrop and flips a
+ * light-tone glass to its dark profile when the backdrop is bright. Published as
+ * `data-te-lg-adaptive-tone` on the root; `overLight` remains the manual force.
+ */
+function resolveSharedGlassProfileIsDark(tone: ThemeTone): boolean {
+  if (tone === 'dark' || liquidGlass.overLight) return true
+  return (
+    liquidGlass.adaptiveTone &&
+    document.documentElement.dataset.teLiquidGlassAdaptiveTone === 'dark'
+  )
+}
+
+function resolveHomeGlassProfileIsDark(tone: ThemeTone): boolean {
+  if (tone === 'dark' || liquidGlass.homeCards.overLight) return true
+  return (
+    liquidGlass.adaptiveTone &&
+    document.documentElement.dataset.teHomeLiquidGlassAdaptiveTone === 'dark'
+  )
+}
+
 function applyLiquidGlassRuntimeVariables(tone: ThemeTone): void {
   const root = document.documentElement
   for (const name of LIQUID_GLASS_RUNTIME_VARIABLES) root.style.removeProperty(name)
   for (const name of HOME_LIQUID_GLASS_RUNTIME_VARIABLES) root.style.removeProperty(name)
   for (const name of EXPANDED_LIQUID_GLASS_RUNTIME_VARIABLES) root.style.removeProperty(name)
   if (usesSharedLiquidGlassProfile()) {
-    const theme = tone === 'dark' || liquidGlass.overLight ? liquidGlass.dark : liquidGlass.light
+    const theme = resolveSharedGlassProfileIsDark(tone) ? liquidGlass.dark : liquidGlass.light
     for (const [name, value] of Object.entries(liquidGlassCssVariables(theme))) {
       root.style.setProperty(name, value, 'important')
     }
   }
   if (liquidGlass.homeCards.enabled) {
-    const theme =
-      tone === 'dark' || liquidGlass.homeCards.overLight
-        ? liquidGlass.homeCards.dark
-        : liquidGlass.homeCards.light
+    const theme = resolveHomeGlassProfileIsDark(tone)
+      ? liquidGlass.homeCards.dark
+      : liquidGlass.homeCards.light
     for (const [name, value] of Object.entries(liquidGlassHomeCardCssVariables(theme))) {
       root.style.setProperty(name, value, 'important')
     }
   }
   if (liquidGlass.coverage === 'expanded') {
-    const theme = tone === 'dark' || liquidGlass.overLight ? liquidGlass.dark : liquidGlass.light
+    const theme = resolveSharedGlassProfileIsDark(tone) ? liquidGlass.dark : liquidGlass.light
     for (const [name, value] of Object.entries(liquidGlassExpandedCssVariables(theme))) {
       root.style.setProperty(name, value, 'important')
     }
   }
   window.dispatchEvent(new Event(LIQUID_GLASS_TUNING_CHANGED_EVENT))
+}
+
+/**
+ * Re-applies the liquid glass runtime variables after the environment analysis
+ * changed the adaptive-tone attributes. Re-dispatches the tuning event so the
+ * SVG filter re-reads its attribute inputs.
+ */
+export function refreshLiquidGlassRuntimeVariables(): void {
+  applyLiquidGlassRuntimeVariables(resolveTone())
 }
 
 function usesSharedLiquidGlassProfile(): boolean {

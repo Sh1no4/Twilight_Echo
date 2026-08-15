@@ -50,6 +50,7 @@ function cloneLiquidGlass(): LiquidGlassSettings {
     followPointer: lg.followPointer,
     coverage: lg.coverage,
     overLight: lg.overLight,
+    adaptiveTone: lg.adaptiveTone,
     light: { ...lg.light },
     dark: { ...lg.dark },
     navigationEnabled: lg.navigationEnabled,
@@ -87,6 +88,7 @@ function resetLiquidGlassParameters(): void {
     coverage: current.coverage,
     followPointer: DEFAULT_LIQUID_GLASS.followPointer,
     overLight: DEFAULT_LIQUID_GLASS.overLight,
+    adaptiveTone: current.adaptiveTone,
     light: { ...DEFAULT_LIQUID_GLASS.light },
     dark: { ...DEFAULT_LIQUID_GLASS.dark },
     navigationEnabled: current.navigationEnabled,
@@ -154,6 +156,12 @@ function toggleActiveOverLight(): void {
   } else {
     liquidGlass.overLight = !liquidGlass.overLight
   }
+  void updateSettings({ liquidGlass })
+}
+
+function toggleAdaptiveTone(): void {
+  const liquidGlass = cloneLiquidGlass()
+  liquidGlass.adaptiveTone = !liquidGlass.adaptiveTone
   void updateSettings({ liquidGlass })
 }
 </script>
@@ -324,6 +332,20 @@ function toggleActiveOverLight(): void {
             首页
           </button>
         </div>
+      </div>
+      <hr />
+      <div class="setting-item">
+        <div class="setting-copy">
+          <strong>自适应明暗</strong>
+          <span>自动采样页面背景亮度，亮背景时切换到深色玻璃配置。</span>
+        </div>
+        <span
+          class="toggle-switch"
+          :class="{ active: settings.liquidGlass.adaptiveTone }"
+          role="switch"
+          :aria-checked="settings.liquidGlass.adaptiveTone"
+          @click="toggleAdaptiveTone"
+        ></span>
       </div>
       <hr />
       <div class="setting-item">

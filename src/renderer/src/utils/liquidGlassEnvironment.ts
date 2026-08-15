@@ -1,8 +1,33 @@
 export type LiquidGlassContext = 'bright' | 'dark' | 'balanced' | 'busy'
+export type LiquidGlassTone = 'light' | 'dark'
 
 export interface LiquidGlassEnvironment {
   context: LiquidGlassContext
+  /** Mean relative luminance of the sampled backdrop, in [0, 1]. */
+  luminance: number
   variables: Record<string, string>
+}
+
+/**
+ * A light-tone glass flips to its dark profile once the backdrop is bright
+ * enough that the light material would lose its edge. Sits just under the
+ * `bright` context boundary so adaptive tone trails the context classification
+ * instead of oscillating against it.
+ */
+export const ADAPTIVE_TONE_LUMINANCE_THRESHOLD = 0.62
+
+export function resolveAdaptiveGlassTone(
+  meanLuminance: number,
+  currentTone: LiquidGlassTone
+): LiquidGlassTone {
+  if (
+    currentTone === 'light' &&
+    Number.isFinite(meanLuminance) &&
+    meanLuminance >= ADAPTIVE_TONE_LUMINANCE_THRESHOLD
+  ) {
+    return 'dark'
+  }
+  return currentTone
 }
 
 const MIN_ALPHA = 128
@@ -56,6 +81,7 @@ function variablesFor(
 
   return {
     context,
+    luminance,
     variables: {
       '--te-lg-context-rgb': `${red}, ${green}, ${blue}`,
       '--te-lg-context-surface-alpha': surfaceAlpha,

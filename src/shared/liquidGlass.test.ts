@@ -84,6 +84,7 @@ test('settings normalization defaults followPointer on and keeps both tones', ()
   const normalized = normalizeLiquidGlass({})
   assert.equal(normalized.coverage, 'functional')
   assert.equal(normalized.followPointer, true)
+  assert.equal(normalized.adaptiveTone, true)
   assert.deepEqual(normalized.light, DEFAULT_LIQUID_GLASS_LIGHT)
   assert.deepEqual(normalized.dark, DEFAULT_LIQUID_GLASS_DARK)
   assert.deepEqual(normalized.homeCards, DEFAULT_LIQUID_GLASS_HOME_CARDS)
@@ -114,10 +115,10 @@ test('normalization never aliases the exported default objects', () => {
   // Values track the tuned defaults in liquidGlass.ts. The point of the test is
   // that mutating a normalized copy never writes through to the exported
   // constants, so these read the real defaults rather than a placeholder 0.
-  assert.equal(DEFAULT_LIQUID_GLASS_LIGHT.blurAmount, 14)
-  assert.equal(DEFAULT_LIQUID_GLASS_DARK.blurAmount, 18)
-  assert.equal(DEFAULT_LIQUID_GLASS.light.blurAmount, 14)
-  assert.equal(DEFAULT_LIQUID_GLASS.dark.elasticity, 7)
+  assert.equal(DEFAULT_LIQUID_GLASS_LIGHT.blurAmount, 12)
+  assert.equal(DEFAULT_LIQUID_GLASS_DARK.blurAmount, 14)
+  assert.equal(DEFAULT_LIQUID_GLASS.light.blurAmount, 12)
+  assert.equal(DEFAULT_LIQUID_GLASS.dark.elasticity, 10)
   assert.equal(DEFAULT_LIQUID_GLASS.overLight, false)
   assert.equal(DEFAULT_LIQUID_GLASS.coverage, 'functional')
   assert.equal(DEFAULT_LIQUID_GLASS.homeCards.enabled, false)
@@ -135,10 +136,10 @@ test('expanded profiles cap high-cost optical parameters without mutating the so
   }
   const expanded = resolveExpandedLiquidGlassTheme(source)
   assert.deepEqual(expanded, {
-    displacementScale: 24,
+    displacementScale: 16,
     blurAmount: 16,
     saturation: 150,
-    aberrationIntensity: 0.8,
+    aberrationIntensity: 0.5,
     elasticity: 0,
     specularOpacity: 36,
     tintOpacity: 12
@@ -212,7 +213,7 @@ test('homepage cards normalize independently and emit their own variables', () =
   const variables = liquidGlassHomeCardCssVariables(normalized.homeCards.light)
   assert.equal(variables['--te-home-lg-blur'], '22px')
   assert.equal(variables['--te-home-lg-tint'], '0.310')
-  assert.equal(variables['--te-home-lg-displacement'], '58')
+  assert.equal(variables['--te-home-lg-displacement'], '46')
 })
 
 test('expanded CSS variables carry the bounded profile units', () => {
@@ -225,10 +226,10 @@ test('expanded CSS variables carry the bounded profile units', () => {
     specularOpacity: 55,
     tintOpacity: 12
   })
-  assert.equal(variables['--te-lg-expanded-displacement'], '24')
+  assert.equal(variables['--te-lg-expanded-displacement'], '16')
   assert.equal(variables['--te-lg-expanded-blur'], '16px')
   assert.equal(variables['--te-lg-expanded-saturate'], '150%')
-  assert.equal(variables['--te-lg-expanded-aberration'], '0.8')
+  assert.equal(variables['--te-lg-expanded-aberration'], '0.5')
   assert.equal(variables['--te-lg-expanded-elasticity'], '0')
   assert.equal(variables['--te-lg-expanded-specular'], '0.360')
 })
@@ -276,4 +277,11 @@ test('over light flag normalizes to a strict boolean', () => {
   assert.equal(normalizeLiquidGlass({ overLight: true }).overLight, true)
   assert.equal(normalizeLiquidGlass({ overLight: 1 }).overLight, false)
   assert.equal(normalizeLiquidGlass({}).overLight, false)
+})
+
+test('adaptive tone defaults on and only an explicit false disables it', () => {
+  assert.equal(normalizeLiquidGlass({}).adaptiveTone, true)
+  assert.equal(normalizeLiquidGlass({ adaptiveTone: true }).adaptiveTone, true)
+  assert.equal(normalizeLiquidGlass({ adaptiveTone: false }).adaptiveTone, false)
+  assert.equal(normalizeLiquidGlass({ adaptiveTone: 0 }).adaptiveTone, true)
 })

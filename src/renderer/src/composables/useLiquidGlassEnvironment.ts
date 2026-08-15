@@ -1,5 +1,6 @@
 import { onBeforeUnmount, onMounted, watch, type ComputedRef, type Ref } from 'vue'
 import { LIQUID_GLASS_TUNING_CHANGED_EVENT } from '../../../shared/liquidGlass.ts'
+import { refreshLiquidGlassRuntimeVariables } from '../stores/useThemeStore'
 import type { AppBackgroundPage } from '../types/settings'
 import {
   analyzeLiquidGlassColor,
@@ -7,7 +8,9 @@ import {
   extractCssImageUrl,
   fallbackLiquidGlassEnvironment,
   isTrustedLiquidGlassImageUrl,
-  type LiquidGlassEnvironment
+  resolveAdaptiveGlassTone,
+  type LiquidGlassEnvironment,
+  type LiquidGlassTone
 } from '../utils/liquidGlassEnvironment'
 
 const RUNTIME_VARIABLES = [
@@ -67,11 +70,27 @@ function sampleImage(image: HTMLImageElement, isDark: boolean): LiquidGlassEnvir
   )
 }
 
-function applyEnvironment(environment: LiquidGlassEnvironment): void {
+function applyEnvironment(environment: LiquidGlassEnvironment, tone: LiquidGlassTone): void {
   const root = document.documentElement
   root.dataset.teLiquidGlassContext = environment.context
   for (const [name, value] of Object.entries(environment.variables)) {
     root.style.setProperty(name, value)
+  }
+  root.style.setProperty('--te-lg-context-luminance', environment.luminance.toFixed(3))
+
+  // Adaptive tone: publish the sampled decision, then re-resolve the glass
+  // profiles so the material flips without waiting on the manual switch. The
+  // hero sample doubles as the home decision — the hero art is the backdrop the
+  // feature cards actually sit over on the local page.
+  const adaptive = resolveAdaptiveGlassTone(environment.luminance, tone)
+  const nextValue = adaptive === 'dark' ? 'dark' : 'light'
+  if (
+    root.dataset.teLiquidGlassAdaptiveTone !== nextValue ||
+    root.dataset.teHomeLiquidGlassAdaptiveTone !== nextValue
+  ) {
+    root.dataset.teLiquidGlassAdaptiveTone = nextValue
+    root.dataset.teHomeLiquidGlassAdaptiveTone = nextValue
+    refreshLiquidGlassRuntimeVariables()
   }
 }
 
@@ -100,7 +119,10 @@ function clearEnvironment(): void {
   delete root.dataset.teLiquidGlassContext
   delete root.dataset.teLiquidGlassSource
   delete root.dataset.teLiquidGlassScrolled
+  delete root.dataset.teLiquidGlassAdaptiveTone
+  delete root.dataset.teHomeLiquidGlassAdaptiveTone
   for (const name of RUNTIME_VARIABLES) root.style.removeProperty(name)
+  root.style.removeProperty('--te-lg-context-luminance')
 }
 
 export function useLiquidGlassEnvironment(options: {
@@ -121,6 +143,7 @@ export function useLiquidGlassEnvironment(options: {
     }
 
     const isDark = rootToneIsDark()
+    const tone: LiquidGlassTone = isDark ? 'dark' : 'light'
     const source = sourceForPage(options.page.value)
     const solidColor = source ? null : solidColorForPage(options.page.value)
     const nextKey = `${isDark}:${source ?? `solid:${solidColor ?? 'fallback'}`}`
@@ -128,11 +151,11 @@ export function useLiquidGlassEnvironment(options: {
     environmentKey = nextKey
     if (!source || !isTrustedLiquidGlassImageUrl(source)) {
       if (solidColor) {
-        applyEnvironment(analyzeLiquidGlassColor(solidColor, isDark))
+        applyEnvironment(analyzeLiquidGlassColor(solidColor, isDark), tone)
         document.documentElement.dataset.teLiquidGlassSource = 'solid'
         return
       }
-      applyEnvironment(fallbackLiquidGlassEnvironment(isDark))
+      applyEnvironment(fallbackLiquidGlassEnvironment(isDark), tone)
       document.documentElement.dataset.teLiquidGlassSource = 'fallback'
       return
     }
@@ -140,12 +163,12 @@ export function useLiquidGlassEnvironment(options: {
     try {
       const environment = sampleImage(await loadImage(source), isDark)
       if (currentSequence === sequence && options.active.value) {
-        applyEnvironment(environment)
+        applyEnvironment(environment, tone)
         document.documentElement.dataset.teLiquidGlassSource = 'image'
       }
     } catch {
       if (currentSequence === sequence && options.active.value) {
-        applyEnvironment(fallbackLiquidGlassEnvironment(isDark))
+        applyEnvironment(fallbackLiquidGlassEnvironment(isDark), tone)
         document.documentElement.dataset.teLiquidGlassSource = 'fallback'
       }
     }

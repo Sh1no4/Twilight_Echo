@@ -70,6 +70,12 @@ export interface LiquidGlassSettings {
   followPointer: boolean
   /** Tint the glass dark on light backgrounds for visibility ("Over Light"). */
   overLight: boolean
+  /**
+   * Flip to the dark glass profile automatically when the sampled backdrop is
+   * bright, instead of waiting on the manual overLight switch. The renderer's
+   * environment analysis publishes the decision as `data-te-lg-adaptive-tone`.
+   */
+  adaptiveTone: boolean
   light: LiquidGlassTheme
   dark: LiquidGlassTheme
   /** Enables title bar and main navigation independently. */
@@ -105,24 +111,31 @@ export const LIQUID_GLASS_BOUNDS: Readonly<Record<keyof LiquidGlassTheme, Bound>
   tintOpacity: { min: 0, max: 100 }
 }
 
+/**
+ * Tuned against the Apple material: a thin refracting rim with a fully clear
+ * center (see DEFAULT_RIM_FRACTION), restrained chromatic fringing, and a
+ * bright shape-following specular. Legibility comes from blur and saturation,
+ * not from darkening — dark-mode tint stays low so the backdrop's colour shows
+ * through the way Apple's clear material does.
+ */
 export const DEFAULT_LIQUID_GLASS_LIGHT: LiquidGlassTheme = {
-  displacementScale: 58,
-  blurAmount: 14,
-  saturation: 132,
-  aberrationIntensity: 1.1,
-  elasticity: 8,
-  specularOpacity: 56,
-  tintOpacity: 6
+  displacementScale: 46,
+  blurAmount: 12,
+  saturation: 140,
+  aberrationIntensity: 0.7,
+  elasticity: 12,
+  specularOpacity: 68,
+  tintOpacity: 3
 }
 
 export const DEFAULT_LIQUID_GLASS_DARK: LiquidGlassTheme = {
-  displacementScale: 62,
-  blurAmount: 18,
-  saturation: 136,
-  aberrationIntensity: 1.35,
-  elasticity: 7,
-  specularOpacity: 48,
-  tintOpacity: 17
+  displacementScale: 50,
+  blurAmount: 14,
+  saturation: 144,
+  aberrationIntensity: 0.9,
+  elasticity: 10,
+  specularOpacity: 68,
+  tintOpacity: 5
 }
 
 export const DEFAULT_LIQUID_GLASS_HOME_CARDS: LiquidGlassHomeCardsSettings = {
@@ -136,6 +149,7 @@ export const DEFAULT_LIQUID_GLASS: LiquidGlassSettings = {
   coverage: 'functional',
   followPointer: true,
   overLight: false,
+  adaptiveTone: true,
   light: DEFAULT_LIQUID_GLASS_LIGHT,
   dark: DEFAULT_LIQUID_GLASS_DARK,
   navigationEnabled: false,
@@ -194,6 +208,7 @@ export function normalizeLiquidGlass(raw: unknown): LiquidGlassSettings {
     coverage: normalizeLiquidGlassCoverage(value.coverage),
     followPointer: value.followPointer !== false,
     overLight: value.overLight === true,
+    adaptiveTone: value.adaptiveTone !== false,
     light: normalizeLiquidGlassTheme(value.light, DEFAULT_LIQUID_GLASS_LIGHT),
     dark: normalizeLiquidGlassTheme(value.dark, DEFAULT_LIQUID_GLASS_DARK),
     navigationEnabled: value.navigationEnabled === true,
@@ -215,10 +230,10 @@ export function normalizeLiquidGlass(raw: unknown): LiquidGlassSettings {
  */
 export function resolveExpandedLiquidGlassTheme(theme: LiquidGlassTheme): LiquidGlassTheme {
   return {
-    displacementScale: Math.min(theme.displacementScale, 24),
+    displacementScale: Math.min(theme.displacementScale, 16),
     blurAmount: Math.min(theme.blurAmount, 16),
     saturation: Math.min(theme.saturation, 150),
-    aberrationIntensity: Math.min(theme.aberrationIntensity, 0.8),
+    aberrationIntensity: Math.min(theme.aberrationIntensity, 0.5),
     elasticity: 0,
     specularOpacity: Math.min(theme.specularOpacity, 36),
     tintOpacity: theme.tintOpacity
