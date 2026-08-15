@@ -38,7 +38,7 @@ const windowSource = readFileSync(new URL('./app/window.ts', import.meta.url), '
 
 test('audioEngine loadQueue IPC accepts renderer queue items with source field', () => {
   const start = source.indexOf('function toQueueItem')
-  const end = source.indexOf("ipcMain.handle('audioEngine:loadQueue'", start)
+  const end = source.indexOf('ipcMain.handle(IPC.audioEngine.loadQueue', start)
   assert.notEqual(start, -1, 'toQueueItem should exist')
   assert.notEqual(end, -1, 'audioEngine:loadQueue handler should exist')
   const toQueueItem = source.slice(start, end)
@@ -88,8 +88,8 @@ test('audioEngine IPC normalizes untrusted renderer parameters', () => {
 
 test('config-applied crosses the manager, IPC, and preload boundary', () => {
   assert.match(source, /audioEngineManager\.on\('config-applied'/)
-  assert.match(source, /webContents\.send\('audioEngine:config-applied', event\)/)
-  assert.match(preloadSource, /ipcRenderer\.on\('audioEngine:config-applied'/)
+  assert.match(source, /webContents\.send\(IPC\.audioEngine\.configApplied, event\)/)
+  assert.match(preloadSource, /ipcRenderer\.on\(IPC\.audioEngine\.configApplied/)
   assert.match(preloadSource, /audioEngineConfigAppliedCallbacks/)
   assert.match(preloadSource, /onConfigApplied:/)
 

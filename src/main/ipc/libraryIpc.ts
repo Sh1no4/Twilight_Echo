@@ -1,3 +1,4 @@
+import { IPC } from '../../shared/ipcChannels.ts'
 import { app, shell, type IpcMain, type IpcMainInvokeEvent } from 'electron'
 import { randomUUID } from 'crypto'
 import { join } from 'path'
@@ -169,16 +170,16 @@ export function registerLibraryIpc(ipcMain: IpcMain): void {
     localLibraryIndexCoordinator.reportServiceError(new Error(message))
   })
   localLibraryIndexCoordinator.on('progress', (progress) => {
-    runtime.mainWindow?.webContents.send('library:scan-progress', progress)
+    runtime.mainWindow?.webContents.send(IPC.library.scanProgress, progress)
   })
   localLibraryIndexCoordinator.on('status', (status: LocalLibraryScanStatus) => {
-    runtime.mainWindow?.webContents.send('library:scan-status', {
+    runtime.mainWindow?.webContents.send(IPC.library.scanStatus, {
       ...status,
       error: redactSensitiveText(status.error)
     })
   })
   localLibraryIndexCoordinator.on('watch-result', (result) => {
-    runtime.mainWindow?.webContents.send('library:changed', {
+    runtime.mainWindow?.webContents.send(IPC.library.changed, {
       kind: 'scan',
       update: toLocalLibraryScanUpdate(result)
     })
@@ -190,27 +191,27 @@ export function registerLibraryIpc(ipcMain: IpcMain): void {
     )
   })
 
-  ipcMain.handle('library:scanStartup', async (event) => {
+  ipcMain.handle(IPC.library.scanStartup, async (event) => {
     assertTrustedIpcSender(event, 'library scan IPC')
     return await runLocalLibraryScanOperation(async () =>
       toLocalLibraryScanUpdate(await localLibraryIndexCoordinator.scanStartup())
     )
   })
 
-  ipcMain.handle('library:scanFull', async (event) => {
+  ipcMain.handle(IPC.library.scanFull, async (event) => {
     assertTrustedIpcSender(event, 'library scan IPC')
     return await runLocalLibraryScanOperation(async () =>
       toLocalLibraryScanUpdate(await localLibraryIndexCoordinator.scanFull())
     )
   })
 
-  ipcMain.handle('library:getScanStatus', async (event) => {
+  ipcMain.handle(IPC.library.getScanStatus, async (event) => {
     assertTrustedIpcSender(event, 'library scan IPC')
     const status = localLibraryIndexCoordinator.getStatus()
     return { ...status, error: redactSensitiveText(status.error) }
   })
 
-  ipcMain.handle('library:getWatcherStatus', async (event) => {
+  ipcMain.handle(IPC.library.getWatcherStatus, async (event) => {
     assertTrustedIpcSender(event, 'library scan IPC')
     return getLibraryWatcherStatusSnapshot(
       runtime.appSettings.libraryFolders,
@@ -218,17 +219,17 @@ export function registerLibraryIpc(ipcMain: IpcMain): void {
     )
   })
 
-  ipcMain.handle('library:pauseScan', async (event) => {
+  ipcMain.handle(IPC.library.pauseScan, async (event) => {
     assertTrustedIpcSender(event, 'library scan IPC')
     return localLibraryIndexCoordinator.pause()
   })
 
-  ipcMain.handle('library:resumeScan', async (event) => {
+  ipcMain.handle(IPC.library.resumeScan, async (event) => {
     assertTrustedIpcSender(event, 'library scan IPC')
     return localLibraryIndexCoordinator.resume()
   })
 
-  ipcMain.handle('library:cancelScan', async (event) => {
+  ipcMain.handle(IPC.library.cancelScan, async (event) => {
     assertTrustedIpcSender(event, 'library scan IPC')
     return localLibraryIndexCoordinator.cancel()
   })
@@ -287,7 +288,7 @@ export function registerLibraryIpc(ipcMain: IpcMain): void {
     })
   })
 
-  ipcMain.handle('library:removeTracks', async (event, rawRequest: unknown) => {
+  ipcMain.handle(IPC.library.removeTracks, async (event, rawRequest: unknown) => {
     assertTrustedIpcSender(event, 'library mutation IPC')
     const request = normalizeLocalLibraryRemoveRequest(rawRequest)
     request.library.folders = await filterAuthorizedLibraryRoots(request.library.folders)
@@ -352,7 +353,7 @@ export function registerLibraryIpc(ipcMain: IpcMain): void {
     })
   })
 
-  ipcMain.handle('library:reset', async (event): Promise<LocalLibraryResetResult> => {
+  ipcMain.handle(IPC.library.reset, async (event): Promise<LocalLibraryResetResult> => {
     assertTrustedIpcSender(event, 'library reset IPC')
     return await enqueueMusicLibraryTransaction(async () => {
       const loaded = loadMusicLibraryForTransaction(MUSIC_LIBRARY_FILE)
@@ -379,7 +380,7 @@ export function registerLibraryIpc(ipcMain: IpcMain): void {
     })
   })
 
-  ipcMain.handle('library:restoreExclusions', async (event, rawRequest: unknown) => {
+  ipcMain.handle(IPC.library.restoreExclusions, async (event, rawRequest: unknown) => {
     assertTrustedIpcSender(event, 'library mutation IPC')
     const request = normalizeLocalLibraryRestoreRequest(rawRequest)
     request.library.folders = await filterAuthorizedLibraryRoots(request.library.folders)
@@ -406,17 +407,17 @@ export function registerLibraryIpc(ipcMain: IpcMain): void {
   })
 
   ipcMain.handle(
-    'library:detectDuplicates',
+    IPC.library.detectDuplicates,
     async (event) => await duplicateDetectionIpc.detect(event)
   )
 
   ipcMain.handle(
-    'library:writeTags',
+    IPC.library.writeTags,
     async (event, rawRequest: unknown) => await tagWriteIpc.write(event, rawRequest)
   )
 
   ipcMain.handle(
-    'library:restoreTags',
+    IPC.library.restoreTags,
     async (event, rawRequest: unknown) => await tagWriteIpc.restore(event, rawRequest)
   )
 }

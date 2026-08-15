@@ -5,6 +5,30 @@ const path = require('node:path')
 
 const ROOT = path.join(__dirname, '..')
 
+const IPC_CONSTANTS = (() => {
+  const source = fs.readFileSync(path.join(ROOT, 'src', 'shared', 'ipcChannels.ts'), 'utf8')
+  const map = new Map()
+  let domain = null
+  for (const line of source.split('\n')) {
+    const domainMatch = line.match(/^ {2}(\w+): \{/)
+    if (domainMatch) {
+      domain = domainMatch[1]
+      continue
+    }
+    const entry = line.match(/^ {4}(\w+): '([^']+)',?$/)
+    if (entry && domain) map.set(`IPC.${domain}.${entry[1]}`, entry[2])
+  }
+  return map
+})()
+
+function resolveChannelReference(ref) {
+  if (typeof ref !== 'string') return ref
+  if (!ref.startsWith('IPC.')) return ref
+  const channel = IPC_CONSTANTS.get(ref)
+  if (!channel) throw new Error(`Unknown IPC channel constant reference: ${ref}`)
+  return channel
+}
+
 function walk(dir) {
   const out = []
   if (!fs.existsSync(dir)) return out
@@ -36,13 +60,14 @@ function collectMain(entries) {
   const out = []
   const patterns = [
     /(?:ipcMain|\bipc)\.(handle|on)\s*\(\s*['"]\s*([^'"]+)['"]\s*,/g,
-    /(?:ipcMain|\bipc)\.(handle|on)\(\s*`([^`]+)`\s*,/g
+    /(?:ipcMain|\bipc)\.(handle|on)\(\s*`([^`]+)`\s*,/g,
+    /(?:ipcMain|\bipc)\.(handle|on)\s*\(\s*(IPC\.[\w.]+)\s*,/g
   ]
   for (const { rel: r, source } of entries) {
     for (const pattern of patterns) {
       for (const match of source.matchAll(pattern)) {
         if (source.slice(Math.max(0, match.index - 12), match.index).endsWith('ver')) continue
-        const channel = match[2] ?? match[3]
+        const channel = resolveChannelReference(match[2] ?? match[3])
         out.push({ channel, kind: match[1], file: r, line: lineNumber(source, match.index) })
       }
     }
@@ -56,12 +81,13 @@ function collectPreloadInvoke(entries) {
   const patterns = [
     /ipcRenderer\.invoke\s*\(\s*['"]\s*([^'"]+)['"]\s*[,)]/g,
     /ipcRenderer\.invoke\(\s*`([^`]+)`\s*[,)]/g,
-    /invoke(?:Optional)?VersionedDataWrite\s*\(\s*['"]\s*([^'"]+)['"]\s*,/g
+    /invoke(?:Optional)?VersionedDataWrite\s*\(\s*['"]\s*([^'"]+)['"]\s*,/g,
+    /ipcRenderer\.invoke\s*\(\s*(IPC\.[\w.]+)\s*[,)]/g
   ]
   for (const { rel: r, source } of entries) {
     for (const pattern of patterns) {
       for (const match of source.matchAll(pattern)) {
-        const channel = match[1] ?? match[2]
+        const channel = resolveChannelReference(match[1] ?? match[2])
         if (channel) out.push({ channel, file: r, line: lineNumber(source, match.index) })
       }
     }
@@ -74,12 +100,13 @@ function collectPreloadSend(entries) {
   const out = []
   const patterns = [
     /ipcRenderer\.send\s*\(\s*['"]\s*([^'"]+)['"]\s*,/g,
-    /ipcRenderer\.send\(\s*`([^`]+)`\s*,/g
+    /ipcRenderer\.send\(\s*`([^`]+)`\s*,/g,
+    /ipcRenderer\.send\s*\(\s*(IPC\.[\w.]+)\s*,/g
   ]
   for (const { rel: r, source } of entries) {
     for (const pattern of patterns) {
       for (const match of source.matchAll(pattern)) {
-        const channel = match[1] ?? match[2]
+        const channel = resolveChannelReference(match[1] ?? match[2])
         if (channel) out.push({ channel, file: r, line: lineNumber(source, match.index) })
       }
     }
@@ -92,12 +119,13 @@ function collectPreloadEvents(entries) {
   const out = []
   const patterns = [
     /ipcRenderer\.on\s*\(\s*['"]\s*([^'"]+)['"]\s*,/g,
-    /ipcRenderer\.on\(\s*`([^`]+)`\s*,/g
+    /ipcRenderer\.on\(\s*`([^`]+)`\s*,/g,
+    /ipcRenderer\.on\s*\(\s*(IPC\.[\w.]+)\s*,/g
   ]
   for (const { rel: r, source } of entries) {
     for (const pattern of patterns) {
       for (const match of source.matchAll(pattern)) {
-        const channel = match[1] ?? match[2]
+        const channel = resolveChannelReference(match[1] ?? match[2])
         if (channel) out.push({ channel, file: r, line: lineNumber(source, match.index) })
       }
     }

@@ -6796,7 +6796,12 @@ test('loudnorm status event, library RG queue fields, and cancel IPC are wired e
   )
   assert.ok(managerSource.includes('this.destroyed'))
   assert.ok(engineIpcSource.includes("on('loudnorm-status'"))
-  assert.ok(engineIpcSource.includes('audioEngine:loudnorm-status'))
+  assert.ok(
+    readFileSync(new URL('../shared/ipcChannels.ts', import.meta.url), 'utf8').includes(
+      "'audioEngine:loudnorm-status'"
+    )
+  )
+  assert.ok(engineIpcSource.includes('IPC.audioEngine.loudnormStatus'))
   assert.ok(engineIpcSource.includes('replayGainTrackGainDb'))
   assert.ok(engineIpcSource.includes('r128TrackGainDb'))
   assert.ok(loudnessIpcSource.includes('loudnessAnalysis:cancel'))
@@ -6806,7 +6811,7 @@ test('loudnorm status event, library RG queue fields, and cancel IPC are wired e
   assert.ok(queuePrepSource.includes('replayGainTrackGainDb'))
   assert.ok(queuePrepSource.includes('r128AlbumGainDb'))
   assert.ok(preloadSource.includes('onLoudnormStatus'))
-  assert.ok(preloadSource.includes('audioEngine:loudnorm-status'))
+  assert.ok(preloadSource.includes('IPC.audioEngine.loudnormStatus'))
   assert.ok(preloadSource.includes('loudnessAnalysis:cancel'))
   assert.ok(playerStoreSource.includes('loudnormStatus'))
   assert.ok(playerStoreSource.includes('onLoudnormStatus'))
