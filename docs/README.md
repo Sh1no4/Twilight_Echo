@@ -11,6 +11,7 @@
 - [音频引擎 API](./audio-engine-api.md)
 - [安全加固边界](./security-hardening.md)
 - [UI、歌词与播放时钟重构审计](./ui-playback-refactor-audit.md)
+- [项目结构审查与改进清单（2026-08-15）](./structure-review-2026-08-15.md)
 - [安全 / UI 阴影与错位 / 交互逻辑审查（2026-08-01）](./audit-security-ui-ux-2026-08-01.md)
 - [音量重启恢复问题交接（2026-08-09）](./volume-restore-handoff-2026-08-09.md)
 
