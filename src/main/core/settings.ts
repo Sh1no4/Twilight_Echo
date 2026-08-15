@@ -77,6 +77,7 @@ import {
   normalizeLyricsPresetConfig
 } from '../../shared/lyricsPresets.ts'
 import { DEFAULT_GENRE_SEPARATORS, normalizeGenreSeparators } from '../../shared/genreSeparators.ts'
+import { normalizeUiFontFamily, type UiFontFamily } from '../../shared/uiFont.ts'
 import {
   loadSettingsFile,
   writeSettingsFile,
@@ -783,10 +784,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     ),
     lightAccentColor: normalizeLightAccentColor(settings.lightAccentColor),
     darkAccentColor: normalizeDarkAccentColor(settings.darkAccentColor, settings.accentColor),
-    fontFamily:
-      typeof settings.fontFamily === 'string' && settings.fontFamily.trim()
-        ? settings.fontFamily.trim().slice(0, 64)
-        : DEFAULT_SETTINGS.fontFamily,
+    fontFamily: normalizeUiFontFamily(settings.fontFamily, DEFAULT_SETTINGS.fontFamily as UiFontFamily),
     uiDensity: normalizeUiDensity(settings.uiDensity),
     appBackground: normalizeAppBackground(settings.appBackground),
     cardAppearance: normalizeCardAppearance(settings.cardAppearance),

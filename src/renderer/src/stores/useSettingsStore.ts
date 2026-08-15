@@ -17,6 +17,7 @@ import {
 } from '../../../shared/lyricsPresets.ts'
 import { DEFAULT_GENRE_SEPARATORS } from '../../../shared/genreSeparators.ts'
 import { DEFAULT_LIQUID_GLASS, normalizeLiquidGlass } from '../../../shared/liquidGlass.ts'
+import { resolveUiFontStack } from '../../../shared/uiFont.ts'
 import {
   DEFAULT_PLAYER_BAR_SETTINGS,
   clonePlayerBarSettings,
@@ -354,9 +355,23 @@ function syncThemeAppearance(): void {
   })
 }
 
+/**
+ * Single entry point that applies the user's UI font to `--te-font-sans`.
+ * Runs after the theme sync so `clearLegacyThemeOwnedInlineStyles()` cannot
+ * wipe it, and writes inline `!important` so a theme's stylesheet `!important`
+ * (which is how themes carry `--te-font-sans`) can never silently replace the
+ * user's choice. Theme fonts stay limited to `--te-font-display` /
+ * `--te-font-rounded`, the explicitly allowed display areas.
+ */
+function applyFontSettings(): void {
+  const root = document.documentElement
+  root.style.setProperty('--te-font-sans', resolveUiFontStack(settings.value.fontFamily), 'important')
+}
+
 function applyDomSettings(): void {
   clearLegacyThemeOwnedInlineStyles()
   syncThemeAppearance()
+  applyFontSettings()
   document.documentElement.dataset.themePreference = settings.value.theme
   document.body.classList.toggle('te-no-blur', !settings.value.blurEffect)
   document.documentElement.dataset.platform = platform.value || 'unknown'
@@ -592,6 +607,16 @@ export function useSettingsStore(): {
         windowTransparencyEffect: patch.windowTransparencyEffect
       }
       applyDomSettings()
+    }
+    // The UI font must flip on the same frame as the picker; waiting for the IPC
+    // round trip shows one frame of the old font. A failed save rolls back via
+    // the reload in the catch below.
+    if (Object.prototype.hasOwnProperty.call(patch, 'fontFamily') && patch.fontFamily) {
+      settings.value = {
+        ...settings.value,
+        fontFamily: patch.fontFamily
+      }
+      applyFontSettings()
     }
     const runUpdate = settingsUpdateQueue.then(async () => {
       const snapshot = await window.api.settings.update(patch)

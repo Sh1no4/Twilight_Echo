@@ -624,3 +624,92 @@ test('playbar settings UI exposes shape, playing-page shape and the auto-hide tu
   // Appearance reset has to drop the playbar back to the shared default too.
   assert.match(source, /playerBar: clonePlayerBarSettings\(DEFAULT_PLAYER_BAR_SETTINGS\)/)
 })
+
+test('global UI font has one application entry and follows user priority over the theme', () => {
+  const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
+  const uiFontSource = readFileSync(new URL('../../../shared/uiFont.ts', import.meta.url), 'utf8')
+  const themeSource = readFileSync(new URL('./useThemeStore.ts', import.meta.url), 'utf8')
+  const mainSource = readFileSync(
+    new URL('../../../main/core/settings.ts', import.meta.url),
+    'utf8'
+  )
+
+  // Default is the real system stack, not a packaged Latin face.
+  assert.match(storeSource, /fontFamily: 'system'/)
+  assert.match(mainSource, /fontFamily: 'system'/)
+  // The single application entry writes --te-font-sans inline with !important so
+  // the theme's stylesheet !important can never silently replace the user font.
+  assert.match(storeSource, /import \{ resolveUiFontStack \} from '\.\.\/\.\.\/\.\.\/shared\/uiFont\.ts'/)
+  assert.match(
+    storeSource,
+    /root\.style\.setProperty\('--te-font-sans', resolveUiFontStack\(settings\.value\.fontFamily\), 'important'\)/
+  )
+  // A font picker change flips the DOM on the same frame, before the IPC round trip.
+  assert.match(
+    storeSource,
+    /Object\.prototype\.hasOwnProperty\.call\(patch, 'fontFamily'\) && patch\.fontFamily/
+  )
+  // The theme never owns the global body font; only display/rounded areas may
+  // carry a theme font.
+  assert.doesNotMatch(themeSource, /\['sansFont', '--te-font-sans'\]/)
+  assert.match(themeSource, /\['displayFont', '--te-font-display'\]/)
+  assert.match(themeSource, /\['roundedFont', '--te-font-rounded'\]/)
+  // The shared resolver is the single value -> stack mapping for the UI font,
+  // and main clamps persisted values through it so only known families survive.
+  assert.match(uiFontSource, /export const UI_FONT_FAMILY_STACKS/)
+  assert.match(uiFontSource, /system: SYSTEM_UI_STACK/)
+  assert.match(uiFontSource, /inter: `'Inter', 'Plus Jakarta Sans', \$\{BUILTIN_UI_STACK\}`/)
+  assert.match(uiFontSource, /export function normalizeUiFontFamily/)
+  assert.match(
+    mainSource,
+    /import \{ normalizeUiFontFamily(, type UiFontFamily)? \} from '\.\.\/\.\.\/shared\/uiFont\.ts'/
+  )
+  assert.match(mainSource, /normalizeUiFontFamily\(settings\.fontFamily, DEFAULT_SETTINGS\.fontFamily( as UiFontFamily)?\)/)
+  // The theme sync is the only path that can carry --te-font-sans, so the font
+  // entry must run after it (and after the legacy inline cleanup) inside
+  // applyDomSettings to keep the user font authoritative.
+  assert.match(storeSource, /clearLegacyThemeOwnedInlineStyles\(\)\s*syncThemeAppearance\(\)\s*applyFontSettings\(\)/)
+})
+
+test('the three font chains stay separate: global UI, main lyrics, desktop lyrics', () => {
+  const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
+  const playingSource = readFileSync(
+    new URL('../components/PlayingMusic.vue', import.meta.url),
+    'utf8'
+  )
+  const desktopLyricsSource = readFileSync(
+    new URL('../../../../resources/desktop-lyrics.html', import.meta.url),
+    'utf8'
+  )
+  const lyricsAppearanceSource = readFileSync(
+    new URL('../../../shared/lyricsAppearance.ts', import.meta.url),
+    'utf8'
+  )
+
+  // Chain 1 (global UI): body text rides --te-font-sans, the single inline entry.
+  assert.match(storeSource, /root\.style\.setProperty\('--te-font-sans', /)
+  // Chain 2 (main lyrics): an explicit lyric font owns --te-lyric-font-family,
+  // but 'inherit' must fall through to the global UI font instead of hard-coding
+  // a face, so the two chains never mix.
+  assert.match(
+    playingSource,
+    /if \(appearance\.fontFamily !== 'inherit'\) \{\s*styles\['--te-lyric-font-family'\] =/
+  )
+  assert.match(
+    playingSource,
+    /font-family: var\(--lyric-style-font-family, var\(--te-lyric-font-family, inherit\)\)/
+  )
+  // Chain 3 (desktop lyrics): its own window maps 'system'/empty to the OS stack
+  // and never reads --te-font-sans, so the global UI font cannot leak in.
+  assert.match(
+    desktopLyricsSource,
+    /s\.fontFamily === 'system' \|\| !s\.fontFamily\s*\? "system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif"\s*: s\.fontFamily/
+  )
+  assert.doesNotMatch(desktopLyricsSource, /--te-font-sans/)
+  // Every chain resolves 'system' to a real OS stack, so the default is usable
+  // without any packaged Latin face.
+  assert.match(
+    lyricsAppearanceSource,
+    /system: "system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif"/
+  )
+})

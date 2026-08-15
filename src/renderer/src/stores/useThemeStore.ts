@@ -574,8 +574,10 @@ function applyProfileAssetBindings(
     }
   }
 
+  // The global UI font (`--te-font-sans`) is owned by the user's font setting,
+  // never by the theme: `system` must not be silently replaced by a theme font.
+  // Theme fonts only reach explicitly allowed display areas.
   const fontBindings = [
-    ['sansFont', '--te-font-sans'],
     ['displayFont', '--te-font-display'],
     ['roundedFont', '--te-font-rounded']
   ] as const
