@@ -79,8 +79,55 @@ const MAX_AUDIO_SERVICE_MESSAGE_BYTES =
   MAX_AUDIO_SERVICE_VISUALIZATION_RESPONSE_BYTES + MAX_UTILITY_PROCESS_CONTROL_MESSAGE_BYTES
 const AUDIO_SERVICE_INVALID_MESSAGE = 'audio service returned an invalid or oversized message'
 
+// Native calls that may legally block the audio service's single JS thread far
+// beyond the control deadline: FFmpeg open/probe on slow disks or network
+// sources, device stop/close joins and exclusive reopens, DSP graph
+// compilation (convolver IRs), ASIO driver enumeration, and the VST3 scanner
+// (which carries its own 8s native budget). Timing out here only fails the
+// individual request — the native side is internally bounded, so killing the
+// service mid-flight is the watchdog misfire that turns any legitimate slow
+// operation into a crash/restart loop.
+const SLOW_NATIVE_METHODS = new Set<string>([
+  'Play',
+  'Stop',
+  'Next',
+  'Previous',
+  'Seek',
+  'SetOutputDevice',
+  'SetOutputBackend',
+  'SetOutputConfig',
+  'LoadQueue',
+  'AddToQueue',
+  'RemoveFromQueue',
+  'SetDspConfig',
+  'SetDspGraph',
+  'ApplyDspState',
+  'SetDspPluginChain',
+  'LoadImpulseResponse',
+  'UnloadImpulseResponse',
+  'SetEqBands',
+  'SetEqPreset',
+  'SetCrossfeedStrength',
+  'SetReplayGainMode',
+  'GetMetadata',
+  'EnumerateDevices',
+  'EnumerateBackends',
+  'GetEngineCapabilities',
+  'ScanVst3Module'
+])
+
+// A child that survives this long is considered stable: the exponential
+// restart backoff resets after it.
+const AUDIO_SERVICE_STABLE_CHILD_MS = 60_000
+const MAX_AUDIO_SERVICE_RESTART_BACKOFF_MS = 30_000
+
+function isSlowNativeMethod(method: keyof NativeAudioBinding): boolean {
+  return SLOW_NATIVE_METHODS.has(String(method))
+}
+
 type PendingRequest = {
   method: keyof NativeAudioBinding
+  slow: boolean
   resolve: (value: unknown) => void
   reject: (error: Error) => void
   timer: NodeJS.Timeout
@@ -128,6 +175,9 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   private stopped = false
   private restarting = false
   private generation = 0
+  private slowPendingCount = 0
+  private restartAttempts = 0
+  private lastChildSpawnedAt = 0
   private cacheRequestSerial = new Map<string, number>()
   private cacheRequestsInFlight = new Set<string>()
   private lastPlaybackInfo: string | PlaybackInfo | null = null
@@ -447,6 +497,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
       pending.reject(new Error('音频服务已停止'))
     }
     this.pending.clear()
+    this.slowPendingCount = 0
     this.coalescedControls.clear()
     this.child?.kill()
     this.child = null
@@ -470,6 +521,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
         env: audioServiceEnv()
       })
       this.child = child
+      this.lastChildSpawnedAt = Date.now()
       this.processLogBudget.reset()
       child.on('message', (message) => {
         if (this.child !== child) return
@@ -530,6 +582,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
         stderr: child.stderr ?? undefined
       }
       this.child = wrappedChild
+      this.lastChildSpawnedAt = Date.now()
       this.processLogBudget.reset()
       wrappedChild.on('message', (message) => {
         if (this.child !== wrappedChild) return
@@ -647,6 +700,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
 
     clearTimeout(pending.timer)
     this.pending.delete(response.requestId)
+    if (pending.slow) this.slowPendingCount -= 1
     if (response.ok) pending.resolve(response.value)
     else pending.reject(new Error(response.error ?? '音频服务调用失败'))
   }
@@ -684,10 +738,21 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     if (options.restart === false) return
     if (this.restarting) return
     this.restarting = true
+    // Exponential backoff over consecutive short-lived children so a
+    // deterministic failure source (bad driver, hostile source) cannot run a
+    // ~2s crash/restart storm. A child that survived a full stability window
+    // resets the ladder.
+    const livedMs = Date.now() - this.lastChildSpawnedAt
+    this.restartAttempts =
+      livedMs < AUDIO_SERVICE_STABLE_CHILD_MS ? this.restartAttempts + 1 : 1
+    const backoffMs = Math.min(
+      this.restartDelayMs * 2 ** (this.restartAttempts - 1),
+      MAX_AUDIO_SERVICE_RESTART_BACKOFF_MS
+    )
     setTimeout(() => {
       this.restarting = false
       this.start()
-    }, this.restartDelayMs)
+    }, backoffMs)
   }
 
   private fireAndForget(method: keyof NativeAudioBinding, args: unknown[]): void {
@@ -908,6 +973,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     }
     const requestId = randomUUID()
     const generation = this.generation
+    const slow = isSlowNativeMethod(method)
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         const pending = this.pending.get(requestId)
@@ -915,11 +981,18 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
         const error = createAudioServiceTimeoutError(method)
         clearTimeout(pending.timer)
         this.pending.delete(requestId)
+        if (pending.slow) this.slowPendingCount -= 1
         pending.reject(error)
+        // Never kill on a slow-tier timeout: the native side is internally
+        // bounded. And while any slow-tier request is still in flight, the
+        // service's single JS thread may be legitimately busy — a fast-tier
+        // timeout here is collateral, not evidence of a wedged child.
+        if (pending.slow || this.slowPendingCount > 0) return
         this.restartUnresponsiveService(child, generation, error.message)
       }, this.requestTimeoutForMethod(method))
       this.pending.set(requestId, {
         method,
+        slow,
         resolve: (value) => {
           if (generation !== this.generation) return
           resolve(value)
@@ -927,11 +1000,13 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
         reject,
         timer
       })
+      if (slow) this.slowPendingCount += 1
       try {
         child.postMessage({ kind: 'request', requestId, method, args })
       } catch (err) {
         clearTimeout(timer)
         this.pending.delete(requestId)
+        if (slow) this.slowPendingCount -= 1
         const message = err instanceof Error ? err.message : String(err)
         this.recordTransientFailure(message)
         reject(err)
@@ -957,6 +1032,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   private recordFailure(message: string): void {
     this.lastErrorJson = JSON.stringify({ message })
     this.coalescedControls.clear()
+    this.slowPendingCount = 0
     this.rejectQueuedDspState(new Error(message))
     for (const [requestId, pending] of this.pending.entries()) {
       clearTimeout(pending.timer)
@@ -972,10 +1048,12 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   }
 
   private requestTimeoutForMethod(method: keyof NativeAudioBinding): number {
-    // Topology updates deliberately stop/join and reopen an exclusive device.
-    // They are still generation-fenced by call(), but must not be killed by a
-    // normal control-RPC deadline while a driver negotiates the new stream.
-    return method === 'SetOutputConfig' ? this.topologyRequestTimeoutMs : this.requestTimeoutMs
+    // Slow-tier methods (device reopen, FFmpeg probe, DSP graph compile, the
+    // 8s-budget VST3 scanner) legally block the service's single JS thread far
+    // beyond the control deadline. They are still generation-fenced by call(),
+    // but must neither fail fast nor trigger the unresponsive-service kill
+    // while a driver negotiates the new stream.
+    return isSlowNativeMethod(method) ? this.topologyRequestTimeoutMs : this.requestTimeoutMs
   }
 
   private recordTransientFailure(message: string): void {
