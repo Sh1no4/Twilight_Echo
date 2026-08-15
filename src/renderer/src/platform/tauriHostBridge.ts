@@ -352,11 +352,20 @@ function createDefaultVst3Catalog(): Vst3CatalogState {
  * Every Electron IPC surface has not been migrated to Tauri yet. Accessing an
  * unmigrated surface (`window.api.audioEngine.play()`) or method would throw a
  * TypeError and crash a page. These proxies return a heuristic stub instead so
- * the app keeps mounting; unimplemented calls log a warning for the migration.
+ * the app keeps mounting. Each unimplemented surface.method warns at most once:
+ * polled methods (e.g. library.getWatcherStatus every 5s while SettingsPage is
+ * open) must not flood the console, but the first call still records every
+ * surface the renderer actually touches for the migration.
  */
+const warnedStubMethods = new Set<string>()
+
 function makeStubMethod(surface: string, method: string): (...args: unknown[]) => unknown {
   return (..._args: unknown[]): unknown => {
-    console.warn(`[tauri-bridge] ${surface}.${method}() not implemented yet`)
+    const key = `${surface}.${method}`
+    if (!warnedStubMethods.has(key)) {
+      warnedStubMethods.add(key)
+      console.warn(`[tauri-bridge] ${surface}.${method}() not implemented yet`)
+    }
     const m = method.toLowerCase()
     if (m.startsWith('on')) return () => {}
     if (m.startsWith('list') || m.startsWith('search')) return Promise.resolve([])
