@@ -42,15 +42,15 @@
   --te-menu-width: clamp(132px, 18vw, 216px);
   --te-radius-global: 10px;
   --te-surface-opacity: 100%;
-  /* Latin: Inter. CJK: MiSans Full (complete faces / OS TTF) before subset MiSans. */
+  /* Latin: Inter. CJK: MiSans (subset faces). */
   --te-font-display:
-    'Inter', 'Plus Jakarta Sans', 'MiSans Full', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei',
+    'Inter', 'Plus Jakarta Sans', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei',
     'PingFang SC', 'Hiragino Sans GB', system-ui, sans-serif;
   --te-font-rounded:
-    'Inter', 'Plus Jakarta Sans', 'MiSans Full', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei',
+    'Inter', 'Plus Jakarta Sans', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei',
     'PingFang SC', 'Hiragino Sans GB', system-ui, sans-serif;
   --te-font-sans:
-    'Inter', 'Plus Jakarta Sans', 'MiSans Full', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei',
+    'Inter', 'Plus Jakarta Sans', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei',
     'PingFang SC', 'Hiragino Sans GB', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
     sans-serif;
   --te-text-title: 500;
