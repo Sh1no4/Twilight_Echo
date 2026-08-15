@@ -575,7 +575,7 @@ onUnmounted(() => {
                 </div>
                 <div class="plugin-actions">
                   <button
-                    v-if="!plugin.builtIn"
+                    v-if="!plugin.builtIn || plugin.error"
                     class="icon-btn"
                     title="查看日志"
                     @click="openLog(plugin)"
