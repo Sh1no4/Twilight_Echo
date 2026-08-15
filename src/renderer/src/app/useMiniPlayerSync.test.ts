@@ -17,6 +17,7 @@ function makeTrack(overrides: Partial<Track> = {}): Track {
     filePath: 'ncm:1',
     duration: 240,
     size: 0,
+    cover: null,
     format: 'FLAC',
     sampleRate: 192000,
     bitDepth: 24,

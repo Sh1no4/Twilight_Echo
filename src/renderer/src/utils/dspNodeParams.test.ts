@@ -30,7 +30,7 @@ test('matrixForNode normalizes missing and malformed matrices to identity', () =
 
   const malformed = node('channelMatrix', { layout: 'stereo', matrix: [1, 0] })
   assert.deepEqual(matrixForNode(malformed), identityMatrix(2))
-  assert.equal(malformed.params.matrix.length, 4)
+  assert.equal((malformed.params.matrix as number[]).length, 4)
 })
 
 test('applyMatrixPreset applies a valid preset and resets the select value', () => {
@@ -44,7 +44,7 @@ test('applyMatrixPreset applies a valid preset and resets the select value', () 
 test('channelStripRows normalizes rows to the active layout', () => {
   const strip = node('channelStrip', { channels: [{ gainDb: 1 }] })
   assert.equal(channelStripRows(strip).length, 2)
-  assert.equal(strip.params.channels.length, 2)
+  assert.equal((strip.params.channels as unknown[]).length, 2)
   setNodeLayout(strip, '7.1')
   assert.equal(channelStripRows(strip).length, 8)
   assert.equal(layoutForNode(strip), '7.1')
@@ -69,5 +69,5 @@ test('matrix edits clamp to the DSP contract and normalizeNodeEditorParams prese
   setMatrixValue(matrixNode, 0, 1, 99)
   assert.equal(matrixValue(matrixNode, 0, 1), 4)
   normalizeNodeEditorParams(matrixNode)
-  assert.equal(matrixNode.params.matrix.length, 4)
+  assert.equal((matrixNode.params.matrix as number[]).length, 4)
 })

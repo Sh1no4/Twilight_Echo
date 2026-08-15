@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { normalizeDsdState, normalizeNativePlaybackInfo } from './playerPlaybackInfo.ts'
+import type { PlaybackInfo } from '../../../preload/types'
 
-function makeInfo(partial: Record<string, unknown> = {}): Record<string, unknown> {
+function makeInfo(partial: Record<string, unknown> = {}): PlaybackInfo {
   return {
     state: 'playing',
     position: 10,
     duration: 240,
     volume: 0.7,
+    requestedConfigRevision: 1,
+    appliedConfigRevision: 1,
     queueIndex: 0,
     playMode: 'sequential',
     source: 'C:\\music\\track.flac',
@@ -21,7 +24,7 @@ function makeInfo(partial: Record<string, unknown> = {}): Record<string, unknown
     decodedSampleFormat: 's16',
     outputBackend: 'wasapi',
     outputDevice: 'default',
-    outputInfo: {},
+    outputInfo: {} as PlaybackInfo['outputInfo'],
     actualBackend: 'wasapi',
     driverName: '',
     driverVersion: 0,
@@ -32,11 +35,21 @@ function makeInfo(partial: Record<string, unknown> = {}): Record<string, unknown
     bufferSizeFrames: 512,
     latencyFrames: 11,
     latencyMs: 5,
-    latencyInfo: { averageMs: 5, jitterMs: 1 },
+    latencyInfo: { bufferLatencyMs: 5, outputLatencyMs: 0, totalLatencyMs: 5 },
     channelRoutingMode: 'auto',
     supportsOutputPerfect: true,
     sourceExact: true,
-    diagnostics: { sessionUnderrunCount: 0 },
+    diagnostics: {
+      sessionUnderrunCount: 0,
+      sessionBufferDropCount: 0,
+      sessionRecoveryCount: 0,
+      lifetimeUnderrunCount: 0,
+      lifetimeBufferDropCount: 0,
+      lifetimeRecoveryCount: 0,
+      driverRestartCount: 0,
+      deviceLostCount: 0,
+      lastError: ''
+    },
     deviceRecovered: false,
     recoveryCount: 0,
     outputSampleRate: 44100,
@@ -115,11 +128,20 @@ test('normalizeNativePlaybackInfo merges canonical output info over mirror field
         bufferSizeFrames: 256,
         latencyFrames: 5,
         latencyMs: 2,
-        latencyInfo: { averageMs: 2, jitterMs: 0 },
+        latencyInfo: { bufferLatencyMs: 2, outputLatencyMs: 0, totalLatencyMs: 2 },
         channelRoutingMode: 'manual',
         supportsOutputPerfect: false,
         sourceExact: false,
-        diagnostics: { sessionUnderrunCount: 0 },
+        diagnostics: {
+          sessionUnderrunCount: 0,
+          sessionBufferDropCount: 0,
+          sessionRecoveryCount: 0,
+          lifetimeUnderrunCount: 0,
+          lifetimeBufferDropCount: 0,
+          lifetimeRecoveryCount: 0,
+          driverRestartCount: 0,
+          deviceLostCount: 0
+        },
         deviceRecovered: true,
         recoveryCount: 3,
         outputSampleRate: 352800,
@@ -172,7 +194,11 @@ test('normalizeNativePlaybackInfo fills missing output fields from the top-level
   assert.equal(normalized.outputInfo.bufferSizeFrames, 512)
   assert.equal(normalized.outputInfo.latencyFrames, 11)
   assert.equal(normalized.outputInfo.latencyMs, 5)
-  assert.deepEqual(normalized.outputInfo.latencyInfo, { averageMs: 5, jitterMs: 1 })
+  assert.deepEqual(normalized.outputInfo.latencyInfo, {
+    bufferLatencyMs: 5,
+    outputLatencyMs: 0,
+    totalLatencyMs: 5
+  })
   assert.equal(normalized.outputInfo.channelRoutingMode, 'auto')
   assert.equal(normalized.outputInfo.diagnostics.sessionUnderrunCount, 0)
   assert.equal(normalized.outputInfo.deviceRecovered, false)

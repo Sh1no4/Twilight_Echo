@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { ProviderDownloadTaskSnapshot } from '../../../preload/types'
+import type { ProviderDownloadTaskSnapshot } from '../../../../shared/providerDownloads.ts'
 
 const { downloadStatusLabel, filterActiveDownloadTasks, formatDownloadProgress } = (await import(
   new URL('./streamingDownloads.ts', import.meta.url).href

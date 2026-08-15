@@ -287,7 +287,7 @@ test('a layout pass belonging to a previous track cannot move the new one', asyn
   controller.registerRow(3, rowB)
   activeIndex.value = 3
   const current = controller.follow(3, { mode: 'snap' })
-  releaseLayout?.()
+  ;(releaseLayout as (() => void) | null)?.()
   await Promise.all([stale, current])
 
   assert.equal(controller.trackId(), 'track-b')
@@ -321,7 +321,7 @@ test('a newer follow cancels an older one still awaiting layout', async () => {
   const stale = controller.follow(0, { mode: 'snap' })
   activeIndex.value = 5
   await controller.follow(5, { mode: 'snap' })
-  releaseFirst?.()
+  ;(releaseFirst as (() => void) | null)?.()
   await stale
 
   // Line 5 is the anchor, so it sits at the align position and line 0 above it.
