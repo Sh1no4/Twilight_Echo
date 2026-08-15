@@ -1,38 +1,19 @@
+import type { BpmAnalysisResult } from '../../../shared/audioEngineTypes.ts'
+import type { TrackSource, TrackMetadataMatch } from '../../../shared/track.ts'
+import type { LyricSource } from '../../../shared/lyricsManagement.ts'
+export type { BpmTempoSegment, BpmAnalysisResult } from '../../../shared/audioEngineTypes.ts'
+export type {
+  BuiltInTrackSource,
+  TrackSource,
+  MetadataMatchConfidence,
+  TrackMetadataMatch
+} from '../../../shared/track.ts'
+export type { LyricSource } from '../../../shared/lyricsManagement.ts'
 import type { PlaybackResumeMode, PlayMode } from './settings'
 import type { NcmPlaybackQuality } from './settings'
 import type { SleepTimerState } from '../../../shared/sleepTimer.ts'
 import type { CueRange, ParsedCueSheet } from '../../../shared/cue.ts'
 import type { NetworkEntry } from '../../../shared/networkSources.ts'
-
-export type BuiltInTrackSource = 'local' | 'ncm'
-export type TrackSource = BuiltInTrackSource | (string & {})
-export type LyricSource = 'embedded' | 'local' | 'provider' | 'manual' | 'online'
-export type MetadataMatchConfidence = 'high' | 'medium'
-
-export interface TrackMetadataMatch {
-  providerId: string
-  trackId: string
-  confidence: MetadataMatchConfidence
-  score: number
-}
-
-export interface BpmTempoSegment {
-  startMs: number
-  endMs: number
-  bpm: number
-  confidence: number
-}
-
-export interface BpmAnalysisResult {
-  bpm: number
-  confidence: number
-  source: 'analyzed'
-  analyzedAt: string
-  algorithmVersion: number
-  variableTempo?: boolean
-  bpmRange?: [number, number]
-  tempoMap?: BpmTempoSegment[]
-}
 
 export interface Track {
   id: string

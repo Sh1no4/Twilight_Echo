@@ -3,19 +3,9 @@ import {
   type AudioProcessingSettings,
   type EqualizerBand
 } from './audioEngineManager.ts'
+import type { HeadphoneCompensationSettings } from '../shared/audioEngineTypes.ts'
 
-export interface HeadphoneCompensationSettings {
-  enabled: boolean
-  productId: string
-  productName: string
-  vendorName: string
-  eqId: string
-  author: string
-  details: string
-  link: string
-  preampDb: number
-  bands: EqualizerBand[]
-}
+export type { HeadphoneCompensationSettings }
 
 export const DEFAULT_HEADPHONE_COMPENSATION: HeadphoneCompensationSettings = {
   enabled: false,

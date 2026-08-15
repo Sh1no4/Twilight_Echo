@@ -187,19 +187,20 @@ test('settings page sends plain app background objects through Electron IPC', ()
 })
 
 test('startup home page setting is persisted and selectable from general settings', () => {
-  const mainTypes = readFileSync(new URL('../../../main/core/types.ts', import.meta.url), 'utf8')
   const mainSettings = readFileSync(
     new URL('../../../main/core/settings.ts', import.meta.url),
     'utf8'
   )
-  const settingsTypes = readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8')
+  const settingsTypes = readFileSync(
+    new URL('../../../shared/appSettings.ts', import.meta.url),
+    'utf8'
+  )
   const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
   const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
   const settingsPageSource = readSettingsPageSources()
 
   assert.match(settingsTypes, /export type StartupHomePage = 'local' \| 'streaming'/)
   assert.match(settingsTypes, /startupHomePage: StartupHomePage/)
-  assert.match(mainTypes, /export type StartupHomePage = 'local' \| 'streaming'/)
   assert.match(mainSettings, /startupHomePage: 'local'/)
   assert.match(mainSettings, /function normalizeStartupHomePage\(value: unknown\): StartupHomePage/)
   assert.match(
@@ -219,14 +220,15 @@ test('startup home page setting is persisted and selectable from general setting
 })
 
 test('track activation mode is persisted across layers and applied to all track lists', () => {
-  const mainTypes = readFileSync(new URL('../../../main/core/types.ts', import.meta.url), 'utf8')
   const mainSettings = readFileSync(
     new URL('../../../main/core/settings.ts', import.meta.url),
     'utf8'
   )
   const preloadTypes = readFileSync(new URL('../../../preload/types.ts', import.meta.url), 'utf8')
-  const preloadDts = readFileSync(new URL('../../../preload/index.d.ts', import.meta.url), 'utf8')
-  const rendererTypes = readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8')
+  const sharedAppSettings = readFileSync(
+    new URL('../../../shared/appSettings.ts', import.meta.url),
+    'utf8'
+  )
   const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
   const settingsPageSource = readSettingsPageSources()
   const songListSource = readFileSync(
@@ -254,12 +256,12 @@ test('track activation mode is persisted across layers and applied to all track 
     'utf8'
   )
 
-  for (const source of [mainTypes, preloadTypes, rendererTypes]) {
-    assert.match(source, /export type TrackActivationMode = 'singleClick' \| 'doubleClick'/)
-    assert.match(source, /trackActivationMode: TrackActivationMode/)
-  }
-  assert.match(preloadDts, /type TrackActivationMode = 'singleClick' \| 'doubleClick'/)
-  assert.match(preloadDts, /trackActivationMode: TrackActivationMode/)
+  assert.match(
+    sharedAppSettings,
+    /export type TrackActivationMode = 'singleClick' \| 'doubleClick'/
+  )
+  assert.match(sharedAppSettings, /trackActivationMode: TrackActivationMode/)
+  assert.match(preloadTypes, /TrackActivationMode/)
   assert.match(mainSettings, /trackActivationMode: 'singleClick'/)
   assert.match(
     mainSettings,
@@ -296,14 +298,14 @@ test('track activation mode is persisted across layers and applied to all track 
 })
 
 test('genre separators persist across settings layers and refresh derived library groups', () => {
-  const mainTypes = readFileSync(new URL('../../../main/core/types.ts', import.meta.url), 'utf8')
   const mainSettings = readFileSync(
     new URL('../../../main/core/settings.ts', import.meta.url),
     'utf8'
   )
-  const preloadTypes = readFileSync(new URL('../../../preload/types.ts', import.meta.url), 'utf8')
-  const preloadDts = readFileSync(new URL('../../../preload/index.d.ts', import.meta.url), 'utf8')
-  const rendererTypes = readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8')
+  const sharedAppSettings = readFileSync(
+    new URL('../../../shared/appSettings.ts', import.meta.url),
+    'utf8'
+  )
   const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
   const settingsPageSource = readSettingsPageSources()
   const songListSource = readFileSync(
@@ -311,9 +313,7 @@ test('genre separators persist across settings layers and refresh derived librar
     'utf8'
   )
 
-  for (const source of [mainTypes, preloadTypes, preloadDts, rendererTypes]) {
-    assert.match(source, /genreSeparators: string/)
-  }
+  assert.match(sharedAppSettings, /genreSeparators: string/)
   assert.match(mainSettings, /genreSeparators: DEFAULT_GENRE_SEPARATORS/)
   assert.match(
     mainSettings,
@@ -332,7 +332,9 @@ test('genre separators persist across settings layers and refresh derived librar
 })
 
 test('audio settings expose advanced replaygain, fft, crossfeed, and real loudnorm option', () => {
-  const settingsTypes = readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8')
+  const settingsTypes =
+    readFileSync(new URL('../../../shared/audioEngineTypes.ts', import.meta.url), 'utf8') +
+    readFileSync(new URL('../../../shared/audioProcessingOptions.ts', import.meta.url), 'utf8')
   const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
   const settingsPageSource = readSettingsPageSources()
   const hifiSidebarSource = readFileSync(
@@ -410,43 +412,33 @@ test('audio settings do not expose DSP bypass as strict bit-perfect mode', () =>
 })
 
 test('cache strategy settings expose separate artifact and provider-controlled audio policies', () => {
-  const mainTypes = readFileSync(new URL('../../../main/core/types.ts', import.meta.url), 'utf8')
   const mainSettings = readFileSync(
     new URL('../../../main/core/settings.ts', import.meta.url),
     'utf8'
   )
-  const rendererTypes = readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8')
   const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
   const preloadTypes = readFileSync(new URL('../../../preload/types.ts', import.meta.url), 'utf8')
-  const preloadIndexTypes = readFileSync(
-    new URL('../../../preload/index.d.ts', import.meta.url),
-    'utf8'
-  )
   const pluginIpcSource = readFileSync(
     new URL('../../../main/ipc/plugins.ts', import.meta.url),
     'utf8'
   )
   const settingsPageSource = readSettingsPageSources()
 
-  for (const source of [mainTypes, rendererTypes, preloadTypes]) {
-    assert.match(source, /export type StreamingAudioCachePolicy = 'off' \| 'provider'/)
-    assert.match(source, /export interface MusicCachePolicySettings \{/)
-    assert.match(source, /cover: boolean/)
-    assert.match(source, /lyrics: boolean/)
-    assert.match(source, /metadata: boolean/)
-    assert.match(source, /streamingAudio: StreamingAudioCachePolicy/)
-    assert.match(source, /cachePolicy: MusicCachePolicySettings/)
-    assert.match(source, /autoAnalyzeBpm: boolean/)
-  }
+  const sharedAppSettings = readFileSync(
+    new URL('../../../shared/appSettings.ts', import.meta.url),
+    'utf8'
+  )
 
-  assert.match(preloadIndexTypes, /type StreamingAudioCachePolicy = 'off' \| 'provider'/)
-  assert.match(preloadIndexTypes, /interface MusicCachePolicySettings \{/)
-  assert.match(preloadIndexTypes, /cover: boolean/)
-  assert.match(preloadIndexTypes, /lyrics: boolean/)
-  assert.match(preloadIndexTypes, /metadata: boolean/)
-  assert.match(preloadIndexTypes, /streamingAudio: StreamingAudioCachePolicy/)
-  assert.match(preloadIndexTypes, /cachePolicy: MusicCachePolicySettings/)
-  assert.match(preloadIndexTypes, /autoAnalyzeBpm: boolean/)
+  assert.match(sharedAppSettings, /export type StreamingAudioCachePolicy = 'off' \| 'provider'/)
+  assert.match(sharedAppSettings, /export interface MusicCachePolicySettings \{/)
+  assert.match(sharedAppSettings, /cover: boolean/)
+  assert.match(sharedAppSettings, /lyrics: boolean/)
+  assert.match(sharedAppSettings, /metadata: boolean/)
+  assert.match(sharedAppSettings, /streamingAudio: StreamingAudioCachePolicy/)
+  assert.match(sharedAppSettings, /cachePolicy: MusicCachePolicySettings/)
+  assert.match(sharedAppSettings, /autoAnalyzeBpm: boolean/)
+  assert.match(preloadTypes, /StreamingAudioCachePolicy/)
+  assert.match(preloadTypes, /MusicCachePolicySettings/)
 
   assert.match(
     mainSettings,
@@ -618,14 +610,10 @@ test('playbar shape persists across settings layers and flips without an IPC rou
   assert.match(storeSource, /Object\.prototype\.hasOwnProperty\.call\(patch, 'playerBar'\)/)
   assert.match(storeSource, /playerBar: normalizePlayerBarSettings\(patch\.playerBar\)/)
 
-  for (const types of [
-    readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8'),
-    readFileSync(new URL('../../../preload/types.ts', import.meta.url), 'utf8'),
-    readFileSync(new URL('../../../preload/index.d.ts', import.meta.url), 'utf8'),
-    readFileSync(new URL('../../../main/core/types.ts', import.meta.url), 'utf8')
-  ]) {
-    assert.match(types, /playerBar: PlayerBarSettings/)
-  }
+  assert.match(
+    readFileSync(new URL('../../../shared/appSettings.ts', import.meta.url), 'utf8'),
+    /playerBar: PlayerBarSettings/
+  )
 })
 
 test('playbar settings UI exposes shape and visibility as independent dimensions', () => {

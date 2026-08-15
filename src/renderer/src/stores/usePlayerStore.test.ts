@@ -1713,7 +1713,10 @@ test('play mode is persisted in settings and restored on launch', () => {
     new URL('./player/playbackQueueController.ts', import.meta.url),
     'utf8'
   )
-  const settingsTypes = readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8')
+  const settingsTypes = readFileSync(
+    new URL('../../../shared/audioEngineTypes.ts', import.meta.url),
+    'utf8'
+  )
   const settingsStoreSource = readFileSync(
     new URL('./useSettingsStore.ts', import.meta.url),
     'utf8'

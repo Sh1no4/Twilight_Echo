@@ -6817,8 +6817,17 @@ test('loudnorm status event, library RG queue fields, and cancel IPC are wired e
   assert.ok(dspSettingsSource.includes('loudnormStatusCopy'))
   assert.ok(dspSettingsSource.includes('settings-loudnorm-status'))
   assert.ok(settingsSource.includes('确认清理 Loudnorm'))
-  assert.ok(preloadDtsSource.includes('replayGainTrackGainDb'))
-  assert.ok(preloadDtsSource.includes('r128AlbumGainDb'))
+  assert.ok(
+    readFileSync(new URL('../shared/audioEngineTypes.ts', import.meta.url), 'utf8').includes(
+      'replayGainTrackGainDb'
+    )
+  )
+  assert.ok(
+    readFileSync(new URL('../shared/audioEngineTypes.ts', import.meta.url), 'utf8').includes(
+      'r128AlbumGainDb'
+    )
+  )
+  assert.ok(preloadDtsSource.includes('TrackData'))
   assert.ok(pipelineSource.includes('refreshQueueReplayGainTags'))
   assert.ok(engineCppSource.includes('refreshQueueReplayGainTags'))
   assert.ok(pipelineSource.includes('lastPreloadFormatMismatch_'))
