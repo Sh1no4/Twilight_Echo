@@ -9,7 +9,7 @@ import {
   type PlaybackInfo,
   type DspSceneState
 } from '../audioEngineManager'
-import { buildEffectiveAudioProcessingSettings } from '../audioProcessingEffective'
+import { buildEffectiveAudioProcessingSettings } from './audioProcessingEffective'
 import {
   createLegacyDspGraph,
   extractStereoImageFromGraph,

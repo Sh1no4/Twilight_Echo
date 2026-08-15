@@ -2,8 +2,8 @@ import {
   normalizeAudioProcessingSettings,
   type AudioProcessingSettings,
   type EqualizerBand
-} from './audioEngineManager.ts'
-import type { HeadphoneCompensationSettings } from '../shared/audioEngineTypes.ts'
+} from '../audioEngineManager.ts'
+import type { HeadphoneCompensationSettings } from '../../shared/audioEngineTypes.ts'
 
 export type { HeadphoneCompensationSettings }
 

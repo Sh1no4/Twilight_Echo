@@ -14,7 +14,7 @@ import {
 import {
   DEFAULT_HEADPHONE_COMPENSATION,
   normalizeHeadphoneCompensationSettings
-} from '../audioProcessingEffective'
+} from '../audio/audioProcessingEffective'
 import type {
   AppBackgroundKind,
   AppBackgroundPage,

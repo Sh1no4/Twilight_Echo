@@ -20,7 +20,7 @@ const themeContributionSource = readFileSync(
   new URL('./themeContribution.ts', import.meta.url),
   'utf8'
 )
-const pluginHostSource = readFileSync(new URL('../pluginHost.ts', import.meta.url), 'utf8')
+const pluginHostSource = readFileSync(new URL('./host.ts', import.meta.url), 'utf8')
 const pluginApiSource = readFileSync(
   new URL('../../../packages/plugin-api/src/index.ts', import.meta.url),
   'utf8'
