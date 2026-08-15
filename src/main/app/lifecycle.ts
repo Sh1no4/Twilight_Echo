@@ -52,6 +52,14 @@ export function startApp(): void {
   electronApp.setAppUserModelId('com.TwilightEcho.music')
   runtime.launchSettings = { ...runtime.appSettings }
 
+  const policy = runtime.pathPolicy
+  console.info(
+    `[path-policy] mode=${policy.mode} portableRequested=${policy.portableRequested} detectionSource=${policy.detectionSource} fallbackReason=${policy.fallbackReason ?? 'none'}`
+  )
+  console.info(
+    `[path-policy] dataRoot=${policy.dataRoot} standardRoot=${policy.standardRoot} writable=${policy.writable}`
+  )
+
   if (!runtime.appSettings.hardwareAcceleration) {
     app.disableHardwareAcceleration()
   }

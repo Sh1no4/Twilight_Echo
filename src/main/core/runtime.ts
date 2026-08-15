@@ -1,4 +1,4 @@
-import { readAppSettings } from './settings'
+import { getPathPolicy, readAppSettings } from './settings'
 import type { AppSettings } from './types'
 import type { DesktopLyricsTrackPayload } from '../../preload/types'
 import type { BrowserWindow, Tray } from 'electron'
@@ -28,6 +28,7 @@ export interface DiscordActivityData {
 
 export const runtime = {
   appSettings: readAppSettings(),
+  pathPolicy: getPathPolicy(),
   launchSettings: {} as AppSettings,
   pluginManager: null as TwilightPluginManager | null,
   pluginManagerReady: null as Promise<void> | null,

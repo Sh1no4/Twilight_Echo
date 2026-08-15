@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, type IpcMainInvokeEvent } from 'electron'
+import { shell, BrowserWindow, ipcMain, dialog, type IpcMainInvokeEvent } from 'electron'
 import { randomUUID } from 'crypto'
 import { basename, dirname, extname, join, resolve } from 'path'
 import { readFileSync, existsSync, statSync } from 'fs'
@@ -20,7 +20,13 @@ import { createDuplicateDetectionIpcHandlers } from '../library/duplicateDetecti
 import { decodeLyrics } from '../../shared/lyricsEncoding.ts'
 import { runtime } from '../core/runtime'
 import type { AppSettings, PlaybackSession } from '../core/types'
-import { createSettingsSnapshot, getDefaultCachePath, normalizeAppSettings } from '../core/settings'
+import {
+  createSettingsSnapshot,
+  getDefaultCachePath,
+  getPathPolicy,
+  normalizeAppSettings
+} from '../core/settings'
+import { getCategorizedDataPath } from '../core/pathPolicy.ts'
 import { exportAppSettingsForBackup, importAppSettingsBackup } from '../core/settingsBackup'
 import { loadThemeLibrary } from '../themes/themeLibrary.ts'
 import { restoreThemeLibraryFromBackup } from './themes.ts'
@@ -384,15 +390,23 @@ export function setupDataIpc(): void {
     }
   })
 
-  const userDataPath = app.getPath('userData')
-  const MUSIC_LIBRARY_FILE = join(userDataPath, 'music-library.json')
-  const NCM_COOKIE_FILE = join(userDataPath, 'ncm-cookie.json')
-  const PLAYBACK_SESSION_FILE = join(userDataPath, 'playback-session.json')
-  const PLAYLISTS_FILE = join(userDataPath, 'playlists.json')
-  const LYRICS_MANAGEMENT_FILE = join(userDataPath, 'lyrics-management.json')
-  const PLAYBACK_BOOKMARKS_FILE = join(userDataPath, 'playback-bookmarks.json')
+  const policy = getPathPolicy()
+  const MUSIC_LIBRARY_FILE = getCategorizedDataPath(policy, 'database', 'music-library.json')
+  const NCM_COOKIE_FILE = getCategorizedDataPath(policy, 'database', 'ncm-cookie.json')
+  const PLAYBACK_SESSION_FILE = getCategorizedDataPath(policy, 'database', 'playback-session.json')
+  const PLAYLISTS_FILE = getCategorizedDataPath(policy, 'database', 'playlists.json')
+  const LYRICS_MANAGEMENT_FILE = getCategorizedDataPath(
+    policy,
+    'database',
+    'lyrics-management.json'
+  )
+  const PLAYBACK_BOOKMARKS_FILE = getCategorizedDataPath(
+    policy,
+    'database',
+    'playback-bookmarks.json'
+  )
   const tagWriteIpc = createTagWriteIpcHandlers({
-    backupRoot: join(userDataPath, 'tag-backups'),
+    backupRoot: getCategorizedDataPath(policy, 'database', 'tag-backups'),
     assertTrustedSender: (event) =>
       assertTrustedIpcSender(event as IpcMainInvokeEvent, 'library tag mutation IPC'),
     authorizeAudioFile: async (filePath) =>

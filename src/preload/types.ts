@@ -8,6 +8,7 @@ import type { LiquidGlassSettings, SurfaceMaterial } from '../shared/liquidGlass
 import type { LyricsAppearanceSettings } from '../shared/lyricsAppearance.ts'
 import type { LyricsPresetConfig } from '../shared/lyricsPresets.ts'
 import type { PlayerBarSettings } from '../shared/playerBar.ts'
+import type { DataRootDiagnostics } from '../shared/pathPolicy.ts'
 import type {
   StructuredPluginTheme,
   ThemeSelection,
@@ -916,6 +917,7 @@ export interface SettingsSnapshot extends AppSettings {
     settingsFile: string
     userDataPath: string
     activeCachePath: string
+    dataRoot: DataRootDiagnostics
   }
   appVersion: string
   platform: string

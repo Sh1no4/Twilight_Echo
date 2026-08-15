@@ -2,7 +2,8 @@ import { app } from 'electron'
 import { execFileSync } from 'node:child_process'
 import { release } from 'node:os'
 import { stat, readdir } from 'fs/promises'
-import { join, resolve } from 'path'
+import { dirname, join, resolve } from 'path'
+import { getCategorizedDataPath, resolvePathPolicy, type PathPolicy } from './pathPolicy.ts'
 import { createLegacyDspGraph, normalizeDspScenes } from '../../shared/dspGraph'
 import {
   DEFAULT_AUDIO_PROCESSING,
@@ -82,6 +83,21 @@ import {
 } from '../persistence/settingsFile.ts'
 
 let appSettingsLoadIssue: SettingsFileLoadIssue | null = null
+
+/**
+ * 启动期一次性解析数据根路径策略（Stage 1）。本模块先于 runtime.ts 被导入，
+ * 因此这里解析出的策略会先于 `runtime.appSettings = readAppSettings()` 生效，
+ * 保证 settings/opra 等任何文件读写都落在解析后的数据根目录。
+ */
+const PATH_POLICY: PathPolicy = resolvePathPolicy({
+  argv: process.argv,
+  exeDir: dirname(process.execPath),
+  standardUserData: app.getPath('userData')
+})
+
+export function getPathPolicy(): PathPolicy {
+  return PATH_POLICY
+}
 
 export const DEFAULT_DESKTOP_LYRICS: DesktopLyricsSettings = {
   enabled: false,
@@ -260,15 +276,15 @@ export const DEFAULT_SETTINGS: AppSettings = {
 }
 
 export function getSettingsFilePath(): string {
-  return join(app.getPath('userData'), 'settings.json')
+  return getCategorizedDataPath(PATH_POLICY, 'config', 'settings.json')
 }
 
 export function getDefaultCachePath(): string {
-  return join(app.getPath('userData'), 'music-cache')
+  return getCategorizedDataPath(PATH_POLICY, 'cache', 'music-cache')
 }
 
 export function getOpraDatabaseCachePath(): string {
-  return join(app.getPath('userData'), 'opra', 'database_v1.jsonl')
+  return getCategorizedDataPath(PATH_POLICY, 'database', 'opra', 'database_v1.jsonl')
 }
 
 export function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
@@ -911,7 +927,8 @@ export function createSettingsSnapshot(
     paths: {
       settingsFile: getSettingsFilePath(),
       userDataPath: app.getPath('userData'),
-      activeCachePath: launch.musicCachePath || getDefaultCachePath()
+      activeCachePath: launch.musicCachePath || getDefaultCachePath(),
+      dataRoot: PATH_POLICY
     },
     appVersion: app.getVersion(),
     platform: process.platform,

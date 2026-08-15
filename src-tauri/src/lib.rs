@@ -1,15 +1,27 @@
 use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
+
+mod path_policy;
 
 #[tauri::command]
 fn relaunch(app: AppHandle) {
     app.restart();
 }
 
+fn categorized_file(app: &AppHandle, category: &str, name: &str) -> PathBuf {
+    let policy = path_policy::get_path_policy(app);
+    path_policy::categorized_data_path(&policy, category, &[name])
+}
+
 fn user_data_file(app: &AppHandle, name: &str) -> PathBuf {
-    app.path().app_data_dir().expect("app data directory").join(name)
+    if name == "settings.json" {
+        categorized_file(app, "config", name)
+    } else {
+        categorized_file(app, "database", name)
+    }
 }
 
 fn load_json_file(app: &AppHandle, name: &str, fallback: Value) -> Value {
@@ -34,13 +46,15 @@ fn settings_snapshot(app: &AppHandle, settings: &Value) -> Value {
         .app_data_dir()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
+    let path_policy = path_policy::get_path_policy(app);
     json!({
         "settings": settings,
         "defaults": { "cachePath": "" },
         "paths": {
             "settingsFile": settings_file,
             "userDataPath": user_data_path,
-            "activeCachePath": ""
+            "activeCachePath": "",
+            "dataRoot": path_policy
         },
         "appVersion": "1.0.5",
         "platform": "windows",
@@ -88,6 +102,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .manage(path_policy::PathPolicyState(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             relaunch,
             settings_get,
