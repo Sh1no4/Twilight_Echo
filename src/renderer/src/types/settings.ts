@@ -8,6 +8,7 @@ import type { LyricsAppearanceSettings } from '../../../shared/lyricsAppearance.
 import type { LyricsPresetConfig } from '../../../shared/lyricsPresets.ts'
 import type { PlayerBarSettings } from '../../../shared/playerBar.ts'
 import type { DataRootDiagnostics } from '../../../shared/pathPolicy.ts'
+import type { DataMigrationDiagnostics } from '../../../shared/dataMigration.ts'
 
 export type { MiniPlayerSettings } from '../../../shared/miniPlayer.ts'
 export type { MotionPreference } from '../../../shared/motion.ts'
@@ -386,6 +387,7 @@ export interface SettingsSnapshot {
     userDataPath: string
     activeCachePath: string
     dataRoot: DataRootDiagnostics
+    migration: DataMigrationDiagnostics | null
   }
   appVersion: string
   platform: string

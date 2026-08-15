@@ -235,3 +235,30 @@ export function getCategorizedDataPath(
   const base = policy.mode === 'portable' ? policy.categories[category] : policy.standardRoot
   return segments.length > 0 ? join(base, ...segments) : base
 }
+
+/**
+ * 解析分类目录下的应用数据路径，与 `getCategorizedDataPath` 互补：
+ *
+ * - `portable`：`data/{category}/{portableSegments…}`，与 `getCategorizedDataPath`
+ *   一致，但允许目标就是分类目录本身（`portableSegments` 为空数组，例如
+ *   plugins 目录、plugin-data 目录、logs 目录）。
+ * - `standard` / `fallback`：`{standardRoot}/{legacyRelative}`，沿用 legacy
+ *   扁平布局（例如 `standardRoot/plugins`、`standardRoot/logs/plugins`），
+ *   保证旧安装路径不变。
+ *
+ * 迁移引擎与插件/主题路径路由使用同一入口，保证"迁移目标"与"应用实际读取
+ * 路径"永远一致。
+ */
+export function getCategorizedAppPath(
+  policy: PathPolicy,
+  category: DataRootCategory,
+  portableSegments: readonly string[],
+  legacyRelative: string
+): string {
+  if (policy.mode === 'portable') {
+    return portableSegments.length > 0
+      ? join(policy.categories[category], ...portableSegments)
+      : policy.categories[category]
+  }
+  return legacyRelative ? join(policy.standardRoot, legacyRelative) : policy.standardRoot
+}

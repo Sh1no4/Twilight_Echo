@@ -9,6 +9,7 @@ import type { LyricsAppearanceSettings } from '../shared/lyricsAppearance.ts'
 import type { LyricsPresetConfig } from '../shared/lyricsPresets.ts'
 import type { PlayerBarSettings } from '../shared/playerBar.ts'
 import type { DataRootDiagnostics } from '../shared/pathPolicy.ts'
+import type { DataMigrationDiagnostics } from '../shared/dataMigration.ts'
 import type {
   StructuredPluginTheme,
   ThemeSelection,
@@ -918,6 +919,7 @@ export interface SettingsSnapshot extends AppSettings {
     userDataPath: string
     activeCachePath: string
     dataRoot: DataRootDiagnostics
+    migration: DataMigrationDiagnostics | null
   }
   appVersion: string
   platform: string

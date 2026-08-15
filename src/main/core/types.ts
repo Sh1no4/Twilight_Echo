@@ -17,6 +17,7 @@ import type { LyricsAppearanceSettings } from '../../shared/lyricsAppearance.ts'
 import type { LyricsPresetConfig } from '../../shared/lyricsPresets.ts'
 import type { PlayerBarSettings } from '../../shared/playerBar.ts'
 import type { DataRootDiagnostics } from '../../shared/pathPolicy.ts'
+import type { DataMigrationDiagnostics } from '../../shared/dataMigration.ts'
 
 export type { MiniPlayerSettings } from '../../shared/miniPlayer'
 export type { MotionPreference } from '../../shared/motion.ts'
@@ -266,6 +267,8 @@ export interface SettingsSnapshot extends AppSettings {
     userDataPath: string
     activeCachePath: string
     dataRoot: DataRootDiagnostics
+    /** 旧数据迁移诊断；未运行迁移时为 null（例如 standard 模式本就不迁移）。 */
+    migration: DataMigrationDiagnostics | null
   }
   appVersion: string
   platform: string

@@ -36,11 +36,16 @@ fn save_json_file(app: &AppHandle, name: &str, data: &Value) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let _ = fs::write(path, serde_json::to_vec_pretty(data).expect("serialize data"));
+    let _ = fs::write(
+        path,
+        serde_json::to_vec_pretty(data).expect("serialize data"),
+    );
 }
 
 fn settings_snapshot(app: &AppHandle, settings: &Value) -> Value {
-    let settings_file = user_data_file(app, "settings.json").to_string_lossy().into_owned();
+    let settings_file = user_data_file(app, "settings.json")
+        .to_string_lossy()
+        .into_owned();
     let user_data_path = app
         .path()
         .app_data_dir()
@@ -54,7 +59,8 @@ fn settings_snapshot(app: &AppHandle, settings: &Value) -> Value {
             "settingsFile": settings_file,
             "userDataPath": user_data_path,
             "activeCachePath": "",
-            "dataRoot": path_policy
+            "dataRoot": path_policy,
+            "migration": null
         },
         "appVersion": "1.0.5",
         "platform": "windows",

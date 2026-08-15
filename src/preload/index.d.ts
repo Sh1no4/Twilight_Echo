@@ -18,6 +18,7 @@ import type { LyricsPresetConfig } from '../shared/lyricsPresets.ts'
 import type { LiquidGlassSettings, SurfaceMaterial } from '../shared/liquidGlass.ts'
 import type { PlayerBarSettings } from '../shared/playerBar.ts'
 import type { DataRootDiagnostics } from '../shared/pathPolicy.ts'
+import type { DataMigrationDiagnostics } from '../shared/dataMigration.ts'
 import type {
   ThemeAssetReference,
   ThemeAssetType,
@@ -919,6 +920,7 @@ interface SettingsSnapshot extends AppSettings {
     userDataPath: string
     activeCachePath: string
     dataRoot: DataRootDiagnostics
+    migration: DataMigrationDiagnostics | null
   }
   appVersion: string
   platform: string

@@ -5,6 +5,7 @@ import { pathToFileURL } from 'url'
 import { fetch as undiciFetch } from 'undici'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { runtime } from '../core/runtime'
+import { runDataMigration } from '../core/dataMigration.ts'
 import { ensureMusicCacheDirectories } from '../cache/ncmCache'
 import { kwinHasInputMethodConfigured } from '../imeBackend'
 import {
@@ -44,7 +45,11 @@ import { setupNetworkSourceIpc } from '../network/networkIpc.ts'
 import { installElectronSecurity } from '../security/electronSecurity.ts'
 import { createRemoteMediaRequestHandler } from '../security/remoteMediaGrants.ts'
 import { createWindow } from './window'
-import { consumeAppSettingsLoadIssue, supportsNativeWindowTransparency } from '../core/settings'
+import {
+  consumeAppSettingsLoadIssue,
+  setDataMigrationDiagnostics,
+  supportsNativeWindowTransparency
+} from '../core/settings'
 import type { SettingsFileLoadIssue } from '../persistence/settingsFile.ts'
 
 export function startApp(): void {
@@ -191,6 +196,16 @@ export function startApp(): void {
     app.whenReady().then(async () => {
       installElectronSecurity()
       await initializeLocalPathGrants(runtime.launchSettings)
+
+      // Stage 2：旧数据迁移。portable 模式把 legacy 扁平数据补齐到分类目录，
+      // standard/fallback 返回 not-needed。必须早于任何 settings/data/theme/plugin
+      // 读写与窗口创建，迁移诊断随后暴露到 settings snapshot。
+      setDataMigrationDiagnostics(
+        runDataMigration({
+          policy: runtime.pathPolicy,
+          legacyRoot: runtime.pathPolicy.standardRoot
+        })
+      )
 
       // Register cover:// protocol — Chromium reads cached image assets directly from disk,
       // no IPC, no base64, browser manages decode cache natively.

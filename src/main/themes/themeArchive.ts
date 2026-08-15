@@ -1,5 +1,4 @@
 import extract from 'extract-zip'
-import { app } from 'electron'
 import {
   lstat,
   mkdir,
@@ -26,6 +25,8 @@ import {
 } from '../../shared/theme.ts'
 import { validateThemeArchiveBuffer as preflightThemeArchive } from './themeArchiveValidation.ts'
 import { tryParseJsonWithNestingLimit } from '../security/jsonSafety.ts'
+import { runtime } from '../core/runtime.ts'
+import { getCategorizedAppPath } from '../core/pathPolicy.ts'
 
 const MAX_THEME_ARCHIVE_BYTES = 20 * 1024 * 1024
 const MAX_THEME_EXTRACTED_BYTES = 40 * 1024 * 1024
@@ -276,7 +277,10 @@ async function collectSafeFiles(root: string, allowMissing = false): Promise<Zip
 
 function getThemeAssetRoot(profileId: string): string {
   const safeId = profileId.replace(/[^a-zA-Z0-9._-]/g, '_')
-  return join(app.getPath('userData'), 'theme-assets', safeId)
+  return join(
+    getCategorizedAppPath(runtime.pathPolicy, 'database', ['theme-assets'], 'theme-assets'),
+    safeId
+  )
 }
 
 export async function importThemeAsset(

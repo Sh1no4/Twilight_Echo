@@ -106,7 +106,11 @@ fn standard_policy(
     fallback_reason: Option<&'static str>,
 ) -> PathPolicy {
     PathPolicy {
-        mode: if fallback_reason.is_some() { "fallback" } else { "standard" },
+        mode: if fallback_reason.is_some() {
+            "fallback"
+        } else {
+            "standard"
+        },
         portable_requested,
         detection_source,
         data_root: standard_root.to_string_lossy().into_owned(),
@@ -130,13 +134,7 @@ pub fn resolve_path_policy(app: &AppHandle) -> PathPolicy {
     let (portable, source) = detect_portable_request(exe_dir.as_deref());
 
     if !portable {
-        return standard_policy(
-            &standard_root,
-            &standard_categories,
-            false,
-            "none",
-            None,
-        );
+        return standard_policy(&standard_root, &standard_categories, false, "none", None);
     }
 
     let Some(exe_dir) = exe_dir else {
@@ -174,7 +172,11 @@ pub fn resolve_path_policy(app: &AppHandle) -> PathPolicy {
         &standard_categories,
         true,
         source,
-        Some(if root_writable { "category-not-writable" } else { "data-dir-not-writable" }),
+        Some(if root_writable {
+            "category-not-writable"
+        } else {
+            "data-dir-not-writable"
+        }),
     )
 }
 

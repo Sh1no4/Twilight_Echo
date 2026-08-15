@@ -1,5 +1,3 @@
-import { app } from 'electron'
-import { join } from 'node:path'
 import {
   createDefaultThemeLibraryDocument,
   type ThemeLibrarySnapshot,
@@ -9,17 +7,20 @@ import {
   type ThemeWindowInheritance
 } from '../../shared/theme.ts'
 import { runtime } from '../core/runtime.ts'
+import { getCategorizedAppPath } from '../core/pathPolicy.ts'
 import { ThemeLibraryRepository } from './themeLibraryRepository.ts'
 
 let repository: ThemeLibraryRepository | null = null
 
 function getRepository(): ThemeLibraryRepository {
   if (!repository) {
-    repository = new ThemeLibraryRepository(join(app.getPath('userData'), 'themes.json'), () =>
-      createDefaultThemeLibraryDocument(
-        runtime.appSettings.activeTheme,
-        runtime.appSettings.themeWindowInheritance
-      )
+    repository = new ThemeLibraryRepository(
+      getCategorizedAppPath(runtime.pathPolicy, 'database', ['themes.json'], 'themes.json'),
+      () =>
+        createDefaultThemeLibraryDocument(
+          runtime.appSettings.activeTheme,
+          runtime.appSettings.themeWindowInheritance
+        )
     )
   }
   return repository

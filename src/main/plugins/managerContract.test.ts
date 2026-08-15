@@ -86,7 +86,10 @@ test('plugin manager routes tep installs through the final hash and confirmation
 })
 
 test('plugin updates stage, trial activate, and roll back without deleting the prior version', () => {
-  assert.match(managerSource, /staging: join\(userData, 'plugin-staging'\)/)
+  assert.match(
+    managerSource,
+    /staging: getCategorizedAppPath\(policy, 'cache', \['plugin-staging'\], 'plugin-staging'\)/
+  )
   assert.match(managerSource, /await commitStagedPluginUpdate\(/)
   assert.match(managerSource, /await this\.trialActivatePlugin\(candidate\)/)
   assert.match(managerSource, /activeVersion: manifest\.version/)
@@ -250,7 +253,10 @@ test('plugin manager exposes per-plugin logs for troubleshooting', () => {
   assert.match(managerSource, /async getLog\(id: string\)/)
   assert.match(managerSource, /raw\.slice\(-20000\)/)
   assert.match(managerSource, /private appendLog\(descriptor: TwilightPluginDescriptor/)
-  assert.match(managerSource, /logs', 'plugins'/)
+  assert.match(
+    managerSource,
+    /getCategorizedAppPath\(policy, 'logs', \['plugins'\], 'logs\/plugins'\)/
+  )
 })
 
 test('plugin manager tracks provider health for calls and plugin failures', () => {

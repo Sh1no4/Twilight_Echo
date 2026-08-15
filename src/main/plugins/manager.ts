@@ -1,4 +1,4 @@
-import { app, dialog, shell, utilityProcess, type UtilityProcess } from 'electron'
+import { dialog, shell, utilityProcess, type UtilityProcess } from 'electron'
 import { randomUUID } from 'crypto'
 import { existsSync, mkdirSync, realpathSync } from 'fs'
 import { cp, readdir, readFile, rm, stat, writeFile } from 'fs/promises'
@@ -34,6 +34,8 @@ import {
 } from './packageSecurity.ts'
 import { redactSensitiveText } from '../security/secureStorage.ts'
 import { protectProviderMedia } from '../security/remoteMediaGrants.ts'
+import { getCategorizedAppPath } from '../core/pathPolicy.ts'
+import { getPathPolicy } from '../core/settings.ts'
 import { normalizeThemeContribution } from './themeContribution.ts'
 import type {
   PluginHostApiResult,
@@ -272,13 +274,13 @@ export class TwilightPluginManager extends EventEmitter {
     logs: string
     stateFile: string
   } {
-    const userData = app.getPath('userData')
+    const policy = getPathPolicy()
     return {
-      plugins: join(userData, 'plugins'),
-      staging: join(userData, 'plugin-staging'),
-      data: join(userData, 'plugin-data'),
-      logs: join(userData, 'logs', 'plugins'),
-      stateFile: join(userData, STATE_FILE)
+      plugins: getCategorizedAppPath(policy, 'plugins', [], 'plugins'),
+      staging: getCategorizedAppPath(policy, 'cache', ['plugin-staging'], 'plugin-staging'),
+      data: getCategorizedAppPath(policy, 'plugin-data', [], 'plugin-data'),
+      logs: getCategorizedAppPath(policy, 'logs', ['plugins'], 'logs/plugins'),
+      stateFile: getCategorizedAppPath(policy, 'plugins', ['plugin-state.json'], STATE_FILE)
     }
   }
 

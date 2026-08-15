@@ -1,4 +1,3 @@
-import { app } from 'electron'
 import { stat } from 'fs/promises'
 import { dirname, extname, resolve } from 'path'
 import type { AppSettings } from '../core/types'
@@ -246,7 +245,11 @@ export async function resolveAuthorizedShowItemPath(filePath: string): Promise<s
 }
 
 async function initializeLocalPathGrantsOnce(settings: AppSettings): Promise<void> {
-  await appDataGrants.grantRoot(app.getPath('userData'))
+  const policy = runtime.pathPolicy
+  await appDataGrants.grantRoot(policy.standardRoot)
+  if (policy.dataRoot !== policy.standardRoot) {
+    await appDataGrants.grantRoot(policy.dataRoot)
+  }
 
   for (const folder of settings.libraryFolders ?? []) {
     if (typeof folder === 'string' && folder.trim()) {

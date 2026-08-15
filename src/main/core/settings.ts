@@ -53,6 +53,7 @@ import {
 } from '../../shared/miniPlayer'
 import { DEFAULT_SOFTWARE_VOLUME } from '../../shared/audioProcessingOptions'
 import { normalizeThemeSelection, normalizeThemeWindowInheritance } from '../../shared/theme.ts'
+import type { DataMigrationDiagnostics } from '../../shared/dataMigration.ts'
 import { normalizeMotionPreference } from '../../shared/motion.ts'
 import {
   DEFAULT_LIQUID_GLASS,
@@ -97,6 +98,20 @@ const PATH_POLICY: PathPolicy = resolvePathPolicy({
 
 export function getPathPolicy(): PathPolicy {
   return PATH_POLICY
+}
+
+let dataMigrationDiagnostics: DataMigrationDiagnostics | null = null
+
+/**
+ * 记录最近一次旧数据迁移的诊断摘要，供 settings snapshot 暴露。
+ * 由启动生命周期在 `runDataMigration` 之后写入；未迁移时为 null。
+ */
+export function setDataMigrationDiagnostics(diagnostics: DataMigrationDiagnostics | null): void {
+  dataMigrationDiagnostics = diagnostics
+}
+
+export function getDataMigrationDiagnostics(): DataMigrationDiagnostics | null {
+  return dataMigrationDiagnostics
 }
 
 export const DEFAULT_DESKTOP_LYRICS: DesktopLyricsSettings = {
@@ -928,7 +943,8 @@ export function createSettingsSnapshot(
       settingsFile: getSettingsFilePath(),
       userDataPath: app.getPath('userData'),
       activeCachePath: launch.musicCachePath || getDefaultCachePath(),
-      dataRoot: PATH_POLICY
+      dataRoot: PATH_POLICY,
+      migration: dataMigrationDiagnostics
     },
     appVersion: app.getVersion(),
     platform: process.platform,
