@@ -83,14 +83,14 @@ function resolveSystemTone(): ThemeTone {
  * here because the renderer must not import from src/main/**.
  */
 
-const DEFAULT_EQ_BANDS = [
-  31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000
-].map((frequency) => ({
-  frequency,
-  gain: 0,
-  q: 1,
-  filterType: 'peak' as const
-}))
+const DEFAULT_EQ_BANDS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000].map(
+  (frequency) => ({
+    frequency,
+    gain: 0,
+    q: 1,
+    filterType: 'peak' as const
+  })
+)
 
 const DEFAULT_AUDIO_PROCESSING: AudioProcessingSettings = {
   dspEnabled: false,
@@ -374,9 +374,11 @@ function makeStubMethod(surface: string, method: string): (...args: unknown[]) =
     const m = method.toLowerCase()
     if (m.startsWith('on')) return () => {}
     if (m.startsWith('list') || m.startsWith('search')) return Promise.resolve([])
-    if (m.startsWith('get') || m.startsWith('load') || m.startsWith('fetch')) return Promise.resolve(null)
+    if (m.startsWith('get') || m.startsWith('load') || m.startsWith('fetch'))
+      return Promise.resolve(null)
     if (m.startsWith('is') || m === 'toggle') return Promise.resolve(false)
-    if (m === 'cancel' || m === 'clear' || m === 'reset' || m === 'delete') return Promise.resolve(true)
+    if (m === 'cancel' || m === 'clear' || m === 'reset' || m === 'delete')
+      return Promise.resolve(true)
     if (m.startsWith('import') || m.startsWith('choose')) return Promise.resolve(null)
     return Promise.resolve(undefined)
   }
@@ -429,9 +431,9 @@ export function installTauriHostBridge(): void {
     window: {
       minimize: () => void currentWindow.minimize(),
       toggleMaximize: () => {
-        void currentWindow.isMaximized().then((maximized) =>
-          maximized ? currentWindow.unmaximize() : currentWindow.maximize()
-        )
+        void currentWindow
+          .isMaximized()
+          .then((maximized) => (maximized ? currentWindow.unmaximize() : currentWindow.maximize()))
       },
       close: () => void currentWindow.close()
     },
@@ -474,13 +476,14 @@ export function installTauriHostBridge(): void {
     },
     plugins: {
       list: () => invoke('plugins_list'),
+      enable: (id: string) => invoke('plugins_enable', { id }),
+      disable: (id: string) => invoke('plugins_disable', { id }),
+      uninstall: (id: string, options?: { removeData?: boolean }) =>
+        invoke('plugins_uninstall', { id, removeData: options?.removeData }),
+      openLog: (id: string) => invoke('plugins_open_log', { id }),
+      getLog: (id: string) => invoke('plugins_get_log', { id }),
       installFromPath: () => Promise.reject(capabilityError('plugins')),
       chooseAndInstall: () => Promise.reject(capabilityError('plugins')),
-      enable: () => Promise.reject(capabilityError('plugins')),
-      disable: () => Promise.reject(capabilityError('plugins')),
-      uninstall: () => Promise.reject(capabilityError('plugins')),
-      openLog: () => Promise.reject(capabilityError('plugins')),
-      getLog: () => Promise.reject(capabilityError('plugins')),
       listIndex: () => Promise.reject(capabilityError('plugins')),
       refreshIndex: () => Promise.reject(capabilityError('plugins')),
       getIndexStatus: () => Promise.reject(capabilityError('plugins')),
@@ -548,9 +551,7 @@ export function installTauriHostBridge(): void {
     providers: {
       list: () => invoke('providers_list'),
       call: () =>
-        Promise.reject(
-          capabilityError('providers', 'Provider 未启用：当前运行时不支持在线音源')
-        ),
+        Promise.reject(capabilityError('providers', 'Provider 未启用：当前运行时不支持在线音源')),
       cancel: () => {}
     },
     extensions: {
@@ -566,7 +567,12 @@ export function installTauriHostBridge(): void {
       savePlaybackSession: async () => undefined,
       clearPlaybackSession: async () => undefined,
       loadPlaylists: async () => null,
-      savePlaylists: async () => ({ version: 2, revision: 0, savedAt: new Date().toISOString(), data: [] })
+      savePlaylists: async () => ({
+        version: 2,
+        revision: 0,
+        savedAt: new Date().toISOString(),
+        data: []
+      })
     },
     audioEngine: {
       getAudioOutputState: async () => defaultAudioOutputState(),

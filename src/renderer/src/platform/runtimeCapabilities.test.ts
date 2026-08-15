@@ -91,23 +91,44 @@ test('runtime detection is safe in a non-browser environment', () => {
 
 /* ── Contract: the Tauri bridge must reject, never lie ────────────────── */
 
-test('Tauri bridge rejects unimplemented plugin write surfaces instead of returning fake results', () => {
+test('Tauri bridge wires plugin lifecycle commands and rejects the remaining install/index surfaces', () => {
   const source = readFileSync(new URL('./tauriHostBridge.ts', import.meta.url), 'utf8')
   const pluginsSection = source.slice(source.indexOf('plugins: {'), source.indexOf('fonts: {'))
-  // plugins.list is a real Stage 4 command; every write/side-effect op rejects.
+  // plugins.list plus the five Stage 5A lifecycle ops are real Tauri commands.
   assert.match(
     pluginsSection,
     /list: \(\) => invoke\('plugins_list'\)/,
     'plugins.list must invoke the real plugins_list command'
   )
+  assert.match(
+    pluginsSection,
+    /enable: \(id: string\) => invoke\('plugins_enable', \{ id \}\)/,
+    'plugins.enable must invoke the real plugins_enable command'
+  )
+  assert.match(
+    pluginsSection,
+    /disable: \(id: string\) => invoke\('plugins_disable', \{ id \}\)/,
+    'plugins.disable must invoke the real plugins_disable command'
+  )
+  assert.match(
+    pluginsSection,
+    /uninstall: \(id: string, options\?: \{ removeData\?: boolean \}\) =>\s*invoke\('plugins_uninstall', \{ id, removeData: options\?\.removeData \}\)/,
+    'plugins.uninstall must invoke the real plugins_uninstall command'
+  )
+  assert.match(
+    pluginsSection,
+    /openLog: \(id: string\) => invoke\('plugins_open_log', \{ id \}\)/,
+    'plugins.openLog must invoke the real plugins_open_log command'
+  )
+  assert.match(
+    pluginsSection,
+    /getLog: \(id: string\) => invoke\('plugins_get_log', \{ id \}\)/,
+    'plugins.getLog must invoke the real plugins_get_log command'
+  )
+  // Install (.tep) and marketplace index surfaces are not migrated yet and must reject.
   for (const method of [
     'installFromPath',
     'chooseAndInstall',
-    'enable',
-    'disable',
-    'uninstall',
-    'openLog',
-    'getLog',
     'listIndex',
     'refreshIndex',
     'getIndexStatus',

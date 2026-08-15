@@ -117,6 +117,11 @@ pub fn run() {
             data_load_music_library,
             data_save_music_library,
             plugins::plugins_list,
+            plugins::plugins_enable,
+            plugins::plugins_disable,
+            plugins::plugins_uninstall,
+            plugins::plugins_get_log,
+            plugins::plugins_open_log,
             plugins::providers_list,
             plugins::extensions_list
         ])
