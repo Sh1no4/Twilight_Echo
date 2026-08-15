@@ -181,7 +181,7 @@ pub fn resolve_path_policy(app: &AppHandle) -> PathPolicy {
 /// 取已解析（必要时惰性解析并缓存）的路径策略。
 pub fn get_path_policy(app: &AppHandle) -> PathPolicy {
     let state = app.state::<PathPolicyState>();
-    let mut guard = state.0.lock().expect("path policy state lock");
+    let mut guard = state.inner().0.lock().expect("path policy state lock");
     if guard.is_none() {
         *guard = Some(resolve_path_policy(app));
     }
