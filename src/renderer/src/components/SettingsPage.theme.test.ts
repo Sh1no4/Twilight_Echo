@@ -38,18 +38,24 @@ test('liquid glass settings navigation has its own readable surface layer', () =
   )
   assert.match(
     styles,
-    /\[data-te-settings-navigation-liquid-glass='on'\][\s\S]{0,280}\.settings-preview-nav\s+\.preview-nav-item\s*\{[\s\S]*?color:\s*var\(--te-settings-text\)/
+    /\[data-te-settings-navigation-liquid-glass='on'\][\s\S]{0,280}\.settings-preview-nav\s+\.preview-nav-item\s*\{[\s\S]*?color:\s*var\(--te-lg-context-label\)/
   )
 })
 
 test('liquid glass settings expose unified and independent targets', () => {
   assert.match(liquidGlassSettingsSource, /全局液态玻璃/)
+  assert.match(liquidGlassSettingsSource, /主导航液态玻璃/)
   assert.match(liquidGlassSettingsSource, /播放栏液态玻璃/)
   assert.match(liquidGlassSettingsSource, /设置导航液态玻璃/)
-  assert.match(liquidGlassSettingsSource, /首页卡片液态玻璃/)
+  assert.match(liquidGlassSettingsSource, /首页媒体焦点液态玻璃/)
+  assert.match(liquidGlassSettingsSource, /navigationEnabled/)
   assert.match(liquidGlassSettingsSource, /playbarEnabled/)
   assert.match(liquidGlassSettingsSource, /settingsNavigationEnabled/)
   assert.match(liquidGlassSettingsSource, /activeLiquidGlassTheme/)
+  assert.match(liquidGlassSettingsSource, /恢复默认参数/)
+  assert.match(liquidGlassSettingsSource, /function resetLiquidGlassParameters\(\)/)
+  assert.match(liquidGlassSettingsSource, /DEFAULT_LIQUID_GLASS\.light/)
+  assert.match(liquidGlassSettingsSource, /navigationEnabled: current\.navigationEnabled/)
 })
 
 test('dark settings folder controls and switches avoid light fixed-color surfaces', () => {

@@ -401,10 +401,18 @@ export function buildKaraokeMaskPlan(
     }
   })
 
+  const keyframes = normalizeKeyframes(frames)
+  const finalFrame = keyframes[keyframes.length - 1]
+  if (finalFrame?.offset === 1) {
+    keyframes[keyframes.length - 1] = { ...finalFrame, maskPosition: '0px 0' }
+  } else {
+    keyframes.push({ offset: 1, maskPosition: '0px 0' })
+  }
+
   return {
     maskImage: gradient,
     maskSize: `${totalAspect * 100}% 100%`,
-    keyframes: normalizeKeyframes(frames),
+    keyframes,
     timing: { duration: totalFadeDuration, fill: 'both' }
   }
 }

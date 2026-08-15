@@ -3505,15 +3505,16 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 
 .player-bar-liquid {
   --te-lg-sheen-rgb: 255, 255, 255;
-  --te-lg-surface-rgb: 255, 255, 255;
-  --te-lg-shade-rgb: 0, 0, 0;
-  --te-lg-drop-rgb: 15, 23, 42;
+  --te-lg-surface-rgb: var(--te-lg-context-rgb, 241, 245, 249);
+  --te-lg-shade-rgb: var(--te-lg-context-label-rgb, 15, 23, 42);
+  --te-lg-drop-rgb: var(--te-lg-context-label-rgb, 15, 23, 42);
   --te-lg-rim-strength: 0.55;
   --te-lg-top-wash-alpha: 0.11;
   --te-lg-bottom-density-alpha: 0.1;
   --te-lg-shade-alpha: 0.08;
   --te-lg-drop-near-alpha: 0.07;
-  --te-lg-drop-alpha: 0.16;
+  --te-lg-drop-alpha: var(--te-lg-context-shadow-alpha, 0.16);
+  --te-lg-press-color: transparent;
   background: transparent !important;
   border-color: transparent !important;
   /* Rim stays outside the filter so it reads crisp instead of smeared. */
@@ -3538,6 +3539,11 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   /* Elasticity lets the playbar reach toward the cursor; 0 keeps it pinned. */
   transform: translate(var(--te-lg-elastic-x, 0px), var(--te-lg-elastic-y, 0px));
   background:
+    radial-gradient(
+      circle at var(--te-lg-press-x, 50%) var(--te-lg-press-y, 50%),
+      var(--te-lg-press-color) 0%,
+      transparent 30%
+    ),
     radial-gradient(
       135% 210% at var(--te-lg-light-x, 50%) var(--te-lg-light-y, 42%),
       rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.36)) 0%,
@@ -3567,11 +3573,27 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   filter: url(#te-lg-playbar);
 }
 
+html[data-te-liquid-glass-source='solid'] .player-bar-liquid .player-bar-warp {
+  background:
+    radial-gradient(
+      135% 210% at var(--te-lg-light-x, 50%) var(--te-lg-light-y, 42%),
+      color-mix(in srgb, var(--te-lg-context-rim) 24%, transparent),
+      transparent 67%
+    ),
+    var(--te-lg-context-material);
+}
+
 /* Grid children are not positioned by default, so they would paint below a z-index 0
    sibling. Lifting them keeps every control above the warp layer. */
 .player-bar-liquid > *:not(.player-bar-warp) {
   position: relative;
   z-index: 1;
+}
+
+.player-bar-liquid:active {
+  --te-lg-press-color: color-mix(in srgb, var(--te-lg-context-rim) 52%, transparent);
+  transform: scale(0.996);
+  transition-duration: 90ms;
 }
 
 /* Dark tone only needs to move the bases: the sheen stays light because it is a
@@ -3584,7 +3606,6 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
    this component, so a plain descendant selector is already correct: scoping
    appends the id to the subject and leaves the document-level ancestor alone. */
 html[data-theme='dark'] .player-bar-liquid {
-  --te-lg-surface-rgb: 126, 134, 152;
   --te-lg-drop-rgb: var(--te-lg-shade-rgb);
   --te-lg-rim-strength: 0.4;
   --te-lg-top-wash-alpha: 0.055;
@@ -3610,6 +3631,29 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
   filter: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .player-bar-liquid .player-bar-warp {
+    background: var(--te-lg-context-surface-solid);
+    filter: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .player-bar-liquid {
+    border-color: CanvasText !important;
+    box-shadow: none !important;
+  }
+
+  .player-bar-liquid .player-bar-warp {
+    background: Canvas;
+    filter: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
 
 /* ===== Mini shape =====

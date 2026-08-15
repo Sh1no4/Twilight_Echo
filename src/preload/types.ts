@@ -44,6 +44,7 @@ export type {
 } from '../shared/frequencyResponse.ts'
 export type { MotionPreference } from '../shared/motion.ts'
 export type {
+  LiquidGlassCoverage,
   LiquidGlassSettings,
   LiquidGlassTheme,
   SurfaceMaterial
@@ -217,6 +218,7 @@ export type DesktopLyricsLayout = 'multi' | 'bilingual'
 export interface DesktopLyricsSettings {
   enabled: boolean
   fontSize: number
+  /** `follow` resolves from the active PlayingMusic lyric style; other values are overrides. */
   fontFamily: string
   fontWeight: number
   color: string
@@ -838,7 +840,7 @@ export interface AppSettings {
   uiDensity: UiDensity
   appBackground: AppBackgroundSettings
   cardAppearance: CardAppearanceSettings
-  /** Switches cards and the playbar between the standard surface and liquid glass. */
+  /** Switches navigation and playback controls between standard surfaces and liquid glass. */
   surfaceMaterial: SurfaceMaterial
   liquidGlass: LiquidGlassSettings
   /** Standard vs mini playbar shape, plus now-playing auto-hide. */

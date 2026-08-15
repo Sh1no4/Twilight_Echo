@@ -2503,20 +2503,17 @@
       user's own background image, so it needs a denser legibility floor than a
       card floating over an app-coloured page.
 
-   So the page mixes its own glass from the same shared roles the canonical
-   cards and the playbar use (--te-lg-*). Its independent profile maps those
+   The Hero mixes its own Clear material from the same shared roles the
+   navigation and playbar use (--te-lg-*). Its independent profile maps those
    roles to --te-home-lg-*; only the veil density is local.
 
-   Readability contract: every text-bearing surface keeps an opaque-enough
-   substrate that body copy clears 4.5:1 against the wallpaper's worst case
-   (pure black and pure white), and secondary copy is pushed toward ink because
-   a mid-grey muted token loses contrast the moment its backing turns
-   translucent. Decorative panes may be thinner; text-bearing ones may not.
+   Readability contract: the Hero copy keeps an adaptive opaque-enough substrate
+   so it clears the wallpaper's worst case (pure black and pure white).
 
-   The home surfaces are included in LIQUID_GLASS_CARD_SELECTOR so the shared
-   pointer tracker and visibility observer cover them without per-card listeners. */
+   Only the Hero is included in LIQUID_GLASS_CARD_SELECTOR, so the shared pointer
+   tracker and visibility observer never run for ordinary home content. */
 
-html:is([data-te-surface-material='liquidGlass'], [data-te-home-liquid-glass='on']) .home {
+html[data-te-home-liquid-glass='on'] .home {
   /* Veil roles, densest first. Text-bearing surfaces use `panel` or `strong`;
      `soft` is for decorative or already-covered areas. */
   --home-glass-veil-strong: 82%;
@@ -2546,20 +2543,9 @@ html[data-te-home-liquid-glass='on'] .home {
   --home-lg-filter: url(#te-lg-home-card);
 }
 
-/* ── Shared glass recipe for the page's own panels ─────────────────────── */
+/* ── Clear material recipe for the media hero ─────────────────────────── */
 
-html:is([data-te-surface-material='liquidGlass'], [data-te-home-liquid-glass='on'])
-  .home
-  :is(
-    .feature-card,
-    .signal-card,
-    .chart-panel,
-    .cal-panel,
-    .empty-stage,
-    .figures,
-    .masthead-shuffle,
-    .block-more
-  ) {
+html[data-te-home-liquid-glass='on'] .home .feature-card {
   position: relative;
   /* Contains the negative-z warp layer so it cannot slip behind the page. */
   isolation: isolate;
@@ -2575,18 +2561,7 @@ html:is([data-te-surface-material='liquidGlass'], [data-te-home-liquid-glass='on
     0 13px 32px rgba(var(--te-lg-drop-rgb, 15, 23, 42), 0.072) !important;
 }
 
-html:is([data-te-surface-material='liquidGlass'], [data-te-home-liquid-glass='on'])
-  .home
-  :is(
-    .feature-card,
-    .signal-card,
-    .chart-panel,
-    .cal-panel,
-    .empty-stage,
-    .figures,
-    .masthead-shuffle,
-    .block-more
-  )::after {
+html[data-te-home-liquid-glass='on'] .home .feature-card::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -2615,27 +2590,17 @@ html:is([data-te-surface-material='liquidGlass'], [data-te-home-liquid-glass='on
   filter: var(--home-lg-filter);
 }
 
-/* Decorative panes can be thinner than text-bearing ones. .empty-stage carries
-   its own blurred orbs; .block-more and .masthead-shuffle are small pills whose
-   own copy stays on the veil above. */
-html:is([data-te-surface-material='liquidGlass'], [data-te-home-liquid-glass='on'])
+html[data-te-liquid-glass-source='solid'][data-te-home-liquid-glass='on']
   .home
-  :is(.empty-stage, .figures)::after {
-  background-color: color-mix(in srgb, var(--home-card) var(--home-glass-veil-soft), transparent);
-}
-
-/* The figures row used to be bare text on the wallpaper — the readability hole
-   the material made obvious. As a glass strip it gains a substrate and reads as
-   a deliberate band instead of floating labels. */
-html:is([data-te-surface-material='liquidGlass'], [data-te-home-liquid-glass='on']) .home .figures {
-  padding: 10px clamp(10px, 1.2vw, 18px);
-  border-radius: var(--home-radius-lg);
-}
-
-html:is([data-te-surface-material='liquidGlass'], [data-te-home-liquid-glass='on'])
-  .home
-  .figures::after {
-  background-color: color-mix(in srgb, var(--home-card) var(--home-glass-veil), transparent);
+  .feature-card::after {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--te-lg-context-rim) 18%, transparent),
+      transparent 48%,
+      color-mix(in srgb, var(--te-lg-context-label) 8%, transparent)
+    ),
+    var(--te-lg-context-material);
 }
 
 /* ── Hero ─────────────────────────────────────────────────────────────── */
@@ -2645,9 +2610,7 @@ html:is([data-te-surface-material='liquidGlass'], [data-te-home-liquid-glass='on
    light themes) painted by an in-flow child, on top of the glass. Replaced with a
    wedge that is dense only under the copy column and clears entirely over the
    artwork, so the card reads as glass while the type keeps a real substrate. */
-html:is([data-te-surface-material='liquidGlass'], [data-te-home-liquid-glass='on'])
-  .home
-  .feature-backdrop::after {
+html[data-te-home-liquid-glass='on'] .home .feature-backdrop::after {
   background:
     linear-gradient(
       100deg,
@@ -2669,31 +2632,13 @@ html:is([data-te-surface-material='liquidGlass'], [data-te-home-liquid-glass='on
 /* The sheen stays light — it is a specular highlight, not a fill — while the
    veil darkens with --home-card (#181818). Depth roles go heavier, matching the
    canonical dark-card profile. */
-html[data-theme='dark']:is(
-    [data-te-surface-material='liquidGlass'],
-    [data-te-home-liquid-glass='on']
-  )
-  .home {
+html[data-theme='dark'][data-te-home-liquid-glass='on'] .home {
   --home-glass-rim: color-mix(in srgb, var(--home-ink) 16%, transparent);
   --home-hover: color-mix(in srgb, var(--home-ink) 10%, transparent);
   --home-soft: color-mix(in srgb, var(--home-ink) 6%, transparent);
 }
 
-html[data-theme='dark']:is(
-    [data-te-surface-material='liquidGlass'],
-    [data-te-home-liquid-glass='on']
-  )
-  .home
-  :is(
-    .feature-card,
-    .signal-card,
-    .chart-panel,
-    .cal-panel,
-    .empty-stage,
-    .figures,
-    .masthead-shuffle,
-    .block-more
-  ) {
+html[data-theme='dark'][data-te-home-liquid-glass='on'] .home .feature-card {
   box-shadow:
     inset 0 0 0 0.5px
       rgba(var(--te-lg-sheen-rgb, 255, 255, 255), calc(var(--home-lg-specular) * 0.54)),
@@ -2704,21 +2649,7 @@ html[data-theme='dark']:is(
     0 13px 32px rgba(0, 0, 0, 0.18) !important;
 }
 
-html[data-theme='dark']:is(
-    [data-te-surface-material='liquidGlass'],
-    [data-te-home-liquid-glass='on']
-  )
-  .home
-  :is(
-    .feature-card,
-    .signal-card,
-    .chart-panel,
-    .cal-panel,
-    .empty-stage,
-    .figures,
-    .masthead-shuffle,
-    .block-more
-  )::after {
+html[data-theme='dark'][data-te-home-liquid-glass='on'] .home .feature-card::after {
   background:
     linear-gradient(
       var(--te-lg-angle, 135deg),
@@ -2728,15 +2659,6 @@ html[data-theme='dark']:is(
     ),
     linear-gradient(180deg, transparent 48%, rgba(0, 0, 0, 0.13) 100%),
     color-mix(in srgb, var(--home-card) var(--home-glass-veil), transparent);
-}
-
-html[data-theme='dark']:is(
-    [data-te-surface-material='liquidGlass'],
-    [data-te-home-liquid-glass='on']
-  )
-  .home
-  :is(.empty-stage)::after {
-  background-color: color-mix(in srgb, var(--home-card) var(--home-glass-veil-soft), transparent);
 }
 
 /* ── Degradation contracts ────────────────────────────────────────────── */
@@ -2749,47 +2671,19 @@ html[data-theme='dark']:is(
    last compound of a scoped selector, so `:global(body.te-no-blur) .foo`
    compiles to the bare ancestor and lands `filter: none` on <body> itself. */
 
-html:is([data-te-surface-material='liquidGlass'], [data-te-home-liquid-glass='on'])
-  .home
-  .te-liquid-glass-offscreen::after {
+html[data-te-home-liquid-glass='on'] .home .te-liquid-glass-offscreen::after {
   filter: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
 
-html:is([data-te-surface-material='liquidGlass'], [data-te-home-liquid-glass='on'])
-  body.te-no-blur
-  .home
-  :is(
-    .feature-card,
-    .signal-card,
-    .chart-panel,
-    .cal-panel,
-    .empty-stage,
-    .figures,
-    .masthead-shuffle,
-    .block-more
-  )::after {
+html[data-te-home-liquid-glass='on'] body.te-no-blur .home .feature-card::after {
   filter: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
 
-html:is(
-    [data-te-surface-material='liquidGlass'],
-    [data-te-home-liquid-glass='on']
-  )[data-te-effects-mode='reduced']
-  .home
-  :is(
-    .feature-card,
-    .signal-card,
-    .chart-panel,
-    .cal-panel,
-    .empty-stage,
-    .figures,
-    .masthead-shuffle,
-    .block-more
-  )::after {
+html[data-te-home-liquid-glass='on'][data-te-effects-mode='reduced'] .home .feature-card::after {
   filter: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -2797,21 +2691,9 @@ html:is(
 
 /* Transparent Linux windows cannot sample the desktop behind the window, so an
    in-app backdrop snapshot has nothing valid to read. */
-html:is(
-    [data-te-surface-material='liquidGlass'],
-    [data-te-home-liquid-glass='on']
-  )[data-window-transparent='on'][data-platform='linux']
+html[data-te-home-liquid-glass='on'][data-window-transparent='on'][data-platform='linux']
   .home
-  :is(
-    .feature-card,
-    .signal-card,
-    .chart-panel,
-    .cal-panel,
-    .empty-stage,
-    .figures,
-    .masthead-shuffle,
-    .block-more
-  )::after {
+  .feature-card::after {
   filter: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -2819,19 +2701,9 @@ html:is(
 
 /* Blur-free modes lose the optical separation the blur provided, so the veil has
    to carry legibility on its own. */
-html:is([data-te-surface-material='liquidGlass'], [data-te-home-liquid-glass='on'])
-  body.te-no-blur
-  .home,
-html:is(
-    [data-te-surface-material='liquidGlass'],
-    [data-te-home-liquid-glass='on']
-  )[data-te-effects-mode='reduced']
-  .home,
-html:is(
-    [data-te-surface-material='liquidGlass'],
-    [data-te-home-liquid-glass='on']
-  )[data-window-transparent='on'][data-platform='linux']
-  .home {
+html[data-te-home-liquid-glass='on'] body.te-no-blur .home,
+html[data-te-home-liquid-glass='on'][data-te-effects-mode='reduced'] .home,
+html[data-te-home-liquid-glass='on'][data-window-transparent='on'][data-platform='linux'] .home {
   --home-glass-veil-strong: 94%;
   --home-glass-veil: 90%;
   --home-glass-veil-soft: 62%;
@@ -2840,20 +2712,25 @@ html:is(
 
 /* Reduced / disabled motion keeps the material but pins the transition, matching
    the canonical carve-out. */
-html:is([data-te-surface-material='liquidGlass'], [data-te-home-liquid-glass='on']):is(
-    [data-te-motion='reduced'],
-    [data-te-motion='off']
-  )
+html[data-te-home-liquid-glass='on']:is([data-te-motion='reduced'], [data-te-motion='off'])
   .home
-  :is(
-    .feature-card,
-    .signal-card,
-    .chart-panel,
-    .cal-panel,
-    .empty-stage,
-    .figures,
-    .masthead-shuffle,
-    .block-more
-  )::after {
+  .feature-card::after {
   transition: none !important;
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  html[data-te-home-liquid-glass='on'] .home .feature-card::after {
+    filter: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  html[data-te-home-liquid-glass='on'] .home .feature-card::after {
+    background: Canvas !important;
+    filter: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
 }

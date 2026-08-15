@@ -6,15 +6,17 @@ import {
   DEFAULT_LIQUID_GLASS_HOME_CARDS,
   DEFAULT_LIQUID_GLASS_LIGHT,
   LIQUID_GLASS_BOUNDS,
-  LIQUID_GLASS_CARD_CLASSES,
   LIQUID_GLASS_CARD_SELECTOR,
   liquidGlassCssVariables,
+  liquidGlassExpandedCssVariables,
   liquidGlassHomeCardCssVariables,
   normalizeLiquidGlass,
+  normalizeLiquidGlassCoverage,
   normalizeLiquidGlassTheme,
   normalizeSurfaceMaterial,
   resolveAberrationBlur,
   resolveChannelScales,
+  resolveExpandedLiquidGlassTheme,
   SURFACE_MATERIALS
 } from './liquidGlass.ts'
 
@@ -28,18 +30,8 @@ test('surface material normalization only accepts known values', () => {
   assert.deepEqual([...SURFACE_MATERIALS], ['standard', 'liquidGlass'])
 })
 
-test('card surface list is non-trivial, unique, and selector-ready', () => {
-  assert.ok(LIQUID_GLASS_CARD_CLASSES.length > 30, 'card list must stay canonical')
-  assert.equal(new Set(LIQUID_GLASS_CARD_CLASSES).size, LIQUID_GLASS_CARD_CLASSES.length)
-  for (const className of ['album-card', 'artist-card', 'playlist-card', 'card'] as const) {
-    assert.ok(LIQUID_GLASS_CARD_CLASSES.includes(className), `${className} must be surfaced`)
-  }
-  for (const className of LIQUID_GLASS_CARD_CLASSES) {
-    assert.ok(
-      LIQUID_GLASS_CARD_SELECTOR.split(',').includes(`.${className}`),
-      `selector must contain .${className}`
-    )
-  }
+test('clear glass selector is restricted to the media-rich dashboard hero', () => {
+  assert.equal(LIQUID_GLASS_CARD_SELECTOR, '.home .feature-card')
 })
 
 test('theme normalization falls back per field and clamps to bounds', () => {
@@ -90,16 +82,26 @@ test('theme normalization accepts non-object input', () => {
 
 test('settings normalization defaults followPointer on and keeps both tones', () => {
   const normalized = normalizeLiquidGlass({})
+  assert.equal(normalized.coverage, 'functional')
   assert.equal(normalized.followPointer, true)
   assert.deepEqual(normalized.light, DEFAULT_LIQUID_GLASS_LIGHT)
   assert.deepEqual(normalized.dark, DEFAULT_LIQUID_GLASS_DARK)
   assert.deepEqual(normalized.homeCards, DEFAULT_LIQUID_GLASS_HOME_CARDS)
+  assert.equal(normalized.navigationEnabled, false)
   assert.equal(normalized.playbarEnabled, false)
   assert.equal(normalized.settingsNavigationEnabled, false)
 
   assert.equal(normalizeLiquidGlass({ followPointer: false }).followPointer, false)
   // only an explicit false disables it
   assert.equal(normalizeLiquidGlass({ followPointer: 0 }).followPointer, true)
+})
+
+test('coverage normalization only enables the explicit expanded mode', () => {
+  assert.equal(normalizeLiquidGlassCoverage('expanded'), 'expanded')
+  assert.equal(normalizeLiquidGlassCoverage('functional'), 'functional')
+  assert.equal(normalizeLiquidGlassCoverage('legacy'), 'functional')
+  assert.equal(normalizeLiquidGlass({ coverage: 'expanded' }).coverage, 'expanded')
+  assert.equal(normalizeLiquidGlass({ coverage: true }).coverage, 'functional')
 })
 
 test('normalization never aliases the exported default objects', () => {
@@ -117,7 +119,31 @@ test('normalization never aliases the exported default objects', () => {
   assert.equal(DEFAULT_LIQUID_GLASS.light.blurAmount, 14)
   assert.equal(DEFAULT_LIQUID_GLASS.dark.elasticity, 7)
   assert.equal(DEFAULT_LIQUID_GLASS.overLight, false)
+  assert.equal(DEFAULT_LIQUID_GLASS.coverage, 'functional')
   assert.equal(DEFAULT_LIQUID_GLASS.homeCards.enabled, false)
+})
+
+test('expanded profiles cap high-cost optical parameters without mutating the source', () => {
+  const source = {
+    displacementScale: 80,
+    blurAmount: 28,
+    saturation: 180,
+    aberrationIntensity: 2,
+    elasticity: 60,
+    specularOpacity: 70,
+    tintOpacity: 12
+  }
+  const expanded = resolveExpandedLiquidGlassTheme(source)
+  assert.deepEqual(expanded, {
+    displacementScale: 24,
+    blurAmount: 16,
+    saturation: 150,
+    aberrationIntensity: 0.8,
+    elasticity: 0,
+    specularOpacity: 36,
+    tintOpacity: 12
+  })
+  assert.equal(source.displacementScale, 80)
 })
 
 test('channel scales trail red to produce aberration and never invert', () => {
@@ -189,18 +215,40 @@ test('homepage cards normalize independently and emit their own variables', () =
   assert.equal(variables['--te-home-lg-displacement'], '58')
 })
 
+test('expanded CSS variables carry the bounded profile units', () => {
+  const variables = liquidGlassExpandedCssVariables({
+    displacementScale: 70,
+    blurAmount: 20,
+    saturation: 180,
+    aberrationIntensity: 2,
+    elasticity: 40,
+    specularOpacity: 55,
+    tintOpacity: 12
+  })
+  assert.equal(variables['--te-lg-expanded-displacement'], '24')
+  assert.equal(variables['--te-lg-expanded-blur'], '16px')
+  assert.equal(variables['--te-lg-expanded-saturate'], '150%')
+  assert.equal(variables['--te-lg-expanded-aberration'], '0.8')
+  assert.equal(variables['--te-lg-expanded-elasticity'], '0')
+  assert.equal(variables['--te-lg-expanded-specular'], '0.360')
+})
+
 test('independent shared targets normalize to strict booleans', () => {
   const enabled = normalizeLiquidGlass({
+    navigationEnabled: true,
     playbarEnabled: true,
     settingsNavigationEnabled: true
   })
+  assert.equal(enabled.navigationEnabled, true)
   assert.equal(enabled.playbarEnabled, true)
   assert.equal(enabled.settingsNavigationEnabled, true)
 
   const invalid = normalizeLiquidGlass({
+    navigationEnabled: 1,
     playbarEnabled: 1,
     settingsNavigationEnabled: 'yes'
   })
+  assert.equal(invalid.navigationEnabled, false)
   assert.equal(invalid.playbarEnabled, false)
   assert.equal(invalid.settingsNavigationEnabled, false)
 })

@@ -1202,7 +1202,8 @@ function visibilityDataAttribute(id: ThemeVisibilitySlotId): `data-te-${string}`
 export const THEME_MANAGED_DATA_ATTRIBUTES: readonly `data-te-${string}`[] = Object.freeze([
   ...THEME_MODE_DEFINITIONS.map((definition) => definition.dataAttribute),
   ...THEME_VISIBILITY_SLOT_IDS.map(visibilityDataAttribute),
-  ...THEME_SHELL_MANAGED_DATA_ATTRIBUTES
+  ...THEME_SHELL_MANAGED_DATA_ATTRIBUTES,
+  'data-te-liquid-glass-coverage'
 ])
 
 export function themeTokensToCssVariables(tokens: Record<string, string>): Record<string, string> {

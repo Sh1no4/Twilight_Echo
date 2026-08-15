@@ -273,6 +273,14 @@ window.runPlayingLyricWordsRuntime = async () => {
     'karaoke sweep did not advance on the compositor while playing'
   )
 
+  const beforeLaggingSample = Number(firstMask.currentTime)
+  setPosition(1.2)
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  expect(
+    Number(firstMask.currentTime) >= beforeLaggingSample - 60,
+    'a lagging playback sample rewound the karaoke timeline'
+  )
+
   isPlaying.value = false
   await settle(
     () => firstMask.playState === 'paused',
@@ -296,6 +304,43 @@ window.runPlayingLyricWordsRuntime = async () => {
     chars[0].getAnimations().length >= 2,
     'emphasised characters did not receive both a glow and a float animation'
   )
+
+  const firstWordFloat = firstWord.getAnimations().find((animation) => {
+    const frames = animation.effect?.getKeyframes?.() ?? []
+    return frames.some((frame) => String(frame.transform ?? '').includes('translateY'))
+  })
+  expect(firstWordFloat, 'the word did not receive its lift animation')
+
+  setPosition(4)
+  await settle(
+    () => Math.abs(Number(firstMask.currentTime) - 2000) < 60,
+    'karaoke timeline exceeded the current line duration; currentTime=' + firstMask.currentTime
+  )
+
+  isPlaying.value = true
+  await settle(
+    () => firstMask.playState === 'finished' && firstWordFloat.playState === 'finished',
+    'the completed karaoke sweep did not settle at the line boundary'
+  )
+  const completedMaskTime = Number(firstMask.currentTime)
+  const completedFloatTime = Number(firstWordFloat.currentTime)
+  setPosition(4.2)
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  expect(
+    Math.abs(Number(firstMask.currentTime) - completedMaskTime) < 60,
+    'the completed karaoke sweep restarted after a later clock tick'
+  )
+  expect(
+    Math.abs(Number(firstWordFloat.currentTime) - completedFloatTime) < 60,
+    'the completed word lift restarted after a later clock tick; before=' +
+      completedFloatTime +
+      '; after=' +
+      firstWordFloat.currentTime +
+      '; state=' +
+      firstWordFloat.playState
+  )
+  expect(firstMask.playState === 'finished', 'the completed karaoke sweep was played again')
+  expect(firstWordFloat.playState === 'finished', 'the completed word lift was played again')
 
   const disabledRoot = document.createElement('div')
   document.body.appendChild(disabledRoot)

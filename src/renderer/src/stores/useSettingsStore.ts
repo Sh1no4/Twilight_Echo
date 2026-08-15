@@ -5,6 +5,7 @@ import {
 } from '../../../shared/miniPlayer.ts'
 import { createLegacyDspGraph } from '../../../shared/dspGraph.ts'
 import { DEFAULT_SLEEP_TIMER_SETTINGS } from '../../../shared/sleepTimer.ts'
+import { DESKTOP_LYRICS_FOLLOW_FONT } from '../../../shared/desktopLyricsFont.ts'
 import {
   DEFAULT_LYRICS_APPEARANCE,
   cloneLyricsAppearance,
@@ -228,7 +229,7 @@ const fallbackSettings: AppSettings = {
   desktopLyrics: {
     enabled: false,
     fontSize: 32,
-    fontFamily: 'system',
+    fontFamily: DESKTOP_LYRICS_FOLLOW_FONT,
     fontWeight: 700,
     color: '#ffffff',
     highlightColor: '#3b82f6',

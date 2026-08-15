@@ -85,6 +85,15 @@ const shortcutStatuses = ref<PlayerShortcutStatus[]>([])
 const activeSection = ref<SectionKey>(props.initialSection ?? 'general')
 const pageRef = ref<HTMLElement | null>(null)
 
+function setNavigationPressOrigin(event: PointerEvent): void {
+  const button =
+    event.target instanceof Element ? event.target.closest<HTMLElement>('button') : null
+  if (!button) return
+  const rect = button.getBoundingClientRect()
+  button.style.setProperty('--te-lg-press-x', `${event.clientX - rect.left}px`)
+  button.style.setProperty('--te-lg-press-y', `${event.clientY - rect.top}px`)
+}
+
 const {
   settings,
   paths,
@@ -1108,7 +1117,11 @@ onBeforeUnmount(() => {
       @change="handleSettingsBackupSelected"
     />
     <div class="settings-preview-layout">
-      <nav class="settings-preview-nav" aria-label="设置分区">
+      <nav
+        class="settings-preview-nav"
+        aria-label="设置分区"
+        @pointerdown="setNavigationPressOrigin"
+      >
         <div class="settings-nav-search-wrap">
           <div class="settings-search-box settings-nav-search">
             <i class="pi pi-search"></i>
@@ -1249,8 +1262,6 @@ onBeforeUnmount(() => {
 
         <PlaybackSettingsSection />
 
-        <AppearanceSettingsSection @open-theme-studio="emit('openThemeStudio')" />
-
         <DspSettingsSection
           @open-equalizer="emit('openEqualizer')"
           @open-dsp-rack="emit('openDspRack')"
@@ -1278,6 +1289,9 @@ onBeforeUnmount(() => {
         />
 
         <PerformanceSettingsSection :toggle-setting="toggleSetting" />
+
+        <AppearanceSettingsSection @open-theme-studio="emit('openThemeStudio')" />
+
         <DesktopLyricsSettingsSection
           :desktop-lyrics="settings.desktopLyrics"
           @toggle="toggleDesktopLyrics"

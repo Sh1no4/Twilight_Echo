@@ -109,14 +109,8 @@ const lyricStyle = computed<Record<string, string>>(() => {
     '--te-lyric-font-size': `${appearance.fontSize}px`,
     '--te-lyric-font-weight': String(appearance.fontWeight),
     '--te-lyric-line-height': String(appearance.lineHeight),
-    '--te-lyric-translation-spacing': `${appearance.translationSpacing}px`
-  }
-
-  if (appearance.fontFamily !== 'inherit') {
-    styles['--te-lyric-font-family'] = resolveLyricsFontFamily({
-      fontFamily: appearance.fontFamily,
-      customFontFamily: ''
-    })
+    '--te-lyric-translation-spacing': `${appearance.translationSpacing}px`,
+    '--te-lyric-font-family': resolveLyricsFontFamily(appearance.styles.active)
   }
 
   if (appearance.colorMode === 'custom') {
@@ -1081,6 +1075,7 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   min-height: 120px;
+  font-family: var(--te-lyric-font-family, inherit);
   color: var(--te-playback-lyric-text, rgba(255, 255, 255, 0.42));
   font-size: 14px;
   letter-spacing: 0.08em;

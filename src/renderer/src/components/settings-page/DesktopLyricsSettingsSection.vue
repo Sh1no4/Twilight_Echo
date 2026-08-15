@@ -1,6 +1,16 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import EditableRangeValue from '../EditableRangeValue.vue'
 import type { DesktopLyricsLayout, DesktopLyricsSettings, LyricAlign } from '../../types/settings'
+import {
+  BUILTIN_FONT_OPTIONS,
+  useLyricsFontPicker,
+  type LyricsFontOption
+} from '../../composables/useLyricsFontPicker'
+import {
+  DESKTOP_LYRICS_FOLLOW_FONT,
+  DESKTOP_LYRICS_SYSTEM_FONT
+} from '../../../../shared/desktopLyricsFont.ts'
 
 const props = defineProps<{
   desktopLyrics: DesktopLyricsSettings
@@ -16,6 +26,82 @@ function update<K extends keyof DesktopLyricsSettings>(
   value: DesktopLyricsSettings[K]
 ): void {
   emit('update', { [key]: value } as Partial<DesktopLyricsSettings>)
+}
+
+type DesktopFontOption = {
+  key: string
+  label: string
+  preview: string
+  value: string
+}
+
+const fontPicker = useLyricsFontPicker()
+const fontMenuOpen = ref(false)
+const followFontOption: DesktopFontOption = {
+  key: 'desktop:follow',
+  label: '跟随 PlayingMusic',
+  preview: 'var(--te-font-rounded, var(--te-font-sans, sans-serif))',
+  value: DESKTOP_LYRICS_FOLLOW_FONT
+}
+
+const query = computed(() => fontPicker.query.value.trim().toLowerCase())
+const desktopBuiltinMatches = computed<DesktopFontOption[]>(() => {
+  const options = [
+    followFontOption,
+    ...BUILTIN_FONT_OPTIONS.filter((option) => option.builtin !== 'inherit').map((option) =>
+      toDesktopFontOption(option)
+    )
+  ]
+  return options.filter(
+    (option) =>
+      !query.value || `${option.label} ${option.value}`.toLowerCase().includes(query.value)
+  )
+})
+const installedFontMatches = computed<DesktopFontOption[]>(() =>
+  fontPicker.installedMatches.value.map((option) => ({
+    key: `desktop:${option.key}`,
+    label: option.label,
+    preview: option.preview,
+    value: option.familyName ?? ''
+  }))
+)
+
+function toDesktopFontOption(option: LyricsFontOption): DesktopFontOption {
+  return {
+    key: `desktop:${option.key}`,
+    label: option.label,
+    preview: option.preview,
+    value: option.builtin ?? DESKTOP_LYRICS_SYSTEM_FONT
+  }
+}
+
+const selectedFontOption = computed(() => {
+  const value = props.desktopLyrics.fontFamily || DESKTOP_LYRICS_SYSTEM_FONT
+  return [...desktopBuiltinMatches.value, ...installedFontMatches.value].find(
+    (option) => option.value === value
+  )
+})
+
+const selectedFontLabel = computed(
+  () =>
+    selectedFontOption.value?.label ??
+    (props.desktopLyrics.fontFamily || DESKTOP_LYRICS_SYSTEM_FONT)
+)
+const selectedFontPreview = computed(
+  () =>
+    selectedFontOption.value?.preview ??
+    `${JSON.stringify(props.desktopLyrics.fontFamily || DESKTOP_LYRICS_SYSTEM_FONT)}, sans-serif`
+)
+
+function chooseDesktopFont(value: string): void {
+  update('fontFamily', value)
+  fontMenuOpen.value = false
+  fontPicker.query.value = ''
+}
+
+async function toggleFontMenu(): Promise<void> {
+  fontMenuOpen.value = !fontMenuOpen.value
+  if (fontMenuOpen.value) await fontPicker.load()
 }
 </script>
 
@@ -42,6 +128,63 @@ function update<K extends keyof DesktopLyricsSettings>(
           :aria-checked="props.desktopLyrics.enabled"
           @click="$emit('toggle')"
         ></span>
+      </div>
+      <hr />
+      <div
+        class="setting-item top-align desktop-font-setting"
+        :class="{ 'font-menu-open': fontMenuOpen }"
+      >
+        <div class="setting-copy">
+          <strong>歌词字体 (Font Family)</strong>
+          <span>默认跟随 PlayingMusic，也可以单独选择本机已安装字体。</span>
+        </div>
+        <div class="desktop-font-field">
+          <button
+            type="button"
+            class="desktop-font-trigger"
+            :aria-expanded="fontMenuOpen"
+            @click="toggleFontMenu"
+          >
+            <span :style="{ fontFamily: selectedFontPreview }">{{ selectedFontLabel }}</span>
+            <i class="pi pi-chevron-down"></i>
+          </button>
+          <div v-if="fontMenuOpen" class="desktop-font-menu">
+            <input
+              v-model="fontPicker.query.value"
+              type="text"
+              class="desktop-font-search"
+              placeholder="搜索字体…"
+            />
+            <div class="desktop-font-list">
+              <p class="desktop-font-group">内置</p>
+              <button
+                v-for="option in desktopBuiltinMatches"
+                :key="option.key"
+                type="button"
+                class="desktop-font-option"
+                :style="{ fontFamily: option.preview }"
+                @click="chooseDesktopFont(option.value)"
+              >
+                {{ option.label }}
+              </button>
+              <p class="desktop-font-group">
+                本机字体
+                <small v-if="fontPicker.loading.value">载入中…</small>
+                <small v-else-if="!installedFontMatches.length">无匹配</small>
+              </p>
+              <button
+                v-for="option in installedFontMatches"
+                :key="option.key"
+                type="button"
+                class="desktop-font-option"
+                :style="{ fontFamily: option.preview }"
+                @click="chooseDesktopFont(option.value)"
+              >
+                {{ option.label }}
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
       <hr />
       <div class="setting-item">

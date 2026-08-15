@@ -133,12 +133,18 @@ function supportsWebAnimations(): boolean {
   return typeof Element !== 'undefined' && typeof Element.prototype.animate === 'function'
 }
 
-function lyricTime(position = props.clock.snapshot.value.position): number {
+function lyricTime(position = props.clock.positionAt()): number {
   return position + props.offsetSeconds
 }
 
 function timelineMs(time = lyricTime()): number {
-  return (time - lineStartSeconds.value) * 1000
+  const lineDurationMs = Math.max(0, (lineEndSeconds.value - lineStartSeconds.value) * 1000)
+  return Math.min(lineDurationMs, Math.max(0, (time - lineStartSeconds.value) * 1000))
+}
+
+function animationEndTime(animation: Animation): number | null {
+  const endTime = animation.effect?.getComputedTiming().endTime
+  return typeof endTime === 'number' && Number.isFinite(endTime) ? endTime : null
 }
 
 function releaseAnimations(): void {
@@ -251,12 +257,25 @@ function syncAnimations(hard = false): void {
   const playing = props.active && props.clock.isPlaying.value
 
   for (const animation of activeAnimations) {
+    const endTime = animationEndTime(animation)
+    const boundedTarget = endTime == null ? target : Math.min(target, endTime)
     const current = Number(animation.currentTime ?? 0)
-    if (hard || Math.abs(current - target) > DRIFT_TOLERANCE_MS) {
-      animation.currentTime = target
+    const forwardDrift = boundedTarget - current
+    const shouldCorrect =
+      hard ||
+      (!playing ? Math.abs(forwardDrift) > DRIFT_TOLERANCE_MS : forwardDrift > DRIFT_TOLERANCE_MS)
+    if (shouldCorrect) {
+      animation.currentTime = boundedTarget
     }
-    if (playing) animation.play()
-    else animation.pause()
+    if (playing) {
+      const pastEnd = endTime != null && target >= endTime
+      if (pastEnd) {
+        if (animation.playState !== 'finished') {
+          animation.currentTime = endTime
+          animation.finish()
+        }
+      } else if (animation.playState !== 'finished') animation.play()
+    } else animation.pause()
   }
 }
 

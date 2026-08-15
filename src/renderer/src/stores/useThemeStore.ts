@@ -40,6 +40,7 @@ import {
   DEFAULT_LIQUID_GLASS,
   LIQUID_GLASS_TUNING_CHANGED_EVENT,
   liquidGlassCssVariables,
+  liquidGlassExpandedCssVariables,
   liquidGlassHomeCardCssVariables,
   normalizeSurfaceMaterial,
   type LiquidGlassSettings,
@@ -98,6 +99,9 @@ const LIQUID_GLASS_RUNTIME_VARIABLES = Object.keys(
 const HOME_LIQUID_GLASS_RUNTIME_VARIABLES = Object.keys(
   liquidGlassHomeCardCssVariables(DEFAULT_LIQUID_GLASS.homeCards.light)
 )
+const EXPANDED_LIQUID_GLASS_RUNTIME_VARIABLES = Object.keys(
+  liquidGlassExpandedCssVariables(DEFAULT_LIQUID_GLASS.light)
+)
 
 function resolveTone(): ThemeTone {
   return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'pureWhite'
@@ -147,6 +151,7 @@ function applyLiquidGlassRuntimeVariables(tone: ThemeTone): void {
   const root = document.documentElement
   for (const name of LIQUID_GLASS_RUNTIME_VARIABLES) root.style.removeProperty(name)
   for (const name of HOME_LIQUID_GLASS_RUNTIME_VARIABLES) root.style.removeProperty(name)
+  for (const name of EXPANDED_LIQUID_GLASS_RUNTIME_VARIABLES) root.style.removeProperty(name)
   if (usesSharedLiquidGlassProfile()) {
     const theme = tone === 'dark' || liquidGlass.overLight ? liquidGlass.dark : liquidGlass.light
     for (const [name, value] of Object.entries(liquidGlassCssVariables(theme))) {
@@ -162,14 +167,22 @@ function applyLiquidGlassRuntimeVariables(tone: ThemeTone): void {
       root.style.setProperty(name, value, 'important')
     }
   }
+  if (liquidGlass.coverage === 'expanded') {
+    const theme = tone === 'dark' || liquidGlass.overLight ? liquidGlass.dark : liquidGlass.light
+    for (const [name, value] of Object.entries(liquidGlassExpandedCssVariables(theme))) {
+      root.style.setProperty(name, value, 'important')
+    }
+  }
   window.dispatchEvent(new Event(LIQUID_GLASS_TUNING_CHANGED_EVENT))
 }
 
 function usesSharedLiquidGlassProfile(): boolean {
   return (
     surfaceMaterial === 'liquidGlass' ||
+    liquidGlass.navigationEnabled ||
     liquidGlass.playbarEnabled ||
-    liquidGlass.settingsNavigationEnabled
+    liquidGlass.settingsNavigationEnabled ||
+    liquidGlass.coverage === 'expanded'
   )
 }
 
@@ -345,7 +358,9 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
           dataAttributes: {
             ...themeModesToDataAttributes(resolveThemeProfileModes(null)),
             'data-te-surface-material': surfaceMaterial,
+            'data-te-liquid-glass-coverage': liquidGlass.coverage,
             'data-te-home-liquid-glass': liquidGlass.homeCards.enabled ? 'on' : 'off',
+            'data-te-navigation-liquid-glass': liquidGlass.navigationEnabled ? 'on' : 'off',
             'data-te-playbar-liquid-glass': liquidGlass.playbarEnabled ? 'on' : 'off',
             'data-te-settings-navigation-liquid-glass': liquidGlass.settingsNavigationEnabled
               ? 'on'
@@ -395,7 +410,9 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
       ...themeShellLayoutToDataAttributes(shellLayout),
       // Settings-owned, so it wins over anything a theme profile declares.
       'data-te-surface-material': surfaceMaterial,
+      'data-te-liquid-glass-coverage': liquidGlass.coverage,
       'data-te-home-liquid-glass': liquidGlass.homeCards.enabled ? 'on' : 'off',
+      'data-te-navigation-liquid-glass': liquidGlass.navigationEnabled ? 'on' : 'off',
       'data-te-playbar-liquid-glass': liquidGlass.playbarEnabled ? 'on' : 'off',
       'data-te-settings-navigation-liquid-glass': liquidGlass.settingsNavigationEnabled
         ? 'on'
@@ -423,6 +440,10 @@ function applyLiquidGlassVariables(tone: ThemeTone, variables: Record<string, st
         ? liquidGlass.homeCards.dark
         : liquidGlass.homeCards.light
     Object.assign(variables, liquidGlassHomeCardCssVariables(theme))
+  }
+  if (liquidGlass.coverage === 'expanded') {
+    const theme = tone === 'dark' || liquidGlass.overLight ? liquidGlass.dark : liquidGlass.light
+    Object.assign(variables, liquidGlassExpandedCssVariables(theme))
   }
 }
 

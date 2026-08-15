@@ -202,6 +202,11 @@ const MEASURE: WordMeasurement[] = [
   { width: 60, height: 20, padding: 0 }
 ]
 
+const PADDED_MEASURE: WordMeasurement[] = [
+  { width: 40, height: 20, padding: 7 },
+  { width: 60, height: 20, padding: 7 }
+]
+
 test('the karaoke sweep runs from fully hidden to fully revealed', () => {
   const words = resolveLyricWordTimings([
     { text: 'one', time: 0, endTime: 1 },
@@ -216,6 +221,17 @@ test('the karaoke sweep runs from fully hidden to fully revealed', () => {
   const positions = plan.keyframes.map(maskX)
   assert.ok(positions[0] < 0, 'the word starts covered')
   assert.equal(positions[positions.length - 1], 0, 'and ends fully uncovered')
+})
+
+test('the karaoke sweep reaches the glyph edge when words have padding', () => {
+  const words = resolveLyricWordTimings([
+    { text: 'one', time: 0, endTime: 1 },
+    { text: 'two', time: 1, endTime: 2 }
+  ])
+  const plan = buildKaraokeMaskPlan(words, PADDED_MEASURE, 1, 0, 2)
+
+  assert.ok(plan)
+  assert.equal(maskX(plan.keyframes[plan.keyframes.length - 1]), 0)
 })
 
 test('sweep keyframes are monotonic and within the WAAPI range', () => {

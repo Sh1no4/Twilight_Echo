@@ -45,6 +45,7 @@ import { useSideMenuClearance } from './app/useSideMenuClearance'
 import { useMiniPlayerSync } from './app/useMiniPlayerSync'
 import { useFavoriteButton } from './components/player-bar/useFavoriteButton'
 import { useMotionPreference } from './app/useMotionPreference'
+import { useLiquidGlassEnvironment } from './composables/useLiquidGlassEnvironment'
 import { useAppNoticeStore } from './stores/useAppNoticeStore'
 import { getTrackSource } from './utils/logicalTrackModel'
 import {
@@ -54,6 +55,7 @@ import {
 import AppNoticeHost from './components/AppNoticeHost.vue'
 import LiquidGlassDefs from './components/LiquidGlassDefs.vue'
 import { resolvePlayerBarPresentation } from '../../shared/playerBar.ts'
+import type { AppBackgroundPage } from './types/settings'
 
 type TitleSurface = 'default' | 'settings' | 'streaming'
 type StreamingInitialTab = 'home' | 'library' | 'recent'
@@ -687,23 +689,43 @@ const titleSurface = computed<TitleSurface>(() => {
   if (activePluginPage.value) return 'settings'
   return 'default'
 })
+const liquidGlassChromeActive = computed(
+  () =>
+    settings.value.surfaceMaterial === 'liquidGlass' || settings.value.liquidGlass.navigationEnabled
+)
+const liquidGlassActive = computed(
+  () =>
+    liquidGlassChromeActive.value ||
+    settings.value.liquidGlass.homeCards.enabled ||
+    settings.value.liquidGlass.playbarEnabled ||
+    settings.value.liquidGlass.settingsNavigationEnabled ||
+    settings.value.liquidGlass.coverage === 'expanded'
+)
+const liquidGlassBackgroundPage = computed<AppBackgroundPage>(() => {
+  if (showPlayingPage.value) return 'player'
+  if (titleSurface.value === 'settings') return 'settings'
+  if (titleSurface.value === 'streaming') return 'streaming'
+  return 'local'
+})
+
+useLiquidGlassEnvironment({
+  active: liquidGlassActive,
+  page: liquidGlassBackgroundPage
+})
 </script>
 
 <template>
   <div class="app-shell">
     <LiquidGlassDefs
-      :active="
-        settings.surfaceMaterial === 'liquidGlass' ||
-        settings.liquidGlass.homeCards.enabled ||
-        settings.liquidGlass.playbarEnabled ||
-        settings.liquidGlass.settingsNavigationEnabled
-      "
+      :active="liquidGlassActive"
       :follow-pointer="settings.liquidGlass.followPointer"
       :home-cards-active="settings.liquidGlass.homeCards.enabled"
+      :expanded-active="settings.liquidGlass.coverage === 'expanded'"
     />
     <div class="app-shell-title">
       <TitleBar
         :glass="showPlayingPage"
+        :liquid-material="liquidGlassChromeActive"
         :streaming="showStreamingPage && !showPlayingPage"
         :hide-start="showThemeStudioPage || showLoginPage"
         :title-surface="titleSurface"
@@ -719,6 +741,7 @@ const titleSurface = computed<TitleSurface>(() => {
     <div v-if="showLocalSidebar" class="app-shell-navigation">
       <SideMenu
         :open="menuOpen"
+        :liquid-material="liquidGlassChromeActive"
         :active-key="sideMenuActiveKey"
         :plugin-pages="sidebarPages"
         :local-items="localSidebarItems"

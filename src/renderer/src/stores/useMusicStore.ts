@@ -412,43 +412,90 @@ export function useMusicStore(): {
       ...scannedFolders.value,
       ...settings.value.libraryFolders
     ])
-    const folderPaths =
-      configuredFolderPaths.length > 0
-        ? configuredFolderPaths
-        : deduplicateLibraryPaths(
-            tracks.value.map((track) => track.dir?.trim() || parentDirectoryOf(track.filePath))
-          )
-    const folderGroups = folderPaths.map((folderPath) => {
+    const configuredFolderRoots = configuredFolderPaths.map((folderPath) => ({
+      folderPath,
+      normalized: normalizeLibraryPath(folderPath)
+    }))
+    type FolderGroup = {
+      folderPath: string
+      normalized: string
+      tracks: Track[]
+      cover: string | null
+    }
+    const folderGroups = new Map<string, FolderGroup>()
+    const ensureFolderGroup = (folderPath: string): void => {
       const normalized = normalizeLibraryPath(folderPath)
-      return {
+      if (!normalized || folderGroups.has(normalized)) return
+      folderGroups.set(normalized, {
         folderPath,
         normalized,
-        group: { tracks: [] as Track[], cover: null as string | null }
-      }
-    })
-    for (const track of tracks.value) {
-      for (const folder of folderGroups) {
-        if (isTrackUnderLibraryRoot(track.filePath, folder.normalized)) {
-          folder.group.tracks.push(track)
-          if (!folder.group.cover && track.cover) folder.group.cover = track.cover
-        }
+        tracks: [],
+        cover: null
+      })
+    }
+    const addTrackToFolderGroup = (group: FolderGroup | undefined, track: Track): void => {
+      if (!group) return
+      group.tracks.push(track)
+      if (!group.cover && track.cover) group.cover = track.cover
+    }
+
+    for (const root of configuredFolderRoots) ensureFolderGroup(root.folderPath)
+
+    if (configuredFolderRoots.length === 0) {
+      for (const track of tracks.value) {
+        ensureFolderGroup(track.dir?.trim() || parentDirectoryOf(track.filePath))
       }
     }
 
-    folders.value = folderGroups
-      .map(({ folderPath, normalized, group }) => {
-        const items = group.tracks
+    for (const track of tracks.value) {
+      if (configuredFolderRoots.length === 0) {
+        const trackDirectory = track.dir?.trim() || parentDirectoryOf(track.filePath)
+        addTrackToFolderGroup(folderGroups.get(normalizeLibraryPath(trackDirectory)), track)
+        continue
+      }
+
+      const matchingRoots = configuredFolderRoots.filter((root) =>
+        isTrackUnderLibraryRoot(track.filePath, root.normalized)
+      )
+      if (matchingRoots.length === 0) continue
+      const metadataDirectory = track.dir?.trim() || parentDirectoryOf(track.filePath)
+      const currentDirectoryIsBounded = matchingRoots.some((root) =>
+        isTrackUnderLibraryRoot(metadataDirectory, root.normalized)
+      )
+      let currentDirectory = currentDirectoryIsBounded
+        ? metadataDirectory
+        : parentDirectoryOf(track.filePath)
+      const remainingRootPaths = new Set(matchingRoots.map((root) => root.normalized))
+      while (currentDirectory) {
+        const normalizedCurrent = normalizeLibraryPath(currentDirectory)
+        const group = folderGroups.get(normalizedCurrent)
+        if (!group) {
+          ensureFolderGroup(currentDirectory)
+        }
+        addTrackToFolderGroup(folderGroups.get(normalizedCurrent), track)
+        remainingRootPaths.delete(normalizedCurrent)
+        if (remainingRootPaths.size === 0) break
+        const parent = parentDirectoryOf(currentDirectory)
+        if (!parent || parent === currentDirectory) break
+        currentDirectory = parent
+      }
+    }
+
+    folders.value = [...folderGroups.values()]
+      .map(({ folderPath, normalized, tracks: folderTracks, cover }) => {
         const name = normalized.split(/[\\/]/).pop() || folderPath
         return {
           name,
           path: folderPath,
-          trackCount: items.length,
-          tracks: items,
-          cover: group.cover
+          trackCount: folderTracks.length,
+          tracks: folderTracks,
+          cover
         }
       })
       .filter((f) => f.trackCount > 0)
-      .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+      .sort(
+        (a, b) => a.name.localeCompare(b.name, 'zh') || (a.path ?? '').localeCompare(b.path ?? '')
+      )
   }
 
   function librarySnapshot(): { revision: number; tracks: Track[]; folders: string[] } {

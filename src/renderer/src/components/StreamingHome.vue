@@ -1948,6 +1948,28 @@ html[data-te-surface-material='liquidGlass']
   filter: url(#te-lg-card);
 }
 
+html[data-te-liquid-glass-source='solid'][data-te-surface-material='liquidGlass']
+  .home-view
+  :is(
+    .hero,
+    .duo-card,
+    .chart-grid,
+    .shelf-tile,
+    .shelf-empty,
+    .section-more,
+    .hero-invite,
+    .home-error
+  )::after {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--te-lg-context-rim) 18%, transparent),
+      transparent 48%,
+      color-mix(in srgb, var(--te-lg-context-label) 8%, transparent)
+    ),
+    var(--te-lg-context-material);
+}
+
 html[data-te-surface-material='liquidGlass'] .home-view .hero::after {
   background-color: color-mix(in srgb, var(--te-card-bg) var(--home-glass-veil-soft), transparent);
 }

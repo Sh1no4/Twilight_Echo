@@ -18,7 +18,11 @@ import {
   DEFAULT_LIQUID_GLASS_LIGHT,
   LIQUID_GLASS_CARD_FILTER_ID,
   LIQUID_GLASS_CARD_SELECTOR,
+  LIQUID_GLASS_BUDGET_CLASS,
+  LIQUID_GLASS_EXPANDED_CARD_FILTER_ID,
+  LIQUID_GLASS_EXPANDED_SURFACE_SELECTOR,
   LIQUID_GLASS_HOME_CARD_FILTER_ID,
+  LIQUID_GLASS_MAX_VISIBLE_EXPANDED_SURFACES,
   LIQUID_GLASS_OFFSCREEN_CLASS,
   LIQUID_GLASS_PLAYBAR_FILTER_ID,
   LIQUID_GLASS_TUNING_CHANGED_EVENT,
@@ -46,6 +50,8 @@ const props = defineProps<{
   followPointer: boolean
   /** Whether the local dashboard uses its independently tuned liquid-glass filter. */
   homeCardsActive: boolean
+  /** Whether the opt-in expanded card/panel filter is active. */
+  expandedActive: boolean
 }>()
 
 const cardMapUrl = ref('')
@@ -54,6 +60,8 @@ const displacementScale = ref(DEFAULT_LIQUID_GLASS_LIGHT.displacementScale)
 const aberrationIntensity = ref(DEFAULT_LIQUID_GLASS_LIGHT.aberrationIntensity)
 const homeDisplacementScale = ref(DEFAULT_LIQUID_GLASS_HOME_CARDS.light.displacementScale)
 const homeAberrationIntensity = ref(DEFAULT_LIQUID_GLASS_HOME_CARDS.light.aberrationIntensity)
+const expandedDisplacementScale = ref(24)
+const expandedAberrationIntensity = ref(0.8)
 
 const channelScales = computed(() =>
   resolveChannelScales(displacementScale.value, aberrationIntensity.value)
@@ -63,12 +71,21 @@ const homeChannelScales = computed(() =>
   resolveChannelScales(homeDisplacementScale.value, homeAberrationIntensity.value)
 )
 const homeAberrationBlur = computed(() => resolveAberrationBlur(homeAberrationIntensity.value))
+const expandedChannelScales = computed(() =>
+  resolveChannelScales(expandedDisplacementScale.value, expandedAberrationIntensity.value)
+)
+const expandedAberrationBlur = computed(() =>
+  resolveAberrationBlur(expandedAberrationIntensity.value)
+)
 /**
  * Alpha ramp for the edge mask. The middle stop scales with aberration so a higher
  * setting lets more of the refracted band through before the hard cutoff.
  */
 const edgeMaskTable = computed(() => `0 ${(aberrationIntensity.value * 0.05).toFixed(3)} 1`)
 const homeEdgeMaskTable = computed(() => `0 ${(homeAberrationIntensity.value * 0.05).toFixed(3)} 1`)
+const expandedEdgeMaskTable = computed(
+  () => `0 ${(expandedAberrationIntensity.value * 0.05).toFixed(3)} 1`
+)
 
 function readNumericVariable(name: string, fallback: number): number {
   const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
@@ -97,6 +114,10 @@ function syncFilterInputs(): void {
       '--te-home-lg-aberration',
       DEFAULT_LIQUID_GLASS_HOME_CARDS.light.aberrationIntensity
     )
+  }
+  if (props.expandedActive) {
+    expandedDisplacementScale.value = readNumericVariable('--te-lg-expanded-displacement', 24)
+    expandedAberrationIntensity.value = readNumericVariable('--te-lg-expanded-aberration', 0.8)
   }
   pointerElasticity = readNumericVariable('--te-lg-elasticity', 0)
 }
@@ -294,7 +315,11 @@ function detachPointer(): void {
 function syncPointerTracking(): void {
   // Motion-reduced users get a fixed light source rather than a moving one.
   const shouldTrack =
-    props.active && props.followPointer && resolveMotionMode() !== 'off' && !isReducedMotion()
+    props.active &&
+    props.homeCardsActive &&
+    props.followPointer &&
+    resolveMotionMode() !== 'off' &&
+    !isReducedMotion()
 
   if (shouldTrack === pointerAttached) return
   if (shouldTrack) {
@@ -332,13 +357,20 @@ function clearSurfaceVisibility(): void {
   surfaceVisibilityObserver = null
   surfaceMutationObserver?.disconnect()
   surfaceMutationObserver = null
-  for (const surface of observedSurfaces) surface.classList.remove(LIQUID_GLASS_OFFSCREEN_CLASS)
+  for (const surface of observedSurfaces) {
+    surface.classList.remove(LIQUID_GLASS_OFFSCREEN_CLASS, LIQUID_GLASS_BUDGET_CLASS)
+  }
   observedSurfaces.clear()
 }
 
 function observeSurface(surface: Element): void {
   if (!surfaceVisibilityObserver || observedSurfaces.has(surface)) return
-  if (!surface.matches(LIQUID_GLASS_CARD_SELECTOR)) return
+  if (
+    !surface.matches(LIQUID_GLASS_CARD_SELECTOR) &&
+    !(props.expandedActive && surface.matches(LIQUID_GLASS_EXPANDED_SURFACE_SELECTOR))
+  ) {
+    return
+  }
   observedSurfaces.add(surface)
   surfaceVisibilityObserver.observe(surface)
 }
@@ -349,17 +381,43 @@ function observeSurfacesIn(root: Element | Document): void {
   for (const surface of root.querySelectorAll(LIQUID_GLASS_CARD_SELECTOR)) {
     observeSurface(surface)
   }
+  if (props.expandedActive) {
+    for (const surface of root.querySelectorAll(LIQUID_GLASS_EXPANDED_SURFACE_SELECTOR)) {
+      observeSurface(surface)
+    }
+  }
+}
+
+function syncExpandedSurfaceBudget(): void {
+  if (!props.expandedActive) return
+  const visible = Array.from(
+    document.querySelectorAll<HTMLElement>(LIQUID_GLASS_EXPANDED_SURFACE_SELECTOR)
+  ).filter((surface) => !surface.classList.contains(LIQUID_GLASS_OFFSCREEN_CLASS))
+  for (const [index, surface] of visible.entries()) {
+    surface.classList.toggle(
+      LIQUID_GLASS_BUDGET_CLASS,
+      index >= LIQUID_GLASS_MAX_VISIBLE_EXPANDED_SURFACES
+    )
+  }
 }
 
 function syncSurfaceVisibility(): void {
   clearSurfaceVisibility()
-  if (!props.active || typeof IntersectionObserver === 'undefined' || !document.body) return
+  if (
+    !props.active ||
+    (!props.homeCardsActive && !props.expandedActive) ||
+    typeof IntersectionObserver === 'undefined' ||
+    !document.body
+  ) {
+    return
+  }
 
   surfaceVisibilityObserver = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
         entry.target.classList.toggle(LIQUID_GLASS_OFFSCREEN_CLASS, !entry.isIntersecting)
       }
+      syncExpandedSurfaceBudget()
     },
     { rootMargin: '128px 0px' }
   )
@@ -372,6 +430,7 @@ function syncSurfaceVisibility(): void {
     }
   })
   surfaceMutationObserver.observe(document.body, { childList: true, subtree: true })
+  syncExpandedSurfaceBudget()
 }
 
 onMounted(() => {
@@ -394,7 +453,8 @@ onMounted(() => {
       'data-te-motion',
       'data-theme',
       'data-te-surface-material',
-      'data-te-home-liquid-glass'
+      'data-te-home-liquid-glass',
+      'data-te-liquid-glass-coverage'
     ]
   })
 })
@@ -408,7 +468,7 @@ onBeforeUnmount(() => {
 })
 
 watch(
-  () => [props.active, props.followPointer, props.homeCardsActive],
+  () => [props.active, props.followPointer, props.homeCardsActive, props.expandedActive],
   () => {
     ensureMaps()
     syncFilterInputs()
@@ -524,6 +584,113 @@ watch(
         <!-- Clip the refraction band back to the source's own rounded alpha. The
              displacement map is a full rectangle, so without this the corners of
              a rounded card get filled with refracted content and read as square. -->
+        <feComposite
+          in="EDGE_ABERRATION"
+          in2="SourceGraphic"
+          operator="in"
+          result="EDGE_ABERRATION_CLIPPED"
+        />
+        <feComponentTransfer in="EDGE_MASK" result="INVERTED_MASK">
+          <feFuncA type="table" tableValues="1 0" />
+        </feComponentTransfer>
+        <feComposite in="SourceGraphic" in2="INVERTED_MASK" operator="in" result="CENTER_CLEAN" />
+        <feComposite in="EDGE_ABERRATION_CLIPPED" in2="CENTER_CLEAN" operator="over" />
+      </filter>
+
+      <filter
+        v-if="props.expandedActive"
+        :id="LIQUID_GLASS_EXPANDED_CARD_FILTER_ID"
+        x="-35%"
+        y="-35%"
+        width="170%"
+        height="170%"
+        color-interpolation-filters="sRGB"
+      >
+        <feImage
+          x="0"
+          y="0"
+          width="100%"
+          height="100%"
+          result="MAP"
+          preserveAspectRatio="xMidYMid slice"
+          :href="cardMapUrl"
+        />
+        <feColorMatrix
+          in="MAP"
+          type="matrix"
+          values="0.3 0.3 0.3 0 0
+                  0.3 0.3 0.3 0 0
+                  0.3 0.3 0.3 0 0
+                  0 0 0 1 0"
+          result="EDGE_INTENSITY"
+        />
+        <feComponentTransfer in="EDGE_INTENSITY" result="EDGE_MASK">
+          <feFuncA type="discrete" :tableValues="expandedEdgeMaskTable" />
+        </feComponentTransfer>
+        <feDisplacementMap
+          in="SourceGraphic"
+          in2="MAP"
+          :scale="expandedChannelScales.red"
+          xChannelSelector="R"
+          yChannelSelector="B"
+          result="RED_DISPLACED"
+        />
+        <feColorMatrix
+          in="RED_DISPLACED"
+          type="matrix"
+          values="1 0 0 0 0
+                  0 0 0 0 0
+                  0 0 0 0 0
+                  0 0 0 1 0"
+          result="RED_CHANNEL"
+        />
+        <feDisplacementMap
+          in="SourceGraphic"
+          in2="MAP"
+          :scale="expandedChannelScales.green"
+          xChannelSelector="R"
+          yChannelSelector="B"
+          result="GREEN_DISPLACED"
+        />
+        <feColorMatrix
+          in="GREEN_DISPLACED"
+          type="matrix"
+          values="0 0 0 0 0
+                  0 1 0 0 0
+                  0 0 0 0 0
+                  0 0 0 1 0"
+          result="GREEN_CHANNEL"
+        />
+        <feDisplacementMap
+          in="SourceGraphic"
+          in2="MAP"
+          :scale="expandedChannelScales.blue"
+          xChannelSelector="R"
+          yChannelSelector="B"
+          result="BLUE_DISPLACED"
+        />
+        <feColorMatrix
+          in="BLUE_DISPLACED"
+          type="matrix"
+          values="0 0 0 0 0
+                  0 0 0 0 0
+                  0 0 1 0 0
+                  0 0 0 1 0"
+          result="BLUE_CHANNEL"
+        />
+        <feBlend in="GREEN_CHANNEL" in2="BLUE_CHANNEL" mode="screen" result="GB_COMBINED" />
+        <feBlend in="RED_CHANNEL" in2="GB_COMBINED" mode="screen" result="RGB_COMBINED" />
+        <feGaussianBlur
+          in="RGB_COMBINED"
+          :stdDeviation="expandedAberrationBlur"
+          result="ABERRATED_BLURRED"
+        />
+        <feComposite
+          in="ABERRATED_BLURRED"
+          in2="EDGE_MASK"
+          operator="in"
+          result="EDGE_ABERRATION"
+        />
         <feComposite
           in="EDGE_ABERRATION"
           in2="SourceGraphic"

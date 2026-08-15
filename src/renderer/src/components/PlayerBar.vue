@@ -1171,6 +1171,14 @@ function onGlassPointerMove(event: PointerEvent): void {
   glassPointerFrames.schedule({ x: event.clientX, y: event.clientY })
 }
 
+function setGlassPressOrigin(event: PointerEvent): void {
+  const element = playerBarRef.value
+  if (!element || !liquidGlassActive.value) return
+  const rect = element.getBoundingClientRect()
+  element.style.setProperty('--te-lg-press-x', `${event.clientX - rect.left}px`)
+  element.style.setProperty('--te-lg-press-y', `${event.clientY - rect.top}px`)
+}
+
 function onGlassPointerLeave(): void {
   if (!glassPointerEnabled || !glassPointerOverBar) return
   resetGlassPointer()
@@ -1442,6 +1450,7 @@ onBeforeUnmount(() => {
         '--play-button-color': playButtonColor
       }"
       @pointerenter="onBarPointerEnter"
+      @pointerdown="setGlassPressOrigin"
       @pointermove="onGlassPointerMove"
       @pointerleave="onBarPointerLeaveWithGlass"
       @focusin="onBarFocusIn"

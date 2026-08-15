@@ -13,85 +13,37 @@
  */
 
 export type SurfaceMaterial = 'standard' | 'liquidGlass'
+export type LiquidGlassCoverage = 'functional' | 'expanded'
 
 export const SURFACE_MATERIALS: readonly SurfaceMaterial[] = ['standard', 'liquidGlass']
 
 /** Filter ids referenced from CSS. Cards and the playbar differ in aspect ratio. */
 export const LIQUID_GLASS_CARD_FILTER_ID = 'te-lg-card'
+export const LIQUID_GLASS_EXPANDED_CARD_FILTER_ID = 'te-lg-expanded-card'
 export const LIQUID_GLASS_HOME_CARD_FILTER_ID = 'te-lg-home-card'
 export const LIQUID_GLASS_PLAYBAR_FILTER_ID = 'te-lg-playbar'
 export const LIQUID_GLASS_TUNING_CHANGED_EVENT = 'twilight:liquid-glass-tuning-changed'
 export const LIQUID_GLASS_OFFSCREEN_CLASS = 'te-liquid-glass-offscreen'
+export const LIQUID_GLASS_BUDGET_CLASS = 'te-liquid-glass-budget'
+export const LIQUID_GLASS_MAX_VISIBLE_EXPANDED_SURFACES = 24
 
-/**
- * Class names that receive the canonical liquid-glass card surface. Kept in sync
- * with the selector list in `base.css`; dashboard-only surfaces have their own
- * selector below because their material recipe is intentionally local.
- */
-export const LIQUID_GLASS_CARD_CLASSES = [
-  'artist-card',
-  'album-card',
-  'playlist-card',
-  'glass-card',
-  'feature-card',
-  'playlist-grid-card',
-  'playlist-tile',
-  'favorites-card',
-  'streaming-placeholder',
-  'empty-recommend',
-  'detail-playlist-header',
-  'track-table-wrapper',
-  'profile-panel',
-  'liked-panel',
-  'playlist-list-item',
-  'profile-card',
-  'recent-card',
-  'ranking-card',
-  'create-playlist-card',
-  'folder-card',
-  'empty-list-card',
-  'filter-card',
-  'sponsor-card',
-  'update-card',
-  'dsp-module-card',
-  'device-card',
-  'card',
-  'account-card',
-  'plugin-card',
-  'market-card',
-  'plugin-extension-card',
-  'bili-qr-card',
-  'chart-card',
-  'parameter-card',
-  'square-card',
-  'opra-panel',
-  'opra-result-item',
-  'device-panel',
-  'plugin-panel',
-  'output-diagnostic-panel',
-  'background-accordion-panel'
-] as const
-
-const LIQUID_GLASS_BASE_CARD_SELECTOR = LIQUID_GLASS_CARD_CLASSES.map(
-  (className) => `.${className}`
-).join(',')
-
-/** Dashboard-only surfaces use their own material recipe and filter profile. */
-export const LIQUID_GLASS_HOME_CARD_SELECTOR = [
-  '.home .feature-card',
-  '.home .signal-card',
-  '.home .chart-panel',
-  '.home .cal-panel',
-  '.home .empty-stage',
-  '.home .figures',
-  '.home .masthead-shuffle',
-  '.home .block-more'
-].join(',')
+/** Clear glass is reserved for the dashboard's media-rich Hero treatment. */
+export const LIQUID_GLASS_HOME_CARD_SELECTOR = '.home .feature-card'
 
 /** Selector used by the pointer tracker and visibility observer. */
-export const LIQUID_GLASS_CARD_SELECTOR = [
-  LIQUID_GLASS_BASE_CARD_SELECTOR,
-  LIQUID_GLASS_HOME_CARD_SELECTOR
+export const LIQUID_GLASS_CARD_SELECTOR = LIQUID_GLASS_HOME_CARD_SELECTOR
+
+/** Explicit content surfaces used only by the opt-in expanded coverage mode. */
+export const LIQUID_GLASS_EXPANDED_SURFACE_SELECTOR = [
+  '.artist-card',
+  '.album-card',
+  '.playlist-card',
+  '.glass-card',
+  '.signal-card',
+  '.chart-card',
+  '.profile-card',
+  '.recent-card',
+  '.ranking-card'
 ].join(',')
 
 export interface LiquidGlassTheme {
@@ -112,12 +64,16 @@ export interface LiquidGlassTheme {
 }
 
 export interface LiquidGlassSettings {
+  /** Functional chrome by default; expanded also applies a bounded card profile. */
+  coverage: LiquidGlassCoverage
   /** Highlight gradient angle follows the pointer (rAF-throttled). */
   followPointer: boolean
   /** Tint the glass dark on light backgrounds for visibility ("Over Light"). */
   overLight: boolean
   light: LiquidGlassTheme
   dark: LiquidGlassTheme
+  /** Enables title bar and main navigation independently. */
+  navigationEnabled: boolean
   /** Enables the playbar independently while reusing the global glass profile. */
   playbarEnabled: boolean
   /** Enables the settings navigation independently while reusing the global profile. */
@@ -177,10 +133,12 @@ export const DEFAULT_LIQUID_GLASS_HOME_CARDS: LiquidGlassHomeCardsSettings = {
 }
 
 export const DEFAULT_LIQUID_GLASS: LiquidGlassSettings = {
+  coverage: 'functional',
   followPointer: true,
   overLight: false,
   light: DEFAULT_LIQUID_GLASS_LIGHT,
   dark: DEFAULT_LIQUID_GLASS_DARK,
+  navigationEnabled: false,
   playbarEnabled: false,
   settingsNavigationEnabled: false,
   homeCards: DEFAULT_LIQUID_GLASS_HOME_CARDS
@@ -193,6 +151,10 @@ function clamp(value: unknown, bound: Bound, fallback: number): number {
 
 export function normalizeSurfaceMaterial(value: unknown): SurfaceMaterial {
   return value === 'liquidGlass' ? 'liquidGlass' : 'standard'
+}
+
+export function normalizeLiquidGlassCoverage(value: unknown): LiquidGlassCoverage {
+  return value === 'expanded' ? 'expanded' : 'functional'
 }
 
 export function normalizeLiquidGlassTheme(
@@ -229,10 +191,12 @@ export function normalizeLiquidGlass(raw: unknown): LiquidGlassSettings {
     typeof value.homeCards === 'object' && value.homeCards !== null ? value.homeCards : {}
   ) as Record<string, unknown>
   return {
+    coverage: normalizeLiquidGlassCoverage(value.coverage),
     followPointer: value.followPointer !== false,
     overLight: value.overLight === true,
     light: normalizeLiquidGlassTheme(value.light, DEFAULT_LIQUID_GLASS_LIGHT),
     dark: normalizeLiquidGlassTheme(value.dark, DEFAULT_LIQUID_GLASS_DARK),
+    navigationEnabled: value.navigationEnabled === true,
     playbarEnabled: value.playbarEnabled === true,
     settingsNavigationEnabled: value.settingsNavigationEnabled === true,
     homeCards: {
@@ -241,6 +205,23 @@ export function normalizeLiquidGlass(raw: unknown): LiquidGlassSettings {
       light: normalizeLiquidGlassTheme(homeCards.light, DEFAULT_LIQUID_GLASS_HOME_CARDS.light),
       dark: normalizeLiquidGlassTheme(homeCards.dark, DEFAULT_LIQUID_GLASS_HOME_CARDS.dark)
     }
+  }
+}
+
+/**
+ * Expanded content surfaces use a deliberately restrained derivative of the
+ * shared profile. This keeps the functional chrome tunable without turning
+ * large content cards into high-contrast plastic panels.
+ */
+export function resolveExpandedLiquidGlassTheme(theme: LiquidGlassTheme): LiquidGlassTheme {
+  return {
+    displacementScale: Math.min(theme.displacementScale, 24),
+    blurAmount: Math.min(theme.blurAmount, 16),
+    saturation: Math.min(theme.saturation, 150),
+    aberrationIntensity: Math.min(theme.aberrationIntensity, 0.8),
+    elasticity: 0,
+    specularOpacity: Math.min(theme.specularOpacity, 36),
+    tintOpacity: theme.tintOpacity
   }
 }
 
@@ -283,9 +264,16 @@ export function liquidGlassHomeCardCssVariables(theme: LiquidGlassTheme): Record
   return liquidGlassCssVariablesWithPrefix(theme, '--te-home-lg')
 }
 
+export function liquidGlassExpandedCssVariables(theme: LiquidGlassTheme): Record<string, string> {
+  return liquidGlassCssVariablesWithPrefix(
+    resolveExpandedLiquidGlassTheme(theme),
+    '--te-lg-expanded'
+  )
+}
+
 function liquidGlassCssVariablesWithPrefix(
   theme: LiquidGlassTheme,
-  prefix: '--te-lg' | '--te-home-lg'
+  prefix: '--te-lg' | '--te-home-lg' | '--te-lg-expanded'
 ): Record<string, string> {
   return {
     [`${prefix}-displacement`]: String(theme.displacementScale),

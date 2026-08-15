@@ -26,6 +26,7 @@ import type {
   StreamingAudioCachePolicy,
   UiDensity
 } from '../../types/settings'
+import { DESKTOP_LYRICS_FOLLOW_FONT } from '../../../../shared/desktopLyricsFont.ts'
 
 export type SectionKey =
   | 'general'
@@ -519,6 +520,12 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = (
     { section: 'desktopLyrics', title: '启用桌面歌词', terms: '桌面歌词 启用 开关 显示 歌词' },
     {
       section: 'desktopLyrics',
+      title: '歌词字体 (Font Family)',
+      terms:
+        '桌面歌词 字体 字体名 跟随 PlayingMusic 系统默认 霞鹜文楷 更纱黑体 本机字体 已安装 font family custom installed follow'
+    },
+    {
+      section: 'desktopLyrics',
       title: '字体大小 (Font Size)',
       terms: '字体 大小 font size 字号 歌词'
     },
@@ -656,7 +663,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = (
 export const RESET_DESKTOP_LYRICS: DesktopLyricsSettings = {
   enabled: false,
   fontSize: 32,
-  fontFamily: 'system',
+  fontFamily: DESKTOP_LYRICS_FOLLOW_FONT,
   fontWeight: 700,
   color: '#ffffff',
   highlightColor: '#3b82f6',

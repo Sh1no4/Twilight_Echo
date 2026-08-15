@@ -973,6 +973,12 @@ test('scan root folders aggregate tracks from nested directories at path boundar
       },
       {
         ...generateMockTracks(1)[0],
+        id: 'deep-track',
+        filePath: 'C:\\music\\nested\\deep\\song.flac',
+        dir: 'C:\\music\\nested\\deep'
+      },
+      {
+        ...generateMockTracks(1)[0],
         id: 'outside-track',
         filePath: 'C:\\music-other\\outside.flac',
         dir: 'C:\\music-other'
@@ -980,20 +986,26 @@ test('scan root folders aggregate tracks from nested directories at path boundar
     ],
     { deferRebuild: false }
   )
-  store.syncFolders(['C:\\music', 'C:\\music\\nested'])
+  store.syncFolders(['C:\\music'])
   store.flushRebuild()
 
   assert.deepEqual(
     store.folders.value
       .find((folder) => folder.path === 'C:\\music')
       ?.tracks.map((track) => track.id),
-    ['root-track', 'nested-track']
+    ['root-track', 'nested-track', 'deep-track']
   )
   assert.deepEqual(
     store.folders.value
       .find((folder) => folder.path === 'C:\\music\\nested')
       ?.tracks.map((track) => track.id),
-    ['nested-track']
+    ['nested-track', 'deep-track']
+  )
+  assert.deepEqual(
+    store.folders.value
+      .find((folder) => folder.path === 'C:\\music\\nested\\deep')
+      ?.tracks.map((track) => track.id),
+    ['deep-track']
   )
   assert.equal(
     store.folders.value.some((folder) => folder.path === 'C:\\music-other'),
