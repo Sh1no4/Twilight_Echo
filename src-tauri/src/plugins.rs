@@ -30,7 +30,7 @@
 //! - `extensions_execute_command` / `extensions_read_theme_stylesheet`（Stage 5C）：
 //!   Tauri 无扩展宿主，恒定报错以明确能力差异。
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -804,6 +804,131 @@ async fn dispatch_ncm_provider_call(
             let resp = proxy_ncm(policy, &path, idempotency_key, timeout_ms, false).await?;
             ncm_account_login_response(policy, resp, idempotency_key, timeout_ms).await
         }
+        // 我的音乐库（镜像 index.mjs fetchUserLibrary）：`/user/playlist?uid=&limit=1000`
+        // 取全部歌单，分离"我喜欢的音乐"（specialType=5）与其余歌单，返回
+        // `{likedPlaylist, playlists}`；封面统一放大到 `param=600y600`。
+        "fetchUserLibrary" => {
+            let uid = ncm_current_uid(policy, idempotency_key, timeout_ms).await?;
+            let path = ncm_path(
+                "/user/playlist",
+                &[("uid", &uid.to_string()), ("limit", "1000")],
+            );
+            let resp = proxy_ncm(policy, &path, idempotency_key, timeout_ms, true).await?;
+            let items = ncm_playlist_items(&resp);
+            let liked_id = items
+                .iter()
+                .find(|item| ncm_is_liked_playlist(item))
+                .and_then(ncm_value_u64_id);
+            let liked_playlist = items
+                .iter()
+                .find(|item| ncm_is_liked_playlist(item))
+                .map(|item| ncm_normalize_playlist(item, uid))
+                .unwrap_or(Value::Null);
+            let playlists = Value::Array(
+                items
+                    .iter()
+                    .filter(|item| ncm_value_u64_id(item) != liked_id)
+                    .map(|item| ncm_normalize_playlist(item, uid))
+                    .collect(),
+            );
+            Ok(json!({ "likedPlaylist": liked_playlist, "playlists": playlists }))
+        }
+        // 分页取"我喜欢的音乐"（镜像 index.mjs fetchLikedTracksPage）：`/likelist?uid=`
+        // 取喜欢歌曲 ID 全量，按 offset/limit 切片后再 `/song/detail` 批量取元数据，
+        // 保序返回分页信封（tracks/total/offset/limit/nextOffset/hasMore）。
+        "fetchLikedTracksPage" => {
+            let offset = arg_u64(args, 0).unwrap_or(0);
+            let limit = arg_u64(args, 1).unwrap_or(100).clamp(1, 200);
+            let uid = ncm_current_uid(policy, idempotency_key, timeout_ms).await?;
+            let path = ncm_path("/likelist", &[("uid", &uid.to_string())]);
+            let resp = proxy_ncm(policy, &path, idempotency_key, timeout_ms, true).await?;
+            let ids = ncm_likelist_ids(&resp);
+            let total = ids.len();
+            let page_ids: Vec<u64> = ids
+                .iter()
+                .skip(offset as usize)
+                .take(limit as usize)
+                .copied()
+                .collect();
+            let songs =
+                ncm_fetch_song_details(&page_ids, policy, idempotency_key, timeout_ms).await?;
+            let track_by_song_id: HashMap<u64, Value> = songs
+                .iter()
+                .filter_map(|song| ncm_value_u64_id(song).map(|id| (id, ncm_normalize_track(song))))
+                .collect();
+            let tracks = Value::Array(
+                page_ids
+                    .iter()
+                    .filter_map(|id| track_by_song_id.get(id).cloned())
+                    .collect(),
+            );
+            let next_offset = offset.saturating_add(limit).min(total as u64);
+            Ok(json!({
+                "tracks": tracks,
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "nextOffset": next_offset,
+                "hasMore": next_offset < total as u64
+            }))
+        }
+        // 歌单全部歌曲（镜像 index.mjs fetchPlaylistTracks）：`/playlist/track/all` 分页
+        // 去重取到 MAX_PLAYLIST_TRACKS，空则回退 `/playlist/detail` + `/song/detail`。
+        "fetchPlaylistTracks" => {
+            let playlist_id = arg_string(args, 0)
+                .ok_or_else(|| "NCM fetchPlaylistTracks 缺少参数 playlistId".to_string())?;
+            let songs = ncm_playlist_tracks(&playlist_id, policy, idempotency_key, timeout_ms).await;
+            Ok(Value::Array(
+                songs
+                    .iter()
+                    .take(NCM_MAX_PLAYLIST_TRACKS)
+                    .map(ncm_normalize_track)
+                    .collect(),
+            ))
+        }
+        // 全部"我喜欢的音乐"（镜像 index.mjs fetchLikedTracks）：优先喜欢歌单 track/all，
+        // 否则 `/likelist` ID + `/song/detail` 兜底。
+        "fetchLikedTracks" => {
+            let uid = ncm_current_uid(policy, idempotency_key, timeout_ms).await?;
+            let library_path = ncm_path(
+                "/user/playlist",
+                &[("uid", &uid.to_string()), ("limit", "1000")],
+            );
+            let library_resp =
+                proxy_ncm(policy, &library_path, idempotency_key, timeout_ms, true).await?;
+            if let Some(liked) = ncm_playlist_items(&library_resp)
+                .into_iter()
+                .find(|item| ncm_is_liked_playlist(item))
+            {
+                if let Some(liked_id) = ncm_value_u64_id(&liked) {
+                    let songs =
+                        ncm_playlist_tracks(&liked_id.to_string(), policy, idempotency_key, timeout_ms).await;
+                    if !songs.is_empty() {
+                        return Ok(Value::Array(
+                            songs
+                                .iter()
+                                .take(NCM_MAX_PLAYLIST_TRACKS)
+                                .map(ncm_normalize_track)
+                                .collect(),
+                        ));
+                    }
+                }
+            }
+            let likelist_path = ncm_path("/likelist", &[("uid", &uid.to_string())]);
+            let likelist_resp =
+                proxy_ncm(policy, &likelist_path, idempotency_key, timeout_ms, true).await?;
+            let ids = ncm_likelist_ids(&likelist_resp);
+            let songs = ncm_fetch_song_details(&ids, policy, idempotency_key, timeout_ms).await?;
+            let track_by_song_id: HashMap<u64, Value> = songs
+                .iter()
+                .filter_map(|song| ncm_value_u64_id(song).map(|id| (id, ncm_normalize_track(song))))
+                .collect();
+            Ok(Value::Array(
+                ids.iter()
+                    .filter_map(|id| track_by_song_id.get(id).cloned())
+                    .collect(),
+            ))
+        }
         _ => Err(format!(
             "原型尚未映射 NCM 方法 {method} 到网关路径（{provider_id}）"
         )),
@@ -1136,6 +1261,327 @@ fn ncm_track_song_id(track: &Value) -> Option<u64> {
         }
         _ => None,
     }
+}
+
+/// 歌单取歌上限 / track/all 分页大小 / song/detail 分片大小（镜像 index.mjs）。
+const NCM_MAX_PLAYLIST_TRACKS: usize = 5000;
+const NCM_PLAYLIST_TRACK_PAGE_SIZE: usize = 1000;
+const NCM_SONG_DETAIL_CHUNK_SIZE: usize = 100;
+
+/// 取当前登录用户 id（镜像 provider ensureProfile）：未登录 → Err。
+async fn ncm_current_uid(
+    policy: &path_policy::PathPolicy,
+    idempotency_key: Option<&str>,
+    timeout_ms: u32,
+) -> Result<u64, String> {
+    let status = ncm_login_status(policy, idempotency_key, timeout_ms).await?;
+    if status.get("loggedIn") != Some(&Value::Bool(true)) {
+        return Err("请先登录网易云音乐".to_string());
+    }
+    status
+        .pointer("/profile/userId")
+        .and_then(Value::as_u64)
+        .filter(|id| *id > 0)
+        .ok_or_else(|| "请先登录网易云音乐".to_string())
+}
+
+/// 提取歌单数组（镜像 index.mjs getPlaylistItems）。
+fn ncm_playlist_items(data: &Value) -> Vec<Value> {
+    for path in ["/playlist", "/playlists", "/data/playlist", "/data/playlists"] {
+        if let Some(Value::Array(items)) = data.pointer(path) {
+            return items.clone();
+        }
+    }
+    Vec::new()
+}
+
+/// 提取歌曲数组（镜像 index.mjs getSongItems，最后 `/data` 兜底）。
+fn ncm_song_items(data: &Value) -> Vec<Value> {
+    for path in [
+        "/songs",
+        "/data/songs",
+        "/result/songs",
+        "/data/result/songs",
+        "/playlist/tracks",
+        "/playlist/songs",
+        "/data/playlist/tracks",
+        "/data/artist/hotSongs",
+        "/artist/hotSongs",
+        "/hotSongs",
+        "/data",
+    ] {
+        if let Some(Value::Array(items)) = data.pointer(path) {
+            return items.clone();
+        }
+    }
+    Vec::new()
+}
+
+/// 判断"我喜欢的音乐"歌单（镜像 index.mjs isLikedPlaylistItem）。
+fn ncm_is_liked_playlist(item: &Value) -> bool {
+    let is_special = item
+        .get("specialType")
+        .and_then(|value| match value {
+            Value::Number(n) => n.as_i64().map(|n| n == 5),
+            Value::String(s) => Some(s == "5"),
+            _ => None,
+        })
+        .unwrap_or(false);
+    is_special || item.get("name").and_then(Value::as_str) == Some("喜欢的音乐")
+}
+
+/// 从对象取正整数 id（镜像 Number(id) 且 >0 的过滤）。
+fn ncm_value_u64_id(value: &Value) -> Option<u64> {
+    let id = value.get("id")?;
+    match id {
+        Value::Number(n) => n.as_u64().filter(|&id| id > 0),
+        Value::String(s) => s.parse::<u64>().ok().filter(|&id| id > 0),
+        _ => None,
+    }
+}
+
+/// 归一化歌单封面并放大到 `param=600y600`（镜像 normalizePlaylistCoverUrl）。
+fn ncm_playlist_cover_value(playlist: &Value) -> Value {
+    let raw = playlist
+        .get("coverImgUrl")
+        .and_then(Value::as_str)
+        .or_else(|| playlist.get("picUrl").and_then(Value::as_str))
+        .unwrap_or("");
+    let normalized = normalize_remote_asset_url(raw);
+    let Some(url) = normalized.as_str() else {
+        return Value::Null;
+    };
+    let is_http = url.starts_with("http://") || url.starts_with("https://");
+    if !is_http || !url.contains("music.126.net") {
+        return json!(url);
+    }
+    if let Some(start) = url.find("param=") {
+        let preceded = start > 0
+            && (url.as_bytes()[start - 1] == b'?'
+                || url.as_bytes()[start - 1] == b'&');
+        if preceded {
+            let value_start = start + "param=".len();
+            let end = url[value_start..]
+                .find(|c| c == '&' || c == '#')
+                .map(|offset| value_start + offset)
+                .unwrap_or(url.len());
+            return json!(format!("{}param=600y600{}", &url[..start], &url[end..]));
+        }
+    }
+    let sep = if url.contains('?') { "&" } else { "?" };
+    json!(format!("{url}{sep}param=600y600"))
+}
+
+/// 归一化歌单摘要（镜像 index.mjs normalizePlaylist；`owned` 仅在能确定
+/// 创建者时输出，`creatorName` 仅在存在时输出，与 JS 的 undefined 省略一致）。
+fn ncm_normalize_playlist(playlist: &Value, owner_uid: u64) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert(
+        "id".to_string(),
+        playlist.get("id").cloned().unwrap_or(Value::Null),
+    );
+    map.insert(
+        "name".to_string(),
+        json!(playlist
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("未命名歌单")),
+    );
+    map.insert("cover".to_string(), ncm_playlist_cover_value(playlist));
+    map.insert(
+        "trackCount".to_string(),
+        json!(playlist.get("trackCount").and_then(Value::as_u64).unwrap_or(0)),
+    );
+    let creator_name = playlist
+        .pointer("/creator/nickname")
+        .and_then(Value::as_str)
+        .map(String::from)
+        .or_else(|| {
+            playlist
+                .get("creatorName")
+                .and_then(Value::as_str)
+                .map(String::from)
+        });
+    if let Some(name) = creator_name {
+        map.insert("creatorName".to_string(), json!(name));
+    }
+    let creator_id = playlist
+        .get("userId")
+        .and_then(Value::as_u64)
+        .or_else(|| playlist.pointer("/creator/userId").and_then(Value::as_u64));
+    if let Some(creator_id) = creator_id {
+        map.insert("owned".to_string(), json!(creator_id == owner_uid));
+    }
+    Value::Object(map)
+}
+
+/// 提取喜欢歌曲 ID 列表（镜像 index.mjs getLikelistIds）。
+fn ncm_likelist_ids(data: &Value) -> Vec<u64> {
+    let raw = if let Some(Value::Array(ids)) = data.get("ids") {
+        ids
+    } else if let Some(Value::Array(ids)) = data.pointer("/data/ids") {
+        ids
+    } else {
+        return Vec::new();
+    };
+    raw.iter()
+        .filter_map(|item| match item {
+            Value::Number(n) => n.as_u64().filter(|&id| id > 0),
+            Value::String(s) => s.parse::<u64>().ok().filter(|&id| id > 0),
+            _ => None,
+        })
+        .collect()
+}
+
+/// 提取歌单 trackIds（镜像 index.mjs getPlaylistTrackIds）。
+fn ncm_playlist_track_ids(data: &Value) -> Vec<u64> {
+    let raw = if let Some(Value::Array(items)) = data.pointer("/playlist/trackIds") {
+        items
+    } else if let Some(Value::Array(items)) = data.pointer("/data/playlist/trackIds") {
+        items
+    } else {
+        return Vec::new();
+    };
+    raw.iter()
+        .filter_map(|item| {
+            let id = match item {
+                Value::Number(n) => n.as_u64(),
+                Value::String(s) => s.parse::<u64>().ok(),
+                Value::Object(map) => map.get("id").and_then(|value| match value {
+                    Value::Number(n) => n.as_u64(),
+                    Value::String(s) => s.parse::<u64>().ok(),
+                    _ => None,
+                }),
+                _ => None,
+            };
+            id.filter(|&id| id > 0)
+        })
+        .collect()
+}
+
+/// 分片批量取歌曲详情（镜像 index.mjs fetchSongDetailsByIds / fetchSongDetailChunk）；
+/// `authed=true` 在有登录 cookie 时附加（对应 requestOptionalAuthRead）。
+async fn ncm_fetch_song_details(
+    ids: &[u64],
+    policy: &path_policy::PathPolicy,
+    idempotency_key: Option<&str>,
+    timeout_ms: u32,
+) -> Result<Vec<Value>, String> {
+    let mut songs = Vec::new();
+    for chunk in ids.chunks(NCM_SONG_DETAIL_CHUNK_SIZE) {
+        if chunk.is_empty() {
+            continue;
+        }
+        let ids_joined = chunk
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let path = ncm_path("/song/detail", &[("ids", &ids_joined)]);
+        let resp = proxy_ncm(policy, &path, idempotency_key, timeout_ms, true).await?;
+        songs.extend(ncm_song_items(&resp));
+    }
+    Ok(songs)
+}
+
+/// 歌单 detail 兜底（镜像 index.mjs fetchPlaylistTracksViaDetail）：优先 trackIds →
+/// song/detail 保序取详情，否则用内联 tracks。失败返回 None。
+async fn ncm_playlist_tracks_via_detail(
+    playlist_id: &str,
+    policy: &path_policy::PathPolicy,
+    idempotency_key: Option<&str>,
+    timeout_ms: u32,
+) -> Option<Vec<Value>> {
+    let path = ncm_path("/playlist/detail", &[("id", playlist_id)]);
+    let resp = proxy_ncm(policy, &path, idempotency_key, timeout_ms, true)
+        .await
+        .ok()?;
+    let track_ids = ncm_playlist_track_ids(&resp);
+    if !track_ids.is_empty() {
+        let sliced: Vec<u64> = track_ids.into_iter().take(NCM_MAX_PLAYLIST_TRACKS).collect();
+        if let Ok(songs) =
+            ncm_fetch_song_details(&sliced, policy, idempotency_key, timeout_ms).await
+        {
+            let by_id: HashMap<u64, Value> = songs
+                .iter()
+                .filter_map(|song| ncm_value_u64_id(song).map(|id| (id, song.clone())))
+                .collect();
+            let ordered: Vec<Value> = sliced
+                .iter()
+                .filter_map(|id| by_id.get(id).cloned())
+                .collect();
+            if !ordered.is_empty() {
+                return Some(ordered);
+            }
+        }
+    }
+    let inline = ncm_song_items(&resp);
+    if inline.is_empty() {
+        None
+    } else {
+        Some(inline.into_iter().take(NCM_MAX_PLAYLIST_TRACKS).collect())
+    }
+}
+
+/// 歌单全部歌曲（镜像 index.mjs fetchPlaylistTracks）：track/all 分页去重，
+/// 空则回退 playlist/detail。
+async fn ncm_playlist_tracks(
+    playlist_id: &str,
+    policy: &path_policy::PathPolicy,
+    idempotency_key: Option<&str>,
+    timeout_ms: u32,
+) -> Vec<Value> {
+    let mut songs = Vec::new();
+    let mut seen: HashSet<u64> = HashSet::new();
+    let mut offset: usize = 0;
+    while songs.len() < NCM_MAX_PLAYLIST_TRACKS {
+        let remaining = NCM_MAX_PLAYLIST_TRACKS - songs.len();
+        let limit = remaining.min(NCM_PLAYLIST_TRACK_PAGE_SIZE);
+        let path = ncm_path(
+            "/playlist/track/all",
+            &[
+                ("id", playlist_id),
+                ("limit", &limit.to_string()),
+                ("offset", &offset.to_string()),
+            ],
+        );
+        let page = match proxy_ncm(policy, &path, idempotency_key, timeout_ms, true).await {
+            Ok(resp) => ncm_song_items(&resp),
+            Err(error) => {
+                if !songs.is_empty() {
+                    eprintln!("NCM 歌单 track/all 分页中断（已取 {} 首）：{error}", songs.len());
+                }
+                break;
+            }
+        };
+        if page.is_empty() {
+            break;
+        }
+        let mut added = 0;
+        for song in &page {
+            if ncm_value_u64_id(song).is_some_and(|id| !seen.insert(id)) {
+                continue;
+            }
+            songs.push(song.clone());
+            added += 1;
+            if songs.len() >= NCM_MAX_PLAYLIST_TRACKS {
+                break;
+            }
+        }
+        if added == 0 || page.len() < limit {
+            break;
+        }
+        offset += page.len();
+    }
+    if songs.is_empty() {
+        if let Some(fallback) =
+            ncm_playlist_tracks_via_detail(playlist_id, policy, idempotency_key, timeout_ms).await
+        {
+            songs = fallback;
+        }
+    }
+    songs
 }
 
 /// 镜像 index.mjs NCM_PLAYBACK_QUALITY_FALLBACKS：偏好质量 → 降级链。
