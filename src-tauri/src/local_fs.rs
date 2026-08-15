@@ -18,7 +18,7 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     hash
 }
 
-fn is_audio_path(path: &Path) -> bool {
+pub(crate) fn is_audio_path(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| {

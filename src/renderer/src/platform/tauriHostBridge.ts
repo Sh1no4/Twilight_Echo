@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
+import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open } from '@tauri-apps/plugin-dialog'
 import { openPath, openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
@@ -454,8 +454,9 @@ export function installTauriHostBridge(): void {
     fs: {
       scanMusicFiles: (folderPath: string) => invoke('fs_scan_music_files', { folderPath }),
       readAudioFile: async () => ({ buffer: new ArrayBuffer(0), mimeType: '' }),
-      getAudioFileUrl: async () => '',
-      isAudioFileAuthorized: async () => false,
+      getAudioFileUrl: async (filePath: string) => convertFileSrc(filePath),
+      isAudioFileAuthorized: (filePath: string) =>
+        invoke<boolean>('fs_is_audio_file_authorized', { filePath }),
       onScanProgress: () => () => {}
     },
     app: {
@@ -594,7 +595,7 @@ export function installTauriHostBridge(): void {
       getVst3Catalog: async () => createDefaultVst3Catalog(),
       getDspAssets: async () => [],
       getAudioOutputOptions: async () => AUDIO_OUTPUT_OPTIONS,
-      isHtmlAudioFallbackAllowed: async () => false,
+      isHtmlAudioFallbackAllowed: async () => true,
       setExclusiveMode: async (next: boolean) => defaultAudioOutputState('wasapi', 'auto', next),
       setAudioOutput: async (output: AudioOutputId, device = 'auto') =>
         defaultAudioOutputState(output, device, false),

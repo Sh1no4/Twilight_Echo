@@ -436,11 +436,17 @@ export function useMusicStore(): {
       .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
   }
 
-  function librarySnapshot(): { revision: number; tracks: Track[]; folders: string[] } {
+  function librarySnapshot(): {
+    revision: number
+    tracks: Track[]
+    folders: string[]
+    exclusions: LocalLibraryExclusion[]
+  } {
     return {
       revision: libraryRevision,
       tracks: tracks.value,
-      folders: [...scannedFolders.value]
+      folders: [...scannedFolders.value],
+      exclusions: excludedTracks.value
     }
   }
 
@@ -491,7 +497,8 @@ export function useMusicStore(): {
       .saveMusicLibrary({
         revision: libraryRevision,
         tracks: tracks.value,
-        folders: [...scannedFolders.value]
+        folders: [...scannedFolders.value],
+        exclusions: excludedTracks.value
       })
       .then(
         (saved) => {
@@ -579,7 +586,10 @@ export function useMusicStore(): {
   }
 
   function applyLibraryScanUpdate(update: LocalLibraryScanUpdate): void {
-    excludedTracks.value = update.exclusions
+    const nextExclusions = Array.isArray(update.exclusions)
+      ? update.exclusions
+      : excludedTracks.value
+    excludedTracks.value = nextExclusions
     libraryRevision = update.libraryRevision
     libraryScanStatus.value = {
       ...libraryScanStatus.value,
@@ -593,7 +603,7 @@ export function useMusicStore(): {
     if (update.state === 'cancelled') return
 
     const excludedPaths = new Set(
-      update.exclusions.map((entry) => normalizePortableLibraryPath(entry.filePath))
+      nextExclusions.map((entry) => normalizePortableLibraryPath(entry.filePath))
     )
     const removedPaths = new Set(update.removedFilePaths.map(normalizePortableLibraryPath))
     const replacements = [...update.addedTracks, ...update.updatedTracks].filter(
@@ -655,7 +665,9 @@ export function useMusicStore(): {
     pendingMetadataEnrichmentUpdates.clear()
     metadataEnrichmentFlushScheduled = false
     libraryRevision = result.library.revision
-    excludedTracks.value = result.library.exclusions
+    if (Array.isArray(result.library.exclusions)) {
+      excludedTracks.value = result.library.exclusions
+    }
     setTracks([])
     rebuildDerivedCollections()
     libraryRepairReport.value = null
@@ -994,7 +1006,9 @@ export function useMusicStore(): {
 
   function applySavedLibraryMetadata(document: LocalMusicLibraryDocument): void {
     libraryRevision = document.revision
-    excludedTracks.value = document.exclusions
+    if (Array.isArray(document.exclusions)) {
+      excludedTracks.value = document.exclusions
+    }
   }
 
   function applyPendingRejectedRemoval(document: LocalMusicLibraryDocument): void {

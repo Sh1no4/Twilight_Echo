@@ -37,6 +37,7 @@ export function useSongListVirtualScroll({
   const rowHeight = ROW_HEIGHT
   let pointerMoveRafId: number | null = null
   let lastPointerEvent: PointerEvent | null = null
+  let lastPointerRow: HTMLElement | null = null
 
   const visibleRange = computed(() =>
     getSongListVirtualRange({
@@ -62,9 +63,13 @@ export function useSongListVirtualScroll({
 
   function flushPointerMove(): void {
     const event = lastPointerEvent
+    const row = lastPointerRow
     pointerMoveRafId = null
-    if (!event) return
-    const row = event.currentTarget as HTMLElement
+    lastPointerEvent = null
+    lastPointerRow = null
+    // currentTarget is null outside event dispatch; the row may also have been
+    // detached by a re-render while the rAF was pending — bail instead of crashing.
+    if (!event || !row) return
     const rect = row.getBoundingClientRect()
     row.style.setProperty('--track-pointer-x', `${event.clientX - rect.left}px`)
     row.style.setProperty('--track-pointer-y', `${event.clientY - rect.top}px`)
@@ -72,6 +77,7 @@ export function useSongListVirtualScroll({
 
   function onRowPointerMove(event: PointerEvent): void {
     lastPointerEvent = event
+    lastPointerRow = event.currentTarget as HTMLElement
     if (pointerMoveRafId === null) {
       pointerMoveRafId = requestAnimationFrame(flushPointerMove)
     }

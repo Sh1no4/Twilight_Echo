@@ -28,6 +28,7 @@ export interface LocalLibrarySnapshotInput {
   revision: number
   tracks: unknown[]
   folders: string[]
+  exclusions?: LocalLibraryExclusion[]
 }
 
 export interface LocalLibraryRemoveRequest {

@@ -111,6 +111,57 @@ fn data_save_music_library(app: AppHandle, data: Value) -> Value {
     data
 }
 
+/// 与 Electron `src/main/security/localPaths.ts` 的 `resolveAuthorizedAudioFile`
+/// 语义对齐：文件存在、扩展名受支持，且位于已配置的音乐库目录（settings.json
+/// 的 libraryFolders / musicCachePath / cachePath）或已保存音乐库的 folders 内。
+/// Tauri 原型阶段没有独立的授权授权集，配置与已扫描目录即为授权范围。
+#[tauri::command]
+fn fs_is_audio_file_authorized(app: AppHandle, file_path: String) -> Result<bool, String> {
+    let path = PathBuf::from(&file_path);
+    if !path.is_file() || !local_fs::is_audio_path(&path) {
+        return Ok(false);
+    }
+    let canonical = fs::canonicalize(&path).map_err(|err| format!("解析文件路径失败：{err}"))?;
+
+    let settings = load_json_file(&app, "settings.json", json!({}));
+    let library = load_json_file(
+        &app,
+        "music-library.json",
+        json!({ "version": 2, "revision": 0, "tracks": [], "folders": [], "exclusions": [] }),
+    );
+
+    let mut roots: Vec<PathBuf> = Vec::new();
+    for array in [
+        settings.get("libraryFolders").and_then(Value::as_array),
+        library.get("folders").and_then(Value::as_array),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for folder in array.iter().filter_map(Value::as_str) {
+            if !folder.trim().is_empty() {
+                roots.push(PathBuf::from(folder));
+            }
+        }
+    }
+    for key in ["musicCachePath", "cachePath"] {
+        if let Some(folder) = settings.get(key).and_then(Value::as_str) {
+            if !folder.trim().is_empty() {
+                roots.push(PathBuf::from(folder));
+            }
+        }
+    }
+
+    for root in roots {
+        if let Ok(canonical_root) = fs::canonicalize(&root) {
+            if canonical.starts_with(&canonical_root) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -125,6 +176,7 @@ pub fn run() {
             data_load_music_library,
             data_save_music_library,
             local_fs::fs_scan_music_files,
+            fs_is_audio_file_authorized,
             plugins::plugins_list,
             plugins::plugins_enable,
             plugins::plugins_disable,
