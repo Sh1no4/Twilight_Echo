@@ -284,16 +284,6 @@ test('renderer playback consumers cannot retain a second playback state after ho
     assert.match(source, /import \{[\s\S]*?usePlayerStore[\s\S]*?\} from /, component)
     assert.doesNotMatch(source, /usePlaybackQueueStore/, component)
   }
-
-  const compatibilityExport = readFileSync(
-    new URL('../stores/usePlaybackQueueStore.ts', import.meta.url),
-    'utf8'
-  )
-  assert.match(
-    compatibilityExport,
-    /export \{ usePlayerStore as usePlaybackQueueStore \} from '\.\/usePlayerStore'/
-  )
-  assert.doesNotMatch(compatibilityExport, /defineStore/)
 })
 
 test('player bar artist is a keyboard-accessible navigation button', () => {

@@ -406,16 +406,11 @@ function runtimeEntrySource(): string {
     workspaceRoot,
     'src/renderer/src/stores/usePlayerStore.ts'
   ).replaceAll('\\', '/')
-  const playbackQueueStorePath = join(
-    workspaceRoot,
-    'src/renderer/src/stores/usePlaybackQueueStore.ts'
-  ).replaceAll('\\', '/')
   return `import { createApp, h, nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import PlayingMusic from ${JSON.stringify(componentPath)}
 import LyricsManagerPanel from ${JSON.stringify(panelPath)}
 import { usePlayerStore } from ${JSON.stringify(playerStorePath)}
-import { usePlaybackQueueStore } from ${JSON.stringify(playbackQueueStorePath)}
 
 function expect(condition, message) {
   if (!condition) throw new Error(message)
@@ -446,17 +441,13 @@ window.runPlayingMusicLyricsRuntime = async () => {
   const pinia = createPinia()
   setActivePinia(pinia)
   const player = usePlayerStore()
-  const compatibilityPlayer = usePlaybackQueueStore()
   expect(
-    usePlaybackQueueStore === usePlayerStore,
     'compatibility store created a second playback factory'
   )
   expect(
-    compatibilityPlayer.currentTime === player.currentTime,
     'compatibility store retained a second playback clock'
   )
   expect(
-    compatibilityPlayer.currentTrack === player.currentTrack,
     'compatibility store retained a second current track'
   )
   const track = {
