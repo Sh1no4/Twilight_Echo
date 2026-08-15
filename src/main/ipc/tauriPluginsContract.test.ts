@@ -58,7 +58,7 @@ test('Tauri registers the list + Stage 5A lifecycle commands and the Rust module
   assert.match(pluginsSource, /#\[tauri::command\]\s*pub fn extensions_list\(\) -> Value/)
   assert.match(
     pluginsSource,
-    /#\[tauri::command\]\s*pub fn providers_call\(\s*app: AppHandle,\s*registry: State<'_, ProviderCallRegistry>,\s*provider_id: String,\s*method: String,\s*args: Option<Value>,\s*options: Option<Value>,\s*\) -> Result<Value, String>/
+    /#\[tauri::command\]\s*pub async fn providers_call\(\s*app: AppHandle,\s*registry: State<'_, ProviderCallRegistry>,\s*provider_id: String,\s*method: String,\s*args: Option<Value>,\s*options: Option<Value>,\s*\) -> Result<Value, String>/
   )
   assert.match(
     pluginsSource,
@@ -188,9 +188,10 @@ test('Rust persists provider health and merges it into providers_list', () => {
   assert.match(pluginsSource, /provider_health_descriptor\(record, "enabled"\)/)
 })
 
-test('Rust providers_call gates on plugin enabled state and persists a health failure for gateway-unavailable dispatch', () => {
-  assert.match(pluginsSource, /fn dispatch_ncm_provider_call\(/)
-  assert.match(pluginsSource, /内置网易云网关在 Tauri 运行时不可用/)
+test('Rust providers_call gates on plugin enabled state and proxies NCM via the node gateway prototype', () => {
+  assert.match(pluginsSource, /async fn dispatch_ncm_provider_call\(/)
+  assert.match(pluginsSource, /"getQrKey" => "\/login\/qr\/key"/)
+  assert.match(pluginsSource, /原型尚未映射 NCM 方法 \{method\} 到网关路径（\{provider_id\}）/)
   assert.match(pluginsSource, /Provider 未启用：\{provider_id\}/)
   assert.match(
     pluginsSource,

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
+mod ncm_gateway;
 mod path_policy;
 mod plugins;
 

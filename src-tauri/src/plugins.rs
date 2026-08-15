@@ -16,9 +16,9 @@
 //! - `providers_call` / `providers_cancel`：镜像 Electron `providers:call` /
 //!   `providers:cancel` 的参数校验（provider id / method 白名单 / args 上限 / options
 //!   白名单 / requestId），并保留超时分层与按 requestId 的中止注册表契约面。实际 NCM
-//!   调用在 Tauri 下不可用（网易云网关是 Node-only HTTP 服务，离线 crate 又不携带
-//!   TLS 与 WEAPI 加密），因此 dispatch 统一返回结构化的"网关不可用"错误，并在健康记录
-//!   中记一次失败（与 Electron 调用失败即记录一致）。
+//!   调用经 `crate::ncm_gateway`（prototype）：把 Node 网关作为子进程 spawn 后通过本地
+//!   HTTP 代理到真实网易云接口；网关不可用 / 调用失败时记录一次健康失败（与 Electron
+//!   调用失败即记录一致）。
 //! - `extensions_list`：全部来自插件 manifest 的 `contributes` 声明，当前无任何声明，
 //!   返回真实空数组。
 //!
@@ -29,6 +29,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 use time::format_description::well_known::Rfc3339;
@@ -561,33 +562,49 @@ fn provider_health_descriptor(record: Option<&Value>, plugin_status: &str) -> Va
     })
 }
 
-/// 分派 NCM Provider 调用。
+/// 分派 NCM Provider 调用（prototype：Node 网关子进程 + 本地 HTTP 代理）。
 ///
-/// Electron 侧的网易云网关是 Node HTTP 服务（`serveNcmApi`），只能在 Electron 主进程
-/// 运行；Tauri 侧离线 crate 不携带 TLS 与 WEAPI 加密能力，无法直连 `music.163.com`。
-/// 因此这里不真正发起网络请求，而是返回结构化的"网关不可用"错误，由 `providers_call`
-/// 记录一次健康失败（与 Electron 调用失败即记录一致）。超时分层已计算，作为网关迁移
-/// 为异步执行时的契约面保留。
-fn dispatch_ncm_provider_call(
+/// Electron 侧的网易云网关是 Node HTTP 服务（`serveNcmApi`），只能在 Node 环境运行；
+/// Tauri 侧离线 crate 不携带 TLS 与 WEAPI 加密能力，无法直连 `music.163.com`。因此这里
+/// 经 `crate::ncm_gateway::proxy_json_call` 把请求代理到由本进程 spawn 的本地网关，
+/// 拿到真实网易云 JSON。目前只映射零鉴权方法 `getQrKey`（→ `/login/qr/key`）验证链路；
+/// 其余方法返回结构化的"原型未映射"错误，由 `providers_call` 记录一次健康失败。
+async fn dispatch_ncm_provider_call(
     provider_id: &str,
     method: &str,
     _args: &Value,
-    _idempotency_key: Option<&str>,
+    idempotency_key: Option<&str>,
     timeout_ms: u32,
 ) -> Result<Value, String> {
-    Err(format!(
-        "内置网易云网关在 Tauri 运行时不可用（{provider_id}.{method}，超时 {timeout_ms}ms）"
-    ))
+    let base_path = match method {
+        "getQrKey" => "/login/qr/key".to_string(),
+        _ => {
+            return Err(format!(
+                "原型尚未映射 NCM 方法 {method} 到网关路径（{provider_id}）"
+            ))
+        }
+    };
+    let sep = if base_path.contains('?') { '&' } else { '?' };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let path = format!("{base_path}{sep}timestamp={now_ms}");
+    let mut headers: Vec<(String, String)> = Vec::new();
+    if let Some(key) = idempotency_key {
+        headers.push(("X-Twilight-Idempotency-Key".to_string(), key.to_string()));
+    }
+    crate::ncm_gateway::proxy_json_call(&path, headers, Duration::from_millis(timeout_ms as u64)).await
 }
 
 /// `providers.call`：校验并分派 Provider 调用。
 ///
 /// 参数校验镜像 Electron `providers:call`（provider id / method 白名单 / args 上限 /
 /// options 仅允许 idempotencyKey+requestId / requestId 模式）；Provider 未启用或内置
-/// manifest 缺失时返回 `Provider 未启用`（不记录健康）。实际 NCM 调用在 Tauri 运行时
-/// 不可用，dispatch 统一返回"网关不可用"错误并记录一次健康失败。
+/// manifest 缺失时返回 `Provider 未启用`（不记录健康）。NCM 调用经 `ncm_gateway`
+/// 代理到本地 Node 网关；成功记录健康成功，失败（含网关不可用）记录一次健康失败。
 #[tauri::command]
-pub fn providers_call(
+pub async fn providers_call(
     app: AppHandle,
     registry: State<'_, ProviderCallRegistry>,
     provider_id: String,
@@ -634,7 +651,8 @@ pub fn providers_call(
         &args,
         idempotency_key.as_deref(),
         timeout_ms,
-    );
+    )
+    .await;
     if let Some(request_id) = &request_id {
         registry
             .0
