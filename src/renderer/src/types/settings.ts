@@ -54,7 +54,6 @@ export type { MiniPlayerSettings } from '../../../shared/miniPlayer.ts'
 export type { MotionPreference } from '../../../shared/motion.ts'
 export type {
   LiquidGlassCoverage,
-  LiquidGlassHomeCardMode,
   LiquidGlassSettings,
   LiquidGlassTheme,
   SurfaceMaterial

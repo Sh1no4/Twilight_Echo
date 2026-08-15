@@ -187,15 +187,19 @@ function close(): void {
   background-attachment: fixed, fixed;
 }
 
-:global(html[data-theme='dark'] .title-bar),
-:global(html[data-theme='dark'] .title-bar.title-bar-streaming),
-:global(
-  html[data-theme='dark']
-    .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(
-      .title-bar-settings
-    )
-),
-:global(html[data-theme='dark'] .title-bar.title-bar-glass) {
+/* Dark tone must not wrap the whole chain in `:global()`: Vue's scoped transform
+   rewrites only the last compound, so `:global(html .title-bar…)` compiles to the
+   bare ancestor and the declarations land on <html> instead of this component.
+   Both compounds here belong to this component; scoping appends the id to the
+   subject and leaves the document-level ancestor alone — same contract as the
+   playbar glass rules in PlayerBar.css. */
+html[data-theme='dark'] .title-bar,
+html[data-theme='dark'] .title-bar.title-bar-streaming,
+html[data-theme='dark']
+  .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(
+    .title-bar-settings
+  ),
+html[data-theme='dark'] .title-bar.title-bar-glass {
   background: transparent !important;
 }
 
@@ -392,7 +396,7 @@ function close(): void {
     var(--te-lg-context-material) !important;
 }
 
-:global(html[data-te-liquid-glass-scrolled='on']) .title-bar-liquid .title-bar-background {
+html[data-te-liquid-glass-scrolled='on'] .title-bar-liquid .title-bar-background {
   background:
     linear-gradient(
       180deg,
