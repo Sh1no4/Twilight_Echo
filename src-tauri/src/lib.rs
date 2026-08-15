@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
 mod path_policy;
+mod plugins;
 
 #[tauri::command]
 fn relaunch(app: AppHandle) {
@@ -114,7 +115,10 @@ pub fn run() {
             settings_get,
             settings_update,
             data_load_music_library,
-            data_save_music_library
+            data_save_music_library,
+            plugins::plugins_list,
+            plugins::providers_list,
+            plugins::extensions_list
         ])
         .on_page_load(|webview, _| {
             let window = webview.window();

@@ -22,26 +22,34 @@ test('Electron is the full-featured baseline: every capability is supported', ()
   }
 })
 
-test('Tauri matrix flags unimplemented surfaces as unsupported, not as empty business data', () => {
+test('Tauri matrix marks the read-only list surfaces partial and fonts unsupported', () => {
   const matrix = getRuntimeCapabilities(true)
-  for (const id of ['plugins', 'providers', 'extensions', 'fonts'] as const) {
-    assert.equal(matrix[id].status, 'unsupported', `${id} must be unsupported on Tauri`)
-    assert.equal(matrix[id].code, UNSUPPORTED_CAPABILITY_CODE)
-    assert.match(matrix[id].message, /当前运行时不支持/)
-  }
-  // Settings is implemented on Tauri; the migration is partial for the rest.
+  // Only fonts is still fully unimplemented on Tauri.
+  assert.equal(matrix.fonts.status, 'unsupported')
+  assert.equal(matrix.fonts.code, UNSUPPORTED_CAPABILITY_CODE)
+  assert.match(matrix.fonts.message, /当前运行时不支持/)
+  // Settings is implemented on Tauri; list surfaces and the rest are partial.
   assert.equal(matrix.settings.status, 'supported')
-  for (const id of ['data', 'themes', 'localLibrary', 'audioEngine'] as const) {
+  for (const id of [
+    'plugins',
+    'providers',
+    'extensions',
+    'data',
+    'themes',
+    'localLibrary',
+    'audioEngine'
+  ] as const) {
     assert.equal(matrix[id].status, 'partial', `${id} is a partial migration on Tauri`)
   }
 })
 
 test('getCapabilityState / isCapabilitySupported route through the same matrix', () => {
-  assert.equal(getCapabilityState('plugins', true).status, 'unsupported')
+  assert.equal(getCapabilityState('plugins', true).status, 'partial')
   assert.equal(getCapabilityState('plugins', false).status, 'supported')
   assert.equal(isCapabilitySupported('plugins', true), false)
   assert.equal(isCapabilitySupported('plugins', false), true)
   assert.equal(isCapabilitySupported('settings', true), true)
+  assert.equal(isCapabilitySupported('fonts', true), false)
 })
 
 /* ── Behavioral: RuntimeCapabilityError ───────────────────────────────── */
@@ -83,14 +91,16 @@ test('runtime detection is safe in a non-browser environment', () => {
 
 /* ── Contract: the Tauri bridge must reject, never lie ────────────────── */
 
-test('Tauri bridge rejects unimplemented plugin surface instead of returning []', () => {
-  const source = readFileSync(
-    new URL('./tauriHostBridge.ts', import.meta.url),
-    'utf8'
-  )
+test('Tauri bridge rejects unimplemented plugin write surfaces instead of returning fake results', () => {
+  const source = readFileSync(new URL('./tauriHostBridge.ts', import.meta.url), 'utf8')
   const pluginsSection = source.slice(source.indexOf('plugins: {'), source.indexOf('fonts: {'))
+  // plugins.list is a real Stage 4 command; every write/side-effect op rejects.
+  assert.match(
+    pluginsSection,
+    /list: \(\) => invoke\('plugins_list'\)/,
+    'plugins.list must invoke the real plugins_list command'
+  )
   for (const method of [
-    'list',
     'installFromPath',
     'chooseAndInstall',
     'enable',
@@ -112,7 +122,7 @@ test('Tauri bridge rejects unimplemented plugin surface instead of returning []'
   }
 })
 
-test('Tauri bridge rejects fonts, extensions, and providers surfaces', () => {
+test('Tauri bridge wires list commands while fonts and provider/extensions calls reject', () => {
   const source = readFileSync(new URL('./tauriHostBridge.ts', import.meta.url), 'utf8')
   assert.match(
     source,
@@ -121,18 +131,23 @@ test('Tauri bridge rejects fonts, extensions, and providers surfaces', () => {
   )
   assert.match(
     source,
-    /extensions: \{\s*list: \(\) => Promise\.reject\(capabilityError\('extensions'\)\)/,
-    'extensions.list must reject with an extensions capability error'
+    /extensions: \{\s*list: \(\) => invoke\('extensions_list'\)/,
+    'extensions.list must invoke the real extensions_list command'
   )
   assert.match(
     source,
-    /providers: \{\s*list: \(\) => Promise\.reject\(capabilityError\('providers'\)\)/,
-    'providers.list must reject with a providers capability error'
+    /providers: \{\s*list: \(\) => invoke\('providers_list'\)/,
+    'providers.list must invoke the real providers_list command'
   )
   assert.match(
     source,
-    /providers: \{\s*list: \(\) => Promise\.reject\(capabilityError\('providers'\)\)[\s\S]*?call: \(\) =>\s*Promise\.reject\(\s*capabilityError\('providers', 'Provider 未启用：当前运行时不支持在线音源'\)/,
+    /providers: \{\s*list: \(\) => invoke\('providers_list'\)[\s\S]*?call: \(\) =>\s*Promise\.reject\(\s*capabilityError\('providers', 'Provider 未启用：当前运行时不支持在线音源'\)/,
     'providers.call must reject with a message compatible with the Provider 未启用 regex'
+  )
+  assert.match(
+    source,
+    /extensions: \{\s*list: \(\) => invoke\('extensions_list'\)[\s\S]*?executeCommand: \(\) => Promise\.reject\(capabilityError\('extensions'\)\)/,
+    'extensions.executeCommand must reject with an extensions capability error'
   )
 })
 
@@ -141,15 +156,24 @@ test('Tauri bridge rejects fonts, extensions, and providers surfaces', () => {
 test('provider store exposes a structured capability ref, not just an empty list', () => {
   const source = readFileSync(new URL('../stores/useProviderStore.ts', import.meta.url), 'utf8')
   assert.match(source, /providerCapability: Ref<CapabilityState>/)
-  assert.match(source, /const providerCapability = ref<CapabilityState>\(getCapabilityState\('providers'\)\)/)
+  assert.match(
+    source,
+    /const providerCapability = ref<CapabilityState>\(getCapabilityState\('providers'\)\)/
+  )
   assert.match(source, /if \(capability\.status === 'unsupported'\)/)
   assert.match(source, /providerCapability,/)
 })
 
 test('font picker exposes fontsUnavailable for runtime capability gaps', () => {
-  const source = readFileSync(new URL('../composables/useLyricsFontPicker.ts', import.meta.url), 'utf8')
+  const source = readFileSync(
+    new URL('../composables/useLyricsFontPicker.ts', import.meta.url),
+    'utf8'
+  )
   assert.match(source, /fontsUnavailable: Ref<boolean>/)
-  assert.match(source, /fontsUnavailable = ref\(getCapabilityState\('fonts'\)\.status === 'unsupported'\)/)
+  assert.match(
+    source,
+    /fontsUnavailable = ref\(getCapabilityState\('fonts'\)\.status === 'unsupported'\)/
+  )
   assert.match(source, /fontsUnavailable\.value = isRuntimeCapabilityError\(error\)/)
 })
 
@@ -175,7 +199,10 @@ test('streaming page distinguishes runtime-unsupported from no-provider-configur
 })
 
 test('lyrics appearance customizer shows the font capability gap', () => {
-  const source = readFileSync(new URL('../components/LyricsAppearanceCustomizer.vue', import.meta.url), 'utf8')
+  const source = readFileSync(
+    new URL('../components/LyricsAppearanceCustomizer.vue', import.meta.url),
+    'utf8'
+  )
   assert.match(source, /fontPicker\.fontsUnavailable\.value/)
   assert.match(source, /当前运行时不支持/)
 })

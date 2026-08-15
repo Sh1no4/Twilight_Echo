@@ -10,7 +10,10 @@ import {
   createPluginTrustRefreshController,
   type PluginTrustRefreshController
 } from '@renderer/utils/pluginTrustRefresh'
-import { getCapabilityState } from '@renderer/platform/runtimeCapabilities'
+import {
+  getCapabilityState,
+  isRuntimeCapabilityError
+} from '@renderer/platform/runtimeCapabilities'
 
 type TwilightPluginDescriptor = Awaited<ReturnType<typeof window.api.plugins.list>>[number]
 type TwilightPluginIndexEntry = Awaited<ReturnType<typeof window.api.plugins.listIndex>>[number]
@@ -144,8 +147,14 @@ async function refreshIndex(force = false) {
     indexStatus.value = status
   } catch (e) {
     if (generation !== indexRequestGeneration) return
-    errorMsg.value = `加载插件市场失败：${e instanceof Error ? e.message : String(e)}`
-    indexStatus.value = await window.api.plugins.getIndexStatus().catch(() => null)
+    if (isRuntimeCapabilityError(e)) {
+      // 当前运行时（Tauri）不支持插件市场：清空占位，不把能力缺口误报为网络错误。
+      indexEntries.value = []
+      indexStatus.value = null
+    } else {
+      errorMsg.value = `加载插件市场失败：${e instanceof Error ? e.message : String(e)}`
+      indexStatus.value = await window.api.plugins.getIndexStatus().catch(() => null)
+    }
   } finally {
     if (generation === indexRequestGeneration) {
       trustEvaluationTimeMs.value = Date.now()

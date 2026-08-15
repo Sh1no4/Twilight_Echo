@@ -208,3 +208,39 @@ pub fn categorized_data_path(policy: &PathPolicy, category: &str, segments: &[&s
     }
     path
 }
+
+/// 解析分类目录下的应用数据路径（与 TS 侧 `getCategorizedAppPath` 语义一致）：
+///
+/// - `portable`：`data/<category>/<portable_segments...>`，允许目标就是分类目录本身
+///   （`portable_segments` 为空数组，例如 plugins 目录、plugin-data 目录、logs 目录）。
+/// - `standard` / `fallback`：`{standardRoot}/{legacy_relative}`，沿用 legacy 扁平布局
+///   （例如 `standardRoot/plugins`、`standardRoot/logs/plugins`），保证旧安装路径不变。
+///
+/// 插件/Provider 只读 list 使用同一入口，保证"迁移目标"与"应用实际读取路径"一致。
+pub fn categorized_app_path(
+    policy: &PathPolicy,
+    category: &str,
+    portable_segments: &[&str],
+    legacy_relative: &str,
+) -> PathBuf {
+    if policy.mode == "portable" {
+        let base = policy
+            .categories
+            .get(category)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(&policy.data_root));
+        let mut path = base;
+        for segment in portable_segments {
+            path.push(segment);
+        }
+        path
+    } else {
+        let mut path = PathBuf::from(&policy.standard_root);
+        for segment in legacy_relative.split(['/', '\\']) {
+            if !segment.is_empty() {
+                path.push(segment);
+            }
+        }
+        path
+    }
+}

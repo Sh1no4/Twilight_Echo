@@ -473,7 +473,7 @@ export function installTauriHostBridge(): void {
       scanFull: async () => noopScanUpdate
     },
     plugins: {
-      list: () => Promise.reject(capabilityError('plugins')),
+      list: () => invoke('plugins_list'),
       installFromPath: () => Promise.reject(capabilityError('plugins')),
       chooseAndInstall: () => Promise.reject(capabilityError('plugins')),
       enable: () => Promise.reject(capabilityError('plugins')),
@@ -546,7 +546,7 @@ export function installTauriHostBridge(): void {
       onCommand: () => () => {}
     },
     providers: {
-      list: () => Promise.reject(capabilityError('providers')),
+      list: () => invoke('providers_list'),
       call: () =>
         Promise.reject(
           capabilityError('providers', 'Provider 未启用：当前运行时不支持在线音源')
@@ -554,7 +554,7 @@ export function installTauriHostBridge(): void {
       cancel: () => {}
     },
     extensions: {
-      list: () => Promise.reject(capabilityError('extensions')),
+      list: () => invoke('extensions_list'),
       executeCommand: () => Promise.reject(capabilityError('extensions')),
       readThemeStylesheet: () => Promise.reject(capabilityError('extensions'))
     },
