@@ -68,7 +68,7 @@ export function isTauriRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
-const CAPABILITY_LABELS: Record<RuntimeCapabilityId, string> = {
+export const CAPABILITY_LABELS: Record<RuntimeCapabilityId, string> = {
   settings: '设置',
   data: '数据',
   plugins: '插件',

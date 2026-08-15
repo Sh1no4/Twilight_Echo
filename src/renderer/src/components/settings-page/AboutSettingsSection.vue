@@ -4,6 +4,13 @@ import { useEscapeToClose, useFocusTrap } from '../../app/useDismissLayer.ts'
 import { resolveCover } from '../../utils/coverLoader.ts'
 import { GITHUB_URL, HOMEPAGE_URL, RELEASES_URL } from './types.ts'
 import type { AppUpdateProgress } from '../../../../shared/appUpdate.ts'
+import {
+  CAPABILITY_LABELS,
+  getRuntimeCapabilities,
+  isTauriRuntime,
+  RUNTIME_CAPABILITY_IDS
+} from '../../platform/runtimeCapabilities.ts'
+import type { CapabilityState } from '../../platform/runtimeCapabilities.ts'
 
 const AFDIAN_URL = 'https://ifdian.net/a/pxasen'
 // Public assets are copied to the renderer root at build time. Relative paths
@@ -175,6 +182,40 @@ function progressLabel(): string {
   }
   return progress.message || ''
 }
+
+/* Read-only runtime capability boundary (Part 3): Electron is the full-feature
+   baseline (all supported); Tauri reports partial/unsupported per surface. */
+const runtimeCapabilities = getRuntimeCapabilities()
+const runtimeLabel = isTauriRuntime() ? 'Tauri' : 'Electron'
+
+interface CapabilityRow {
+  id: (typeof RUNTIME_CAPABILITY_IDS)[number]
+  label: string
+  state: CapabilityState
+}
+
+const capabilityRows: CapabilityRow[] = RUNTIME_CAPABILITY_IDS.map((id) => ({
+  id,
+  label: CAPABILITY_LABELS[id],
+  state: runtimeCapabilities[id]
+}))
+
+const CAPABILITY_STATUS_LABELS: Record<CapabilityState['status'], string> = {
+  supported: '已支持',
+  partial: '部分支持',
+  unsupported: '不支持'
+}
+
+function capabilityBadgeClass(status: CapabilityState['status']): string {
+  switch (status) {
+    case 'supported':
+      return 'te-status-badge--success'
+    case 'partial':
+      return 'te-status-badge--warning'
+    case 'unsupported':
+      return 'te-status-badge--danger'
+  }
+}
 </script>
 
 <template>
@@ -316,6 +357,30 @@ function progressLabel(): string {
     </div>
 
     <hr />
+
+    <div class="about-capabilities" aria-label="运行时能力">
+      <div class="about-capabilities-title">
+        <strong>运行时能力</strong>
+        <span>当前宿主为 {{ runtimeLabel }}，以下为各功能的支持边界（只读）。</span>
+      </div>
+      <dl class="capability-grid">
+        <div v-for="row in capabilityRows" :key="row.id" class="capability-entry">
+          <dt>{{ row.label }}</dt>
+          <dd>
+            <span
+              class="te-status-badge"
+              :class="capabilityBadgeClass(row.state.status)"
+              :aria-label="`${row.label}：${CAPABILITY_STATUS_LABELS[row.state.status]}`"
+            >
+              {{ CAPABILITY_STATUS_LABELS[row.state.status] }}
+            </span>
+            <span v-if="row.state.status !== 'supported'" class="capability-detail">
+              {{ row.state.message }}
+            </span>
+          </dd>
+        </div>
+      </dl>
+    </div>
 
     <div class="about-links">
       <button type="button" @click="emit('exportAudioDiagnostics')">

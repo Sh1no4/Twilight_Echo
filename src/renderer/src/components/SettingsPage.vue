@@ -113,6 +113,8 @@ import {
   type PlayerBarMode,
   type PlayerBarPageMode
 } from '../../../shared/playerBar.ts'
+import type { DataRootMode, DataRootFallbackReason } from '../../../shared/pathPolicy.ts'
+import type { DataMigrationStatus } from '../../../shared/dataMigration.ts'
 
 const props = defineProps<{
   initialSection?: SectionKey
@@ -169,6 +171,52 @@ const settingsSearchQuery = ref('')
 const settingsNotice = ref('')
 const settingsError = ref('')
 const importSettingsInputRef = ref<HTMLInputElement | null>(null)
+/** Guards the export/import backup buttons against double submission. */
+const backupBusy = ref(false)
+/** Guards the per-group reset buttons against double submission. */
+const resetBusy = ref(false)
+
+/** Read-only data-location diagnostics for the 备份与恢复 section (Part 3). */
+const dataRootInfo = computed(() => paths.value?.dataRoot ?? null)
+const migrationInfo = computed(() => paths.value?.migration ?? null)
+
+const DATA_ROOT_MODE_LABELS: Record<DataRootMode, string> = {
+  standard: '标准（用户目录）',
+  portable: '便携（随应用目录）',
+  fallback: '回退标准'
+}
+
+const DATA_ROOT_FALLBACK_LABELS: Record<DataRootFallbackReason, string> = {
+  'exe-dir-unresolvable': '程序目录不可解析',
+  'data-dir-not-writable': '数据目录不可写',
+  'category-not-writable': '分类目录不可写'
+}
+
+const MIGRATION_STATUS_LABELS: Record<DataMigrationStatus, string> = {
+  'not-needed': '无需迁移',
+  pending: '待迁移',
+  completed: '已完成',
+  failed: '失败'
+}
+
+const dataRootModeLabel = computed(() => {
+  const info = dataRootInfo.value
+  if (!info) return '—'
+  if (info.mode === 'fallback') {
+    return `${DATA_ROOT_MODE_LABELS.fallback}（${DATA_ROOT_FALLBACK_LABELS[info.fallbackReason ?? 'data-dir-not-writable']}）`
+  }
+  return DATA_ROOT_MODE_LABELS[info.mode]
+})
+
+const dataRootPathLabel = computed(() => dataRootInfo.value?.dataRoot ?? '—')
+
+const migrationStatusLabel = computed(() => {
+  const info = migrationInfo.value
+  if (!info) return '—'
+  const base = MIGRATION_STATUS_LABELS[info.status]
+  if (info.status === 'failed' && info.failure) return `${base}：${info.failure}`
+  return base
+})
 const shortcutStatuses = ref<PlayerShortcutStatus[]>([])
 const remoteStatus = ref<import('../../../shared/remoteControl.ts').RemoteControlStatus | null>(
   null
@@ -893,17 +941,19 @@ async function toggleDesktopLyrics(): Promise<void> {
   await updateSettings({ desktopLyrics: { ...settings.value.desktopLyrics, enabled } })
 }
 
-function resetSettingsGroup(group: 'appearance' | 'playback' | 'desktopLyrics'): void {
+async function resetSettingsGroup(group: 'appearance' | 'playback' | 'desktopLyrics'): Promise<void> {
+  if (resetBusy.value) return
   if (
     !window.confirm(
       `恢复${group === 'appearance' ? '外观' : group === 'playback' ? '播放' : '桌面歌词'}设置为默认值？`
     )
   )
     return
+  resetBusy.value = true
   settingsNotice.value = ''
   settingsError.value = ''
-  if (group === 'appearance') {
-    void (async () => {
+  try {
+    if (group === 'appearance') {
       await themeStore.setActive({ kind: 'builtin', id: 'builtin:twilight-echo-default' })
       await updateSettings({
         theme: 'system',
@@ -916,55 +966,55 @@ function resetSettingsGroup(group: 'appearance' | 'playback' | 'desktopLyrics'):
         uiDensity: 'standard'
       })
       settingsNotice.value = '外观设置已恢复默认'
-    })().catch((cause) => {
-      settingsError.value = cause instanceof Error ? cause.message : '外观设置恢复失败'
-    })
-    return
-  }
-  if (group === 'playback') {
-    void updateSettings({
-      playbackResumeMode: 'off',
-      previousButtonAction: 'restart',
-      sleepTimer: { defaultMinutes: 30, fadeSeconds: 10 },
-      ncmPlaybackQuality: 'auto',
-      audioExclusiveMode: false,
-      audioOutputConfig: {
-        preferredBufferSize: 0,
-        routingMode: 'auto',
-        wasapiExclusivePushMode: false,
-        pcmToDsdMode: 'off'
-      }
-    }).then(() => {
+      return
+    }
+    if (group === 'playback') {
+      await updateSettings({
+        playbackResumeMode: 'off',
+        previousButtonAction: 'restart',
+        sleepTimer: { defaultMinutes: 30, fadeSeconds: 10 },
+        ncmPlaybackQuality: 'auto',
+        audioExclusiveMode: false,
+        audioOutputConfig: {
+          preferredBufferSize: 0,
+          routingMode: 'auto',
+          wasapiExclusivePushMode: false,
+          pcmToDsdMode: 'off'
+        }
+      })
+      await setAudioProcessing({
+        dspEnabled: false,
+        clipGuard: true,
+        fftEnabled: true,
+        fftResolution: 8192,
+        highResolution: true,
+        dsdToPcm: false,
+        dsdOutputMode: 'auto',
+        sacdProgramMode: 'auto',
+        eqEnabled: false,
+        volumeNormalization: 'off',
+        replayGainPreamp: 0,
+        replayGainFallback: 0,
+        replayGainClip: true,
+        convolverEnabled: false,
+        convolverIrPath: '',
+        crossfeedEnabled: false,
+        crossfeedStrength: 0,
+        crossfeedDelayMs: 0.35,
+        crossfeedCutoffHz: 700,
+        gapless: true,
+        crossfadeSeconds: 0
+      })
       settingsNotice.value = '播放设置已恢复默认'
-    })
-    void setAudioProcessing({
-      dspEnabled: false,
-      clipGuard: true,
-      fftEnabled: true,
-      fftResolution: 8192,
-      highResolution: true,
-      dsdToPcm: false,
-      dsdOutputMode: 'auto',
-      sacdProgramMode: 'auto',
-      eqEnabled: false,
-      volumeNormalization: 'off',
-      replayGainPreamp: 0,
-      replayGainFallback: 0,
-      replayGainClip: true,
-      convolverEnabled: false,
-      convolverIrPath: '',
-      crossfeedEnabled: false,
-      crossfeedStrength: 0,
-      crossfeedDelayMs: 0.35,
-      crossfeedCutoffHz: 700,
-      gapless: true,
-      crossfadeSeconds: 0
-    })
-    return
-  }
-  void updateSettings({ desktopLyrics: { ...RESET_DESKTOP_LYRICS } }).then(() => {
+      return
+    }
+    await updateSettings({ desktopLyrics: { ...RESET_DESKTOP_LYRICS } })
     settingsNotice.value = '桌面歌词设置已恢复默认'
-  })
+  } catch (cause) {
+    settingsError.value = cause instanceof Error ? cause.message : '设置恢复失败'
+  } finally {
+    resetBusy.value = false
+  }
 }
 
 function updateTp<K extends keyof WindowTransparencyEffectSettings>(
@@ -1720,6 +1770,8 @@ function downloadTextFile(fileName: string, content: string): void {
 }
 
 async function exportSettingsBackup(): Promise<void> {
+  if (backupBusy.value) return
+  backupBusy.value = true
   settingsNotice.value = ''
   settingsError.value = ''
   try {
@@ -1728,6 +1780,8 @@ async function exportSettingsBackup(): Promise<void> {
     settingsNotice.value = '设置备份已导出'
   } catch (err) {
     settingsError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    backupBusy.value = false
   }
 }
 
@@ -1741,6 +1795,8 @@ async function handleSettingsBackupSelected(event: Event): Promise<void> {
   input.value = ''
   if (!file) return
   if (!window.confirm('导入设置备份会覆盖当前设置。确认继续？')) return
+  if (backupBusy.value) return
+  backupBusy.value = true
   settingsNotice.value = ''
   settingsError.value = ''
   try {
@@ -1749,6 +1805,8 @@ async function handleSettingsBackupSelected(event: Event): Promise<void> {
     settingsNotice.value = '设置备份已导入'
   } catch (err) {
     settingsError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    backupBusy.value = false
   }
 }
 
@@ -2363,20 +2421,28 @@ onBeforeUnmount(() => {
         </header>
         <section class="settings-command-bar glass-card">
           <div class="settings-command-actions">
-            <button type="button" class="soft-button" @click="exportSettingsBackup">
+            <button type="button" class="soft-button" :disabled="backupBusy" @click="exportSettingsBackup">
               <i class="pi pi-download"></i>
-              导出设置
+              {{ backupBusy ? '处理中…' : '导出设置' }}
             </button>
-            <button type="button" class="soft-button" @click="importSettingsBackup">
+            <button type="button" class="soft-button" :disabled="backupBusy" @click="importSettingsBackup">
               <i class="pi pi-upload"></i>
               导入设置
             </button>
           </div>
-          <div v-if="settingsNotice" class="settings-inline-notice">{{ settingsNotice }}</div>
-          <div v-if="settingsError" class="settings-inline-error">{{ settingsError }}</div>
+          <div v-if="settingsNotice" class="settings-inline-notice" role="status" aria-live="polite">
+            {{ settingsNotice }}
+          </div>
+          <div v-if="settingsError" class="settings-inline-error" role="alert">{{ settingsError }}</div>
         </section>
 
-        <div v-if="restartRequired" class="restart-banner restart-banner-sticky" role="status">
+        <div
+          v-if="restartRequired"
+          class="restart-banner restart-banner-sticky"
+          role="status"
+          aria-live="polite"
+          tabindex="0"
+        >
           <div>
             <strong>需要重启以应用更改</strong>
             <span>{{ restartReasons.join('、') }}</span>
@@ -2822,15 +2888,36 @@ onBeforeUnmount(() => {
                   <span>导出当前设置为 JSON，或从备份文件恢复；导入前会二次确认。</span>
                 </div>
                 <div class="inline-controls">
-                  <button type="button" class="soft-button" @click="exportSettingsBackup">
+                  <button type="button" class="soft-button" :disabled="backupBusy" @click="exportSettingsBackup">
                     <i class="pi pi-download"></i>
-                    导出
+                    {{ backupBusy ? '处理中…' : '导出' }}
                   </button>
-                  <button type="button" class="soft-button" @click="importSettingsBackup">
+                  <button type="button" class="soft-button" :disabled="backupBusy" @click="importSettingsBackup">
                     <i class="pi pi-upload"></i>
                     导入
                   </button>
                 </div>
+              </div>
+              <hr />
+              <div class="setting-item top-align read-only-info" aria-label="数据位置">
+                <div class="setting-copy">
+                  <strong>数据位置</strong>
+                  <span>当前设置、媒体库与缓存的实际存储路径（只读）。</span>
+                </div>
+                <dl class="info-description-list">
+                  <div class="info-row">
+                    <dt>路径模式</dt>
+                    <dd>{{ dataRootModeLabel }}</dd>
+                  </div>
+                  <div class="info-row">
+                    <dt>数据根目录</dt>
+                    <dd class="info-path">{{ dataRootPathLabel }}</dd>
+                  </div>
+                  <div class="info-row">
+                    <dt>迁移状态</dt>
+                    <dd>{{ migrationStatusLabel }}</dd>
+                  </div>
+                </dl>
               </div>
               <hr />
               <div class="setting-item top-align">
@@ -2842,6 +2929,7 @@ onBeforeUnmount(() => {
                   <button
                     type="button"
                     class="muted-button"
+                    :disabled="resetBusy"
                     @click="resetSettingsGroup('appearance')"
                   >
                     外观
@@ -2849,6 +2937,7 @@ onBeforeUnmount(() => {
                   <button
                     type="button"
                     class="muted-button"
+                    :disabled="resetBusy"
                     @click="resetSettingsGroup('playback')"
                   >
                     播放
@@ -2856,6 +2945,7 @@ onBeforeUnmount(() => {
                   <button
                     type="button"
                     class="muted-button"
+                    :disabled="resetBusy"
                     @click="resetSettingsGroup('desktopLyrics')"
                   >
                     桌面歌词
@@ -3086,6 +3176,7 @@ onBeforeUnmount(() => {
                   type="button"
                   class="icon-button"
                   title="刷新设备列表"
+                  aria-label="刷新设备列表"
                   @click="refreshAudioOutputState"
                 >
                   <i class="pi pi-refresh"></i>
@@ -6573,7 +6664,7 @@ onBeforeUnmount(() => {
 }
 
 .plugin-settings-field b {
-  color: var(--te-danger, #ef4444);
+  color: var(--te-danger-soft-fg);
 }
 
 .plugin-settings-field .preview-select {
@@ -6746,7 +6837,7 @@ html[data-theme='dark'] .settings-preview-page .device-card > i {
   justify-content: center;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 10px;
-  background: #07080a;
+  background: var(--te-app-bg);
   color: var(--te-primary-400);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
@@ -6755,14 +6846,14 @@ html[data-theme='dark'] .settings-preview-page .device-card > i {
 
 html[data-theme='dark'] .settings-preview-page .device-capability-chip {
   border-color: rgba(255, 255, 255, 0.08);
-  background: #07080a;
+  background: var(--te-app-bg);
   color: rgba(203, 213, 225, 0.86);
 }
 
 html[data-theme='dark'] .settings-preview-page .device-capability-chip.verified {
-  border-color: rgba(34, 197, 94, 0.26);
-  background: rgba(20, 83, 45, 0.34);
-  color: #86efac;
+  border-color: color-mix(in srgb, var(--te-success-soft-fg) 30%, transparent);
+  background: var(--te-success-soft-bg);
+  color: var(--te-success-soft-fg);
 }
 
 html[data-theme='dark'] .settings-preview-page .device-capability-chip.runtime {
@@ -6772,20 +6863,20 @@ html[data-theme='dark'] .settings-preview-page .device-capability-chip.runtime {
 }
 
 html[data-theme='dark'] .settings-preview-page .device-capability-chip.unsupported {
-  border-color: rgba(248, 113, 113, 0.24);
-  background: rgba(127, 29, 29, 0.3);
-  color: #fca5a5;
+  border-color: color-mix(in srgb, var(--te-danger-soft-fg) 30%, transparent);
+  background: var(--te-danger-soft-bg);
+  color: var(--te-danger-soft-fg);
 }
 
 html[data-theme='dark'] .settings-preview-page .device-capability-chip.unknown {
-  border-color: rgba(148, 163, 184, 0.16);
-  background: rgba(15, 23, 42, 0.82);
-  color: rgba(203, 213, 225, 0.78);
+  border-color: color-mix(in srgb, var(--te-neutral-500) 16%, transparent);
+  background: var(--te-app-bg);
+  color: color-mix(in srgb, var(--te-neutral-700) 78%, transparent);
 }
 
 html[data-theme='dark'] .settings-preview-page .device-card > b {
   border: 1px solid rgba(var(--te-primary-rgb), 0.32);
-  background: #07080a;
+  background: var(--te-app-bg);
   color: var(--te-primary-300);
 }
 
@@ -6853,7 +6944,7 @@ html[data-theme='dark'] .settings-preview-page .signal-node-circle {
 }
 
 html[data-theme='dark'] .settings-preview-page .signal-node-circle.active {
-  border-color: var(--brand-500);
+  border-color: var(--te-primary-500);
   background: rgba(var(--te-primary-rgb), 0.14);
 }
 
@@ -6906,25 +6997,25 @@ html[data-theme='dark'] .settings-preview-page .engine-warning,
 html[data-theme='dark'] .settings-preview-page .compute-badge,
 html[data-theme='dark'] .settings-preview-page .sponsor-card,
 html[data-theme='dark'] .settings-preview-page .sponsor-pending {
-  border-color: rgba(245, 158, 11, 0.28);
-  background: rgba(245, 158, 11, 0.12);
-  color: #fbbf24;
+  border-color: color-mix(in srgb, var(--te-warning-soft-fg) 30%, transparent);
+  background: var(--te-warning-soft-bg);
+  color: var(--te-warning-soft-fg);
 }
 
 html[data-theme='dark'] .settings-preview-page .restart-banner strong,
 html[data-theme='dark'] .settings-preview-page .sponsor-card h3 {
-  color: #fde68a;
+  color: var(--te-warning-soft-fg);
 }
 
 html[data-theme='dark'] .settings-preview-page .restart-banner span,
 html[data-theme='dark'] .settings-preview-page .sponsor-card p {
-  color: rgba(253, 230, 138, 0.78);
+  color: color-mix(in srgb, var(--te-warning-soft-fg) 78%, transparent);
 }
 
 html[data-theme='dark'] .settings-preview-page .engine-error {
-  border-color: rgba(248, 113, 113, 0.34);
-  background: rgba(127, 29, 29, 0.26);
-  color: #fca5a5;
+  border-color: color-mix(in srgb, var(--te-danger-soft-fg) 35%, transparent);
+  background: var(--te-danger-soft-bg);
+  color: var(--te-danger-soft-fg);
 }
 
 .settings-preview-page .remote-control-panel .remote-pin-row {
@@ -6955,7 +7046,7 @@ html[data-theme='dark'] .settings-preview-page .engine-error {
 .settings-preview-page .remote-url-list .linkish {
   border: 0;
   background: transparent;
-  color: var(--te-primary-600, #2563eb);
+  color: var(--te-primary-500, #2563eb);
   cursor: pointer;
   padding: 0;
   text-align: left;
@@ -6967,7 +7058,7 @@ html[data-theme='dark'] .settings-preview-page .engine-error {
 .settings-preview-page .remote-error {
   display: block;
   margin-top: 8px;
-  color: #f87171;
+  color: var(--te-danger-soft-fg);
   font-size: 0.9rem;
 }
 </style>

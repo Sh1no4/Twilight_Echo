@@ -261,11 +261,11 @@ function onBindingInputBlur(key: BindingKey): void {
 }
 
 .shortcut-input:focus {
-  border-color: var(--brand-400, #3b82f6);
+  border-color: var(--te-primary-400, #3b82f6);
 }
 
 .shortcut-input.conflict {
-  border-color: rgba(220, 38, 38, 0.5);
+  border-color: color-mix(in srgb, var(--te-danger-soft-fg) 50%, transparent);
 }
 
 .shortcut-conflict-tip {

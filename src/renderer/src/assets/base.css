@@ -23,6 +23,10 @@
   --te-glow-soft: rgba(255, 126, 182, 0.18);
   --te-glow-cyan: rgba(34, 211, 238, 0.18);
   --color-text: var(--te-neutral-900);
+  /* Single focus ring token, shared by every focusable element. Alias of the
+     primary accent so it follows the active theme (blue light / amber dark /
+     custom accent) without a second source of truth. */
+  --te-focus-ring: var(--te-primary-500);
   --te-ease-enter: cubic-bezier(0.4, 0, 0.2, 1);
   /* Soft = out-quint: fast start, long settling tail (osu!lazer-style motion). */
   --te-ease-soft: var(--te-ease-out-quint);
@@ -297,9 +301,22 @@
   transition: translate var(--te-motion-hover) var(--te-ease-soft);
 }
 
-:where(button, [role='button'], [role='switch'], [data-te-interactive]):focus-visible {
-  outline: 2px solid var(--te-navigation-indicator, var(--te-primary-500));
-  outline-offset: 2px;
+:where(
+  a,
+  button,
+  input,
+  select,
+  textarea,
+  [tabindex]:not([tabindex='-1']),
+  [role='button'],
+  [role='switch'],
+  [role='menuitemradio'],
+  [role='option'],
+  [role='tab'],
+  [data-te-interactive]
+):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--te-focus-ring);
 }
 
 :where(button, [role='button'], [role='switch'], [data-te-interactive]):is(
@@ -366,6 +383,178 @@ html[data-te-motion='off'] *::after {
   animation: none !important;
   transition: none !important;
   scroll-behavior: auto !important;
+}
+
+/* --- Stage 8 shared interaction primitives -------------------------------
+   One icon-button contract, one empty-state, one status badge, and the
+   signature rail indicator. Every value resolves to an existing --te-* token;
+   --te-focus-ring is the only new token. The reduced/off motion guards above
+   zero the rail's animation and transition automatically. */
+
+.te-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--te-neutral-700);
+  cursor: pointer;
+  transition:
+    background-color var(--te-motion-hover) var(--te-ease-soft),
+    color var(--te-motion-hover) var(--te-ease-soft);
+}
+
+@media (hover: hover) {
+  .te-icon-button:not(:disabled):not([aria-disabled='true']):hover {
+    background: var(--te-hover-bg);
+  }
+}
+
+.te-icon-button:not(:disabled):not([aria-disabled='true']):active {
+  background: var(--te-active-bg);
+}
+
+.te-icon-button:disabled,
+.te-icon-button[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.te-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 28px 20px;
+  text-align: center;
+}
+
+.te-empty-state__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 2px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--te-primary-500) 10%, transparent);
+  color: var(--te-primary-500);
+  font-size: 24px;
+}
+
+.te-empty-state__title {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--te-neutral-900);
+}
+
+.te-empty-state__hint {
+  max-width: 340px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--te-neutral-500);
+}
+
+.te-empty-state__action {
+  margin-top: 8px;
+}
+
+.te-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--te-subtle-bg);
+  color: var(--te-neutral-500);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.te-status-badge::before {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  content: '';
+}
+
+.te-status-badge--success {
+  background: var(--te-success-soft-bg);
+  color: var(--te-success-soft-fg);
+}
+
+.te-status-badge--info {
+  background: var(--te-info-soft-bg);
+  color: var(--te-info-soft-fg);
+}
+
+.te-status-badge--warning {
+  background: var(--te-warning-soft-bg);
+  color: var(--te-warning-soft-fg);
+}
+
+.te-status-badge--danger {
+  background: var(--te-danger-soft-bg);
+  color: var(--te-danger-soft-fg);
+}
+
+/* Signature: the active nav item's 3px left accent bar. A static gradient
+   whose tuning shimmer sweeps --te-primary-500 -> --te-primary-300 once on
+   activation (te-rail-in handles the entry, te-rail-shimmer the sweep, both
+   from existing --te-motion-panel/--te-ease-out-quint tokens). */
+.te-rail-indicator {
+  position: relative;
+}
+
+.te-rail-indicator::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 3px;
+  height: 60%;
+  min-height: 16px;
+  border-radius: 0 999px 999px 0;
+  background: linear-gradient(180deg, var(--te-primary-500), var(--te-primary-300));
+  background-position: 0 0;
+  background-size: 100% 200%;
+  transform: translateY(-50%);
+  animation:
+    te-rail-in var(--te-motion-panel) var(--te-ease-out-quint) both,
+    te-rail-shimmer calc(var(--te-motion-panel) * 3) var(--te-ease-out-quint)
+      var(--te-motion-panel) none;
+}
+
+@keyframes te-rail-in {
+  from {
+    opacity: 0;
+    transform: translateY(-50%) scaleY(0.4);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(-50%) scaleY(1);
+  }
+}
+
+@keyframes te-rail-shimmer {
+  from {
+    background-position: 0 0;
+  }
+
+  to {
+    background-position: 0 100%;
+  }
 }
 
 :root,
