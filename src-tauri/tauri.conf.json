@@ -39,7 +39,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../resources/plugins/ncm-provider": "plugins/ncm-provider"
+      "../resources/plugins/ncm-provider": "plugins/ncm-provider",
+      "../resources/plugin-index": "plugin-index"
     }
   }
 }

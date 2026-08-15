@@ -482,13 +482,14 @@ export function installTauriHostBridge(): void {
         invoke('plugins_uninstall', { id, removeData: options?.removeData }),
       openLog: (id: string) => invoke('plugins_open_log', { id }),
       getLog: (id: string) => invoke('plugins_get_log', { id }),
-      installFromPath: () => Promise.reject(capabilityError('plugins')),
-      chooseAndInstall: () => Promise.reject(capabilityError('plugins')),
-      listIndex: () => Promise.reject(capabilityError('plugins')),
-      refreshIndex: () => Promise.reject(capabilityError('plugins')),
-      getIndexStatus: () => Promise.reject(capabilityError('plugins')),
-      installFromIndex: () => Promise.reject(capabilityError('plugins')),
-      setNativeDspParameters: () => Promise.reject(capabilityError('plugins')),
+      installFromPath: (path: string) => invoke('plugins_install_from_path', { sourcePath: path }),
+      chooseAndInstall: () => invoke('plugins_choose_and_install'),
+      listIndex: () => invoke('plugins_list_index'),
+      refreshIndex: () => invoke('plugins_refresh_index'),
+      getIndexStatus: () => invoke('plugins_get_index_status'),
+      installFromIndex: (id: string) => invoke('plugins_install_from_index', { id }),
+      setNativeDspParameters: (id: string, parameters: Record<string, number>) =>
+        invoke('plugins_set_native_dsp_parameters', { id, parameters }),
       onChanged: () => () => {}
     },
     fonts: {
@@ -560,8 +561,10 @@ export function installTauriHostBridge(): void {
     },
     extensions: {
       list: () => invoke('extensions_list'),
-      executeCommand: () => Promise.reject(capabilityError('extensions')),
-      readThemeStylesheet: () => Promise.reject(capabilityError('extensions'))
+      executeCommand: (command: string, args?: unknown[]) =>
+        invoke('extensions_execute_command', { command, args }),
+      readThemeStylesheet: (stylesheetPath: string) =>
+        invoke('extensions_read_theme_stylesheet', { stylesheetPath })
     },
     data: {
       ...existing?.data,

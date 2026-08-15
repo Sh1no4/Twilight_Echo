@@ -7,6 +7,10 @@ const pluginsSource = readFileSync(
   new URL('../../../src-tauri/src/plugins.rs', import.meta.url),
   'utf8'
 )
+const pluginIndexGatewaySource = readFileSync(
+  new URL('../../../src-tauri/src/plugin_index_gateway.rs', import.meta.url),
+  'utf8'
+)
 const tauriConf = readFileSync(
   new URL('../../../src-tauri/tauri.conf.json', import.meta.url),
   'utf8'
@@ -20,11 +24,12 @@ const capabilitiesSource = readFileSync(
   'utf8'
 )
 
-test('Tauri registers the list + Stage 5A lifecycle commands and the Rust module', () => {
+test('Tauri registers the list + Stage 5A lifecycle + Stage 5C index/extension commands and the Rust modules', () => {
   assert.match(libSource, /mod plugins;/)
+  assert.match(libSource, /mod plugin_index_gateway;/)
   assert.match(
     libSource,
-    /plugins::plugins_list,\s*\n\s*plugins::plugins_enable,\s*\n\s*plugins::plugins_disable,\s*\n\s*plugins::plugins_uninstall,\s*\n\s*plugins::plugins_get_log,\s*\n\s*plugins::plugins_open_log,\s*\n\s*plugins::providers_list,\s*\n\s*plugins::providers_call,\s*\n\s*plugins::providers_cancel,\s*\n\s*plugins::extensions_list/
+    /plugins::plugins_list,\s*\n\s*plugins::plugins_enable,\s*\n\s*plugins::plugins_disable,\s*\n\s*plugins::plugins_uninstall,\s*\n\s*plugins::plugins_get_log,\s*\n\s*plugins::plugins_open_log,\s*\n\s*plugins::plugins_install_from_path,\s*\n\s*plugins::plugins_choose_and_install,\s*\n\s*plugins::plugins_list_index,\s*\n\s*plugins::plugins_refresh_index,\s*\n\s*plugins::plugins_get_index_status,\s*\n\s*plugins::plugins_install_from_index,\s*\n\s*plugins::plugins_set_native_dsp_parameters,\s*\n\s*plugins::providers_list,\s*\n\s*plugins::providers_call,\s*\n\s*plugins::providers_cancel,\s*\n\s*plugins::extensions_list,\s*\n\s*plugins::extensions_execute_command,\s*\n\s*plugins::extensions_read_theme_stylesheet/
   )
   assert.match(libSource, /\.manage\(plugins::ProviderCallRegistry::default\(\)\)/)
   assert.match(
@@ -63,6 +68,22 @@ test('Tauri registers the list + Stage 5A lifecycle commands and the Rust module
   assert.match(
     pluginsSource,
     /#\[tauri::command\]\s*pub fn providers_cancel\(\s*registry: State<'_, ProviderCallRegistry>,\s*request_id: String,\s*\) -> Result<\(\), String>/
+  )
+})
+
+test('Rust plugin-index gateway proxies index JSON and .tep bytes through the node sidecar', () => {
+  // Stage 5C commands (plugins_install_from_path / *_index / extensions_*) proxy the
+  // marketplace fetch through this std-TCP gateway, mirroring the ncm_gateway design.
+  assert.match(pluginIndexGatewaySource, /pub const GATEWAY_HOST: &str = "127\.0\.0\.1";/)
+  assert.match(pluginIndexGatewaySource, /pub const GATEWAY_PORT: u16 = 3101;/)
+  assert.match(pluginIndexGatewaySource, /pub fn port_open\(\) -> bool/)
+  assert.match(
+    pluginIndexGatewaySource,
+    /pub async fn proxy_index_json\(timeout: Duration\) -> Result<Value, String>/
+  )
+  assert.match(
+    pluginIndexGatewaySource,
+    /pub async fn proxy_package_bytes\(source_url: &str, timeout: Duration\) -> Result<Vec<u8>, String>/
   )
 })
 
@@ -199,12 +220,13 @@ test('Rust providers_call gates on plugin enabled state and proxies NCM via the 
   )
 })
 
-test('bundled NCM plugin is packaged into the Tauri resources', () => {
+test('bundled NCM plugin and plugin-index are packaged into the Tauri resources', () => {
   assert.match(tauriConf, /"resources": \{/)
   assert.match(tauriConf, /"\.\.\/resources\/plugins\/ncm-provider": "plugins\/ncm-provider"/)
+  assert.match(tauriConf, /"\.\.\/resources\/plugin-index": "plugin-index"/)
 })
 
-test('tauriHostBridge wires list + lifecycle commands to invoke() and keeps install/index ops rejected', () => {
+test('tauriHostBridge wires list + lifecycle + Stage 5C install/index/extension commands to invoke()', () => {
   assert.match(bridgeSource, /plugins: \{[\s\S]*?list: \(\) => invoke\('plugins_list'\)/)
   assert.match(bridgeSource, /providers: \{[\s\S]*?list: \(\) => invoke\('providers_list'\)/)
   assert.match(bridgeSource, /extensions: \{[\s\S]*?list: \(\) => invoke\('extensions_list'\)/)
@@ -217,31 +239,22 @@ test('tauriHostBridge wires list + lifecycle commands to invoke() and keeps inst
   )
   assert.match(bridgeSource, /openLog: \(id: string\) => invoke\('plugins_open_log', \{ id \}\)/)
   assert.match(bridgeSource, /getLog: \(id: string\) => invoke\('plugins_get_log', \{ id \}\)/)
-  // .tep install and marketplace index operations must still be explicitly disabled.
+  // Stage 5C turned .tep install and marketplace index operations into real commands.
   assert.match(
     bridgeSource,
-    /installFromPath: \(\) => Promise\.reject\(capabilityError\('plugins'\)\)/
+    /installFromPath: \(path: string\) => invoke\('plugins_install_from_path', \{ sourcePath: path \}\)/
+  )
+  assert.match(bridgeSource, /chooseAndInstall: \(\) => invoke\('plugins_choose_and_install'\)/)
+  assert.match(bridgeSource, /listIndex: \(\) => invoke\('plugins_list_index'\)/)
+  assert.match(bridgeSource, /refreshIndex: \(\) => invoke\('plugins_refresh_index'\)/)
+  assert.match(bridgeSource, /getIndexStatus: \(\) => invoke\('plugins_get_index_status'\)/)
+  assert.match(
+    bridgeSource,
+    /installFromIndex: \(id: string\) => invoke\('plugins_install_from_index', \{ id \}\)/
   )
   assert.match(
     bridgeSource,
-    /chooseAndInstall: \(\) => Promise\.reject\(capabilityError\('plugins'\)\)/
-  )
-  assert.match(bridgeSource, /listIndex: \(\) => Promise\.reject\(capabilityError\('plugins'\)\)/)
-  assert.match(
-    bridgeSource,
-    /refreshIndex: \(\) => Promise\.reject\(capabilityError\('plugins'\)\)/
-  )
-  assert.match(
-    bridgeSource,
-    /getIndexStatus: \(\) => Promise\.reject\(capabilityError\('plugins'\)\)/
-  )
-  assert.match(
-    bridgeSource,
-    /installFromIndex: \(\) => Promise\.reject\(capabilityError\('plugins'\)\)/
-  )
-  assert.match(
-    bridgeSource,
-    /setNativeDspParameters: \(\) => Promise\.reject\(capabilityError\('plugins'\)\)/
+    /setNativeDspParameters: \(id: string, parameters: Record<string, number>\) =>\s*invoke\('plugins_set_native_dsp_parameters', \{ id, parameters \}\)/
   )
   assert.match(
     bridgeSource,
@@ -253,11 +266,11 @@ test('tauriHostBridge wires list + lifecycle commands to invoke() and keeps inst
   )
   assert.match(
     bridgeSource,
-    /executeCommand: \(\) => Promise\.reject\(capabilityError\('extensions'\)\)/
+    /executeCommand: \(command: string, args\?: unknown\[\]\) =>\s*invoke\('extensions_execute_command', \{ command, args \}\)/
   )
   assert.match(
     bridgeSource,
-    /readThemeStylesheet: \(\) => Promise\.reject\(capabilityError\('extensions'\)\)/
+    /readThemeStylesheet: \(stylesheetPath: string\) =>\s*invoke\('extensions_read_theme_stylesheet', \{ stylesheetPath \}\)/
   )
   assert.match(bridgeSource, /listInstalled: \(\) => Promise\.reject\(capabilityError\('fonts'\)\)/)
 })
@@ -265,7 +278,7 @@ test('tauriHostBridge wires list + lifecycle commands to invoke() and keeps inst
 test('Tauri capability matrix marks plugins/providers/extensions partial and fonts unsupported', () => {
   assert.match(
     capabilitiesSource,
-    /plugins: partial\('plugins', '已支持插件启停\/卸载与日志；安装与市场待迁移'\)/
+    /plugins: partial\('plugins', '已支持插件安装\/启停\/卸载\/日志与市场索引'\)/
   )
   assert.match(
     capabilitiesSource,
@@ -273,7 +286,7 @@ test('Tauri capability matrix marks plugins/providers/extensions partial and fon
   )
   assert.match(
     capabilitiesSource,
-    /extensions: partial\('extensions', '已支持扩展列表；命令执行待迁移'\)/
+    /extensions: partial\('extensions', '已支持扩展列表；命令执行与主题样式读取接口已接通'\)/
   )
   assert.match(capabilitiesSource, /fonts: unsupported\('fonts'\)/)
 })

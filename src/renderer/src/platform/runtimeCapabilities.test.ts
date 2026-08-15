@@ -91,7 +91,7 @@ test('runtime detection is safe in a non-browser environment', () => {
 
 /* ── Contract: the Tauri bridge must reject, never lie ────────────────── */
 
-test('Tauri bridge wires plugin lifecycle commands and rejects the remaining install/index surfaces', () => {
+test('Tauri bridge wires plugin lifecycle and Stage 5C install/index commands to invoke()', () => {
   const source = readFileSync(new URL('./tauriHostBridge.ts', import.meta.url), 'utf8')
   const pluginsSection = source.slice(source.indexOf('plugins: {'), source.indexOf('fonts: {'))
   // plugins.list plus the five Stage 5A lifecycle ops are real Tauri commands.
@@ -125,25 +125,45 @@ test('Tauri bridge wires plugin lifecycle commands and rejects the remaining ins
     /getLog: \(id: string\) => invoke\('plugins_get_log', \{ id \}\)/,
     'plugins.getLog must invoke the real plugins_get_log command'
   )
-  // Install (.tep) and marketplace index surfaces are not migrated yet and must reject.
-  for (const method of [
-    'installFromPath',
-    'chooseAndInstall',
-    'listIndex',
-    'refreshIndex',
-    'getIndexStatus',
-    'installFromIndex',
-    'setNativeDspParameters'
-  ]) {
-    assert.match(
-      pluginsSection,
-      new RegExp(`${method}: \\(\\) => Promise\\.reject\\(capabilityError\\('plugins'\\)\\)`),
-      `plugins.${method} must reject with a plugins capability error`
-    )
-  }
+  // Stage 5C turned the .tep install and marketplace index surfaces into real commands.
+  assert.match(
+    pluginsSection,
+    /installFromPath: \(path: string\) => invoke\('plugins_install_from_path', \{ sourcePath: path \}\)/,
+    'plugins.installFromPath must invoke the real plugins_install_from_path command'
+  )
+  assert.match(
+    pluginsSection,
+    /chooseAndInstall: \(\) => invoke\('plugins_choose_and_install'\)/,
+    'plugins.chooseAndInstall must invoke the real plugins_choose_and_install command'
+  )
+  assert.match(
+    pluginsSection,
+    /listIndex: \(\) => invoke\('plugins_list_index'\)/,
+    'plugins.listIndex must invoke the real plugins_list_index command'
+  )
+  assert.match(
+    pluginsSection,
+    /refreshIndex: \(\) => invoke\('plugins_refresh_index'\)/,
+    'plugins.refreshIndex must invoke the real plugins_refresh_index command'
+  )
+  assert.match(
+    pluginsSection,
+    /getIndexStatus: \(\) => invoke\('plugins_get_index_status'\)/,
+    'plugins.getIndexStatus must invoke the real plugins_get_index_status command'
+  )
+  assert.match(
+    pluginsSection,
+    /installFromIndex: \(id: string\) => invoke\('plugins_install_from_index', \{ id \}\)/,
+    'plugins.installFromIndex must invoke the real plugins_install_from_index command'
+  )
+  assert.match(
+    pluginsSection,
+    /setNativeDspParameters: \(id: string, parameters: Record<string, number>\) =>\s*invoke\('plugins_set_native_dsp_parameters', \{ id, parameters \}\)/,
+    'plugins.setNativeDspParameters must invoke the real plugins_set_native_dsp_parameters command'
+  )
 })
 
-test('Tauri bridge wires provider call/cancel commands while fonts and extension execution reject', () => {
+test('Tauri bridge wires provider call/cancel and extension command/stylesheet commands while fonts reject', () => {
   const source = readFileSync(new URL('./tauriHostBridge.ts', import.meta.url), 'utf8')
   assert.match(
     source,
@@ -172,8 +192,13 @@ test('Tauri bridge wires provider call/cancel commands while fonts and extension
   )
   assert.match(
     source,
-    /extensions: \{\s*list: \(\) => invoke\('extensions_list'\)[\s\S]*?executeCommand: \(\) => Promise\.reject\(capabilityError\('extensions'\)\)/,
-    'extensions.executeCommand must reject with an extensions capability error'
+    /extensions: \{\s*list: \(\) => invoke\('extensions_list'\)[\s\S]*?executeCommand: \(command: string, args\?: unknown\[\]\) =>\s*invoke\('extensions_execute_command', \{ command, args \}\)/,
+    'extensions.executeCommand must invoke the real extensions_execute_command command'
+  )
+  assert.match(
+    source,
+    /readThemeStylesheet: \(stylesheetPath: string\) =>\s*invoke\('extensions_read_theme_stylesheet', \{ stylesheetPath \}\)/,
+    'extensions.readThemeStylesheet must invoke the real extensions_read_theme_stylesheet command'
   )
 })
 

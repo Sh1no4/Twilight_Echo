@@ -22,8 +22,13 @@
 //! - `extensions_list`：全部来自插件 manifest 的 `contributes` 声明，当前无任何声明，
 //!   返回真实空数组。
 //!
-//! 仍未实现的操作（.tep 安装、插件市场索引、extension command 执行）由
-//! `tauriHostBridge.ts` 以 `RuntimeCapabilityError` 明确拒绝。
+//! - `plugins_install_from_path` / `plugins_choose_and_install`（Stage 5C）：`.tep`
+//!   包或目录来源安装，校验解压、信任确认、落盘到 `{pluginsRoot}/{id}/{version}/`。
+//! - `plugins_list_index` / `plugins_refresh_index` / `plugins_get_index_status` /
+//!   `plugins_install_from_index`（Stage 5C）：插件市场索引 + 校验下载安装。
+//! - `plugins_set_native_dsp_parameters`（Stage 5C）：DSP 插件原生参数持久化。
+//! - `extensions_execute_command` / `extensions_read_theme_stylesheet`（Stage 5C）：
+//!   Tauri 无扩展宿主，恒定报错以明确能力差异。
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
@@ -36,13 +41,16 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
 use crate::path_policy;
+use crate::plugins_ext;
+use crate::plugins_index;
+use crate::plugins_install;
 
 /// 内置 NCM Provider 插件 id（与 Electron 侧 `bundledPluginIds` 一致）。
 pub const BUNDLED_PLUGIN_ID: &str = "com.twilightecho.provider.ncm";
 /// 内置 NCM Provider 激活时注册的 provider id（`index.mjs` 的 `PROVIDER_ID`）。
 const BUNDLED_NCM_PROVIDER_ID: &str = "ncm";
 /// 当前应用版本（与 `tauri.conf.json` / Electron `appVersion` 对齐）。
-const APP_VERSION: &str = "1.0.5";
+pub(crate) const APP_VERSION: &str = "1.0.5";
 
 // ── Provider RPC 契约常量（镜像 `src/main/ipc/plugins.ts`）──────────────────────────
 
@@ -167,15 +175,15 @@ const HOST_ONLY_PROVIDER_METHODS: [&str; 4] = [
     "cancelDownload",
 ];
 
-fn plugins_root_path(policy: &path_policy::PathPolicy) -> PathBuf {
+pub(crate) fn plugins_root_path(policy: &path_policy::PathPolicy) -> PathBuf {
     path_policy::categorized_app_path(policy, "plugins", &[], "plugins")
 }
 
-fn plugin_data_root_path(policy: &path_policy::PathPolicy) -> PathBuf {
+pub(crate) fn plugin_data_root_path(policy: &path_policy::PathPolicy) -> PathBuf {
     path_policy::categorized_app_path(policy, "plugin-data", &[], "plugin-data")
 }
 
-fn plugin_logs_root_path(policy: &path_policy::PathPolicy) -> PathBuf {
+pub(crate) fn plugin_logs_root_path(policy: &path_policy::PathPolicy) -> PathBuf {
     path_policy::categorized_app_path(policy, "logs", &["plugins"], "logs/plugins")
 }
 
@@ -186,7 +194,7 @@ fn plugin_state_path(policy: &path_policy::PathPolicy) -> PathBuf {
     path_policy::categorized_app_path(policy, "plugins", &["plugin-state.json"], "plugin-state.json")
 }
 
-fn read_plugin_state(policy: &path_policy::PathPolicy) -> Value {
+pub(crate) fn read_plugin_state(policy: &path_policy::PathPolicy) -> Value {
     fs::read_to_string(plugin_state_path(policy))
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
@@ -195,7 +203,7 @@ fn read_plugin_state(policy: &path_policy::PathPolicy) -> Value {
 
 /// 写入插件状态；同时写 `.bak` 备份（镜像 Electron `PluginStatePersistence` 的双文件
 /// 布局）。与 Electron `queueStateSave` 一致，写失败不使命令失败。
-fn write_plugin_state(policy: &path_policy::PathPolicy, state: &Value) {
+pub(crate) fn write_plugin_state(policy: &path_policy::PathPolicy, state: &Value) {
     let path = plugin_state_path(policy);
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
@@ -237,7 +245,7 @@ fn write_provider_health(policy: &path_policy::PathPolicy, health: &Value) {
 }
 
 /// 当前 UTC 时间，ISO-8601（与 Electron `new Date().toISOString()` 对齐）。
-fn now_iso8601() -> String {
+pub(crate) fn now_iso8601() -> String {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
@@ -691,13 +699,13 @@ pub fn providers_cancel(
     Ok(())
 }
 
-fn read_manifest(root: &Path) -> Result<Value, String> {
+pub(crate) fn read_manifest(root: &Path) -> Result<Value, String> {
     let text = fs::read_to_string(root.join("plugin.json"))
         .map_err(|error| format!("读取 plugin.json 失败：{error}"))?;
     serde_json::from_str(&text).map_err(|error| format!("plugin.json 不是合法 JSON：{error}"))
 }
 
-fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
+pub(crate) fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
     let mut parts = s.trim().split('.');
     let major: u32 = parts.next()?.trim().parse().ok()?;
     let minor: u32 = parts
@@ -713,7 +721,7 @@ fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
 
 /// 极小引擎范围检查：支持 `>=x.y.z` 与裸 `x.y.z`，其余范围一律视为兼容，
 /// 避免只读列表误拒绝。与 Electron `isCompatibleTwilightRange` 的常见用例对齐。
-fn engine_range_compatible(range: &str) -> bool {
+pub(crate) fn engine_range_compatible(range: &str) -> bool {
     let spec = range.trim();
     let version = spec.strip_prefix(">=").unwrap_or(spec);
     let Some(required) = parse_version(version) else {
@@ -726,7 +734,7 @@ fn engine_range_compatible(range: &str) -> bool {
 }
 
 /// 校验 manifest 是否为可展示的插件 descriptor；返回错误文本时表示 `invalid`。
-fn validate_manifest(manifest: &Value, version_root: &Path) -> Result<(), String> {
+pub(crate) fn validate_manifest(manifest: &Value, version_root: &Path) -> Result<(), String> {
     let object = manifest
         .as_object()
         .ok_or_else(|| "plugin.json 顶层不是对象".to_string())?;
@@ -802,7 +810,7 @@ fn paths_json(id: &str, version_root: &Path, data_root: &Path, logs_root: &Path)
 /// 或（存在持久化 lastError）failed，为 `Some` 时状态为 invalid。`state_record` 为
 /// `plugin-state.json` 中该插件 id 的记录，用于叠加 installedAt/updatedAt/source/
 /// enabled/activeVersion/lastError（与 Electron `readDescriptor` 的合并语义一致）。
-fn manifest_descriptor(
+pub(crate) fn manifest_descriptor(
     manifest: &Value,
     version_root: &Path,
     source: &str,
@@ -952,7 +960,7 @@ fn descriptor_for_version_root(
 }
 
 /// 指定插件 id 的 descriptor：先扫插件目录，未命中且为内置插件时回退到资源目录合成。
-fn find_descriptor(app: &AppHandle, policy: &path_policy::PathPolicy, id: &str) -> Option<Value> {
+pub(crate) fn find_descriptor(app: &AppHandle, policy: &path_policy::PathPolicy, id: &str) -> Option<Value> {
     let plugins_root = plugins_root_path(policy);
     let data_root = plugin_data_root_path(policy);
     let logs_root = plugin_logs_root_path(policy);
@@ -1307,6 +1315,62 @@ pub fn providers_list(app: AppHandle) -> Value {
 #[tauri::command]
 pub fn extensions_list() -> Value {
     Value::Array(vec![])
+}
+
+// ── Stage 5C：安装 / 索引 / 扩展命令薄封装 ──────────────────────────────
+
+/// `plugins.installFromPath`：从目录或 `.tep` 包安装插件。
+#[tauri::command]
+pub async fn plugins_install_from_path(app: AppHandle, source_path: String) -> Result<Value, String> {
+    plugins_install::install_from_path(app, source_path).await
+}
+
+/// `plugins.chooseAndInstall`：文件对话框选择 `.tep` 包安装；取消返回 `None`。
+#[tauri::command]
+pub async fn plugins_choose_and_install(app: AppHandle) -> Result<Option<Value>, String> {
+    plugins_install::choose_and_install(app).await
+}
+
+/// `plugins.listIndex`：读取插件市场索引并叠加安装状态。
+#[tauri::command]
+pub fn plugins_list_index(app: AppHandle) -> Result<Vec<Value>, String> {
+    plugins_index::list_index(app)
+}
+
+/// `plugins.refreshIndex`：经网关拉远端索引，失败回退打包索引。
+#[tauri::command]
+pub async fn plugins_refresh_index(app: AppHandle) -> Result<Vec<Value>, String> {
+    plugins_index::refresh_index(app).await
+}
+
+/// `plugins.getIndexStatus`：插件市场索引状态。
+#[tauri::command]
+pub fn plugins_get_index_status(app: AppHandle) -> Result<Value, String> {
+    plugins_index::get_index_status(app)
+}
+
+/// `plugins.installFromIndex`：从插件市场下载、校验并安装。
+#[tauri::command]
+pub async fn plugins_install_from_index(app: AppHandle, id: String) -> Result<Value, String> {
+    plugins_index::install_from_index(app, id).await
+}
+
+/// `plugins.setNativeDspParameters`：DSP 插件原生参数持久化。
+#[tauri::command]
+pub fn plugins_set_native_dsp_parameters(app: AppHandle, id: String, parameters: Value) -> Result<Value, String> {
+    plugins_index::set_native_dsp_parameters(app, id, parameters)
+}
+
+/// `extensions.executeCommand`：扩展命令（Tauri 无扩展宿主，恒定报错）。
+#[tauri::command]
+pub fn extensions_execute_command(command: String, args: Option<Value>) -> Result<Value, String> {
+    plugins_ext::execute_command(command, args)
+}
+
+/// `extensions.readThemeStylesheet`：主题 stylesheet（Tauri 无扩展宿主，恒定报错）。
+#[tauri::command]
+pub fn extensions_read_theme_stylesheet(stylesheet_path: String) -> Result<String, String> {
+    plugins_ext::read_theme_stylesheet(stylesheet_path)
 }
 
 #[cfg(test)]

@@ -115,9 +115,9 @@ const TAURI_CAPABILITIES: RuntimeCapabilities = {
   // loadMusicLibrary / saveMusicLibrary are real; playback session and
   // playlists remain stub shapes until their commands are migrated.
   data: partial('data', '音乐库已支持；播放状态与歌单待迁移'),
-  plugins: partial('plugins', '已支持插件启停/卸载与日志；安装与市场待迁移'),
+  plugins: partial('plugins', '已支持插件安装/启停/卸载/日志与市场索引'),
   providers: partial('providers', '已支持调用/取消与健康记录；网易云网关在 Tauri 不可用'),
-  extensions: partial('extensions', '已支持扩展列表；命令执行待迁移'),
+  extensions: partial('extensions', '已支持扩展列表；命令执行与主题样式读取接口已接通'),
   fonts: unsupported('fonts'),
   // getBootstrap / getSystemTone are real; library edits return an empty
   // default snapshot until the theme persistence commands are migrated.

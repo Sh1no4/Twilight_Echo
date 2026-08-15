@@ -6,7 +6,12 @@ use tauri::{AppHandle, Manager};
 
 mod ncm_gateway;
 mod path_policy;
+mod plugin_index_gateway;
 mod plugins;
+mod plugins_ext;
+mod plugins_index;
+mod plugins_install;
+mod plugins_zip;
 
 #[tauri::command]
 fn relaunch(app: AppHandle) {
@@ -124,10 +129,19 @@ pub fn run() {
             plugins::plugins_uninstall,
             plugins::plugins_get_log,
             plugins::plugins_open_log,
+            plugins::plugins_install_from_path,
+            plugins::plugins_choose_and_install,
+            plugins::plugins_list_index,
+            plugins::plugins_refresh_index,
+            plugins::plugins_get_index_status,
+            plugins::plugins_install_from_index,
+            plugins::plugins_set_native_dsp_parameters,
             plugins::providers_list,
             plugins::providers_call,
             plugins::providers_cancel,
-            plugins::extensions_list
+            plugins::extensions_list,
+            plugins::extensions_execute_command,
+            plugins::extensions_read_theme_stylesheet
         ])
         .on_page_load(|webview, _| {
             let window = webview.window();
