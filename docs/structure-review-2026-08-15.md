@@ -123,3 +123,9 @@
 
 - 2026-08-15：本文档由四路并行扫描 + 人工核对生成，全部条目初始为"未开始"。
 - 2026-08-15（同日）：P0 五项全部完成——0-1 三个测试文件随液态玻璃提交入库；0-2 新增 `shared/audioFormats.ts` / `shared/musicCacheLayout.ts` 并让 security / library / cache / renderer 全部改为引用单一事实源（renderer 死拷贝一并消除）；0-3 DSP 资料库与下载目录统一到 `isCanonicalPathInside` / `lexicalPathKey`；0-4 插件设置换 `writeJsonFileAtomic`；0-5 删除 `eq-repro-tmp.mjs`、untrack `.zcode/` 并补 ignore、删除 `nul`（大产物目录与废弃分支未动，见 P3-5）。验证：typecheck、lint、`test:plugins` / `test:dsp-assets` / `test:audio-manager` / `test:app` / `test:cue` 全绿。
+- 2026-08-15（同日，P1 第一批）：
+  - **P1-1 已完成**：新增 `shared/audioEngineTypes.ts`（音频契约全集 + PlayMode 统一为含 `'heart'` 的 5 值超集，修复 main 4 值 / renderer 5 值的既有漂移）、`shared/appSettings.ts`、`shared/track.ts`；preload/types.ts 与 index.d.ts 各删除 69 个重复声明、renderer types 删 46+7 个，全部改为 re-export shared；`VolumeNormalizationMode` / `DsdOutputMode` / `LoudnormStatus` 三份重复收敛。源码契约测试改为断言 shared 单一事实源。typecheck + `test:app` / `test:audio-manager` / `test:plugins` / `test:playback-routing` 全绿。
+  - **P1-2 已完成**：新增 `shared/ipcChannels.ts`（audioEngine 69 + library 17 通道常量）；engineIpc / audioEngineApi / libraryIpc / libraryApi 共 179 处字面量改常量引用；`ipc-channel-report.cjs` 增加 `IPC.*` 常量解析，一致性门禁与基线继续有效。
+  - **P1-6 进行中（成本已探明）**：试验性取消 `tsconfig.web.json` 对 `src/renderer/src/**/*.test.ts` 的排除后，131 个测试文件暴露 **105 处存量类型错误**（mock 签名 `Promise<number>` vs `Promise<void>` 为主），集中在 `usePlaybackSessionPersistence.test.ts`(25)、`unifiedRecentTracks.test.ts`(10)、`localMusicPerf.test.ts`(8) 等。启用前需先做一轮测试文件类型清理，再移除 exclude。
+  - **P1-5 暂缓（阻塞）**：`shared/theme.ts` 正被并行的液态玻璃施工修改（未提交），拆分必然冲突，待其落定后执行。
+  - **P1-4 部分暂缓**：`audioEngineServiceClient.ts` 正被并行音频施工修改，该文件搬家待其落定；其余归位项待做。
