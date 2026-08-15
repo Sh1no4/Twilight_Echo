@@ -8,6 +8,29 @@ import { createSleepTimerState } from '../shared/sleepTimer.ts'
 import { registerNativeSleepTimerBoundaries } from './audio/sleepTimerNativeBoundary.ts'
 import { SleepTimerService } from './sleepTimerCore.ts'
 
+function readPreloadSources(): string {
+  const root = new URL('../preload/', import.meta.url)
+  return [
+    'index.ts',
+    'types.ts',
+    'index.d.ts',
+    'sleepTimerEvents.ts',
+    'domains/dataApi.ts',
+    'domains/audioEngineApi.ts',
+    'domains/desktopLyricsApi.ts',
+    'domains/libraryApi.ts',
+    'domains/mediaSubscriptionsApi.ts',
+    'domains/networkSourcesApi.ts',
+    'domains/settingsApi.ts',
+    'domains/themesApi.ts',
+    'domains/pluginsApi.ts',
+    'domains/systemApi.ts',
+    'domains/versionedData.ts'
+  ]
+    .map((rel) => readFileSync(new URL(rel, root), 'utf8'))
+    .join('\n')
+}
+
 import type {
   AudioEngineServiceNativeBinding,
   AudioDeviceOption,
@@ -6727,15 +6750,23 @@ test('loudnorm status event, library RG queue fields, and cancel IPC are wired e
     new URL('../renderer/src/components/SettingsPage.vue', import.meta.url),
     'utf8'
   )
+  const dspSettingsSource = readFileSync(
+    new URL('../renderer/src/components/settings-page/DspSettingsSection.vue', import.meta.url),
+    'utf8'
+  )
   const playerStoreSource = readFileSync(
     new URL('../renderer/src/stores/usePlayerStore.ts', import.meta.url),
+    'utf8'
+  )
+  const playerSessionTrackSource = readFileSync(
+    new URL('../renderer/src/utils/playerSessionTrack.ts', import.meta.url),
     'utf8'
   )
   const dspStoreSource = readFileSync(
     new URL('../renderer/src/stores/useAudioOutputDspStore.ts', import.meta.url),
     'utf8'
   )
-  const preloadSource = readFileSync(new URL('../preload/index.ts', import.meta.url), 'utf8')
+  const preloadSource = readPreloadSources()
   const preloadDtsSource = readFileSync(new URL('../preload/index.d.ts', import.meta.url), 'utf8')
   const pipelineSource = readFileSync(
     new URL('../../audio-engine/core/AudioPipeline.cpp', import.meta.url),
@@ -6765,7 +6796,12 @@ test('loudnorm status event, library RG queue fields, and cancel IPC are wired e
   )
   assert.ok(managerSource.includes('this.destroyed'))
   assert.ok(engineIpcSource.includes("on('loudnorm-status'"))
-  assert.ok(engineIpcSource.includes('audioEngine:loudnorm-status'))
+  assert.ok(
+    readFileSync(new URL('../shared/ipcChannels.ts', import.meta.url), 'utf8').includes(
+      "'audioEngine:loudnorm-status'"
+    )
+  )
+  assert.ok(engineIpcSource.includes('IPC.audioEngine.loudnormStatus'))
   assert.ok(engineIpcSource.includes('replayGainTrackGainDb'))
   assert.ok(engineIpcSource.includes('r128TrackGainDb'))
   assert.ok(loudnessIpcSource.includes('loudnessAnalysis:cancel'))
@@ -6775,19 +6811,28 @@ test('loudnorm status event, library RG queue fields, and cancel IPC are wired e
   assert.ok(queuePrepSource.includes('replayGainTrackGainDb'))
   assert.ok(queuePrepSource.includes('r128AlbumGainDb'))
   assert.ok(preloadSource.includes('onLoudnormStatus'))
-  assert.ok(preloadSource.includes('audioEngine:loudnorm-status'))
+  assert.ok(preloadSource.includes('IPC.audioEngine.loudnormStatus'))
   assert.ok(preloadSource.includes('loudnessAnalysis:cancel'))
   assert.ok(playerStoreSource.includes('loudnormStatus'))
   assert.ok(playerStoreSource.includes('onLoudnormStatus'))
-  assert.ok(playerStoreSource.includes('replayGainTrackGainDb'))
+  assert.ok(playerSessionTrackSource.includes('replayGainTrackGainDb'))
   assert.ok(dspStoreSource.includes('loudnormStatus: player.loudnormStatus'))
   assert.ok(hifiSource.includes('loudnormStatusCopy'))
   assert.ok(hifiSource.includes('loudnormStatusText'))
-  assert.ok(settingsSource.includes('loudnormStatusCopy'))
-  assert.ok(settingsSource.includes('settings-loudnorm-status'))
+  assert.ok(dspSettingsSource.includes('loudnormStatusCopy'))
+  assert.ok(dspSettingsSource.includes('settings-loudnorm-status'))
   assert.ok(settingsSource.includes('确认清理 Loudnorm'))
-  assert.ok(preloadDtsSource.includes('replayGainTrackGainDb'))
-  assert.ok(preloadDtsSource.includes('r128AlbumGainDb'))
+  assert.ok(
+    readFileSync(new URL('../shared/audioEngineTypes.ts', import.meta.url), 'utf8').includes(
+      'replayGainTrackGainDb'
+    )
+  )
+  assert.ok(
+    readFileSync(new URL('../shared/audioEngineTypes.ts', import.meta.url), 'utf8').includes(
+      'r128AlbumGainDb'
+    )
+  )
+  assert.ok(preloadDtsSource.includes('TrackData'))
   assert.ok(pipelineSource.includes('refreshQueueReplayGainTags'))
   assert.ok(engineCppSource.includes('refreshQueueReplayGainTags'))
   assert.ok(pipelineSource.includes('lastPreloadFormatMismatch_'))

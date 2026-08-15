@@ -33,6 +33,12 @@ test('now playing lyrics never reveal the global auto-hide scrollbar', () => {
   assert.match(webkitThumb, /background: transparent !important/)
 })
 
+test('now playing lyrics have no page-entry animation', () => {
+  const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+
+  assert.doesNotMatch(source, /te-playing-lyrics-arrive/)
+})
+
 test('visualizer mode does not keep the heavy blurred backdrop mounted', () => {
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
 
@@ -109,6 +115,9 @@ test('now playing exposes independent lyric customization with live persisted pr
   )
   assert.match(source, /:style="lyricStyleVars\('translation'\)"/)
   assert.match(source, /:style="lyricStyleVars\('romanization'\)"/)
+  assert.match(source, /resolveLyricsFontFamily\(appearance\.styles\.active\)/)
+  assert.doesNotMatch(source, /customFontFamily:\s*''/)
+  assert.match(source, /font-family: var\(--te-lyric-font-family, inherit\)/)
   assert.match(customizer, /普通歌词/)
   assert.match(customizer, /当前歌词/)
   assert.match(customizer, /翻译歌词/)
@@ -238,7 +247,9 @@ test('now playing isolates high-frequency playhead updates from the full lyrics 
   // no per-frame main-thread work, and a seek is a single currentTime assignment.
   assert.match(words, /\.animate\(/)
   assert.doesNotMatch(words, /setWordProgress|--lyric-word-progress|dataset\.progressing/)
-  assert.match(words, /animation\.currentTime = target/)
+  assert.match(words, /animation\.currentTime = boundedTarget/)
+  assert.match(words, /animationEndTime\(animation\)/)
+  assert.match(source, /contain-intrinsic-size: auto 4em/)
   assert.match(words, /buildKaraokeMaskPlan\(/)
   assert.match(words, /buildEmphasisAnimation\(/)
   assert.match(words, /data-word-text/)
@@ -262,7 +273,7 @@ test('renderer playback consumers cannot retain a second playback state after ho
     './LocalDashboard.vue',
     './PlayingMusic.vue',
     './PlayerBar.vue',
-    './SettingsPage.vue',
+    './settings-page/PlaybackSettingsSection.vue',
     './SongList.vue',
     './StreamingPage.vue',
     './player-bar/LyricsManagerPanel.vue'
@@ -273,16 +284,6 @@ test('renderer playback consumers cannot retain a second playback state after ho
     assert.match(source, /import \{[\s\S]*?usePlayerStore[\s\S]*?\} from /, component)
     assert.doesNotMatch(source, /usePlaybackQueueStore/, component)
   }
-
-  const compatibilityExport = readFileSync(
-    new URL('../stores/usePlaybackQueueStore.ts', import.meta.url),
-    'utf8'
-  )
-  assert.match(
-    compatibilityExport,
-    /export \{ usePlayerStore as usePlaybackQueueStore \} from '\.\/usePlayerStore'/
-  )
-  assert.doesNotMatch(compatibilityExport, /defineStore/)
 })
 
 test('player bar artist is a keyboard-accessible navigation button', () => {

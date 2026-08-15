@@ -437,3 +437,7 @@ export function getLyricWordProgress(
 
   return Math.min(1, Math.max(0, (currentTime - word.time) / (endTime - word.time)))
 }
+
+export function hasLyricContent(value: string | null | undefined): boolean {
+  return typeof value === 'string' && value.trim().length > 0
+}

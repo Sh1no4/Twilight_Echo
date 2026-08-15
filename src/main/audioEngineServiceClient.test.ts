@@ -458,7 +458,10 @@ test('cached audio service calls swallow timeout rejections', async () => {
     await new Promise((resolve) => setTimeout(resolve, 30))
     assert.equal(unhandled.length, 0)
     assert.match(binding.GetLastError(), /音频服务调用超时/)
-    assert.equal(child.killCount, 1)
+    // Device enumeration is slow-tier: while it is legitimately in flight, the
+    // fast-tier playback-info timeout must be treated as collateral blocking,
+    // not as a wedged child. No kill.
+    assert.equal(child.killCount, 0)
     binding.destroy()
   } finally {
     process.off('unhandledRejection', onUnhandled)
@@ -486,13 +489,95 @@ test('timed out audio service RPC terminates and restarts the unresponsive gener
   binding.on('crash', (reason: string) => crashes.push(reason))
 
   try {
-    await assert.rejects(() => binding.getMetadataAsync('hung-track.flac'), /音频服务调用超时/)
+    // A fast-tier status RPC: with no slow-tier request in flight, a timeout
+    // here is genuine evidence of a wedged child and must recover the service.
+    await assert.rejects(() => binding.callAsync('GetPlaybackInfo', []), /音频服务调用超时/)
     await new Promise((resolve) => setTimeout(resolve, 30))
 
     assert.equal(children[0].killCount, 1)
     assert.equal(children.length, 2)
     assert.equal(crashes.length, 1)
-    assert.match(crashes[0], /GetMetadata/)
+    assert.match(crashes[0], /GetPlaybackInfo/)
+  } finally {
+    binding.destroy()
+  }
+})
+
+test('slow-tier native RPCs time out without killing the audio service', async () => {
+  const children: ManualUtilityProcess[] = []
+  const electron = {
+    utilityProcess: {
+      fork: () => {
+        const child = new ManualUtilityProcess()
+        children.push(child)
+        return child
+      }
+    }
+  }
+  const binding = new AudioEngineServiceBinding({
+    serviceEntry: 'audioEngineService.js',
+    requestTimeoutMs: 5,
+    topologyRequestTimeoutMs: 20,
+    restartDelayMs: 5,
+    electron
+  })
+
+  try {
+    // GetMetadata runs a synchronous FFmpeg probe on the service's JS thread;
+    // it may legally outlive the control deadline and must not trigger the
+    // unresponsive-service kill.
+    await assert.rejects(() => binding.getMetadataAsync('slow-probe.flac'), /音频服务调用超时/)
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    assert.equal(children[0].killCount, 0)
+    assert.equal(children.length, 1)
+  } finally {
+    binding.destroy()
+  }
+})
+
+test('playback polling never kills the service while a slow native operation is in flight', async () => {
+  const children: ManualUtilityProcess[] = []
+  const electron = {
+    utilityProcess: {
+      fork: () => {
+        const child = new ManualUtilityProcess()
+        children.push(child)
+        return child
+      }
+    }
+  }
+  const binding = new AudioEngineServiceBinding({
+    serviceEntry: 'audioEngineService.js',
+    requestTimeoutMs: 5,
+    topologyRequestTimeoutMs: 200,
+    restartDelayMs: 5,
+    electron
+  })
+
+  try {
+    // A Play on a slow source blocks the service's single JS thread; the
+    // 250ms playback-info poller then times out as collateral. This exact
+    // interleaving used to kill the service mid-open and loop the restart.
+    binding.Play('network-source.flac', 0)
+    for (let poll = 0; poll < 3; poll += 1) {
+      await assert.rejects(() => binding.callAsync('GetPlaybackInfo', []), /音频服务调用超时/)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    assert.equal(children[0].killCount, 0)
+    assert.equal(children.length, 1)
+    // Once the slow operation resolves, the wedged-child watchdog works again.
+    const playRequest = children[0].messages.find(
+      (message) => (message as { method?: string }).method === 'Play'
+    ) as { requestId: string }
+    children[0].emit('message', {
+      kind: 'response',
+      requestId: playRequest.requestId,
+      ok: true,
+      value: undefined
+    })
+    await assert.rejects(() => binding.callAsync('GetPlaybackInfo', []), /音频服务调用超时/)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    assert.equal(children[0].killCount, 1)
   } finally {
     binding.destroy()
   }

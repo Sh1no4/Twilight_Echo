@@ -179,7 +179,7 @@ test('lines depart in sequence rather than as one block, which is the cascade', 
   )
 })
 
-test('an underdamped line overshoots its target and settles back', async () => {
+test('line movement reaches its target without bouncing back', async () => {
   const { controller, manual, activeIndex } = harness(10)
   activeIndex.value = 8
   await controller.follow(8, { mode: 'snap' })
@@ -188,15 +188,25 @@ test('an underdamped line overshoots its target and settles back', async () => {
   await controller.follow(0)
 
   const target = controller.getRowTargetTop(0) as number
-  let overshot = false
+  let bouncedBack = false
   for (let frame = 0; frame < 200; frame += 1) {
     manual.runFrame()
     const top = controller.getRowTop(0) as number
-    if (top > target + 0.5) overshot = true
+    if (top > target + 0.01) bouncedBack = true
   }
 
-  assert.ok(overshot, 'scrollTop could never do this; a per-line spring can')
+  assert.ok(!bouncedBack, 'a lyric line must not reverse past its target')
   assert.ok(Math.abs((controller.getRowTop(0) as number) - target) < 1, 'it still settles')
+})
+
+test('the first lyric layout snaps into place instead of falling from the top', async () => {
+  const { controller, manual, activeIndex } = harness(8)
+  activeIndex.value = 4
+
+  await controller.follow(4)
+
+  assert.equal(manual.pendingFrames(), 0, 'the first layout must not animate from the row default')
+  assert.equal(controller.getRowTop(4), controller.getRowTargetTop(4))
 })
 
 test('scale trails position, so the motion is not perfectly rigid', async () => {
@@ -277,7 +287,7 @@ test('a layout pass belonging to a previous track cannot move the new one', asyn
   controller.registerRow(3, rowB)
   activeIndex.value = 3
   const current = controller.follow(3, { mode: 'snap' })
-  releaseLayout?.()
+  ;(releaseLayout as (() => void) | null)?.()
   await Promise.all([stale, current])
 
   assert.equal(controller.trackId(), 'track-b')
@@ -311,7 +321,7 @@ test('a newer follow cancels an older one still awaiting layout', async () => {
   const stale = controller.follow(0, { mode: 'snap' })
   activeIndex.value = 5
   await controller.follow(5, { mode: 'snap' })
-  releaseFirst?.()
+  ;(releaseFirst as (() => void) | null)?.()
   await stale
 
   // Line 5 is the anchor, so it sits at the align position and line 0 above it.
@@ -459,6 +469,63 @@ test('lines outside the viewport are marked so they can stop painting', async ()
 
   assert.equal(rows[0].properties.get('--lyric-line-in-sight'), undefined, 'visible by default')
   assert.equal(rows[29].properties.get('--lyric-line-in-sight'), '0', 'far lines are culled')
+  assert.ok(
+    rows[29].properties.get('--lyric-line-top'),
+    'culled lines still keep a layout top so a later browse cannot stack them at y=0'
+  )
+})
+
+test('browsing does not wait on the cascade, so lines below move with the wheel', async () => {
+  const { controller, activeIndex } = harness(10)
+  activeIndex.value = 0
+  await controller.follow(0, { mode: 'snap' })
+  const restingSeven = controller.getRowTargetTop(7) as number
+
+  controller.browseBy(80)
+  assert.ok(
+    Math.abs((controller.getRowTargetTop(7) as number) - (restingSeven - 80)) < 1e-6,
+    'a line further down must retarget immediately rather than waiting its cascade turn'
+  )
+})
+
+test('culled rows keep their last measured height so browsing cannot collapse them', async () => {
+  const { controller, rows, activeIndex } = harness(30)
+  activeIndex.value = 0
+  await controller.follow(0, { mode: 'snap' })
+
+  for (let index = 8; index < 30; index += 1) {
+    rows[index].offsetHeight = 24
+  }
+
+  controller.browseBy(400)
+  const tops = [18, 19, 20, 21].map((index) => controller.getRowTargetTop(index) as number)
+  for (let index = 1; index < tops.length; index += 1) {
+    assert.ok(
+      Math.abs(tops[index] - tops[index - 1] - ROW_HEIGHT) < 1,
+      `browsed lines must stay one row apart; gap=${tops[index] - tops[index - 1]}`
+    )
+  }
+})
+
+test('browsing expands the focus window so distant lines do not share a row', async () => {
+  const { controller, activeIndex } = harness(8, {
+    getFocusWindow: () => new Set([2, 3, 4]),
+    isPlaying: () => true
+  })
+  activeIndex.value = 3
+  await controller.follow(3, { mode: 'snap' })
+  assert.equal(
+    controller.getRowTargetTop(5),
+    controller.getRowTargetTop(7),
+    'focus mode collapses outsiders onto the same y'
+  )
+
+  controller.browseBy(40)
+  assert.ok(
+    (controller.getRowTargetTop(7) as number) - (controller.getRowTargetTop(5) as number) >
+      ROW_HEIGHT,
+    'browsing must give hidden lines their own rows'
+  )
 })
 
 test('the interlude dots position is published for the view', async () => {

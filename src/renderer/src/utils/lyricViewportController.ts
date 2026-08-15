@@ -22,7 +22,7 @@ import {
  * which forced every line to share one position and made Apple's cascade
  * mathematically impossible: a single scalar cannot express lines arriving at
  * different times. `scrollTop` also clamps at both ends and quantises to whole
- * pixels, so a spring driving it could never overshoot.
+ * pixels, so it could not give each line an independent target.
  *
  * Here each line is absolutely positioned and owns a `posY` and a `scale` spring.
  * One rAF loop advances them all. Manual browsing moves a `scrollOffset` that
@@ -103,6 +103,7 @@ interface RowState {
   lastScale: number | null
   lastOpacity: number | null
   lastBlur: number | null
+  lastIntrinsicHeight: number | null
   inSight: boolean
 }
 
@@ -128,6 +129,7 @@ export function createLyricViewportController(options: LyricViewportControllerOp
   let cancelResize: (() => void) | null = null
   let lastFrameNow: number | null = null
   let interludeDotsTop: number | null = null
+  let hasCommittedLayout = false
 
   const scheduler = options.frameScheduler
   const springEnabled = (): boolean => options.isSpringEnabled?.() ?? true
@@ -161,7 +163,13 @@ export function createLyricViewportController(options: LyricViewportControllerOp
     const indices = [...rows.keys()].sort((left, right) => left - right)
     return indices.map((index) => {
       const row = rows.get(index) as RowState
-      row.height = row.element.offsetHeight || row.height
+      // Culled rows use `content-visibility: hidden`, which applies size
+      // containment. `offsetHeight` then collapses to padding, and feeding that
+      // back in packs later lines on top of each other after a downward browse.
+      if (row.inSight) {
+        const measured = row.element.offsetHeight
+        if (measured > 0) row.height = measured
+      }
       return { index, height: row.height, isBackground: row.isBackground }
     })
   }
@@ -187,12 +195,16 @@ export function createLyricViewportController(options: LyricViewportControllerOp
       scrollOffset,
       bottomReservedPx: Math.max(0, options.getBottomReservedPx?.() ?? 0),
       isPlaying: options.isPlaying?.() ?? true,
-      isSeeking: isSeeking || !springEnabled(),
+      // Manual browsing is a rigid translation: cascade delay would leave the
+      // lines below waiting on the active row and they would pile up on screen.
+      isSeeking: isSeeking || !springEnabled() || manualBrowse,
       enableScale: options.isScaleEnabled?.() ?? true,
       enableBlur: options.isBlurEnabled?.() ?? true,
       isNonDynamic: options.isNonDynamic?.() ?? false,
       hidePassedLines: options.shouldHidePassedLines?.() ?? false,
-      focusWindow: options.getFocusWindow?.() ?? null,
+      // Focus mode collapses outsiders onto the same y. Yield it while the user
+      // is reading ahead, the same way pause already does.
+      focusWindow: manualBrowse ? null : (options.getFocusWindow?.() ?? null),
       inactiveDim: options.getInactiveDim?.() ?? 1,
       scaleIntensity: options.getScaleIntensity?.() ?? 1,
       blurIntensity: options.getBlurIntensity?.() ?? 1,
@@ -205,7 +217,7 @@ export function createLyricViewportController(options: LyricViewportControllerOp
     interludeDotsTop = result.interludeDotsTop
     options.onInterludeDotsTop?.(interludeDotsTop)
 
-    const snap = force || !springEnabled() || isDocumentHidden()
+    const snap = force || !hasCommittedLayout || !springEnabled() || isDocumentHidden()
 
     for (const target of result.lines) {
       const row = rows.get(target.index)
@@ -223,8 +235,10 @@ export function createLyricViewportController(options: LyricViewportControllerOp
       writeRowStatics(row, target.opacity, target.blur)
     }
 
-    if (snap) commitRows()
-    else scheduleFrame()
+    if (snap) {
+      commitRows()
+      hasCommittedLayout = true
+    } else scheduleFrame()
   }
 
   function writeRowStatics(row: RowState, opacity: number, blur: number): void {
@@ -239,7 +253,7 @@ export function createLyricViewportController(options: LyricViewportControllerOp
     }
   }
 
-  /** Write spring positions to the DOM, skipping lines outside the viewport. */
+  /** Write spring positions to the DOM. Culled rows keep a top so a later browse cannot stack them. */
   function commitRows(): boolean {
     if (!stage) return true
     const viewportHeight = stage.clientHeight
@@ -256,13 +270,16 @@ export function createLyricViewportController(options: LyricViewportControllerOp
         row.inSight = inSight
         row.element.style.setProperty('--lyric-line-in-sight', inSight ? '1' : '0')
       }
-      if (!inSight) continue
 
       if (row.lastTop !== top || row.lastScale !== scale) {
         row.lastTop = top
         row.lastScale = scale
         row.element.style.setProperty('--lyric-line-top', `${top.toFixed(2)}px`)
         row.element.style.setProperty('--lyric-line-scale', (scale / 100).toFixed(5))
+      }
+      if (row.lastIntrinsicHeight !== row.height && row.height > 0) {
+        row.lastIntrinsicHeight = row.height
+        row.element.style.setProperty('contain-intrinsic-size', `auto ${row.height.toFixed(2)}px`)
       }
     }
 
@@ -321,6 +338,7 @@ export function createLyricViewportController(options: LyricViewportControllerOp
     clearManualBrowseTimer()
     rows.clear()
     scrollOffset = 0
+    hasCommittedLayout = false
     activeTrackId = trackId
     setManualBrowse(false)
   }
@@ -358,6 +376,7 @@ export function createLyricViewportController(options: LyricViewportControllerOp
       lastScale: null,
       lastOpacity: null,
       lastBlur: null,
+      lastIntrinsicHeight: null,
       inSight: true
     })
   }

@@ -5,6 +5,7 @@ const {
   buildLyricLines,
   findActiveLyricIndex,
   getLyricWordProgress,
+  hasLyricContent,
   parsePlainLyrics,
   parseTimedLrc
 } = (await import(new URL('./lyrics.ts', import.meta.url).href)) as typeof import('./lyrics')
@@ -178,4 +179,13 @@ test('buildLyricLines keeps exact matches and only uses each layer line once', (
   assert.equal(lines[0]?.translation, '你好')
   // Second line is exact and must not steal/be stolen by the tolerant pass.
   assert.equal(lines[1]?.translation, '第二句')
+})
+
+test('hasLyricContent accepts only non-empty trimmed strings', () => {
+  assert.equal(hasLyricContent('lyrics'), true)
+  assert.equal(hasLyricContent('  lyrics  '), true)
+  assert.equal(hasLyricContent(''), false)
+  assert.equal(hasLyricContent('   '), false)
+  assert.equal(hasLyricContent(null), false)
+  assert.equal(hasLyricContent(undefined), false)
 })

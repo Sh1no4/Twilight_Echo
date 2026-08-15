@@ -45,6 +45,7 @@ import { useSideMenuClearance } from './app/useSideMenuClearance'
 import { useMiniPlayerSync } from './app/useMiniPlayerSync'
 import { useFavoriteButton } from './components/player-bar/useFavoriteButton'
 import { useMotionPreference } from './app/useMotionPreference'
+import { useLiquidGlassEnvironment } from './composables/useLiquidGlassEnvironment'
 import { useAppNoticeStore } from './stores/useAppNoticeStore'
 import { getTrackSource } from './utils/logicalTrackModel'
 import {
@@ -54,6 +55,7 @@ import {
 import AppNoticeHost from './components/AppNoticeHost.vue'
 import LiquidGlassDefs from './components/LiquidGlassDefs.vue'
 import { resolvePlayerBarPresentation } from '../../shared/playerBar.ts'
+import type { AppBackgroundPage } from './types/settings'
 
 type TitleSurface = 'default' | 'settings' | 'streaming'
 type StreamingInitialTab = 'home' | 'library' | 'recent'
@@ -378,8 +380,10 @@ const hasPlayerBar = computed(
     !visualizerActive.value &&
     !!currentTrack.value
 )
-/* Shape resolution lives in shared/playerBar.ts so main and renderer agree and the
-   truth table stays unit-testable; App.vue only forwards the result. */
+/* Shape and visibility resolution live in shared/playerBar.ts so main and renderer
+   agree and the truth table stays unit-testable; App.vue only forwards the result.
+   A fully hidden bar stays mounted — playback controls, the HiFi panel and the
+   geometry flag both consumers read all live on it — so CSS does the hiding. */
 const playerBarPresentation = computed(() =>
   resolvePlayerBarPresentation(settings.value.playerBar, {
     onPlayingPage: showPlayingPage.value
@@ -685,17 +689,43 @@ const titleSurface = computed<TitleSurface>(() => {
   if (activePluginPage.value) return 'settings'
   return 'default'
 })
+const liquidGlassChromeActive = computed(
+  () =>
+    settings.value.surfaceMaterial === 'liquidGlass' || settings.value.liquidGlass.navigationEnabled
+)
+const liquidGlassActive = computed(
+  () =>
+    liquidGlassChromeActive.value ||
+    settings.value.liquidGlass.homeCards.enabled ||
+    settings.value.liquidGlass.playbarEnabled ||
+    settings.value.liquidGlass.settingsNavigationEnabled ||
+    settings.value.liquidGlass.coverage === 'expanded'
+)
+const liquidGlassBackgroundPage = computed<AppBackgroundPage>(() => {
+  if (showPlayingPage.value) return 'player'
+  if (titleSurface.value === 'settings') return 'settings'
+  if (titleSurface.value === 'streaming') return 'streaming'
+  return 'local'
+})
+
+useLiquidGlassEnvironment({
+  active: liquidGlassActive,
+  page: liquidGlassBackgroundPage
+})
 </script>
 
 <template>
   <div class="app-shell">
     <LiquidGlassDefs
-      :active="settings.surfaceMaterial === 'liquidGlass'"
+      :active="liquidGlassActive"
       :follow-pointer="settings.liquidGlass.followPointer"
+      :home-cards-active="settings.liquidGlass.homeCards.enabled"
+      :expanded-active="settings.liquidGlass.coverage === 'expanded'"
     />
     <div class="app-shell-title">
       <TitleBar
         :glass="showPlayingPage"
+        :liquid-material="liquidGlassChromeActive"
         :streaming="showStreamingPage && !showPlayingPage"
         :hide-start="showThemeStudioPage || showLoginPage"
         :title-surface="titleSurface"
@@ -711,6 +741,7 @@ const titleSurface = computed<TitleSurface>(() => {
     <div v-if="showLocalSidebar" class="app-shell-navigation">
       <SideMenu
         :open="menuOpen"
+        :liquid-material="liquidGlassChromeActive"
         :active-key="sideMenuActiveKey"
         :plugin-pages="sidebarPages"
         :local-items="localSidebarItems"
@@ -814,6 +845,7 @@ const titleSurface = computed<TitleSurface>(() => {
         :glass="showPlayingPage"
         :mode="playerBarPresentation.mode"
         :auto-hide="playerBarPresentation.autoHide"
+        :hidden-bar="playerBarPresentation.hidden"
         :playing-page-open="showPlayingPage"
         @toggle-lyrics-page="handleToggleLyricsPage"
         @click-cover="handleCoverClick"
@@ -973,6 +1005,14 @@ html[data-te-shell-layout='custom'] .app-shell-player .player-bar-shell.menu-ope
   width: 100% !important;
   height: 100%;
   pointer-events: auto;
+}
+
+/* A fully hidden bar still occupies its grid area here, so the shell above would
+   keep eating clicks across that row. Re-assert none, out-specifying that rule. */
+html[data-te-shell-layout='custom']
+  .app-shell-player
+  .player-bar-shell[data-te-playbar-visibility='hidden'] {
+  pointer-events: none;
 }
 
 @media (max-width: 760px) {

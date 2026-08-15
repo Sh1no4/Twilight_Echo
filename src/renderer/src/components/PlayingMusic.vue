@@ -109,14 +109,8 @@ const lyricStyle = computed<Record<string, string>>(() => {
     '--te-lyric-font-size': `${appearance.fontSize}px`,
     '--te-lyric-font-weight': String(appearance.fontWeight),
     '--te-lyric-line-height': String(appearance.lineHeight),
-    '--te-lyric-translation-spacing': `${appearance.translationSpacing}px`
-  }
-
-  if (appearance.fontFamily !== 'inherit') {
-    styles['--te-lyric-font-family'] = resolveLyricsFontFamily({
-      fontFamily: appearance.fontFamily,
-      customFontFamily: ''
-    })
+    '--te-lyric-translation-spacing': `${appearance.translationSpacing}px`,
+    '--te-lyric-font-family': resolveLyricsFontFamily(appearance.styles.active)
   }
 
   if (appearance.colorMode === 'custom') {
@@ -1072,17 +1066,6 @@ onBeforeUnmount(() => {
   transform: translateX(var(--te-lyric-offset-x, 0px));
 }
 
-:global(html[data-te-motion='full'] .lyrics-column) {
-  animation: te-playing-lyrics-arrive var(--te-motion-page) var(--te-ease-spring) 64ms both;
-}
-
-@keyframes te-playing-lyrics-arrive {
-  from {
-    opacity: 0;
-    translate: 18px 0;
-  }
-}
-
 .lyrics-column--pending {
   pointer-events: none;
 }
@@ -1092,6 +1075,7 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   min-height: 120px;
+  font-family: var(--te-lyric-font-family, inherit);
   color: var(--te-playback-lyric-text, rgba(255, 255, 255, 0.42));
   font-size: 14px;
   letter-spacing: 0.08em;
@@ -1119,8 +1103,8 @@ onBeforeUnmount(() => {
 
 /*
  * The stage no longer scrolls. Rows are absolutely positioned and moved by their
- * own springs, which is what allows lines to arrive at different times and to
- * overshoot; `scrollTop` clamps and quantises and could do neither. Keeping it
+ * own springs, which is what allows lines to arrive at different times;
+ * `scrollTop` clamps and quantises and could not do that. Keeping it
  * `hidden` also means the wheel listener never has to call preventDefault.
  */
 .lyrics-scroll {
@@ -1249,6 +1233,7 @@ onBeforeUnmount(() => {
   filter: blur(var(--lyric-line-blur, 0px));
   backface-visibility: hidden;
   contain: layout style;
+  contain-intrinsic-size: auto 4em;
   transition:
     color var(--te-motion-hover) ease,
     background var(--te-motion-hover) ease;

@@ -1,3 +1,4 @@
+import { IPC } from '../../shared/ipcChannels.ts'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { readFile, stat } from 'node:fs/promises'
 import { release } from 'node:os'
@@ -498,22 +499,22 @@ export async function setupAudioEngineIpc(): Promise<void> {
   lastAudioDiagnosticPlaybackSignature = ''
 
   runtime.audioEngineManager.on('property-change', ({ name, data }) => {
-    runtime.mainWindow?.webContents.send('audioEngine:property-change', { name, data })
+    runtime.mainWindow?.webContents.send(IPC.audioEngine.propertyChange, { name, data })
     void runtime.pluginManager?.broadcastEvent(`audioEngine:${name}`, data)
   })
 
   runtime.audioEngineManager.on('end-file', ({ reason }) => {
     audioDiagnosticRecorder?.record('end-file', { reason })
-    runtime.mainWindow?.webContents.send('audioEngine:end-file', { reason })
-    void runtime.pluginManager?.broadcastEvent('audioEngine:end-file', { reason })
+    runtime.mainWindow?.webContents.send(IPC.audioEngine.endFile, { reason })
+    void runtime.pluginManager?.broadcastEvent(IPC.audioEngine.endFile, { reason })
   })
 
   registerNativeSleepTimerBoundaries(runtime.audioEngineManager, sleepTimerService)
 
   runtime.audioEngineManager.on('start-file', () => {
     audioDiagnosticRecorder?.record('start-file')
-    runtime.mainWindow?.webContents.send('audioEngine:start-file')
-    void runtime.pluginManager?.broadcastEvent('audioEngine:start-file', null)
+    runtime.mainWindow?.webContents.send(IPC.audioEngine.startFile)
+    void runtime.pluginManager?.broadcastEvent(IPC.audioEngine.startFile, null)
   })
 
   runtime.audioEngineManager.on('queue-change', (queue) => {
@@ -523,22 +524,22 @@ export async function setupAudioEngineIpc(): Promise<void> {
   runtime.audioEngineManager.on('error', (err: Error) => {
     audioDiagnosticRecorder?.record('engine-error', { message: err.message }, 'error')
     console.error('[音频引擎]', err.message)
-    runtime.mainWindow?.webContents.send('audioEngine:error', err.message)
+    runtime.mainWindow?.webContents.send(IPC.audioEngine.error, err.message)
   })
 
   runtime.audioEngineManager.on('audio-service-crash', ({ reason }) => {
     audioDiagnosticRecorder?.record('audio-service-crash', { reason }, 'error')
     console.error('[音频服务]', reason)
-    runtime.mainWindow?.webContents.send('audioEngine:service-crash', { reason })
-    runtime.mainWindow?.webContents.send('audioEngine:error', `音频服务已重启：${reason}`)
+    runtime.mainWindow?.webContents.send(IPC.audioEngine.serviceCrash, { reason })
+    runtime.mainWindow?.webContents.send(IPC.audioEngine.error, `音频服务已重启：${reason}`)
     void runtime.pluginManager?.handleNativeDspHostCrash(reason)
     void quarantineActiveVst3Nodes(reason)
   })
 
   runtime.audioEngineManager.on('audio-service-ready', (event) => {
     audioDiagnosticRecorder?.record('audio-service-ready', event)
-    runtime.mainWindow?.webContents.send('audioEngine:service-ready', event)
-    void runtime.pluginManager?.broadcastEvent('audioEngine:service-ready', event)
+    runtime.mainWindow?.webContents.send(IPC.audioEngine.serviceReady, event)
+    void runtime.pluginManager?.broadcastEvent(IPC.audioEngine.serviceReady, event)
   })
 
   runtime.audioEngineManager.on('audio-service-stderr', ({ message }) => {
@@ -551,33 +552,33 @@ export async function setupAudioEngineIpc(): Promise<void> {
 
   runtime.audioEngineManager.on('audio-device-options-changed', ({ reason }) => {
     audioDiagnosticRecorder?.record('device-options-changed', { reason })
-    runtime.mainWindow?.webContents.send('audioEngine:device-options-changed', { reason })
+    runtime.mainWindow?.webContents.send(IPC.audioEngine.deviceOptionsChanged, { reason })
   })
 
   runtime.audioEngineManager.on('ready', () => {
     audioDiagnosticRecorder?.record('engine-ready')
-    runtime.mainWindow?.webContents.send('audioEngine:ready')
-    void runtime.pluginManager?.broadcastEvent('audioEngine:ready', null)
+    runtime.mainWindow?.webContents.send(IPC.audioEngine.ready)
+    void runtime.pluginManager?.broadcastEvent(IPC.audioEngine.ready, null)
   })
 
   runtime.audioEngineManager.on('playback-info', (info) => {
     recordPlaybackDiagnostic(info)
-    runtime.mainWindow?.webContents.send('audioEngine:playback-info', info)
+    runtime.mainWindow?.webContents.send(IPC.audioEngine.playbackInfo, info)
     void runtime.pluginManager?.broadcastEvent('player:playback-info', info)
     broadcastPlayerLifecycleEvents(info)
   })
 
   runtime.audioEngineManager.on('config-applied', (event) => {
     audioDiagnosticRecorder?.record('output-config-applied', event)
-    runtime.mainWindow?.webContents.send('audioEngine:config-applied', event)
+    runtime.mainWindow?.webContents.send(IPC.audioEngine.configApplied, event)
   })
 
   runtime.audioEngineManager.on('loudnorm-status', (event) => {
     audioDiagnosticRecorder?.record('loudnorm-status', event)
-    runtime.mainWindow?.webContents.send('audioEngine:loudnorm-status', event)
+    runtime.mainWindow?.webContents.send(IPC.audioEngine.loudnormStatus, event)
   })
 
-  ipcMain.handle('audioEngine:loadQueue', async (_event, items: unknown, startIndex?: number) => {
+  ipcMain.handle(IPC.audioEngine.loadQueue, async (_event, items: unknown, startIndex?: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     if (!Array.isArray(items) || items.length > MAX_AUDIO_QUEUE_ITEMS) {
       throw new Error('Audio queue is invalid or too large')
@@ -602,7 +603,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     await requireAudioEngine().loadQueue(authorizedQueue, normalizedStartIndex)
   })
 
-  ipcMain.handle('audioEngine:play', async (_event, source: string, startTime?: number) => {
+  ipcMain.handle(IPC.audioEngine.play, async (_event, source: string, startTime?: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     const authorizedSource = await resolveAuthorizedPlaybackSource(
       normalizeIpcString(source, 'audio source', MAX_AUDIO_SOURCE_LENGTH)
@@ -636,24 +637,24 @@ export async function setupAudioEngineIpc(): Promise<void> {
     }
   })
 
-  ipcMain.handle('audioEngine:isHtmlAudioFallbackAllowed', async (event) => {
+  ipcMain.handle(IPC.audioEngine.isHtmlAudioFallbackAllowed, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     return rendererFallbackAllowed()
   })
 
-  ipcMain.handle('audioEngine:togglePause', async (event) => {
+  ipcMain.handle(IPC.audioEngine.togglePause, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     await requireAudioEngine().togglePause()
   })
 
-  ipcMain.handle('audioEngine:seek', async (_event, time: number) => {
+  ipcMain.handle(IPC.audioEngine.seek, async (_event, time: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     await requireAudioEngine().seek(
       normalizeFiniteNumber(time, 'seek time', 0, 0, Number.MAX_SAFE_INTEGER)
     )
   })
 
-  ipcMain.handle('audioEngine:setVolume', async (_event, volume: number) => {
+  ipcMain.handle(IPC.audioEngine.setVolume, async (_event, volume: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     const normalizedVolume = normalizeFiniteNumber(volume, 'volume', 1, 0, 1)
     await requireAudioEngine().setVolume(normalizedVolume)
@@ -669,7 +670,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     })
   })
 
-  ipcMain.handle('audioEngine:setPlaybackRate', async (_event, rate: number) => {
+  ipcMain.handle(IPC.audioEngine.setPlaybackRate, async (_event, rate: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     const normalizedRate = normalizeFiniteNumber(rate, 'playback rate', 1, 0.5, 2)
     await requireAudioEngine().setPlaybackRate(normalizedRate)
@@ -677,7 +678,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
   })
 
   ipcMain.handle(
-    'audioEngine:setLoopRange',
+    IPC.audioEngine.setLoopRange,
     async (_event, startSeconds: unknown, endSeconds: unknown) => {
       assertTrustedIpcSender(_event, 'audio engine IPC')
       const start =
@@ -687,34 +688,34 @@ export async function setupAudioEngineIpc(): Promise<void> {
     }
   )
 
-  ipcMain.handle('audioEngine:stop', async (event) => {
+  ipcMain.handle(IPC.audioEngine.stop, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     await requireAudioEngine().stop()
   })
 
-  ipcMain.handle('audioEngine:next', async (event) => {
+  ipcMain.handle(IPC.audioEngine.next, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     await requireAudioEngine().next()
   })
 
-  ipcMain.handle('audioEngine:previous', async (event) => {
+  ipcMain.handle(IPC.audioEngine.previous, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     await requireAudioEngine().previous()
   })
 
-  ipcMain.handle('audioEngine:setPlayMode', async (_event, mode: PlayMode) => {
+  ipcMain.handle(IPC.audioEngine.setPlayMode, async (_event, mode: PlayMode) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     await requireAudioEngine().setPlayMode(
       mode === 'repeat' || mode === 'shuffle' ? mode : 'sequential'
     )
   })
 
-  ipcMain.handle('audioEngine:getUpcomingTrack', async (event) => {
+  ipcMain.handle(IPC.audioEngine.getUpcomingTrack, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     return requireAudioEngine().getUpcomingTrack()
   })
 
-  ipcMain.handle('audioEngine:setExclusiveMode', async (_event, enabled: boolean) => {
+  ipcMain.handle(IPC.audioEngine.setExclusiveMode, async (_event, enabled: boolean) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     const state = await requireAudioEngine().setExclusiveMode(enabled === true)
     persistAudioOutputState(state)
@@ -722,23 +723,26 @@ export async function setupAudioEngineIpc(): Promise<void> {
     return state
   })
 
-  ipcMain.handle('audioEngine:getExclusiveMode', async (event) => {
+  ipcMain.handle(IPC.audioEngine.getExclusiveMode, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     return await requireAudioEngine().getExclusiveMode()
   })
 
-  ipcMain.handle('audioEngine:setAudioOutput', async (_event, output: string, device?: string) => {
-    assertTrustedIpcSender(_event, 'audio engine IPC')
-    const state = await requireAudioEngine().setAudioOutput(
-      normalizeIpcString(output, 'audio output', 64) as AudioOutputId,
-      normalizeOptionalIpcString(device, 'audio device', MAX_AUDIO_DEVICE_LENGTH)
-    )
-    persistAudioOutputState(state)
-    audioDiagnosticRecorder?.record('audio-output-changed', state)
-    return state
-  })
+  ipcMain.handle(
+    IPC.audioEngine.setAudioOutput,
+    async (_event, output: string, device?: string) => {
+      assertTrustedIpcSender(_event, 'audio engine IPC')
+      const state = await requireAudioEngine().setAudioOutput(
+        normalizeIpcString(output, 'audio output', 64) as AudioOutputId,
+        normalizeOptionalIpcString(device, 'audio device', MAX_AUDIO_DEVICE_LENGTH)
+      )
+      persistAudioOutputState(state)
+      audioDiagnosticRecorder?.record('audio-output-changed', state)
+      return state
+    }
+  )
 
-  ipcMain.handle('audioEngine:setAudioDevice', async (_event, device: string) => {
+  ipcMain.handle(IPC.audioEngine.setAudioDevice, async (_event, device: string) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     const state = await requireAudioEngine().setAudioDevice(
       normalizeIpcString(device, 'audio device', MAX_AUDIO_DEVICE_LENGTH)
@@ -748,7 +752,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     return state
   })
 
-  ipcMain.handle('audioEngine:setOutputConfig', async (_event, config: unknown) => {
+  ipcMain.handle(IPC.audioEngine.setOutputConfig, async (_event, config: unknown) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     const normalized = normalizeOutputConfig(config)
     const engine = requireAudioEngine()
@@ -763,28 +767,28 @@ export async function setupAudioEngineIpc(): Promise<void> {
     return applied
   })
 
-  ipcMain.handle('audioEngine:getOutputConfigApplyStatus', async (event) => {
+  ipcMain.handle(IPC.audioEngine.getOutputConfigApplyStatus, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     return requireAudioEngine().getOutputConfigApplyStatus()
   })
 
-  ipcMain.handle('audioEngine:getAudioOutput', async (event) => {
+  ipcMain.handle(IPC.audioEngine.getAudioOutput, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     return await requireAudioEngine().getAudioOutput()
   })
 
-  ipcMain.handle('audioEngine:getAudioOutputOptions', async (event) => {
+  ipcMain.handle(IPC.audioEngine.getAudioOutputOptions, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     return requireAudioEngine().getAudioOutputOptions()
   })
 
-  ipcMain.handle('audioEngine:getAudioOutputState', async (event) => {
+  ipcMain.handle(IPC.audioEngine.getAudioOutputState, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     return await requireAudioEngine().getAudioOutputState()
   })
 
   ipcMain.handle(
-    'audioEngine:setAudioProcessing',
+    IPC.audioEngine.setAudioProcessing,
     async (_event, settings: Partial<AudioProcessingSettings>) => {
       assertTrustedIpcSender(_event, 'audio engine IPC')
       const merged = normalizeAudioProcessingSettings({
@@ -812,18 +816,18 @@ export async function setupAudioEngineIpc(): Promise<void> {
     }
   )
 
-  ipcMain.handle('audioEngine:getAudioProcessing', async (event) => {
+  ipcMain.handle(IPC.audioEngine.getAudioProcessing, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     return runtime.appSettings.audioProcessing
   })
 
-  ipcMain.handle('audioEngine:getDspSceneState', async (event) => {
+  ipcMain.handle(IPC.audioEngine.getDspSceneState, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     return requireAudioEngine().getDspSceneState()
   })
 
   ipcMain.handle(
-    'audioEngine:setDspScenes',
+    IPC.audioEngine.setDspScenes,
     async (event, scenes: unknown, pinnedSceneId?: unknown) => {
       assertTrustedIpcSender(event, 'audio engine IPC')
       const normalizedScenes = normalizeDspScenes(scenes, runtime.appSettings.audioProcessing)
@@ -839,7 +843,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     }
   )
 
-  ipcMain.handle('audioEngine:setOutputStage', async (event, partial: unknown) => {
+  ipcMain.handle(IPC.audioEngine.setOutputStage, async (event, partial: unknown) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const raw =
       partial && typeof partial === 'object' && !Array.isArray(partial)
@@ -850,7 +854,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     return state
   })
 
-  ipcMain.handle('audioEngine:setStereoImage', async (event, partial: unknown) => {
+  ipcMain.handle(IPC.audioEngine.setStereoImage, async (event, partial: unknown) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const raw =
       partial && typeof partial === 'object' && !Array.isArray(partial)
@@ -862,7 +866,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
   })
 
   ipcMain.handle(
-    'audioEngine:applyDspScene',
+    IPC.audioEngine.applyDspScene,
     async (event, sceneId: unknown, confirmDsdPcmFallback?: unknown) => {
       assertTrustedIpcSender(event, 'audio engine IPC')
       const state = await requireAudioEngine().applyDspScene(
@@ -875,17 +879,17 @@ export async function setupAudioEngineIpc(): Promise<void> {
     }
   )
 
-  ipcMain.handle('audioEngine:getDspGraphStatus', async (event) => {
+  ipcMain.handle(IPC.audioEngine.getDspGraphStatus, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     return requireAudioEngine().getDspGraphStatus()
   })
 
-  ipcMain.handle('audioEngine:getDspAssets', async (event) => {
+  ipcMain.handle(IPC.audioEngine.getDspAssets, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     return await requireDspAssets().list()
   })
 
-  ipcMain.handle('audioEngine:importDspAsset', async (event, kind: unknown) => {
+  ipcMain.handle(IPC.audioEngine.importDspAsset, async (event, kind: unknown) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const assetKind = normalizeDspAssetKind(kind)
     const win = BrowserWindow.getFocusedWindow() ?? runtime.mainWindow
@@ -899,7 +903,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     return await requireDspAssets().importFile({ kind: assetKind, sourcePath: result.filePaths[0] })
   })
 
-  ipcMain.handle('audioEngine:importDspCorrectionProfile', async (event) => {
+  ipcMain.handle(IPC.audioEngine.importDspCorrectionProfile, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const win = BrowserWindow.getFocusedWindow() ?? runtime.mainWindow
     const options = assetDialogOptions('correctionProfile')
@@ -910,7 +914,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     return await importCorrectionProfileFile(result.filePaths[0], requireDspAssets())
   })
 
-  ipcMain.handle('audioEngine:importFrequencyResponse', async (event) => {
+  ipcMain.handle(IPC.audioEngine.importFrequencyResponse, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const win = BrowserWindow.getFocusedWindow() ?? runtime.mainWindow
     const options: Electron.OpenDialogOptions = {
@@ -928,7 +932,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     )
   })
 
-  ipcMain.handle('audioEngine:getDspCorrectionProfile', async (event, assetId: unknown) => {
+  ipcMain.handle(IPC.audioEngine.getDspCorrectionProfile, async (event, assetId: unknown) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const id = normalizeIpcString(assetId, 'DSP correction asset id', 160)
     if (!/^correctionProfile:[a-f0-9]{64}$/.test(id)) {
@@ -940,7 +944,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     return await parseCorrectionProfileFile(await assets.getPath(id))
   })
 
-  ipcMain.handle('audioEngine:deleteDspAsset', async (event, assetId: unknown) => {
+  ipcMain.handle(IPC.audioEngine.deleteDspAsset, async (event, assetId: unknown) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const id = normalizeIpcString(assetId, 'DSP asset id', 160)
     if (!/^[a-zA-Z]+:[a-f0-9]{64}$/.test(id)) throw new Error('DSP 资料标识无效')
@@ -948,7 +952,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     return await requireDspAssets().list()
   })
 
-  ipcMain.handle('audioEngine:exportDspProfile', async (event, name?: unknown) => {
+  ipcMain.handle(IPC.audioEngine.exportDspProfile, async (event, name?: unknown) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const win = BrowserWindow.getFocusedWindow() ?? runtime.mainWindow
     const result = win
@@ -974,7 +978,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     return profile
   })
 
-  ipcMain.handle('audioEngine:importDspProfile', async (event) => {
+  ipcMain.handle(IPC.audioEngine.importDspProfile, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const win = BrowserWindow.getFocusedWindow() ?? runtime.mainWindow
     const result = win
@@ -1002,19 +1006,19 @@ export async function setupAudioEngineIpc(): Promise<void> {
     return { state, profile: imported.profile, importedAssets: imported.importedAssets }
   })
 
-  ipcMain.handle('audioEngine:getVst3Catalog', async (event) => {
+  ipcMain.handle(IPC.audioEngine.getVst3Catalog, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     return await requireVst3Catalog().getState()
   })
 
-  ipcMain.handle('audioEngine:setVst3Enabled', async (event, enabled: unknown) => {
+  ipcMain.handle(IPC.audioEngine.setVst3Enabled, async (event, enabled: unknown) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const state = await requireVst3Catalog().setEnabled(enabled === true)
     requireAudioEngine().refreshDspGraph()
     return state
   })
 
-  ipcMain.handle('audioEngine:selectVst3SearchPath', async (event) => {
+  ipcMain.handle(IPC.audioEngine.selectVst3SearchPath, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const win = BrowserWindow.getFocusedWindow() ?? runtime.mainWindow
     const result = win
@@ -1027,7 +1031,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     return await grantUserSelectedVst3SearchPath(result.filePaths[0])
   })
 
-  ipcMain.handle('audioEngine:setVst3SearchPaths', async (event, paths: unknown) => {
+  ipcMain.handle(IPC.audioEngine.setVst3SearchPaths, async (event, paths: unknown) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const authorized = await resolveAuthorizedVst3SearchPaths(paths)
     const state = await requireVst3Catalog().setSearchPaths(authorized)
@@ -1035,14 +1039,14 @@ export async function setupAudioEngineIpc(): Promise<void> {
     return state
   })
 
-  ipcMain.handle('audioEngine:scanVst3Plugins', async (event) => {
+  ipcMain.handle(IPC.audioEngine.scanVst3Plugins, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const state = await requireVst3Catalog().scan()
     requireAudioEngine().refreshDspGraph()
     return state
   })
 
-  ipcMain.handle('audioEngine:clearVst3Quarantine', async (event, id: unknown) => {
+  ipcMain.handle(IPC.audioEngine.clearVst3Quarantine, async (event, id: unknown) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const catalogId = normalizeIpcString(id, 'VST3 catalog id', 160)
     const catalog = requireVst3Catalog()
@@ -1056,7 +1060,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     return state
   })
 
-  ipcMain.handle('audioEngine:selectImpulseResponse', async (event) => {
+  ipcMain.handle(IPC.audioEngine.selectImpulseResponse, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const win = BrowserWindow.getFocusedWindow() ?? runtime.mainWindow
     const options: Electron.OpenDialogOptions = {
@@ -1074,7 +1078,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     return await grantUserSelectedImpulseResponse(result.filePaths[0])
   })
 
-  ipcMain.handle('audioEngine:loadImpulseResponse', async (_event, path: string) => {
+  ipcMain.handle(IPC.audioEngine.loadImpulseResponse, async (_event, path: string) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     const convolverIrPath = await resolveAuthorizedImpulseResponseFile(
       normalizeIpcString(path, 'impulse response path', MAX_AUDIO_SOURCE_LENGTH)
@@ -1089,7 +1093,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     return requireAudioEngine().getConvolverInfo()
   })
 
-  ipcMain.handle('audioEngine:unloadImpulseResponse', async (event) => {
+  ipcMain.handle(IPC.audioEngine.unloadImpulseResponse, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const normalized = normalizeAudioProcessingSettings({
       ...runtime.appSettings.audioProcessing,
@@ -1100,13 +1104,13 @@ export async function setupAudioEngineIpc(): Promise<void> {
     return requireAudioEngine().getConvolverInfo()
   })
 
-  ipcMain.handle('audioEngine:getConvolverInfo', async (event) => {
+  ipcMain.handle(IPC.audioEngine.getConvolverInfo, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     return requireAudioEngine().getConvolverInfo()
   })
 
   ipcMain.handle(
-    'audioEngine:setEqBands',
+    IPC.audioEngine.setEqBands,
     async (_event, settings: Partial<AudioProcessingSettings>) => {
       assertTrustedIpcSender(_event, 'audio engine IPC')
       const merged = normalizeAudioProcessingSettings({
@@ -1129,7 +1133,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
   )
 
   ipcMain.handle(
-    'audioEngine:setEqPreset',
+    IPC.audioEngine.setEqPreset,
     async (
       _event,
       preset: {
@@ -1158,7 +1162,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     }
   )
 
-  ipcMain.handle('audioEngine:setCrossfeedStrength', async (_event, strength: number) => {
+  ipcMain.handle(IPC.audioEngine.setCrossfeedStrength, async (_event, strength: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     const normalizedStrength = normalizeFiniteNumber(strength, 'crossfeed strength', 0, 0, 1)
     const normalized = await authorizeAudioProcessingSettings({
@@ -1172,7 +1176,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
   })
 
   ipcMain.handle(
-    'audioEngine:setReplayGainMode',
+    IPC.audioEngine.setReplayGainMode,
     async (
       _event,
       mode: AudioProcessingSettings['volumeNormalization'],
@@ -1194,7 +1198,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     }
   )
 
-  ipcMain.handle('audioEngine:getMetadata', async (_event, source: string) => {
+  ipcMain.handle(IPC.audioEngine.getMetadata, async (_event, source: string) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     return await requireAudioEngine().getMetadataAsync(
       await resolveAuthorizedAudioSource(
@@ -1203,12 +1207,12 @@ export async function setupAudioEngineIpc(): Promise<void> {
     )
   })
 
-  ipcMain.handle('audioEngine:getPlaybackInfo', async (event) => {
+  ipcMain.handle(IPC.audioEngine.getPlaybackInfo, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     return await requireAudioEngine().getPlaybackInfo()
   })
 
-  ipcMain.handle('audioEngine:exportDiagnostics', async (event) => {
+  ipcMain.handle(IPC.audioEngine.exportDiagnostics, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const recorder = audioDiagnosticRecorder
     if (!recorder) throw new Error('音频诊断记录器尚未初始化')
@@ -1229,14 +1233,14 @@ export async function setupAudioEngineIpc(): Promise<void> {
     return { filePath: result.filePath }
   })
 
-  ipcMain.handle('audioEngine:getSpectrumData', async (_event, points?: number) => {
+  ipcMain.handle(IPC.audioEngine.getSpectrumData, async (_event, points?: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     return requireAudioEngine().getSpectrumData(
       normalizeInteger(points, 'spectrum points', 128, 8, 4096)
     )
   })
 
-  ipcMain.handle('audioEngine:getVisualizationData', async (_event, options?: unknown) => {
+  ipcMain.handle(IPC.audioEngine.getVisualizationData, async (_event, options?: unknown) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     return requireAudioEngine().getVisualizationData(
       typeof options === 'object' && options !== null ? options : {}
