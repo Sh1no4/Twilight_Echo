@@ -116,6 +116,7 @@ agent-tools/
 .qoder/
 .local/
 .codegraph/
+.zcode/
 
 # Temporary files / local scratch
 tmp/
