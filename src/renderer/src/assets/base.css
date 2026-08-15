@@ -3061,6 +3061,12 @@ html[data-te-liquid-glass-coverage='expanded']
   /* Contains the negative-z warp layer so it cannot slip behind an ancestor. */
   isolation: isolate;
   background: transparent !important;
+  /* Press squish: the element itself compresses toward the press point so the
+     content flexes with the material instead of sliding over it. The press
+     spring writes --te-lg-press-scale/origin every frame while a press is in
+     flight, so no transition is layered on top of it. */
+  transform-origin: var(--te-lg-press-x, 50%) var(--te-lg-press-y, 50%);
+  transform: scale(var(--te-lg-press-scale, 1));
   /* The rim is crisp and the depth is diffused, rather than one dark, hard card
      shadow. That is what keeps the surface reading as glass instead of plastic. */
   border-color: transparent !important;
@@ -3102,10 +3108,28 @@ html[data-te-liquid-glass-coverage='expanded']
   border-radius: inherit;
   /* Elasticity lets the glass reach toward the cursor; 0 keeps it pinned. */
   transform: translate(var(--te-lg-elastic-x, 0px), var(--te-lg-elastic-y, 0px));
-  /* A real glass surface needs more than a translucent flat colour: the pointer
-     places a soft specular bloom, the sweep gives it direction, then top/bottom
-     density layers make the light feel enclosed by material. */
+  /* A real glass surface needs more than a translucent flat colour: the rim light
+     traces the shape, the pointer places a soft specular bloom, the sweep gives it
+     direction, then top/bottom density layers make the light feel enclosed. */
   background:
+    /* Shape-aware rim light: a bright bevel along the light side, a faint
+       counter-shade opposite, and nothing through the middle so the center stays
+       clear. This is what makes the highlight read as following the surface. */
+    linear-gradient(
+      var(--te-lg-angle, 135deg),
+      rgba(
+          var(--te-lg-sheen-rgb),
+          calc(var(--te-lg-expanded-specular, var(--te-lg-rim-strength)) * 0.4)
+        )
+        0%,
+      transparent 12%,
+      transparent 88%,
+      rgba(
+          var(--te-lg-shade-rgb),
+          calc(var(--te-lg-expanded-specular, var(--te-lg-rim-strength)) * 0.16)
+        )
+        100%
+    ),
     /* A small, directional highlight is enough to communicate curvature. The old
        full-card bloom made large settings panes read as white molded plastic. */
     radial-gradient(
@@ -3127,7 +3151,7 @@ html[data-te-liquid-glass-coverage='expanded']
       rgba(var(--te-lg-sheen-rgb), 0) 0%,
       rgba(
           var(--te-lg-sheen-rgb),
-          calc(var(--te-lg-expanded-specular, var(--te-lg-rim-strength)) * 0.1)
+          calc(var(--te-lg-expanded-specular, var(--te-lg-rim-strength)) * 0.08)
         )
         35%,
       rgba(
@@ -3232,14 +3256,14 @@ html[data-te-liquid-glass-coverage='expanded'][data-theme='dark']
   --te-lg-shade-rgb: 0, 0, 0;
   --te-lg-drop-rgb: 0, 0, 0;
   /* A broad dark pane must remain an optical layer, not become a raised
-     graphite slab. The compact playbar can carry heavier depth; large cards use
-     only a restrained lower density and a short, diffuse separation shadow. */
-  --te-lg-rim-strength: 0.38;
+     graphite slab. Dark tone leans on blur + saturation for legibility and
+     keeps the density/shade stack light so the backdrop shows through. */
+  --te-lg-rim-strength: 0.46;
   --te-lg-top-wash-alpha: 0.04;
-  --te-lg-bottom-density-alpha: 0.13;
-  --te-lg-shade-alpha: 0.15;
-  --te-lg-drop-near-alpha: 0.07;
-  --te-lg-drop-alpha: 0.18;
+  --te-lg-bottom-density-alpha: 0.09;
+  --te-lg-shade-alpha: 0.11;
+  --te-lg-drop-near-alpha: 0.06;
+  --te-lg-drop-alpha: 0.15;
   --te-lg-tint-scale: 0.76;
 }
 /* The observer keeps a small warm-up margin around the viewport so this only

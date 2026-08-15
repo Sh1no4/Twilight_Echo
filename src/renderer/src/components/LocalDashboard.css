@@ -2530,6 +2530,9 @@ html[data-te-home-liquid-glass='on'] .home {
   /* The card's own backdrop blur already carries the wallpaper's colour; a 0.5
      cover-art bloom on top of it reads as haze rather than light. */
   --home-hero-art-alpha: 0.28;
+  /* Color form of the shade base for the rim light on the feature-card warp;
+     defined once here so the gradient needs no literal color function. */
+  --te-lg-shade: rgb(15 23 42);
   --home-lg-blur: var(--te-lg-blur, 16px);
   --home-lg-saturate: var(--te-lg-saturate, 140%);
   --home-lg-specular: var(--te-lg-specular, 0.44);
@@ -2550,6 +2553,9 @@ html[data-te-home-liquid-glass='on'] .home .feature-card {
   /* Contains the negative-z warp layer so it cannot slip behind the page. */
   isolation: isolate;
   background: transparent !important;
+  /* Press squish toward the press point; the press spring writes the scale. */
+  transform-origin: var(--te-lg-press-x, 50%) var(--te-lg-press-y, 50%);
+  transform: scale(var(--te-lg-press-scale, 1));
   border-color: transparent !important;
   box-shadow:
     inset 0 0 0 0.5px
@@ -2568,13 +2574,20 @@ html[data-te-home-liquid-glass='on'] .home .feature-card::after {
   z-index: -1;
   pointer-events: none;
   border-radius: inherit;
-  /* Directional sheen, then top/bottom density, then the legibility veil last
-     so it sits under the light rather than washing it out. */
+  /* Rim light first so it traces the shape, then directional sheen, then top/bottom
+     density, then the legibility veil last so it sits under the light. */
   background:
     linear-gradient(
       var(--te-lg-angle, 135deg),
-      rgba(var(--te-lg-sheen-rgb, 255, 255, 255), 0) 0%,
-      rgba(var(--te-lg-sheen-rgb, 255, 255, 255), calc(var(--home-lg-specular) * 0.12)) 34%,
+      color-mix(in srgb, white calc(var(--home-lg-specular) * 40%), transparent) 0%,
+      transparent 12%,
+      transparent 88%,
+      color-mix(in srgb, var(--te-lg-shade) calc(var(--home-lg-specular) * 16%), transparent) 100%
+    ),
+    linear-gradient(
+      var(--te-lg-angle, 135deg),
+      transparent 0%,
+      rgba(var(--te-lg-sheen-rgb, 255, 255, 255), calc(var(--home-lg-specular) * 0.09)) 34%,
       rgba(var(--te-lg-sheen-rgb, 255, 255, 255), calc(var(--home-lg-specular) * 0.026)) 62%,
       transparent 100%
     ),
@@ -2654,10 +2667,10 @@ html[data-theme='dark'][data-te-home-liquid-glass='on'] .home .feature-card::aft
     linear-gradient(
       var(--te-lg-angle, 135deg),
       rgba(var(--te-lg-sheen-rgb, 255, 255, 255), 0) 0%,
-      rgba(var(--te-lg-sheen-rgb, 255, 255, 255), calc(var(--home-lg-specular) * 0.1)) 34%,
+      rgba(var(--te-lg-sheen-rgb, 255, 255, 255), calc(var(--home-lg-specular) * 0.12)) 34%,
       transparent 100%
     ),
-    linear-gradient(180deg, transparent 48%, rgba(0, 0, 0, 0.13) 100%),
+    linear-gradient(180deg, transparent 52%, rgba(0, 0, 0, 0.08) 100%),
     color-mix(in srgb, var(--home-card) var(--home-glass-veil), transparent);
 }
 

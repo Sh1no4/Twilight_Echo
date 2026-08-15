@@ -3508,6 +3508,9 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   --te-lg-surface-rgb: var(--te-lg-context-rgb, 241, 245, 249);
   --te-lg-shade-rgb: var(--te-lg-context-label-rgb, 15, 23, 42);
   --te-lg-drop-rgb: var(--te-lg-context-label-rgb, 15, 23, 42);
+  /* Color form of the shade base for the color-mix rim light below; defined once
+     here so the gradient layers need no literal color functions. */
+  --te-lg-shade: var(--te-lg-context-label, rgb(15 23 42));
   --te-lg-rim-strength: 0.55;
   --te-lg-top-wash-alpha: 0.11;
   --te-lg-bottom-density-alpha: 0.1;
@@ -3551,10 +3554,29 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
         27%,
       transparent 67%
     ),
+    /* Shape-aware rim light: bright bevel on the light side, faint counter-shade
+       opposite, clear through the middle. */
     linear-gradient(
       var(--te-lg-angle, 135deg),
-      rgba(var(--te-lg-sheen-rgb), 0) 0%,
-      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.24))
+      color-mix(
+          in srgb,
+          white calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 40%),
+          transparent
+        )
+        0%,
+      transparent 10%,
+      transparent 90%,
+      color-mix(
+          in srgb,
+          var(--te-lg-shade) calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 16%),
+          transparent
+        )
+        100%
+    ),
+    linear-gradient(
+      var(--te-lg-angle, 135deg),
+      transparent 0%,
+      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.2))
         36%,
       rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.055))
         65%,
@@ -3590,9 +3612,16 @@ html[data-te-liquid-glass-source='solid'] .player-bar-liquid .player-bar-warp {
   z-index: 1;
 }
 
+/* Press squish: the container compresses toward the press point while the
+   pointer is down; the press spring writes --te-lg-press-scale each frame, so
+   no transform transition is layered on top of it. */
+.player-bar-liquid {
+  transform-origin: var(--te-lg-press-x, 50%) var(--te-lg-press-y, 50%);
+  transform: scale(var(--te-lg-press-scale, 1));
+}
+
 .player-bar-liquid:active {
   --te-lg-press-color: color-mix(in srgb, var(--te-lg-context-rim) 52%, transparent);
-  transform: scale(0.996);
   transition-duration: 90ms;
 }
 
@@ -3607,12 +3636,15 @@ html[data-te-liquid-glass-source='solid'] .player-bar-liquid .player-bar-warp {
    appends the id to the subject and leaves the document-level ancestor alone. */
 html[data-theme='dark'] .player-bar-liquid {
   --te-lg-drop-rgb: var(--te-lg-shade-rgb);
-  --te-lg-rim-strength: 0.4;
-  --te-lg-top-wash-alpha: 0.055;
-  --te-lg-bottom-density-alpha: 0.18;
-  --te-lg-shade-alpha: 0.24;
-  --te-lg-drop-near-alpha: 0.2;
-  --te-lg-drop-alpha: 0.44;
+  /* Apple's dark glass reads clear, not smoked: legibility comes from blur and
+     the saturated backdrop, so the density/shade stack stays restrained while
+     the rim brightens. */
+  --te-lg-rim-strength: 0.5;
+  --te-lg-top-wash-alpha: 0.05;
+  --te-lg-bottom-density-alpha: 0.1;
+  --te-lg-shade-alpha: 0.16;
+  --te-lg-drop-near-alpha: 0.16;
+  --te-lg-drop-alpha: 0.36;
 }
 
 /* Degradation mirrors the card contracts: refraction without its blurred backdrop

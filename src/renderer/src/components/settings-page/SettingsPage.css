@@ -149,6 +149,15 @@ html:is([data-te-surface-material='liquidGlass'], [data-te-settings-navigation-l
   inset: 0;
   border-radius: inherit;
   background:
+    /* Shape-aware rim light: bright bevel along the light side, faint
+       counter-shade opposite, clear through the middle. */
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--te-lg-context-rim) 22%, transparent) 0%,
+      transparent 12%,
+      transparent 88%,
+      color-mix(in srgb, var(--te-lg-context-label) 7%, transparent) 100%
+    ),
     radial-gradient(
       112% 126% at 50% 42%,
       color-mix(in srgb, var(--te-lg-context-rim) 12%, transparent) 0%,
