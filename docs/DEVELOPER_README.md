@@ -260,6 +260,13 @@ pnpm run test:no-real-device
 - 跨 main/preload/renderer 类型变更：`pnpm run typecheck`
 - 发布前：按 [windows-release-gate.md](./windows-release-gate.md) 执行完整 gate
 
+运行时能力约定：完整功能验证以 Electron 为基线，直到 Tauri 达到约定的能力门槛。
+Electron/Tauri capability matrix 与「未实现 ≠ 空数据」的约定见
+`src/renderer/src/platform/runtimeCapabilities.ts`（测试：
+`src/renderer/src/platform/runtimeCapabilities.test.ts`）。Tauri 尚未实现的能力由
+host bridge 抛 `RuntimeCapabilityError`（`code: 'runtime-not-supported'`），UI 展示
+“当前运行时不支持”，不得把未实现能力渲染成业务空列表。
+
 真实设备 smoke 不属于默认 gate。ASIO、WASAPI Exclusive、native DSD、SACD ISO、CoreAudio、ALSA `hw:` 等验证需要明确设备与曲目样本。
 
 ## 代码风格

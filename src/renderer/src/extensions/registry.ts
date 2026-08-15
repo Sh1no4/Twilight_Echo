@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import type { StructuredPluginTheme } from '../../../shared/theme.ts'
+import { isRuntimeCapabilityError } from '../platform/runtimeCapabilities'
 
 export type UiContributionKind =
   | 'sidebarPage'
@@ -66,7 +67,14 @@ export async function syncExtensions(): Promise<void> {
   if (!api) return
 
   syncInFlight.value = (async () => {
-    const entries = await api.list()
+    // A missing extensions surface on the current runtime (e.g. Tauri) is a
+    // capability gap, not "no extensions registered". Swallow it here so the
+    // bare `await syncExtensions()` in App bootstrap cannot crash, and keep the
+    // contribution lists empty — callers surface the capability state instead.
+    const entries = await api.list().catch((error: unknown) => {
+      if (isRuntimeCapabilityError(error)) return []
+      throw error
+    })
     const nextUi: UiContribution[] = []
     const nextThemes: ThemeContribution[] = []
     for (const entry of entries as PluginExtensionContribution[]) {

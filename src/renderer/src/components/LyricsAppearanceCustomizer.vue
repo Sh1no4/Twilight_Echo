@@ -270,6 +270,7 @@ watch(
                   <p class="font-group">
                     本机字体
                     <small v-if="fontPicker.loading.value">载入中…</small>
+                    <small v-else-if="fontPicker.fontsUnavailable.value">当前运行时不支持</small>
                     <small v-else-if="!fontPicker.installedMatches.value.length">无匹配</small>
                   </p>
                   <button

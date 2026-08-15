@@ -26,9 +26,14 @@ import type {
   AudioOutputOption,
   AudioProcessingSettings
 } from '../types/settings.ts'
+import {
+  RuntimeCapabilityError,
+  isTauriRuntime,
+  type RuntimeCapabilityId
+} from './runtimeCapabilities'
 
-export function isTauriRuntime(): boolean {
-  return '__TAURI_INTERNALS__' in window
+function capabilityError(id: RuntimeCapabilityId, message?: string): RuntimeCapabilityError {
+  return new RuntimeCapabilityError(id, message)
 }
 
 const idleScanStatus: LocalLibraryScanStatus = {
@@ -468,49 +473,23 @@ export function installTauriHostBridge(): void {
       scanFull: async () => noopScanUpdate
     },
     plugins: {
-      list: async () => [],
-      installFromPath: async () => {
-        throw new Error('插件安装未启用')
-      },
-      chooseAndInstall: async () => null,
-      enable: async () => {
-        throw new Error('插件系统未启用')
-      },
-      disable: async () => {
-        throw new Error('插件系统未启用')
-      },
-      uninstall: async () => {
-        throw new Error('插件系统未启用')
-      },
-      openLog: async () => {
-        throw new Error('插件系统未启用')
-      },
-      getLog: async () => '',
-      listIndex: async () => [],
-      refreshIndex: async () => [],
-      getIndexStatus: async () => ({
-        sourceUrl: '',
-        configuredSourceUrl: '',
-        sourceKind: 'bundled',
-        loadedFrom: 'bundled',
-        lastFetchedAt: null,
-        expiresAt: null,
-        loadedAt: new Date(0).toISOString(),
-        stale: false,
-        expired: false,
-        originVerified: false,
-        officialSource: false,
-        cacheFormat: null,
-        trustStoreError: null,
-        error: '插件市场未启用'
-      }),
-      installFromIndex: async () => {
-        throw new Error('插件安装未启用')
-      },
-      setNativeDspParameters: async () => {
-        throw new Error('插件系统未启用')
-      },
+      list: () => Promise.reject(capabilityError('plugins')),
+      installFromPath: () => Promise.reject(capabilityError('plugins')),
+      chooseAndInstall: () => Promise.reject(capabilityError('plugins')),
+      enable: () => Promise.reject(capabilityError('plugins')),
+      disable: () => Promise.reject(capabilityError('plugins')),
+      uninstall: () => Promise.reject(capabilityError('plugins')),
+      openLog: () => Promise.reject(capabilityError('plugins')),
+      getLog: () => Promise.reject(capabilityError('plugins')),
+      listIndex: () => Promise.reject(capabilityError('plugins')),
+      refreshIndex: () => Promise.reject(capabilityError('plugins')),
+      getIndexStatus: () => Promise.reject(capabilityError('plugins')),
+      installFromIndex: () => Promise.reject(capabilityError('plugins')),
+      setNativeDspParameters: () => Promise.reject(capabilityError('plugins')),
       onChanged: () => () => {}
+    },
+    fonts: {
+      listInstalled: () => Promise.reject(capabilityError('fonts'))
     },
     settings: {
       get: () => invoke('settings_get'),
@@ -567,16 +546,17 @@ export function installTauriHostBridge(): void {
       onCommand: () => () => {}
     },
     providers: {
-      list: async () => [],
-      call: async () => {
-        throw new Error('Provider 未启用')
-      },
+      list: () => Promise.reject(capabilityError('providers')),
+      call: () =>
+        Promise.reject(
+          capabilityError('providers', 'Provider 未启用：当前运行时不支持在线音源')
+        ),
       cancel: () => {}
     },
     extensions: {
-      list: async () => [],
-      executeCommand: async () => undefined,
-      readThemeStylesheet: async () => ''
+      list: () => Promise.reject(capabilityError('extensions')),
+      executeCommand: () => Promise.reject(capabilityError('extensions')),
+      readThemeStylesheet: () => Promise.reject(capabilityError('extensions'))
     },
     data: {
       ...existing?.data,

@@ -3,6 +3,10 @@ import {
   LYRICS_FONT_FAMILY_STACKS,
   type LyricsAppearanceFontFamily
 } from '../../../shared/lyricsAppearance.ts'
+import {
+  getCapabilityState,
+  isRuntimeCapabilityError
+} from '../platform/runtimeCapabilities'
 
 export interface LyricsFontOption {
   /** Stable key for `v-for`. */
@@ -43,6 +47,8 @@ export interface LyricsFontPicker {
   installedMatches: ComputedRef<LyricsFontOption[]>
   load: () => Promise<void>
   isFontAvailable: (family: string) => boolean
+  /** True when the current runtime cannot enumerate installed fonts. */
+  fontsUnavailable: Ref<boolean>
 }
 
 /**
@@ -53,6 +59,7 @@ export function useLyricsFontPicker(): LyricsFontPicker {
   const installed = ref<string[]>([])
   const loading = ref(false)
   const query = ref('')
+  const fontsUnavailable = ref(getCapabilityState('fonts').status === 'unsupported')
   let loaded = false
 
   async function load(): Promise<void> {
@@ -61,9 +68,10 @@ export function useLyricsFontPicker(): LyricsFontPicker {
     try {
       installed.value = (await window.api.fonts.listInstalled()) ?? []
       loaded = true
-    } catch {
+    } catch (error) {
       // A font list is a convenience; the free-text field still works without it.
       installed.value = []
+      fontsUnavailable.value = isRuntimeCapabilityError(error)
     } finally {
       loading.value = false
     }
@@ -110,5 +118,14 @@ export function useLyricsFontPicker(): LyricsFontPicker {
     }
   }
 
-  return { installed, loading, query, builtinMatches, installedMatches, load, isFontAvailable }
+  return {
+    installed,
+    loading,
+    query,
+    builtinMatches,
+    installedMatches,
+    load,
+    isFontAvailable,
+    fontsUnavailable
+  }
 }

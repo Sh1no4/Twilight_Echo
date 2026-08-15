@@ -1,4 +1,5 @@
 import { computed, ref, type Ref } from 'vue'
+import { getCapabilityState, type CapabilityState } from '../platform/runtimeCapabilities'
 import type {
   MediaProviderPlaylistSummary,
   MediaProviderProfile,
@@ -77,6 +78,10 @@ export interface ProviderInfo {
 
 export interface OnlineProviderStore {
   providers: Ref<ProviderInfo[]>
+  /** Structured runtime capability for the providers surface, so callers can
+   *  tell "current runtime does not implement providers" apart from "no
+   *  providers registered". */
+  providerCapability: Ref<CapabilityState>
   syncProviders: () => Promise<void>
   stopProviderHealthPolling: () => void
   hasProvider: (id: string) => boolean
@@ -95,9 +100,19 @@ export interface OnlineProviderStore {
 }
 
 const providers = ref<ProviderInfo[]>([])
+const providerCapability = ref<CapabilityState>(getCapabilityState('providers'))
 const providerIds = computed(() => new Set(providers.value.map((provider) => provider.id)))
 
 async function syncProviders(): Promise<void> {
+  const capability = getCapabilityState('providers')
+  providerCapability.value = capability
+  if (capability.status === 'unsupported') {
+    // The current runtime has no provider surface at all. Leave the list empty
+    // but record the reason explicitly instead of pretending the user simply
+    // has no platforms configured.
+    providers.value = []
+    return
+  }
   const list = await window.api.providers.list()
   providers.value = list.map((provider) => ({
     id: provider.id,
@@ -216,6 +231,7 @@ export function useProviderStore(): OnlineProviderStore {
 
   return {
     providers,
+    providerCapability,
     syncProviders,
     stopProviderHealthPolling,
     hasProvider,

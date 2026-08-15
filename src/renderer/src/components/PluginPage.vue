@@ -10,6 +10,7 @@ import {
   createPluginTrustRefreshController,
   type PluginTrustRefreshController
 } from '@renderer/utils/pluginTrustRefresh'
+import { getCapabilityState } from '@renderer/platform/runtimeCapabilities'
 
 type TwilightPluginDescriptor = Awaited<ReturnType<typeof window.api.plugins.list>>[number]
 type TwilightPluginIndexEntry = Awaited<ReturnType<typeof window.api.plugins.listIndex>>[number]
@@ -18,6 +19,13 @@ type TwilightPluginIndexStatus = Awaited<ReturnType<typeof window.api.plugins.ge
 const activeTab = ref('installed')
 const devMode = ref(false)
 const searchText = ref('')
+
+// The current runtime (Tauri) may not implement the plugin surface at all. In
+// that case the page must say "not supported here" instead of pretending the
+// user simply has nothing installed — a business-empty list would be a lie.
+const pluginsUnsupported = computed(
+  () => getCapabilityState('plugins').status === 'unsupported'
+)
 
 const installedPlugins = ref<TwilightPluginDescriptor[]>([])
 const indexEntries = ref<TwilightPluginIndexEntry[]>([])
@@ -114,6 +122,7 @@ function pluginTrust(entry: TwilightPluginIndexEntry) {
 /* ---------- API ---------- */
 
 async function refreshInstalled() {
+  if (pluginsUnsupported.value) return
   try {
     installedPlugins.value = await window.api.plugins.list()
   } catch (e) {
@@ -122,6 +131,7 @@ async function refreshInstalled() {
 }
 
 async function refreshIndex(force = false) {
+  if (pluginsUnsupported.value) return
   const generation = ++indexRequestGeneration
   trustEvaluationTimeMs.value = Date.now()
   try {
@@ -399,14 +409,14 @@ onUnmounted(() => {
           </div>
           <div class="top-actions">
             <button
-              v-if="activeTab === 'installed'"
+              v-if="activeTab === 'installed' && !pluginsUnsupported"
               class="btn btn-outline"
               @click="installFromLocal"
             >
               <i class="pi pi-folder-open"></i> 从本地安装包 (.tep)
             </button>
             <button
-              v-if="activeTab === 'discover'"
+              v-if="activeTab === 'discover' && !pluginsUnsupported"
               class="btn btn-outline"
               @click="refreshMarket"
               :disabled="loading"
@@ -456,13 +466,9 @@ onUnmounted(() => {
 
         <!-- Scroll Area: Installed -->
         <div class="scroll-area" v-if="activeTab === 'installed'">
-          <div class="page-title">
-            已安装扩展 <span class="badge">{{ filteredInstalled.length }}</span>
-          </div>
-
-          <!-- Empty state -->
+          <!-- Unsupported runtime -->
           <div
-            v-if="filteredInstalled.length === 0"
+            v-if="pluginsUnsupported"
             style="
               text-align: center;
               padding: 60px 20px;
@@ -471,22 +477,45 @@ onUnmounted(() => {
             "
           >
             <i
-              class="pi pi-inbox"
+              class="pi pi-puzzle-piece"
               style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3"
             ></i>
-            <p>{{ searchText ? '没有匹配的插件' : '暂无已安装插件' }}</p>
-            <button
-              v-if="!searchText"
-              type="button"
-              class="btn btn-outline"
-              style="margin-top: 16px"
-              @click="switchTab('discover')"
-            >
-              去发现插件
-            </button>
+            <p style="color: var(--te-neutral-700, #374151)">当前运行时不支持插件系统</p>
+            <p style="margin-top: 8px">插件与在线音源仅在完整运行时（Electron）中提供。</p>
           </div>
 
-          <div class="plugin-grid" v-else>
+          <template v-else>
+            <div class="page-title">
+              已安装扩展 <span class="badge">{{ filteredInstalled.length }}</span>
+            </div>
+
+            <!-- Empty state -->
+            <div
+              v-if="filteredInstalled.length === 0"
+              style="
+                text-align: center;
+                padding: 60px 20px;
+                color: var(--te-neutral-400, #9ca3af);
+                font-size: 14px;
+              "
+            >
+              <i
+                class="pi pi-inbox"
+                style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3"
+              ></i>
+              <p>{{ searchText ? '没有匹配的插件' : '暂无已安装插件' }}</p>
+              <button
+                v-if="!searchText"
+                type="button"
+                class="btn btn-outline"
+                style="margin-top: 16px"
+                @click="switchTab('discover')"
+              >
+                去发现插件
+              </button>
+            </div>
+
+            <div class="plugin-grid" v-else>
             <div
               v-for="plugin in filteredInstalled"
               :key="plugin.id"
@@ -565,10 +594,30 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
+          </template>
         </div>
 
         <!-- Scroll Area: Discover -->
         <div class="scroll-area" v-else-if="activeTab === 'discover'">
+          <!-- Unsupported runtime -->
+          <div
+            v-if="pluginsUnsupported"
+            style="
+              text-align: center;
+              padding: 60px 20px;
+              color: var(--te-neutral-400, #9ca3af);
+              font-size: 14px;
+            "
+          >
+            <i
+              class="pi pi-puzzle-piece"
+              style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3"
+            ></i>
+            <p style="color: var(--te-neutral-700, #374151)">当前运行时不支持插件系统</p>
+            <p style="margin-top: 8px">插件与在线音源仅在完整运行时（Electron）中提供。</p>
+          </div>
+
+          <template v-else>
           <div class="discover-banner">
             <div class="banner-text">
               <h2>{{ indexSourceLabel }}</h2>
@@ -736,10 +785,30 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
+          </template>
         </div>
 
         <!-- Scroll Area: Updates -->
         <div class="scroll-area" v-else-if="activeTab === 'updates'">
+          <!-- Unsupported runtime -->
+          <div
+            v-if="pluginsUnsupported"
+            style="
+              text-align: center;
+              padding: 60px 20px;
+              color: var(--te-neutral-400, #9ca3af);
+              font-size: 14px;
+            "
+          >
+            <i
+              class="pi pi-puzzle-piece"
+              style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3"
+            ></i>
+            <p style="color: var(--te-neutral-700, #374151)">当前运行时不支持插件系统</p>
+            <p style="margin-top: 8px">插件与在线音源仅在完整运行时（Electron）中提供。</p>
+          </div>
+
+          <template v-else>
           <div class="page-title">
             可用更新
             <span
@@ -834,6 +903,7 @@ onUnmounted(() => {
                 </button>
               </div>
             </div>
+          </template>
           </template>
         </div>
       </main>

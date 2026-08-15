@@ -214,6 +214,13 @@ const { pushNotice } = useAppNoticeStore()
 const NCM_PROVIDER_ID = 'ncm'
 const ncmNavigationAvailable = computed(() => providerStore.hasProvider(NCM_PROVIDER_ID))
 
+// The current runtime (Tauri) has no provider surface at all; the streaming
+// page must say so instead of implying the user simply has no platforms
+// enabled.
+const providerRuntimeUnsupported = computed(
+  () => providerStore.providerCapability.value.status === 'unsupported'
+)
+
 // ─── Generic external provider state (bili / ytmusic / future) ───────────
 // Replaces the previously bili-only refs so any provider declaring a library
 // tab can plug into the streaming library view without app-side changes.
@@ -3103,8 +3110,20 @@ onMounted(async () => {
         <div v-else :key="streamingViewKey" class="streaming-content-body stream-view-panel">
           <div v-if="!hasOnlineNavigationEntries && !currentDetail" class="streaming-placeholder">
             <i class="pi pi-plug" style="font-size: 48px; color: #ccc"></i>
-            <p class="placeholder-title">未启用可用的在线音源</p>
-            <p class="placeholder-hint">请在设置的插件页启用网易云音乐或其它音源插件。</p>
+            <p class="placeholder-title">
+              {{
+                providerRuntimeUnsupported
+                  ? '当前运行时不支持在线音源'
+                  : '未启用可用的在线音源'
+              }}
+            </p>
+            <p class="placeholder-hint">
+              {{
+                providerRuntimeUnsupported
+                  ? '在线音源仅在完整运行时（Electron）中提供。'
+                  : '请在设置的插件页启用网易云音乐或其它音源插件。'
+              }}
+            </p>
           </div>
 
           <StreamingHome
