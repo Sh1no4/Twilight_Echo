@@ -29,6 +29,21 @@
         "transparent": true,
         "resizable": true,
         "center": true
+      },
+      {
+        "label": "mini-player",
+        "title": "Twilight Echo Mini Player",
+        "width": 480,
+        "height": 300,
+        "minWidth": 420,
+        "minHeight": 220,
+        "maxWidth": 900,
+        "maxHeight": 520,
+        "decorations": false,
+        "transparent": true,
+        "resizable": true,
+        "skipTaskbar": false,
+        "visible": false
       }
     ]
   },

@@ -9,6 +9,7 @@ mod data;
 mod fonts;
 mod library_scan;
 mod local_fs;
+mod mini_player;
 mod ncm_gateway;
 mod node_sidecar;
 mod path_policy;
@@ -21,6 +22,179 @@ mod plugins_index;
 mod plugins_install;
 mod plugins_zip;
 mod themes;
+
+/// `miniPlayer` surface（Stage 7A）设置/快照/命令归一化辅助（见 `mini_player.rs`）。
+pub(crate) mod settings {
+    //! 轻量设置/迷你播放器工具：从 `lib.rs` 复用 settings 读写与快照，
+    //! 避免耦合 Electron 侧的 Electron-specific 路径。
+
+    use serde_json::{json, Value};
+    use std::path::Path;
+
+    /// 读取 settings.json（与 Electron `loadSettingsFile` 语义对齐）。
+    pub(crate) fn load_settings(app: &tauri::AppHandle) -> Value {
+        crate::load_json_file(app, "settings.json", json!({}))
+    }
+
+    /// 写入 settings.json（原子写 + 错误传播）。
+    pub(crate) fn save_settings(app: &tauri::AppHandle, settings: &Value) -> Result<(), String> {
+        crate::save_json_file(app, "settings.json", settings)
+    }
+
+    /// 生成 settings 快照（与主窗口 `settings:changed` 载荷一致）。
+    pub(crate) fn settings_snapshot(app: &tauri::AppHandle) -> Value {
+        let settings = load_settings(app);
+        crate::settings_snapshot(app, &settings)
+    }
+
+    /// 默认 miniPlayer 设置（镜像 `DEFAULT_MINI_PLAYER_SETTINGS` 的窗口部分）。
+    pub(crate) fn default_mini_player_settings() -> Value {
+        json!({
+            "windowX": -1,
+            "windowY": -1,
+            "windowWidth": 480,
+            "windowHeight": 300,
+            "alwaysOnTop": false,
+            "positionLocked": false,
+            "activeStyleId": "aurora-glass"
+        })
+    }
+
+    /// 空 miniPlayer 播放快照（镜像 `EMPTY_MINI_PLAYER_STATE` 的核心字段）。
+    pub(crate) fn empty_mini_player_state() -> Value {
+        json!({
+            "track": null,
+            "currentLyric": null,
+            "lyrics": [],
+            "isPlaying": false,
+            "isLoading": false,
+            "currentTime": 0,
+            "duration": 0,
+            "volume": 0.7,
+            "playMode": "sequential",
+            "favoriteAvailable": false,
+            "favoriteLiked": false,
+            "favoriteLoading": false,
+            "dominantColor": "#7c4dff",
+            "queueIndex": -1,
+            "queueLength": 0
+        })
+    }
+
+    /// 合并 `miniPlayer` 设置（patch 白名单：仅接受 Electron 允许的字段）。
+    pub(crate) fn merge_mini_player_settings(
+        current: &Value,
+        patch: &Value,
+    ) -> Value {
+        let mut merged = current.clone();
+        if let (Some(target), Some(source)) = (merged.as_object_mut(), patch.as_object()) {
+            const ALLOWED_KEYS: &[&str] = &[
+                "alwaysOnTop",
+                "positionLocked",
+                "activeStyleId",
+                "profiles",
+                "windowWidth",
+                "windowHeight",
+            ];
+            for key in ALLOWED_KEYS {
+                if let Some(value) = source.get(*key) {
+                    target.insert((*key).to_string(), value.clone());
+                }
+            }
+        }
+        merged
+    }
+
+    /// 归一化 `miniPlayer` settings（镜像 `normalizeMiniPlayerSettings` 的字段收敛）。
+    pub(crate) fn normalize_mini_player_settings(value: Value) -> Value {
+        let object = value.as_object().cloned().unwrap_or_default();
+        let width = number_or(object.get("windowWidth"), 480.0).clamp(420.0, 900.0);
+        let height = number_or(object.get("windowHeight"), 300.0).clamp(220.0, 520.0);
+        let active_style_id = object
+            .get("activeStyleId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("aurora-glass");
+        json!({
+            "windowX": integer_or(object.get("windowX"), -1),
+            "windowY": integer_or(object.get("windowY"), -1),
+            "windowWidth": width,
+            "windowHeight": height,
+            "alwaysOnTop": object.get("alwaysOnTop").and_then(Value::as_bool).unwrap_or(false),
+            "positionLocked": object.get("positionLocked").and_then(Value::as_bool).unwrap_or(false),
+            "activeStyleId": active_style_id,
+            "profiles": object.get("profiles").cloned().unwrap_or_else(|| json!({}))
+        })
+    }
+
+    /// 归一化 miniPlayer 播放快照（镜像 `normalizeMiniPlayerStateSnapshot`）。
+    pub(crate) fn normalize_mini_player_state(value: Value) -> Value {
+        let object = value.as_object().cloned().unwrap_or_default();
+        json!({
+            "track": object.get("track").cloned().unwrap_or(Value::Null),
+            "currentLyric": object.get("currentLyric").cloned().unwrap_or(Value::Null),
+            "lyrics": object.get("lyrics").cloned().unwrap_or_else(|| json!([])),
+            "isPlaying": object.get("isPlaying").and_then(Value::as_bool).unwrap_or(false),
+            "isLoading": object.get("isLoading").and_then(Value::as_bool).unwrap_or(false),
+            "currentTime": number_or(object.get("currentTime"), 0.0).max(0.0),
+            "duration": number_or(object.get("duration"), 0.0).max(0.0),
+            "volume": number_or(object.get("volume"), 0.7).clamp(0.0, 1.0),
+            "playMode": object.get("playMode").and_then(Value::as_str).unwrap_or("sequential"),
+            "favoriteAvailable": object.get("favoriteAvailable").and_then(Value::as_bool).unwrap_or(false),
+            "favoriteLiked": object.get("favoriteLiked").and_then(Value::as_bool).unwrap_or(false),
+            "favoriteLoading": object.get("favoriteLoading").and_then(Value::as_bool).unwrap_or(false),
+            "dominantColor": object.get("dominantColor").and_then(Value::as_str).unwrap_or("#7c4dff"),
+            "queueIndex": integer_or(object.get("queueIndex"), -1),
+            "queueLength": integer_or(object.get("queueLength"), 0).max(0)
+        })
+    }
+
+    /// 归一化 miniPlayer 播放命令（无效命令返回 `None`）。
+    pub(crate) fn normalize_mini_player_command(command: &Value) -> Option<Value> {
+        let object = command.as_object()?;
+        let command_type = object.get("type")?.as_str()?;
+        let normalized = match command_type {
+            "toggle-play" | "previous" | "next" | "cycle-play-mode" | "toggle-favorite" => {
+                json!({ "type": command_type })
+            }
+            "set-play-mode" => {
+                let mode = object.get("value").and_then(Value::as_str)?;
+                json!({ "type": command_type, "value": mode })
+            }
+            "seek" => {
+                let value = object.get("value").and_then(Value::as_f64)?;
+                json!({ "type": command_type, "value": value })
+            }
+            "set-volume" => {
+                let value = object.get("value").and_then(Value::as_f64)?;
+                json!({ "type": command_type, "value": value.clamp(0.0, 1.0) })
+            }
+            _ => return None,
+        };
+        Some(normalized)
+    }
+
+    fn number_or(value: Option<&Value>, fallback: f64) -> f64 {
+        value
+            .and_then(Value::as_f64)
+            .filter(|v| v.is_finite())
+            .unwrap_or(fallback)
+    }
+
+    fn integer_or(value: Option<&Value>, fallback: i64) -> i64 {
+        value
+            .and_then(Value::as_i64)
+            .unwrap_or(fallback)
+    }
+
+    /// 读文件内容做 SHA-256（用于背景图去重）。
+    #[allow(dead_code)]
+    pub(crate) fn sha256_file(path: &Path) -> Result<String, String> {
+        let bytes = std::fs::read(path).map_err(|e| format!("读取文件失败：{e}"))?;
+        Ok(crate::plugins_index::sha256_hex(&bytes))
+    }
+}
 
 #[tauri::command]
 fn relaunch(app: AppHandle) {
@@ -385,6 +559,7 @@ pub fn run() {
         .manage(plugin_host::PluginHostRegistry::default())
         .manage(audio_runtime::AudioRuntimeRegistry::default())
         .manage(library_scan::LibraryScanManager::default())
+        .manage(mini_player::MiniPlayerState)
         .setup(|app| {
             library_scan::LibraryScanManager::grant_runtime_paths(app.handle());
             Ok(())
@@ -510,6 +685,14 @@ pub fn run() {
             audio_runtime::audio_engine_loudness_get_status,
             audio_runtime::audio_engine_loudness_cancel,
             audio_runtime::audio_engine_export_diagnostics,
+            mini_player::mini_player_open,
+            mini_player::mini_player_get_bootstrap,
+            mini_player::mini_player_update_settings,
+            mini_player::mini_player_command,
+            mini_player::mini_player_publish_state,
+            mini_player::mini_player_minimize,
+            mini_player::mini_player_return_to_main,
+            mini_player::mini_player_choose_background_image,
             runtime_get_manifest
         ])
         .on_page_load(|webview, _| {

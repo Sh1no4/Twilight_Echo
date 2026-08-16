@@ -674,24 +674,80 @@ export const WINDOW_API_MANIFEST: WindowApiSurfaceRecord[] = [
   s(
     'miniPlayer',
     [
-      m('getBootstrap', 'miniPlayer:getBootstrap', { windows: ['main', 'miniPlayer'] }),
-      m('command', 'miniPlayer:command', { mutates: true, params: ['command'], returns: 'void', windows: ['main', 'miniPlayer'] }),
-      m('updateSettings', 'miniPlayer:updateSettings', { mutates: true, params: ['patch'], windows: ['main', 'miniPlayer'] }),
-      m('chooseBackgroundImage', 'miniPlayer:chooseBackgroundImage', { windows: ['main', 'miniPlayer'] }),
-      m('minimize', 'miniPlayer:minimize', { returns: 'void', windows: ['main', 'miniPlayer'] }),
-      m('returnToMain', 'miniPlayer:returnToMain', { returns: 'void', windows: ['main', 'miniPlayer'] }),
-      m('onState', 'miniPlayer:state', { params: ['cb'], events: ['miniPlayer:state'], windows: ['main', 'miniPlayer'] }),
-      m('onSettings', 'miniPlayer:settings', { params: ['cb'], events: ['miniPlayer:settings'], windows: ['main', 'miniPlayer'] }),
+      m('getBootstrap', 'miniPlayer:getBootstrap', {
+        tauriTransport: 'tauri-invoke',
+        windows: ['main', 'miniPlayer']
+      }),
+      m('command', 'miniPlayer:command', {
+        mutates: true,
+        params: ['command'],
+        returns: 'void',
+        tauriTransport: 'tauri-invoke',
+        windows: ['main', 'miniPlayer']
+      }),
+      m('updateSettings', 'miniPlayer:updateSettings', {
+        mutates: true,
+        params: ['patch'],
+        tauriTransport: 'tauri-invoke',
+        windows: ['main', 'miniPlayer']
+      }),
+      m('chooseBackgroundImage', 'miniPlayer:chooseBackgroundImage', {
+        tauriTransport: 'tauri-invoke',
+        windows: ['main', 'miniPlayer']
+      }),
+      m('minimize', 'miniPlayer:minimize', {
+        returns: 'void',
+        tauriTransport: 'tauri-invoke',
+        windows: ['main', 'miniPlayer']
+      }),
+      m('returnToMain', 'miniPlayer:returnToMain', {
+        returns: 'void',
+        tauriTransport: 'tauri-invoke',
+        windows: ['main', 'miniPlayer']
+      }),
+      m('onState', 'miniPlayer:state', {
+        params: ['cb'],
+        events: ['miniPlayer:state'],
+        tauriTransport: 'tauri-native',
+        windows: ['main', 'miniPlayer']
+      }),
+      m('onSettings', 'miniPlayer:settings', {
+        params: ['cb'],
+        events: ['miniPlayer:settings'],
+        tauriTransport: 'tauri-native',
+        windows: ['main', 'miniPlayer']
+      }),
       m('onMotionPreference', 'miniPlayer:motionPreference', {
         params: ['cb'],
         events: ['miniPlayer:motionPreference'],
+        tauriTransport: 'tauri-native',
         windows: ['main', 'miniPlayer']
       }),
-      m('open', 'miniPlayer:open', { mutates: true, windows: ['main'] }),
-      m('publishState', 'miniPlayer:publishState', { mutates: true, params: ['state'], returns: 'void', windows: ['main'] }),
-      m('onCommand', 'miniPlayer:command', { params: ['cb'], events: ['miniPlayer:command'], windows: ['main'] })
+      m('open', 'miniPlayer:open', {
+        mutates: true,
+        tauriTransport: 'tauri-invoke',
+        windows: ['main']
+      }),
+      m('publishState', 'miniPlayer:publishState', {
+        mutates: true,
+        params: ['state'],
+        returns: 'void',
+        tauriTransport: 'tauri-invoke',
+        windows: ['main']
+      }),
+      m('onCommand', 'miniPlayer:command', {
+        params: ['cb'],
+        events: ['miniPlayer:command'],
+        tauriTransport: 'tauri-native',
+        windows: ['main']
+      })
     ],
-    { windows: ['main', 'miniPlayer'], securityBoundary: 'auxWindow', testEvidence: ['test:playback-routing'], transport: 'tauri-reject' }
+    {
+      windows: ['main', 'miniPlayer'],
+      securityBoundary: 'auxWindow',
+      testEvidence: ['test:playback-routing'],
+      transport: 'tauri-invoke'
+    }
   ),
   s(
     'trayPlayer',

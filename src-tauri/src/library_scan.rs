@@ -226,6 +226,11 @@ fn cover_cache_dir(app: &AppHandle) -> PathBuf {
     path_policy::categorized_data_path(&policy, "cache", &["cover-cache"])
 }
 
+fn cache_root_dir(app: &AppHandle) -> PathBuf {
+    let policy = path_policy::get_path_policy(app);
+    path_policy::categorized_data_path(&policy, "cache", &[])
+}
+
 fn ensure_cover_cache_dir(app: &AppHandle) -> PathBuf {
     let dir = cover_cache_dir(app);
     let _ = fs::create_dir_all(&dir);
@@ -252,17 +257,33 @@ fn cache_picture(app: &AppHandle, pic: &Picture) -> Option<String> {
     Some(format!("cover://{name}"))
 }
 
-/// `data.getCover`：把 `cover://<file>` 句柄物化为 data URL（无则返回 null）。
+/// `data.getCover`：把 `cover://<file>` / `background://<file>` 句柄物化为 data URL
+/// （无则返回 null）。封面缓存与背景图缓存共用 `{cache}` 分类目录。
 #[tauri::command]
 pub fn data_get_cover(app: AppHandle, handle: String) -> Result<Option<String>, String> {
-    if !handle.starts_with("cover://") {
+    let subdir = if handle.starts_with("cover://") {
+        Some("cover-cache")
+    } else if handle.starts_with("background://") {
+        Some("")
+    } else {
+        None
+    };
+    let Some(subdir) = subdir else {
         return Ok(None);
-    }
-    let file_name = handle.trim_start_matches("cover://");
+    };
+    let file_name = handle
+        .split_once("://")
+        .map(|(_, name)| name)
+        .unwrap_or("")
+        .trim_start_matches('/');
     if file_name.is_empty() || file_name.contains(['/', '\\']) {
         return Ok(None);
     }
-    let path = cover_cache_dir(&app).join(file_name);
+    let path = if subdir.is_empty() {
+        cache_root_dir(&app).join(file_name)
+    } else {
+        cover_cache_dir(&app).join(file_name)
+    };
     let Ok(bytes) = fs::read(&path) else {
         return Ok(None);
     };

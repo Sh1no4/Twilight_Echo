@@ -6,6 +6,12 @@ import { openPath, openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import type { ThemeLibrarySnapshot, ThemeTone } from '../../../shared/theme.ts'
 import { type DspSceneState } from '../../../shared/dspGraph.ts'
 import type {
+  MiniPlayerCommand,
+  MiniPlayerSettings,
+  MiniPlayerStateSnapshot
+} from '../../../shared/miniPlayer.ts'
+import type { MotionPreference } from '../../../shared/motion.ts'
+import type {
   AudioOutputId,
   AudioProcessingSettings,
   SettingsSnapshot
@@ -301,18 +307,25 @@ export function installTauriHostBridge(): void {
       onProgress: rejectMethod('ncmCloud', 'onProgress')
     },
     miniPlayer: {
-      open: rejectMethod('miniPlayer', 'open'),
-      getBootstrap: rejectMethod('miniPlayer', 'getBootstrap'),
-      command: rejectMethod('miniPlayer', 'command'),
-      updateSettings: rejectMethod('miniPlayer', 'updateSettings'),
-      chooseBackgroundImage: rejectMethod('miniPlayer', 'chooseBackgroundImage'),
-      minimize: rejectMethod('miniPlayer', 'minimize'),
-      returnToMain: rejectMethod('miniPlayer', 'returnToMain'),
-      publishState: rejectMethod('miniPlayer', 'publishState'),
-      onState: rejectMethod('miniPlayer', 'onState'),
-      onSettings: rejectMethod('miniPlayer', 'onSettings'),
-      onMotionPreference: rejectMethod('miniPlayer', 'onMotionPreference'),
-      onCommand: rejectMethod('miniPlayer', 'onCommand')
+      // ── Stage 7A: standalone mini-player window through Tauri commands ──
+      open: () => invoke('mini_player_open'),
+      getBootstrap: () => invoke('mini_player_get_bootstrap'),
+      command: (command) => invoke('mini_player_command', { command }),
+      updateSettings: (patch) => invoke('mini_player_update_settings', { patch }),
+      chooseBackgroundImage: () => invoke('mini_player_choose_background_image'),
+      minimize: () => invoke('mini_player_minimize'),
+      returnToMain: () => invoke('mini_player_return_to_main'),
+      publishState: (state) => invoke('mini_player_publish_state', { state }),
+      onState: (cb: (snapshot: MiniPlayerStateSnapshot) => void) =>
+        subscribeToTauriEvent<MiniPlayerStateSnapshot>('miniPlayer:state', (snapshot) => cb(snapshot)),
+      onSettings: (cb: (settings: MiniPlayerSettings) => void) =>
+        subscribeToTauriEvent<MiniPlayerSettings>('miniPlayer:settings', (settings) => cb(settings)),
+      onMotionPreference: (cb: (preference: MotionPreference) => void) =>
+        subscribeToTauriEvent<MotionPreference>('miniPlayer:motionPreference', (preference) =>
+          cb(preference)
+        ),
+      onCommand: (cb: (command: MiniPlayerCommand) => void) =>
+        subscribeToTauriEvent<MiniPlayerCommand>('miniPlayer:command', (command) => cb(command))
     },
     providers: {
       list: () => invoke('providers_list'),

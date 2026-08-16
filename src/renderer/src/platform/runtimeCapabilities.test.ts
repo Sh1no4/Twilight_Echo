@@ -189,8 +189,11 @@ test('Tauri bridge rejects unmigrated writes instead of returning success or def
   // ncmCloud and miniPlayer must reject instead of returning fake transfer/settings shapes.
   assert.match(source, /upload: rejectMethod\('ncmCloud', 'upload'\)/)
   assert.match(source, /download: rejectMethod\('ncmCloud', 'download'\)/)
-  assert.match(source, /getBootstrap: rejectMethod\('miniPlayer', 'getBootstrap'\)/)
-  assert.match(source, /updateSettings: rejectMethod\('miniPlayer', 'updateSettings'\)/)
+  // Stage 7A wired the miniPlayer window through real commands; the remaining
+  // main-window settings sub-surfaces of miniPlayer that lack a Tauri backend
+  // fall through the surrogate proxy reject.
+  assert.match(source, /getBootstrap: \(\) => invoke\('mini_player_get_bootstrap'\)/)
+  assert.match(source, /updateSettings: \(patch\) => invoke\('mini_player_update_settings', \{ patch \}\)/)
 })
 
 test('Tauri bridge wires Stage 3 persistence (settings cache, data, themes, fonts) to invoke()', () => {
