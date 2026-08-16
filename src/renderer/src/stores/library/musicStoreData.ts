@@ -255,11 +255,40 @@ export function replayPlaylistRecord(base: Playlist, local: Playlist, current: P
 }
 
 export function clonePlaylist<T>(value: T): T {
+  // Callers may pass Vue reactive sources; the JSON round-trip reads through
+  // proxy traps, which structuredClone rejects in Chromium.
   return JSON.parse(JSON.stringify(value)) as T
 }
 
+/**
+ * Structural equality with JSON semantics: undefined-valued properties compare
+ * equal to absent properties, so snapshots cloned in memory match their
+ * JSON-persisted counterparts without building comparison strings.
+ */
 export function playlistDataEqual(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right)
+  if (left === right) return true
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right)) return false
+    if (left.length !== right.length) return false
+    for (let index = 0; index < left.length; index += 1) {
+      if (!playlistDataEqual(left[index], right[index])) return false
+    }
+    return true
+  }
+  if (typeof left !== 'object' || left === null || typeof right !== 'object' || right === null) {
+    return left === right
+  }
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  for (const key of Object.keys(leftRecord)) {
+    if (leftRecord[key] === undefined) continue
+    if (!playlistDataEqual(leftRecord[key], rightRecord[key])) return false
+  }
+  for (const key of Object.keys(rightRecord)) {
+    if (rightRecord[key] === undefined) continue
+    if (leftRecord[key] === undefined) return false
+  }
+  return true
 }
 
 export function normalizePortableLibraryPath(filePath: string): string {
