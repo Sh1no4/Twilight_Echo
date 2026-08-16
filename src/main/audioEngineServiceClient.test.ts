@@ -599,7 +599,12 @@ test('topology RPC outlives the normal control deadline and resolves in the same
     assert.equal(child.killCount, 0)
     const request = child.messages[0] as { requestId: string; method: string }
     assert.equal(request.method, 'SetOutputConfig')
-    child.emit('message', { kind: 'response', requestId: request.requestId, ok: true, value: undefined })
+    child.emit('message', {
+      kind: 'response',
+      requestId: request.requestId,
+      ok: true,
+      value: undefined
+    })
     await pending
     assert.equal(child.killCount, 0)
   } finally {
@@ -718,7 +723,10 @@ test('audio analysis waiting queue honors priority and caps queued tasks', async
   assert.equal((child.messages[2] as { source: string }).source, 'last.flac')
   respondWithBpm(child, 2, 122)
   const results = await Promise.all([first, urgent, last])
-  assert.deepEqual(results.map((result) => result.bpm), [120, 121, 122])
+  assert.deepEqual(
+    results.map((result) => result.bpm),
+    [120, 121, 122]
+  )
   analysis.destroy()
 })
 
@@ -1648,4 +1656,53 @@ test('high-frequency seek and volume service controls coalesce to the latest val
   })
 
   binding.destroy()
+})
+
+test('analysis pool keeps a conservative default concurrency and honors explicit overrides', () => {
+  const child = new ManualUtilityProcess()
+  const derived = new AudioAnalysisServiceClient({
+    serviceEntry: 'audioAnalysisService.js',
+    electron: { utilityProcess: { fork: () => child } }
+  })
+  try {
+    assert.equal(derived.getStatus().maxConcurrency, 1)
+  } finally {
+    derived.destroy()
+  }
+
+  const pinned = new AudioAnalysisServiceClient({
+    serviceEntry: 'audioAnalysisService.js',
+    maxConcurrency: 2,
+    electron: { utilityProcess: { fork: () => child } }
+  })
+  try {
+    assert.equal(pinned.getStatus().maxConcurrency, 2)
+  } finally {
+    pinned.destroy()
+  }
+})
+
+test('whole-file analysis tasks can override the pool default deadline', async () => {
+  const child = new ManualUtilityProcess()
+  const analysis = new AudioAnalysisServiceClient({
+    serviceEntry: 'audioAnalysisService.js',
+    taskTimeoutMs: 60_000,
+    restartDelayMs: 1000,
+    electron: { utilityProcess: { fork: () => child } }
+  })
+  child.emit('message', {
+    kind: 'ready',
+    protocolVersion: 1,
+    analyses: ['bpm', 'loudness']
+  })
+
+  try {
+    await assert.rejects(
+      analysis.analyzeLoudness('long-mix.dsf', '{"maxAnalysisSeconds":0}', { timeoutMs: 1000 }),
+      /analysis timed out after 1000 ms/
+    )
+    assert.equal(child.killCount, 1)
+  } finally {
+    analysis.destroy()
+  }
 })
