@@ -34,7 +34,10 @@ pub async fn install_from_path(app: AppHandle, source_path: String) -> Result<Va
 
 /// 索引安装内部入口：来源强制为 `.tep` 临时包，sourceType 固定 `index`。
 /// 由 `plugins_index::install_from_index` 调用。
-pub(crate) async fn install_index_package(app: AppHandle, package_path: String) -> Result<Value, String> {
+pub(crate) async fn install_index_package(
+    app: AppHandle,
+    package_path: String,
+) -> Result<Value, String> {
     install_impl(app, package_path, Some("index")).await
 }
 
@@ -76,7 +79,8 @@ async fn install_impl(
     if !source.exists() {
         return Err("插件来源不存在".to_string());
     }
-    let metadata = fs::metadata(&source).map_err(|error| format!("读取插件来源信息失败：{error}"))?;
+    let metadata =
+        fs::metadata(&source).map_err(|error| format!("读取插件来源信息失败：{error}"))?;
     let is_tep = metadata.is_file()
         && source
             .extension()
@@ -187,7 +191,10 @@ async fn install_staged(
 fn merged_install_state(previous: &Value, now: &str, source_type: &str, version: &str) -> Value {
     let mut record = previous.clone();
     if let Some(object) = record.as_object_mut() {
-        let was_enabled = previous.get("enabled").and_then(Value::as_bool).unwrap_or(false);
+        let was_enabled = previous
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         object.insert("enabled".to_string(), json!(was_enabled));
         object.insert(
             "installedAt".to_string(),
@@ -254,7 +261,9 @@ fn copy_tree_inner(
             }
         }
         let dest = target.join(entry.file_name());
-        let file_type = entry.file_type().map_err(|error| format!("读取文件类型失败：{error}"))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("读取文件类型失败：{error}"))?;
         if file_type.is_dir() {
             copy_tree_inner(&path, &dest, plugins_root_canonical)?;
         } else if file_type.is_file() {
@@ -279,20 +288,32 @@ mod tests {
         });
         let merged = merged_install_state(&previous, "2026-08-15T00:00:00Z", "directory", "1.0.0");
         assert_eq!(merged.get("enabled"), Some(&json!(true)));
-        assert_eq!(merged.get("installedAt"), Some(&json!("2026-01-01T00:00:00Z")));
-        assert_eq!(merged.get("updatedAt"), Some(&json!("2026-08-15T00:00:00Z")));
+        assert_eq!(
+            merged.get("installedAt"),
+            Some(&json!("2026-01-01T00:00:00Z"))
+        );
+        assert_eq!(
+            merged.get("updatedAt"),
+            Some(&json!("2026-08-15T00:00:00Z"))
+        );
         assert_eq!(merged.get("source"), Some(&json!("directory")));
         assert_eq!(merged.get("activeVersion"), Some(&json!("1.0.0")));
         assert_eq!(merged.get("lastError"), Some(&Value::Null));
         // 非安装字段保留。
-        assert_eq!(merged.get("nativeDspParameters"), Some(&json!({ "gain": 0.5 })));
+        assert_eq!(
+            merged.get("nativeDspParameters"),
+            Some(&json!({ "gain": 0.5 }))
+        );
     }
 
     #[test]
     fn merged_install_state_defaults_for_fresh_install() {
         let merged = merged_install_state(&json!({}), "2026-08-15T00:00:00Z", "tep", "0.2.0");
         assert_eq!(merged.get("enabled"), Some(&json!(false)));
-        assert_eq!(merged.get("installedAt"), Some(&json!("2026-08-15T00:00:00Z")));
+        assert_eq!(
+            merged.get("installedAt"),
+            Some(&json!("2026-08-15T00:00:00Z"))
+        );
         assert_eq!(merged.get("source"), Some(&json!("tep")));
         assert_eq!(merged.get("activeVersion"), Some(&json!("0.2.0")));
         assert_eq!(merged.get("lastError"), Some(&Value::Null));
@@ -328,10 +349,7 @@ mod tests {
 
         copy_tree(&source, &target, &plugins_root).unwrap();
         assert!(target.join("plugin.json").is_file());
-        assert!(
-            !target.join("plugins").exists(),
-            "插件根目录不应被拷进目标"
-        );
+        assert!(!target.join("plugins").exists(), "插件根目录不应被拷进目标");
         let _ = fs::remove_dir_all(&root);
     }
 

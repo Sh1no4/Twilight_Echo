@@ -9,6 +9,7 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
           pluginHost: resolve(__dirname, 'src/main/pluginHost.ts'),
+          pluginHostNode: resolve(__dirname, 'src/main/plugins/pluginHostNode.ts'),
           audioEngineService: resolve(__dirname, 'src/main/audioEngineService.ts'),
           audioAnalysisService: resolve(__dirname, 'src/main/audioAnalysisService.ts'),
           libraryScanService: resolve(__dirname, 'src/main/library/libraryScanService.ts')

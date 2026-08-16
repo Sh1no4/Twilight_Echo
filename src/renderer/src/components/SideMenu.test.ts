@@ -20,5 +20,5 @@ test('local sidebar opening follows the streaming navigation timing', () => {
     /transform 0\.3s cubic-bezier\(0\.4, 0, 0\.2, 1\),\s*filter 0\.28s cubic-bezier\(0\.4, 0, 0\.2, 1\)/
   )
   assert.match(app, /translate3d\(0, -40px, 0\) scale\(0\.99\)/)
-  assert.match(playerBarCss, /transition: left 0\.32s var\(--te-ease-soft\);/)
+  assert.match(playerBarCss, /transition:\s*left 0\.32s var\(--te-ease-soft\),\s*opacity 0\.2s ease,\s*translate 0\.24s var\(--te-ease-spring, ease-out\);/)
 })

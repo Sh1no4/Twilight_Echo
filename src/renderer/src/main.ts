@@ -6,6 +6,7 @@ import { createPinia } from 'pinia'
 import { bootstrapThemeRuntime } from './stores/useThemeStore'
 import { installAutoHideScrollbars } from './utils/autoHideScrollbars'
 import { installTauriHostBridge } from './platform/tauriHostBridge'
+import { getRuntimeKind, isRuntimeMethodSupported, loadRuntimeManifest } from './platform/runtimeCapabilities'
 
 installTauriHostBridge()
 
@@ -42,7 +43,13 @@ document.addEventListener(
 )
 
 async function mountApp(): Promise<void> {
-  if (!isTrayPlayer) await bootstrapThemeRuntime()
+  const runtimeManifest = getRuntimeKind() === 'tauri' ? await loadRuntimeManifest() : null
+  if (
+    !isTrayPlayer &&
+    (!runtimeManifest || isRuntimeMethodSupported(runtimeManifest, 'themes', 'getBootstrap'))
+  ) {
+    await bootstrapThemeRuntime()
+  }
   const rootComponent = isMiniPlayer
     ? (await import('./mini-player/MiniPlayerApp.vue')).default
     : isTrayPlayer

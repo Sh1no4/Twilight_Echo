@@ -7,10 +7,20 @@ import type { AppUpdateProgress } from '../../../../shared/appUpdate.ts'
 import {
   CAPABILITY_LABELS,
   getRuntimeCapabilities,
-  isTauriRuntime,
+  getRuntimeKind,
+  loadRuntimeManifest,
   RUNTIME_CAPABILITY_IDS
 } from '../../platform/runtimeCapabilities.ts'
 import type { CapabilityState } from '../../platform/runtimeCapabilities.ts'
+import {
+  missingMethodsForCapability,
+  runtimeCapabilitiesForManifest,
+  type AggregateCapabilityState,
+  type RuntimeKind,
+  type RuntimeManifest,
+  type RuntimeMethodCapability,
+  type RuntimeMethodState
+} from '../../../../shared/runtimeManifest.ts'
 
 const AFDIAN_URL = 'https://ifdian.net/a/pxasen'
 // Public assets are copied to the renderer root at build time. Relative paths
@@ -186,7 +196,17 @@ function progressLabel(): string {
 /* Read-only runtime capability boundary (Part 3): Electron is the full-feature
    baseline (all supported); Tauri reports partial/unsupported per surface. */
 const runtimeCapabilities = getRuntimeCapabilities()
-const runtimeLabel = isTauriRuntime() ? 'Tauri' : 'Electron'
+const runtimeLabel = getRuntimeKind()
+
+const RUNTIME_KIND_LABELS: Record<RuntimeKind, string> = {
+  electron: 'Electron',
+  tauri: 'Tauri',
+  web: '浏览器'
+}
+
+function runtimeLabelText(): string {
+  return RUNTIME_KIND_LABELS[runtimeLabel]
+}
 
 interface CapabilityRow {
   id: (typeof RUNTIME_CAPABILITY_IDS)[number]
@@ -212,6 +232,66 @@ function capabilityBadgeClass(status: CapabilityState['status']): string {
       return 'te-status-badge--success'
     case 'partial':
       return 'te-status-badge--warning'
+    case 'unsupported':
+      return 'te-status-badge--danger'
+  }
+}
+
+function manifestCapabilityState(row: CapabilityRow): CapabilityState {
+  const state = manifestAggregates.value?.[row.id]
+  return state
+    ? {
+        id: row.id,
+        status: state.status,
+        code: state.code,
+        message: state.message
+      }
+    : row.state
+}
+
+/* ── Stage 1: responsive manifest (loaded async, falls back to the static
+   snapshot above until the manifest resolves) ───────────────────────────── */
+
+const manifest = ref<RuntimeManifest | null>(null)
+const manifestLoadFailed = ref(false)
+const manifestAggregates = ref<Record<string, AggregateCapabilityState> | null>(null)
+const manifestMissingMethods = ref<Record<string, RuntimeMethodCapability[]>>({})
+
+onMounted(async () => {
+  try {
+    const loaded = await loadRuntimeManifest()
+    manifest.value = loaded
+    manifestAggregates.value = runtimeCapabilitiesForManifest(loaded)
+    const missing: Record<string, RuntimeMethodCapability[]> = {}
+    for (const id of RUNTIME_CAPABILITY_IDS) {
+      const list = missingMethodsForCapability(loaded, id)
+      if (list.length > 0) missing[id] = list
+    }
+    manifestMissingMethods.value = missing
+  } catch {
+    manifestLoadFailed.value = true
+  }
+})
+
+const METHOD_STATUS_LABELS: Record<RuntimeMethodState, string> = {
+  supported: '可用',
+  unavailable: '暂不可用',
+  unsupported: '未支持',
+  'platform-inapplicable': '平台不适用'
+}
+
+function methodStatusLabel(state: RuntimeMethodState): string {
+  return METHOD_STATUS_LABELS[state]
+}
+
+function methodBadgeClass(state: RuntimeMethodState): string {
+  switch (state) {
+    case 'supported':
+      return 'te-status-badge--success'
+    case 'unavailable':
+      return 'te-status-badge--info'
+    case 'platform-inapplicable':
+      return 'te-status-badge--info'
     case 'unsupported':
       return 'te-status-badge--danger'
   }
@@ -361,7 +441,7 @@ function capabilityBadgeClass(status: CapabilityState['status']): string {
     <div class="about-capabilities" aria-label="运行时能力">
       <div class="about-capabilities-title">
         <strong>运行时能力</strong>
-        <span>当前宿主为 {{ runtimeLabel }}，以下为各功能的支持边界（只读）。</span>
+        <span>当前宿主为 {{ runtimeLabelText() }}，以下为各功能的支持边界（只读）。</span>
       </div>
       <dl class="capability-grid">
         <div v-for="row in capabilityRows" :key="row.id" class="capability-entry">
@@ -369,17 +449,58 @@ function capabilityBadgeClass(status: CapabilityState['status']): string {
           <dd>
             <span
               class="te-status-badge"
-              :class="capabilityBadgeClass(row.state.status)"
-              :aria-label="`${row.label}：${CAPABILITY_STATUS_LABELS[row.state.status]}`"
+              :class="capabilityBadgeClass(manifestCapabilityState(row).status)"
+              :aria-label="`${row.label}：${CAPABILITY_STATUS_LABELS[manifestCapabilityState(row).status]}`"
             >
-              {{ CAPABILITY_STATUS_LABELS[row.state.status] }}
+              {{ CAPABILITY_STATUS_LABELS[manifestCapabilityState(row).status] }}
             </span>
-            <span v-if="row.state.status !== 'supported'" class="capability-detail">
-              {{ row.state.message }}
+            <span
+              v-if="manifestCapabilityState(row).status !== 'supported'"
+              class="capability-detail"
+            >
+              {{ manifestCapabilityState(row).message }}
             </span>
           </dd>
         </div>
       </dl>
+
+      <div
+        v-if="manifest"
+        class="manifest-card"
+        aria-label="能力明细（基于运行时探测）"
+      >
+        <h3>能力明细 · {{ runtimeLabelText() }}</h3>
+        <p v-if="manifestLoadFailed" class="manifest-load-failed">
+          未能加载运行时探测，以下为各功能的静态支持边界。
+        </p>
+        <div
+          v-for="row in capabilityRows"
+          :key="`detail-${row.id}`"
+          class="manifest-capability"
+        >
+          <div class="manifest-capability-head">
+            <strong>{{ row.label }}</strong>
+            <span
+              class="te-status-badge"
+              :class="capabilityBadgeClass(manifestCapabilityState(row).status)"
+            >{{ CAPABILITY_STATUS_LABELS[manifestCapabilityState(row).status] }}</span>
+          </div>
+          <ul v-if="manifestMissingMethods[row.id]" class="manifest-method-list">
+            <li
+              v-for="method in manifestMissingMethods[row.id]"
+              :key="method.surface + '.' + method.method"
+              class="manifest-method"
+            >
+              <code>{{ method.surface }}.{{ method.method }}</code>
+              <span
+                class="te-status-badge te-status-badge--info manifest-method-badge"
+                :class="methodBadgeClass(method.state)"
+              >{{ methodStatusLabel(method.state) }}</span>
+            </li>
+          </ul>
+          <p v-else class="manifest-capability-ok">该能力下的方法均已支持。</p>
+        </div>
+      </div>
     </div>
 
     <div class="about-links">

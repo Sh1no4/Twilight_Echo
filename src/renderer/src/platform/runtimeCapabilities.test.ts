@@ -8,9 +8,17 @@ import {
   isCapabilitySupported,
   isRuntimeCapabilityError,
   isTauriRuntime,
+  getRuntimeKind,
+  loadRuntimeManifest,
   UNSUPPORTED_CAPABILITY_CODE,
   type RuntimeCapabilityId
 } from './runtimeCapabilities.ts'
+
+import {
+  buildRuntimeManifest,
+  runtimeCapabilitiesForManifest,
+  missingMethodsForCapability
+} from '../../../shared/runtimeManifest.ts'
 
 /* ── Behavioral: the capability matrix itself ─────────────────────────── */
 
@@ -22,22 +30,24 @@ test('Electron is the full-featured baseline: every capability is supported', ()
   }
 })
 
-test('Tauri matrix marks the read-only list surfaces partial and fonts unsupported', () => {
+test('Tauri matrix marks partially migrated surfaces partial and none fully unsupported', () => {
   const matrix = getRuntimeCapabilities(true)
-  // Only fonts is still fully unimplemented on Tauri.
-  assert.equal(matrix.fonts.status, 'unsupported')
-  assert.equal(matrix.fonts.code, UNSUPPORTED_CAPABILITY_CODE)
-  assert.match(matrix.fonts.message, /当前运行时不支持/)
-  // Settings is implemented on Tauri; list surfaces and the rest are partial.
-  assert.equal(matrix.settings.status, 'supported')
+  // Stage 3 wired real persistence for settings/data/themes/fonts; every
+  // capability is now at least partial on Tauri.
+  assert.equal(matrix.fonts.status, 'partial')
+  assert.match(matrix.fonts.message, /系统字体枚举已支持/)
+  assert.notEqual(matrix.fonts.code, UNSUPPORTED_CAPABILITY_CODE)
+  assert.equal(matrix.settings.status, 'partial')
   for (const id of [
+    'settings',
     'plugins',
     'providers',
     'extensions',
     'data',
     'themes',
     'localLibrary',
-    'audioEngine'
+    'audioEngine',
+    'fonts'
   ] as const) {
     assert.equal(matrix[id].status, 'partial', `${id} is a partial migration on Tauri`)
   }
@@ -48,7 +58,7 @@ test('getCapabilityState / isCapabilitySupported route through the same matrix',
   assert.equal(getCapabilityState('plugins', false).status, 'supported')
   assert.equal(isCapabilitySupported('plugins', true), false)
   assert.equal(isCapabilitySupported('plugins', false), true)
-  assert.equal(isCapabilitySupported('settings', true), true)
+  assert.equal(isCapabilitySupported('settings', true), false)
   assert.equal(isCapabilitySupported('fonts', true), false)
 })
 
@@ -62,6 +72,19 @@ test('RuntimeCapabilityError carries a stable machine-readable code', () => {
   assert.match(error.message, /当前运行时不支持/)
 })
 
+test('RuntimeCapabilityError carries method-level rejection details', () => {
+  const error = new RuntimeCapabilityError('localLibrary', '未接通', {
+    surface: 'fs',
+    method: 'readAudioFile',
+    reasonCode: 'transport-not-migrated',
+    recoverable: false
+  })
+  assert.equal(error.surface, 'fs')
+  assert.equal(error.method, 'readAudioFile')
+  assert.equal(error.reasonCode, 'transport-not-migrated')
+  assert.equal(error.code, 'transport-not-migrated')
+  assert.equal(error.recoverable, false)
+})
 test('isRuntimeCapabilityError distinguishes capability gaps from other failures', () => {
   assert.equal(isRuntimeCapabilityError(new RuntimeCapabilityError('providers')), true)
   assert.equal(isRuntimeCapabilityError(new Error('boom')), false)
@@ -71,6 +94,7 @@ test('isRuntimeCapabilityError distinguishes capability gaps from other failures
 
 test('runtime detection is safe in a non-browser environment', () => {
   assert.equal(isTauriRuntime(), false)
+  assert.equal(getRuntimeKind(), 'web')
   // Every capability id is a valid matrix key.
   const matrix = getRuntimeCapabilities(false)
   const ids = [
@@ -89,8 +113,132 @@ test('runtime detection is safe in a non-browser environment', () => {
   }
 })
 
-/* ── Contract: the Tauri bridge must reject, never lie ────────────────── */
+test('runtime manifest derives method states and aggregate capability details', () => {
+  const manifest = buildRuntimeManifest({
+    runtimeKind: 'tauri',
+    os: 'windows',
+    arch: 'x86_64',
+    version: '1.0.5',
+    checkedAt: '2026-08-16T00:00:00Z',
+    isWindows: true
+  })
+  const plugins = manifest.surfaces.find((surface) => surface.surface === 'plugins')
+  assert.equal(plugins?.methods.find((method) => method.method === 'list')?.state, 'supported')
+  assert.equal(plugins?.methods.find((method) => method.method === 'onChanged')?.state, 'unavailable')
+  const aggregates = runtimeCapabilitiesForManifest(manifest)
+  assert.equal(aggregates.plugins.status, 'partial')
+  assert.ok(missingMethodsForCapability(manifest, 'plugins').some((method) => method.method === 'onChanged'))
+})
 
+test('web runtime manifest marks methods unsupported', () => {
+  const manifest = buildRuntimeManifest({
+    runtimeKind: 'web',
+    os: 'unknown',
+    arch: 'unknown',
+    version: 'unknown',
+    checkedAt: '2026-08-16T00:00:00Z'
+  })
+  assert.ok(manifest.surfaces.every((surface) => surface.methods.every((method) => method.state === 'unsupported')))
+})
+
+
+
+test('Tauri bridge rejects unmigrated methods instead of returning business-shaped defaults', () => {
+  const source = readFileSync(new URL('./tauriHostBridge.ts', import.meta.url), 'utf8')
+  assert.doesNotMatch(source, /makeStubMethod|makeStubSurface|warnedStubMethods|emptyThemeLibrarySnapshot/)
+  assert.match(source, /function rejectMethod\(surface: string, method: string\)/)
+  assert.match(source, /onNavigate: rejectMethod\('app', 'onNavigate'\)/)
+  // Stage 4 wired the local library scan surface; methods that still lack a
+  // backend (watcher status, tag writer, duplicate detection) fall through the
+  // surrogate proxy reject and are not declared as fake defaults.
+  assert.match(source, /scanStartup: \(\) => invoke\('library_scan_startup'\)/)
+  assert.match(source, /getCover: \(handle: string\) => invoke<string \| null>\('data_get_cover', \{ handle \}\)/)
+  // The remote-cover grant has no Tauri backend; a surrogate-proxy reject would
+  // pass this by falling through, so it must be declared explicitly.
+  assert.match(source, /grantRemoteCover: rejectMethod\('data', 'grantRemoteCover'\)/)
+})
+
+test('Tauri bridge rejects unmigrated writes instead of returning success or default snapshots', () => {
+  const source = readFileSync(new URL('./tauriHostBridge.ts', import.meta.url), 'utf8')
+  // settings sub-surfaces that previously returned null/0/'{}'/[] fake success.
+  for (const method of [
+    'chooseCacheFolder',
+    'chooseBackgroundImage',
+    'importBackgroundImage',
+    'exportBackup',
+    'importBackup'
+  ]) {
+    assert.match(
+      source,
+      new RegExp(`${method}: rejectMethod\\('settings', '${method}'\\)`),
+      `settings.${method} must reject, not return a fake default`
+    )
+  }
+  // settings.onChanged now subscribes via @tauri-apps/api/event (Stage 3).
+  // themes import/export/asset (zip boundary) still reject; library CRUD is real.
+  for (const method of ['importTheme', 'exportTheme', 'importAsset', 'validateAssets', 'copyAssets']) {
+    assert.match(
+      source,
+      new RegExp(`${method}: rejectMethod\\('themes', '${method}'\\)`),
+      `themes.${method} must reject, not return a default snapshot`
+    )
+  }
+  // data session/playlist writes now persist through real versioned commands.
+  // plugins.onChanged is a fake event source; it must reject, not no-op.
+  assert.match(source, /onChanged: rejectMethod\('plugins', 'onChanged'\)/)
+  // ncmCloud and miniPlayer must reject instead of returning fake transfer/settings shapes.
+  assert.match(source, /upload: rejectMethod\('ncmCloud', 'upload'\)/)
+  assert.match(source, /download: rejectMethod\('ncmCloud', 'download'\)/)
+  assert.match(source, /getBootstrap: rejectMethod\('miniPlayer', 'getBootstrap'\)/)
+  assert.match(source, /updateSettings: rejectMethod\('miniPlayer', 'updateSettings'\)/)
+})
+
+test('Tauri bridge wires Stage 3 persistence (settings cache, data, themes, fonts) to invoke()', () => {
+  const source = readFileSync(new URL('./tauriHostBridge.ts', import.meta.url), 'utf8')
+  // settings cache size / clear / shortcut statuses are real commands.
+  assert.ok(source.includes("invoke<number>('settings_get_cache_size'"), 'settings.getCacheSize must invoke settings_get_cache_size')
+  assert.ok(source.includes("invoke<number>('settings_clear_cache'"), 'settings.clearCache must invoke settings_clear_cache')
+  assert.ok(source.includes("invoke('settings_get_shortcut_statuses'"), 'settings.getShortcutStatuses must invoke settings_get_shortcut_statuses')
+  // settings/themes change events subscribe through the Tauri event bridge.
+  assert.ok(
+    source.includes("subscribeToTauriEvent<SettingsSnapshot>('settings:changed', cb)"),
+    'settings.onChanged must subscribe to settings:changed'
+  )
+  assert.ok(
+    source.includes("subscribeToTauriEvent<ThemeLibrarySnapshot>('themes:changed', cb)"),
+    'themes.onChanged must subscribe to themes:changed'
+  )
+  // data session / playlists / lyrics management / bookmarks persistence.
+  for (const [method, command] of [
+    ['loadPlaybackSession', 'data_load_playback_session'],
+    ['savePlaybackSession', 'data_save_playback_session'],
+    ['clearPlaybackSession', 'data_clear_playback_session'],
+    ['loadPlaylists', 'data_load_playlists'],
+    ['savePlaylists', 'data_save_playlists'],
+    ['loadLyricsManagement', 'data_load_lyrics_management'],
+    ['saveLyricsManagement', 'data_save_lyrics_management'],
+    ['loadPlaybackBookmarks', 'data_load_playback_bookmarks'],
+    ['savePlaybackBookmarks', 'data_save_playback_bookmarks']
+  ] as const) {
+    assert.ok(
+      source.includes(`invoke('${command}'`),
+      `data.${method} must invoke ${command}`
+    )
+  }
+  // themes library CRUD is real.
+  assert.ok(source.includes("invoke('themes_get_bootstrap'"), 'themes.getBootstrap must invoke themes_get_bootstrap')
+  assert.ok(source.includes("invoke('themes_list'"), 'themes.list must invoke themes_list')
+  assert.ok(
+    source.includes("invoke('themes_save', { profile, expectedRevision }"),
+    'themes.save must invoke themes_save with profile + expectedRevision'
+  )
+  assert.ok(
+    source.includes("invoke('themes_set_active', { selection, expectedRevision }"),
+    'themes.setActive must invoke themes_set_active with selection + expectedRevision'
+  )
+  // fonts enumeration is a real command.
+  assert.ok(source.includes("invoke<string[]>('fonts_list_installed'"), 'fonts.listInstalled must invoke fonts_list_installed')
+})
 test('Tauri bridge wires plugin lifecycle and Stage 5C install/index commands to invoke()', () => {
   const source = readFileSync(new URL('./tauriHostBridge.ts', import.meta.url), 'utf8')
   const pluginsSection = source.slice(source.indexOf('plugins: {'), source.indexOf('fonts: {'))
@@ -163,12 +311,12 @@ test('Tauri bridge wires plugin lifecycle and Stage 5C install/index commands to
   )
 })
 
-test('Tauri bridge wires provider call/cancel and extension command/stylesheet commands while fonts reject', () => {
+test('Tauri bridge wires provider call/cancel, extension commands, and fonts enumeration', () => {
   const source = readFileSync(new URL('./tauriHostBridge.ts', import.meta.url), 'utf8')
   assert.match(
     source,
-    /fonts: \{\s*listInstalled: \(\) => Promise\.reject\(capabilityError\('fonts'\)\)/,
-    'fonts.listInstalled must reject with a fonts capability error'
+    /fonts: \{\s*listInstalled: \(\) => invoke<string\[\]>\('fonts_list_installed'\)/,
+    'fonts.listInstalled must invoke the real fonts_list_installed command'
   )
   assert.match(
     source,

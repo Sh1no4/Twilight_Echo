@@ -18,7 +18,10 @@ const themeContributionSource = readFileSync(
   new URL('./themeContribution.ts', import.meta.url),
   'utf8'
 )
-const pluginHostSource = readFileSync(new URL('../pluginHost.ts', import.meta.url), 'utf8')
+const pluginHostSource = readFileSync(new URL('./hostCore.ts', import.meta.url), 'utf8')
+const electronHostEntrySource = readFileSync(new URL('../pluginHost.ts', import.meta.url), 'utf8')
+const nodeHostEntrySource = readFileSync(new URL('./pluginHostNode.ts', import.meta.url), 'utf8')
+const hostTransportSource = readFileSync(new URL('./hostTransport.ts', import.meta.url), 'utf8')
 const pluginApiSource = readFileSync(
   new URL('../../../packages/plugin-api/src/index.ts', import.meta.url),
   'utf8'
@@ -292,6 +295,21 @@ test('plugin manager tracks provider health for calls and plugin failures', () =
 test('plugin host forwards provider health registration metadata', () => {
   assert.match(pluginHostSource, /health\?: Record<string, unknown>/)
   assert.match(pluginHostSource, /health: provider\.health/)
+})
+
+test('plugin host core is transport-free and both entries delegate to it', () => {
+  // The host core must not call Electron parentPort APIs; only the entries adapt.
+  assert.doesNotMatch(pluginHostSource, /parentPort\s*\.\s*(?:postMessage|on|removeListener)/)
+  assert.doesNotMatch(hostTransportSource, /parentPort|utilityProcess/)
+  // Electron utility-process entry stays thin and delegates to the core.
+  assert.match(electronHostEntrySource, /runPluginHost\(transport\)/)
+  assert.match(electronHostEntrySource, /parentPort/)
+  assert.doesNotMatch(electronHostEntrySource, /activatePlugin|callProviderHandler/)
+  // Tauri Node sidecar entry drives the same core over the stdio transport.
+  assert.match(nodeHostEntrySource, /createNodeStdioHostTransport\(\)/)
+  assert.match(nodeHostEntrySource, /runPluginHost\(/)
+  assert.match(hostTransportSource, /createInterface\(\{ input: process\.stdin/)
+  assert.match(hostTransportSource, /process\.stdout\.write/)
 })
 
 test('specialized windows receive only their scoped preload APIs', () => {

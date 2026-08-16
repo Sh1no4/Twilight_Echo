@@ -56,9 +56,14 @@ export function useExtensionRegistry() {
 function setupExtensionChangeListener(): void {
   if (listenerSetup) return
   listenerSetup = true
-  window.api.plugins.onChanged(() => {
+  const subscription = window.api.plugins.onChanged(() => {
     void syncExtensions()
   })
+  if (typeof subscription !== 'function') {
+    // Runtimes without a real plugin-change event source reject the
+    // subscription; swallow that so App bootstrap cannot crash.
+    void Promise.resolve(subscription).catch(() => {})
+  }
 }
 
 export async function syncExtensions(): Promise<void> {

@@ -206,6 +206,10 @@ test('required Ubuntu CI installs a bounded Xvfb dependency and runs real Electr
     workflow.indexOf('Run isolated duplicate detection 10k benchmark') <
       workflow.indexOf('Test playback routing')
   )
+  // `test:radio-remote` already owns every `test:network-sources` test file, so
+  // a separate `test:network-sources` step in the workflow is redundant. The
+  // no-device gate keeps both commands to guard the superset relationship.
+  assert.match(workflow, /pnpm run test:radio-remote/)
 })
 
 test('Windows no-device and release gates cannot omit product suites or the live duplicate benchmark', () => {
@@ -244,7 +248,6 @@ test('CI and the final integrated gate retain all newly owned regression suites'
     'test:sleep-timer',
     'test:cross-cutting-regressions',
     'test:radio-remote',
-    'test:network-sources',
     'test:themes'
   ]) {
     assert.match(workflow, new RegExp(`pnpm run ${escapeRegExp(script)}`))
@@ -265,7 +268,6 @@ test('Windows release documentation fail-closes on every newly owned regression 
     'test:sleep-timer',
     'test:cross-cutting-regressions',
     'test:radio-remote',
-    'test:network-sources',
     'test:themes'
   ]) {
     assert.match(commandBlock, new RegExp(`^pnpm run ${escapeRegExp(script)}$`, 'm'))

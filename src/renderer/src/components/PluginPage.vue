@@ -312,10 +312,17 @@ onMounted(() => {
   window.addEventListener('focus', refreshTrustOnResume)
   document.addEventListener('visibilitychange', handleTrustVisibilityChange)
   void loadAll()
-  unsubChanged = window.api.plugins.onChanged(() => {
+  const subscription = window.api.plugins.onChanged(() => {
     void refreshInstalled()
     refreshTrustOnResume()
   })
+  if (typeof subscription === 'function') {
+    unsubChanged = subscription
+  } else {
+    // Runtimes without a real plugin-change event source reject the
+    // subscription; swallow that so the plugin page still mounts.
+    void Promise.resolve(subscription).catch(() => {})
+  }
 })
 
 onUnmounted(() => {

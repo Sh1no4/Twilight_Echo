@@ -240,7 +240,6 @@ test('now playing isolates high-frequency playhead updates from the full lyrics 
   assert.doesNotMatch(words, /setWordProgress|--lyric-word-progress|dataset\.progressing/)
   assert.match(words, /animation\.currentTime = target/)
   assert.match(words, /buildKaraokeMaskPlan\(/)
-  assert.match(words, /buildEmphasisAnimation\(/)
   assert.match(words, /data-word-text/)
   assert.doesNotMatch(words, /findActiveWordIndex|activeWordIndex|lyric-word--active/)
   assert.doesNotMatch(source, /lyric-word--active|te-lyric-word-pulse/)

@@ -4,17 +4,17 @@
   "version": "1.0.5",
   "identifier": "com.twilightecho.app",
   "build": {
-    "beforeDevCommand": "pnpm vite --config vite.config.ts",
+    "beforeDevCommand": "pnpm run build:plugin-host && pnpm run build:audio-engine:node",
     "devUrl": "http://127.0.0.1:5173",
-    "beforeBuildCommand": "pnpm run build:web",
+    "beforeBuildCommand": "pnpm run build:web && pnpm run build:plugin-host && pnpm run build:audio-engine:node",
     "frontendDist": "../out/renderer"
   },
   "app": {
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: cover: background: theme-asset: twilight-media: https:; media-src 'self' blob: asset: data: https:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:3100 http://127.0.0.1:3101 https:; font-src 'self' data: asset:; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'",
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": ["$APPDATA/**", "$RESOURCE/**"]
       }
     },
     "windows": [
@@ -44,7 +44,9 @@
     ],
     "resources": {
       "../resources/plugins/ncm-provider": "plugins/ncm-provider",
-      "../resources/plugin-index": "plugin-index"
+      "../resources/plugin-index": "plugin-index",
+      "../out/plugin-host/pluginHostNode.js": "sidecar/pluginHostNode.js",
+      "../out/audio-engine/audioEngineNode.js": "sidecar/audioEngineNode.js"
     }
   }
 }

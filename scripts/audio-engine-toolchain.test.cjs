@@ -831,7 +831,10 @@ test('MinGW configure resets a stale cache that lost vcpkg native dependencies',
 
   assert.match(script, /function cleanInvalidNativeDependencyConfiguration\(\)/)
   assert.match(script, /validateMingwNativeDependencyConfiguration\(\{ buildDir \}\)/)
-  assert.match(script, /cleanInvalidNativeDependencyConfiguration\(\)\nconst status = runCmake\(\)/)
+  assert.match(
+    script,
+    /cleanInvalidNativeDependencyConfiguration\(\)\r?\nconst status = runCmake\(\)/
+  )
   assert.match(script, /if \(!verifyNativeDependencies\(\)\) process\.exit\(1\)/)
 })
 

@@ -104,10 +104,10 @@ test('normalization never aliases the exported default objects', () => {
 
   assert.notEqual(normalized.light, DEFAULT_LIQUID_GLASS_LIGHT)
   assert.notEqual(normalized.dark, DEFAULT_LIQUID_GLASS_DARK)
-  assert.equal(DEFAULT_LIQUID_GLASS_LIGHT.blurAmount, 0)
-  assert.equal(DEFAULT_LIQUID_GLASS_DARK.blurAmount, 0)
-  assert.equal(DEFAULT_LIQUID_GLASS.light.blurAmount, 0)
-  assert.equal(DEFAULT_LIQUID_GLASS.dark.elasticity, 0)
+  assert.equal(DEFAULT_LIQUID_GLASS_LIGHT.blurAmount, 14)
+  assert.equal(DEFAULT_LIQUID_GLASS_DARK.blurAmount, 18)
+  assert.equal(DEFAULT_LIQUID_GLASS.light.blurAmount, 14)
+  assert.equal(DEFAULT_LIQUID_GLASS.dark.elasticity, 7)
   assert.equal(DEFAULT_LIQUID_GLASS.overLight, false)
 })
 

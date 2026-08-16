@@ -147,9 +147,7 @@ fn extract_entry(bytes: &[u8], entry: &CentralEntry, dest_root: &Path) -> Result
     }
     for component in Path::new(&normalized).components() {
         match component {
-            Component::ParentDir => {
-                return Err(format!("插件包包含非法路径：{}", entry.file_name))
-            }
+            Component::ParentDir => return Err(format!("插件包包含非法路径：{}", entry.file_name)),
             Component::RootDir | Component::Prefix(_) => {
                 return Err(format!("插件包包含绝对路径：{}", entry.file_name))
             }
@@ -195,12 +193,7 @@ fn extract_entry(bytes: &[u8], entry: &CentralEntry, dest_root: &Path) -> Result
                 .map_err(|error| format!("插件包 DEFLATE 解压失败：{error}"))?;
             out
         }
-        _ => {
-            return Err(format!(
-                "插件包包含不支持的压缩方法：{}",
-                entry.method
-            ))
-        }
+        _ => return Err(format!("插件包包含不支持的压缩方法：{}", entry.method)),
     };
     if decompressed.len() > MAX_PLUGIN_ENTRY_BYTES {
         return Err("插件包单个文件解压后超过 50MB 上限".to_string());
@@ -216,8 +209,7 @@ fn extract_entry(bytes: &[u8], entry: &CentralEntry, dest_root: &Path) -> Result
 
     let dest = dest_root.join(&normalized);
     if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("创建插件解压目录失败：{error}"))?;
+        fs::create_dir_all(parent).map_err(|error| format!("创建插件解压目录失败：{error}"))?;
     }
     fs::write(&dest, &decompressed).map_err(|error| format!("写入插件文件失败：{error}"))
 }
@@ -427,10 +419,7 @@ mod tests {
 
     #[test]
     fn rejects_path_traversal() {
-        let bytes = make_zip(&[
-            ("plugin.json", manifest()),
-            ("../evil.txt", b"pwned"),
-        ]);
+        let bytes = make_zip(&[("plugin.json", manifest()), ("../evil.txt", b"pwned")]);
         let error = validate_and_extract_tep(&bytes).expect_err("should reject traversal");
         assert!(error.contains("非法路径"), "{error}");
     }
@@ -485,10 +474,7 @@ mod tests {
         bytes[central_offset + 38..central_offset + 42]
             .copy_from_slice(&(0o120000u32 << 16).to_le_bytes());
         let root = validate_and_extract_tep(&bytes).expect("extract ok");
-        assert!(
-            !root.join("link.txt").exists(),
-            "symlink 条目不应写入磁盘"
-        );
+        assert!(!root.join("link.txt").exists(), "symlink 条目不应写入磁盘");
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -515,10 +501,7 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
 
         // 唯一子目录含 plugin.json。
-        let bytes = make_zip(&[
-            ("pkg/plugin.json", manifest()),
-            ("pkg/lib/a.js", b"// a"),
-        ]);
+        let bytes = make_zip(&[("pkg/plugin.json", manifest()), ("pkg/lib/a.js", b"// a")]);
         let root = validate_and_extract_tep(&bytes).expect("extract ok");
         let located = locate_plugin_root(&root).expect("subdir");
         assert_eq!(located, root.join("pkg"));

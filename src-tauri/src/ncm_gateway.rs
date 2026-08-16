@@ -1,29 +1,24 @@
 //! NCM 网关实验性桥接（prototype，未提交的验证代码）。
 //!
-//! 验证"Path 2"：Rust 侧用 `std::process::Command` 把 Node 网关
+//! 验证"Path 2"：Rust 侧把 Node 网关
 //! （`@neteasecloudmusicapienhanced/api`，同 Electron `setupNcmApi()`）作为独立子进程
 //! spawn 到 `127.0.0.1:3100`，再把 `providers_call` 的 NCM 调用通过本地 HTTP 代理过去，
 //! 拿到真实网易云 JSON 响应。
 //!
 //! 这不是生产实现：
 //! - 只有零鉴权方法（`getQrKey`）的 方法→网关路径 映射（provider 逻辑在 Node 侧）。
-//! - 未做子进程生命周期管理（退出时不 kill，端口被外部占用时复用）。
 //! - 阻塞式 HTTP 走 `spawn_blocking`，以 `tokio::time::timeout` 覆盖超时分层。
+//! - 子进程经 `crate::node_sidecar::spawn_node_process` 登记，应用退出时统一终止。
 
 use serde_json::Value;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 /// 网关监听地址（与 `src/main/ncm/api.ts` 的 `NCM_API_HOST` / `NCM_API_PORT` 对齐）。
 pub const GATEWAY_HOST: &str = "127.0.0.1";
 pub const GATEWAY_PORT: u16 = 3100;
-
-/// 网关子进程句柄；`None` = 尚未由本进程 spawn（端口可能由外部进程如 Electron dev 服务）。
-static GATEWAY_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
 
 fn socket_addr() -> Option<SocketAddr> {
     (GATEWAY_HOST, GATEWAY_PORT).to_socket_addrs().ok()?.next()
@@ -55,21 +50,16 @@ fn gateway_script_path() -> Option<PathBuf> {
     }
 }
 
-/// 如端口未在服务则 spawn 网关子进程（幂等）。
+/// 如端口未在服务则 spawn 网关子进程（幂等）。子进程经由 `node_sidecar` 登记，
+/// 应用退出时统一终止，不再残留孤儿进程。
 fn spawn_if_needed() -> Result<(), String> {
     if port_open() {
         return Ok(());
     }
-    let script = gateway_script_path().ok_or("找不到 NCM 网关启动脚本（scripts/ncm-gateway.mjs）")?;
-    let child = Command::new("node")
-        .arg(&script)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|err| format!("启动 NCM 网关失败（需要 Node.js）：{err}"))?;
-    let guard = GATEWAY_CHILD.get_or_init(|| Mutex::new(None));
-    *guard.lock().expect("gateway child lock") = Some(child);
-    Ok(())
+    let script =
+        gateway_script_path().ok_or("找不到 NCM 网关启动脚本（scripts/ncm-gateway.mjs）")?;
+    crate::node_sidecar::spawn_node_process(&[], &script)
+        .map_err(|error| format!("启动 NCM 网关失败（需要 Node.js）：{error}"))
 }
 
 /// 确保网关就绪（spawn + 轮询端口），最多等待 `timeout`。
@@ -174,7 +164,8 @@ pub async fn proxy_json_call(
 ) -> Result<Value, String> {
     ensure_gateway(Duration::from_secs(15)).await?;
     let path_owned = path.to_string();
-    let blocking = tokio::task::spawn_blocking(move || http_get_blocking(&path_owned, &headers, timeout));
+    let blocking =
+        tokio::task::spawn_blocking(move || http_get_blocking(&path_owned, &headers, timeout));
     let result = tokio::time::timeout(timeout, blocking)
         .await
         .map_err(|_| format!("NCM 网关调用超时（>{}ms）", timeout.as_millis()))?

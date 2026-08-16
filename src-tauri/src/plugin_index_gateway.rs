@@ -101,7 +101,8 @@ fn decode_chunked_bytes(mut body: &[u8]) -> Result<Vec<u8>, String> {
             .windows(2)
             .position(|window| window == b"\r\n")
             .ok_or("chunked 编码缺少行结束符")?;
-        let size_str = std::str::from_utf8(&body[..line_end]).map_err(|_| "chunked 大小不是文本")?;
+        let size_str =
+            std::str::from_utf8(&body[..line_end]).map_err(|_| "chunked 大小不是文本")?;
         let size = usize::from_str_radix(size_str.split(';').next().unwrap_or("").trim(), 16)
             .map_err(|_| format!("chunked 大小非法：{size_str}"))?;
         let chunk_start = line_end + 2;
@@ -212,8 +213,7 @@ fn gateway_error(status: u16, body: &[u8]) -> String {
 /// 将一次远端索引抓取代理到本地 Node 网关并返回解析后的 JSON。
 pub async fn proxy_index_json(timeout: Duration) -> Result<Value, String> {
     ensure_gateway(Duration::from_secs(15)).await?;
-    let blocking =
-        tokio::task::spawn_blocking(move || http_get_bytes_blocking("/index", timeout));
+    let blocking = tokio::task::spawn_blocking(move || http_get_bytes_blocking("/index", timeout));
     let result = tokio::time::timeout(timeout, blocking)
         .await
         .map_err(|_| format!("插件索引网关调用超时（>{}ms）", timeout.as_millis()))?

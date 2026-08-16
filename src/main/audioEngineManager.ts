@@ -1098,6 +1098,11 @@ export class AudioEngineManager extends EventEmitter {
     return this.playback.getPlaybackInfo()
   }
 
+  /** Whether a native audio binding (in-process addon or service) is loaded. */
+  isNativeAvailable(): boolean {
+    return this.native !== null
+  }
+
   getSpectrumData(points = 64): number[] {
     return this.playback.getSpectrumData(points)
   }

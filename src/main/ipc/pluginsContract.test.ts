@@ -109,6 +109,9 @@ test('unified library selector and provider fallback chain are wired through the
     streamingLibrarySource,
     /const canSwitchProvider = computed\(\(\) => providerOptions\.value\.length > 1\)/
   )
-  assert.match(streamingLibrarySource, /v-if="canSwitchProvider" class="provider-switcher"/)
+  assert.match(
+    streamingLibrarySource,
+    /v-if="canSwitchProvider"\s*\n\s*class="provider-switcher"/
+  )
   assert.match(streamingLibrarySource, /@mousedown\.prevent="selectProvider\(provider\.id\)"/)
 })

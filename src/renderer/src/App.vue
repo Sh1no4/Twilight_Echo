@@ -36,7 +36,6 @@ import { setupListeningStatsTracking } from './stores/useListeningStatsStore'
 import { usePlayerStore } from './stores/usePlayerStore'
 import { useSettingsStore } from './stores/useSettingsStore'
 import { useThemeStore } from './stores/useThemeStore'
-import { setupPluginThemeRuntime } from './extensions/themeRuntime'
 import { useExtensionRegistry } from './extensions/registry'
 import { syncPluginProviders, useMediaProviders } from './providers'
 import { useAppNavigation } from './app/useAppNavigation'
@@ -54,6 +53,19 @@ import {
 import AppNoticeHost from './components/AppNoticeHost.vue'
 import LiquidGlassDefs from './components/LiquidGlassDefs.vue'
 import { resolvePlayerBarPresentation } from '../../shared/playerBar.ts'
+import { getRuntimeKind, isRuntimeMethodSupported, loadRuntimeManifest } from './platform/runtimeCapabilities'
+import type { RuntimeManifest } from '../../shared/runtimeManifest'
+
+/**
+ * Capability gate used during startup wiring. When the runtime has no manifest
+ * (Electron baseline) every method is assumed supported; under Tauri the loaded
+ * manifest decides so unsupported methods are never invoked at mount time.
+ */
+let runtimeManifestForGating: RuntimeManifest | null = null
+function methodSupported(surface: string, method: string): boolean {
+  if (!runtimeManifestForGating) return true
+  return isRuntimeMethodSupported(runtimeManifestForGating, surface, method)
+}
 
 type TitleSurface = 'default' | 'settings' | 'streaming'
 type StreamingInitialTab = 'home' | 'library' | 'recent'
@@ -477,14 +489,25 @@ function flushPendingPersistenceForExit(): void {
 }
 
 onMounted(async () => {
-  setupPluginThemeRuntime()
+  if (getRuntimeKind() === 'tauri') {
+    try {
+      runtimeManifestForGating = await loadRuntimeManifest()
+    } catch (error) {
+      reportStartupDataError('runtime capability manifest', error)
+      return
+    }
+  }
   setupListeningStatsTracking({ currentTrack, isPlaying, currentTime, duration })
   const loadedSettings = await loadSettings()
-  removeAppNavigationListener = window.api.app.onNavigate((target) => {
-    applyExternalNavigation(target)
-    void window.api.app.consumePendingNavigation()
-  })
-  const pendingNavigation = await window.api.app.consumePendingNavigation()
+  if (methodSupported('app', 'consumePendingNavigation')) {
+    removeAppNavigationListener = window.api.app.onNavigate((target) => {
+      applyExternalNavigation(target)
+      void window.api.app.consumePendingNavigation()
+    })
+  }
+  const pendingNavigation = methodSupported('app', 'consumePendingNavigation')
+    ? await window.api.app.consumePendingNavigation()
+    : null
   if (pendingNavigation) applyExternalNavigation(pendingNavigation)
 
   // First-run welcome wizard. The empty-library guard keeps existing users
@@ -506,21 +529,25 @@ onMounted(async () => {
   // Restore the session before loading the potentially large music library.
   // The main-process data handlers use synchronous file reads, so issuing the
   // library request first can delay the home page's current-track state.
-  const playbackSessionSetupPromise = playbackSessionPersistence
-    .restoreSavedPlaybackSession(loadedSettings.playbackResumeMode)
-    .catch((error) => {
-      reportStartupDataError('playback session', error)
-    })
-    .finally(() => {
-      removePlaybackSessionSaveListener = window.api.app.onSavePlaybackSession(async () => {
-        // This callback is awaited by the main-process close coordinator. It
-        // closes the 250ms playlist debounce window before renderer teardown.
-        await flushPlaylistsForExit()
-        await flushSoftwareVolumePersist()
-        await playbackSessionPersistence.savePlaybackSessionForQuit()
-      })
-      playbackSessionPersistence.startAutosaveWatchers()
-    })
+  const playbackSessionSetupPromise = methodSupported('data', 'loadPlaybackSession')
+    ? playbackSessionPersistence
+        .restoreSavedPlaybackSession(loadedSettings.playbackResumeMode)
+        .catch((error) => {
+          reportStartupDataError('playback session', error)
+        })
+        .finally(() => {
+          if (methodSupported('app', 'onSavePlaybackSession')) {
+            removePlaybackSessionSaveListener = window.api.app.onSavePlaybackSession(async () => {
+              // This callback is awaited by the main-process close coordinator. It
+              // closes the 250ms playlist debounce window before renderer teardown.
+              await flushPlaylistsForExit()
+              await flushSoftwareVolumePersist()
+              await playbackSessionPersistence.savePlaybackSessionForQuit()
+            })
+          }
+          playbackSessionPersistence.startAutosaveWatchers()
+        })
+    : Promise.resolve()
   // Run independent startup operations in parallel so none blocks the others.
   const libraryPromise = loadLibrary().catch((error) =>
     reportStartupDataError('music library', error)
@@ -540,48 +567,52 @@ onMounted(async () => {
   // Session restore often finishes before library rows are available; re-apply
   // embedded covers/lyrics so playbar/home art and now-playing lyrics hydrate.
   rehydrateCurrentTrackFromLibrary()
-  removeLibraryChangedListener = window.api.library.onChanged((change) => {
-    handleLibraryChange(change).catch((error) => {
-      console.error('[library] Failed to apply an incremental scan update:', error)
+  if (methodSupported('library', 'getScanStatus')) {
+    removeLibraryChangedListener = window.api.library.onChanged((change) => {
+      handleLibraryChange(change).catch((error) => {
+        console.error('[library] Failed to apply an incremental scan update:', error)
+      })
     })
-  })
-  removeLibraryScanProgressListener = window.api.library.onScanProgress(applyLibraryScanProgress)
-  removeLibraryScanStatusListener = window.api.library.onScanStatus(applyLibraryScanStatus)
-  void window.api.library
-    .getScanStatus()
-    .then(applyLibraryScanStatus)
-    .catch((error) => {
-      console.error('[library] Failed to read background scan status:', error)
+    removeLibraryScanProgressListener = window.api.library.onScanProgress(applyLibraryScanProgress)
+    removeLibraryScanStatusListener = window.api.library.onScanStatus(applyLibraryScanStatus)
+    void window.api.library
+      .getScanStatus()
+      .then(applyLibraryScanStatus)
+      .catch((error) => {
+        console.error('[library] Failed to read background scan status:', error)
+      })
+    void startStartupLibraryScan().catch((error) => {
+      console.error('[library] Startup reconciliation failed:', error)
+      pushNotice({
+        kind: 'warning',
+        message: `启动音乐库核对失败：${error instanceof Error ? error.message : String(error)}`,
+        action: {
+          label: '打开音乐库设置',
+          run: () => openSettingsPage('general')
+        }
+      })
     })
-  void startStartupLibraryScan().catch((error) => {
-    console.error('[library] Startup reconciliation failed:', error)
-    pushNotice({
-      kind: 'warning',
-      message: `启动音乐库核对失败：${error instanceof Error ? error.message : String(error)}`,
-      action: {
-        label: '打开音乐库设置',
-        run: () => openSettingsPage('general')
-      }
-    })
-  })
+  }
 
   // Ensure extensions are loaded before wiring listeners that depend on them.
   await extensionsPromise
   await playlistsPromise
 
-  removeCoversMissingListener = window.api.library.onCoversMissing((info) => {
-    const dirtyCount = Math.max(0, Number(info?.dirtyCount) || 0)
-    if (dirtyCount <= 0) return
-    console.warn(`[library] ${dirtyCount} tracks are missing cover art`)
-    pushNotice({
-      kind: 'warning',
-      message: `检测到 ${dirtyCount} 首缺少封面，可在设置中完整重扫以补全封面。`,
-      action: {
-        label: '打开音乐库设置',
-        run: () => openSettingsPage('general')
-      }
+  if (methodSupported('library', 'onCoversMissing')) {
+    removeCoversMissingListener = window.api.library.onCoversMissing((info) => {
+      const dirtyCount = Math.max(0, Number(info?.dirtyCount) || 0)
+      if (dirtyCount <= 0) return
+      console.warn(`[library] ${dirtyCount} tracks are missing cover art`)
+      pushNotice({
+        kind: 'warning',
+        message: `检测到 ${dirtyCount} 首缺少封面，可在设置中完整重扫以补全封面。`,
+        action: {
+          label: '打开音乐库设置',
+          run: () => openSettingsPage('general')
+        }
+      })
     })
-  })
+  }
   // Lifecycle events are best-effort; the close IPC callback above provides
   // the awaitable completion barrier for application shutdown.
   quitFlushHandler = flushPendingPersistenceForExit

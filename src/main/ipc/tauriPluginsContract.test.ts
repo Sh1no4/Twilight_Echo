@@ -7,6 +7,14 @@ const pluginsSource = readFileSync(
   new URL('../../../src-tauri/src/plugins.rs', import.meta.url),
   'utf8'
 )
+const pluginHostSource = readFileSync(
+  new URL('../../../src-tauri/src/plugin_host.rs', import.meta.url),
+  'utf8'
+)
+const pluginsExtSource = readFileSync(
+  new URL('../../../src-tauri/src/plugins_ext.rs', import.meta.url),
+  'utf8'
+)
 const pluginIndexGatewaySource = readFileSync(
   new URL('../../../src-tauri/src/plugin_index_gateway.rs', import.meta.url),
   'utf8'
@@ -38,15 +46,15 @@ test('Tauri registers the list + Stage 5A lifecycle + Stage 5C index/extension c
   )
   assert.match(
     pluginsSource,
-    /#\[tauri::command\]\s*pub fn plugins_enable\(app: AppHandle, id: String\) -> Result<Value, String>/
+    /#\[tauri::command\]\s*pub async fn plugins_enable\(app: AppHandle, id: String\) -> Result<Value, String>/
   )
   assert.match(
     pluginsSource,
-    /#\[tauri::command\]\s*pub fn plugins_disable\(app: AppHandle, id: String\) -> Result<Value, String>/
+    /#\[tauri::command\]\s*pub async fn plugins_disable\(app: AppHandle, id: String\) -> Result<Value, String>/
   )
   assert.match(
     pluginsSource,
-    /#\[tauri::command\]\s*pub fn plugins_uninstall\(app: AppHandle, id: String, remove_data: Option<bool>\) -> Result<Value, String>/
+    /#\[tauri::command\]\s*pub async fn plugins_uninstall\(\s*app: AppHandle,\s*id: String,\s*remove_data: Option<bool>,\s*\) -> Result<Value, String>/
   )
   assert.match(
     pluginsSource,
@@ -120,7 +128,7 @@ test('Rust persists plugin enable state to plugin-state.json with a .bak backup'
   assert.match(pluginsSource, /fn plugin_state_path\(policy: &path_policy::PathPolicy\) -> PathBuf/)
   assert.match(
     pluginsSource,
-    /categorized_app_path\(policy, "plugins", &\["plugin-state\.json"\], "plugin-state\.json"\)/
+    /categorized_app_path\(\s*policy,\s*"plugins",\s*&\["plugin-state\.json"\],\s*"plugin-state\.json"\s*,?\s*\)/
   )
   assert.match(pluginsSource, /fn read_plugin_state\(policy: &path_policy::PathPolicy\) -> Value/)
   assert.match(
@@ -272,21 +280,109 @@ test('tauriHostBridge wires list + lifecycle + Stage 5C install/index/extension 
     bridgeSource,
     /readThemeStylesheet: \(stylesheetPath: string\) =>\s*invoke\('extensions_read_theme_stylesheet', \{ stylesheetPath \}\)/
   )
-  assert.match(bridgeSource, /listInstalled: \(\) => Promise\.reject\(capabilityError\('fonts'\)\)/)
+  assert.match(bridgeSource, /listInstalled: \(\) => invoke<string\[\]>\('fonts_list_installed'\)/)
 })
 
-test('Tauri capability matrix marks plugins/providers/extensions partial and fonts unsupported', () => {
+test('Tauri capability matrix marks plugins/providers/extensions partial and fonts partial', () => {
   assert.match(
     capabilitiesSource,
-    /plugins: partial\('plugins', '已支持插件安装\/启停\/卸载\/日志与市场索引'\)/
+    /plugins: partial\('plugins', '已支持插件安装\/启停\/卸载\/日志、市场索引与宿主 sidecar 激活'\)/
   )
   assert.match(
     capabilitiesSource,
-    /providers: partial\('providers', '已支持调用\/取消与健康记录；网易云网关在 Tauri 不可用'\)/
+    /providers: partial\('providers', '已支持经插件宿主 sidecar 的调用\/取消与健康记录（内置网易云插件在 Node 宿主中执行）'\)/
   )
   assert.match(
     capabilitiesSource,
-    /extensions: partial\('extensions', '已支持扩展列表；命令执行与主题样式读取接口已接通'\)/
+    /extensions: partial\('extensions', '已支持经宿主的命令执行与注册主题样式读取'\)/
   )
-  assert.match(capabilitiesSource, /fonts: unsupported\('fonts'\)/)
+  assert.match(capabilitiesSource, /fonts: partial\('fonts', '系统字体枚举已支持'\)/)
+  assert.match(capabilitiesSource, /settings: partial\('settings', '基础设置已支持；缓存目录\/备份选择待接通'\)/)
+  assert.match(capabilitiesSource, /themes: partial\('themes', '主题库编辑已支持；导入导出与资源待接通'\)/)
+})
+
+test('Tauri supervises Node sidecars and reaps them on exit (Stage 5D)', () => {
+  const sidecarSource = readFileSync(
+    new URL('../../../src-tauri/src/node_sidecar.rs', import.meta.url),
+    'utf8'
+  )
+  const ncmGatewaySource = readFileSync(
+    new URL('../../../src-tauri/src/ncm_gateway.rs', import.meta.url),
+    'utf8'
+  )
+  assert.match(libSource, /mod node_sidecar;/)
+  assert.match(libSource, /node_sidecar::terminate_all\(\)/)
+  assert.match(libSource, /tauri::RunEvent::Exit/)
+  // The supervisor owns a JSON-lines client over a spawned Node process.
+  assert.match(sidecarSource, /pub struct NodeSidecar/)
+  assert.match(sidecarSource, /pub fn send_json\(&self, value: &Value\) -> Result<\(\), String>/)
+  assert.match(sidecarSource, /pub async fn recv_json\(&mut self, timeout: Duration\) -> Result<Value, String>/)
+  assert.match(sidecarSource, /pub fn terminate_all\(\)/)
+  assert.match(sidecarSource, /pub fn spawn_node_process\(node_args: &\[&str\], script: &Path\) -> Result<\(\), String>/)
+  // The NCM gateway reuses the shared spawn path so exit cleanup covers it too.
+  assert.match(ncmGatewaySource, /node_sidecar::spawn_node_process/)
+})
+
+test('Tauri plugin host sidecar supervises the NCM provider and lifecycle (Stage 5B)', () => {
+  assert.match(libSource, /mod plugin_host;/)
+  assert.match(libSource, /\.manage\(plugin_host::PluginHostRegistry::default\(\)\)/)
+  assert.match(libSource, /plugin_host::shutdown\(app\)/)
+  // providers_call lazily spawns/activates the host then routes via the sidecar RPC.
+  assert.match(
+    pluginsSource,
+    /crate::plugin_host::ensure_host\(&app, BUNDLED_PLUGIN_ID\)\.await/
+  )
+  assert.match(
+    pluginsSource,
+    /crate::plugin_host::provider_call\(\s*&handle,/
+  )
+  assert.match(pluginsSource, /crate::plugin_host::next_request_id\(\)/)
+  // A crash/disconnect moves the host out of the registry for lazy respawn.
+  assert.match(pluginsSource, /crate::plugin_host::drop_host\(&app, BUNDLED_PLUGIN_ID\)\.await/)
+  // enable/disable now spawn/stop the host process.
+  assert.match(pluginsSource, /crate::plugin_host::ensure_host\(&app, &id\)\.await\?/)
+  assert.match(pluginsSource, /crate::plugin_host::stop_host\(&app, &id\)\.await/)
+  // The host resolves a real plugin main under its version root.
+  assert.match(pluginHostSource, /fn resolve_plugin_file\(version_root: &Path, main: &str\)/)
+  assert.match(pluginHostSource, /fn resolve_host_script\(app: &AppHandle\)/)
+  // Plugin host logs are appended to the per-plugin log file.
+  assert.match(pluginHostSource, /fn append_host_log\(log_path: &Path, level: &str, message: &str\)/)
+})
+
+test('Tauri extension commands run through the activated host with stylesheet containment (Stage 5B)', () => {
+  assert.match(pluginsSource, /pub async fn extensions_execute_command/)
+  assert.match(pluginsSource, /pub async fn extensions_read_theme_stylesheet/)
+  assert.match(pluginsExtSource, /plugin_host::ui_command\(handle, &normalized, args\)\.await/)
+  assert.match(pluginsExtSource, /\.canonicalize\(\)/)
+  assert.match(pluginsExtSource, /主题 stylesheet 未注册/)
+})
+
+test('Tauri registers Stage 3 persistence commands (settings cache, data, themes, fonts)', () => {
+  assert.match(libSource, /mod data;/)
+  assert.match(libSource, /mod themes;/)
+  assert.match(libSource, /mod fonts;/)
+  assert.match(libSource, /mod persistence;/)
+  for (const command of [
+    'settings_get_cache_size',
+    'settings_clear_cache',
+    'settings_get_shortcut_statuses',
+    'data::data_load_playback_session',
+    'data::data_save_playback_session',
+    'data::data_clear_playback_session',
+    'data::data_load_playlists',
+    'data::data_save_playlists',
+    'data::data_load_lyrics_management',
+    'data::data_save_lyrics_management',
+    'data::data_load_playback_bookmarks',
+    'data::data_save_playback_bookmarks',
+    'themes::themes_get_bootstrap',
+    'themes::themes_list',
+    'themes::themes_save',
+    'themes::themes_delete',
+    'themes::themes_set_active',
+    'themes::themes_set_window_inheritance',
+    'fonts::fonts_list_installed'
+  ]) {
+    assert.ok(libSource.includes(command), `${command} must be registered in the invoke handler`)
+  }
 })

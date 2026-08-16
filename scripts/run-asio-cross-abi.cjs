@@ -34,6 +34,11 @@ if (!msvcToolchain.ok) {
 const msvcBuildDir = resolveAsioMsvcBuildDirectory(msvcEnvironment, root)
 mkdirSync(msvcBuildDir, { recursive: true })
 const fixtureSource = join(root, 'audio-engine', 'tests', 'asio-abi-fixture')
+// CMake writes CMAKE_RC_COMPILER into CMakeRCCompiler.cmake and re-parses it as
+// a CMake string; a backslash path (`D:\Windows Kits\...\rc.exe`) produces
+// invalid escapes like `\W`. Forward slashes are accepted by CMake on Windows
+// and avoid the escaping failure.
+const rcCompilerPath = msvcToolchain.rcPath.replace(/\\/g, '/')
 if (
   run(
     msvcToolchain.cmakePath,
@@ -46,7 +51,7 @@ if (
       'Ninja',
       `-DCMAKE_MAKE_PROGRAM=${msvcToolchain.ninjaPath}`,
       '-DCMAKE_BUILD_TYPE=Release',
-      `-DCMAKE_RC_COMPILER=${msvcToolchain.rcPath}`
+      `-DCMAKE_RC_COMPILER=${rcCompilerPath}`
     ],
     msvcToolchain.environment
   ) !== 0

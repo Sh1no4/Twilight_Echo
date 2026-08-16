@@ -57,7 +57,10 @@ pub async fn refresh_index(app: AppHandle) -> Result<Vec<Value>, String> {
     match fetched {
         Ok(index) if is_valid_index(&index) => {
             set_last_index_error(None);
-            let entries = index.get("plugins").cloned().unwrap_or(Value::Array(vec![]));
+            let entries = index
+                .get("plugins")
+                .cloned()
+                .unwrap_or(Value::Array(vec![]));
             Ok(listing_from_entries(&app, entries))
         }
         Ok(_index) => {
@@ -103,7 +106,10 @@ pub async fn install_from_index(app: AppHandle, id: String) -> Result<Value, Str
     let entries = read_index_entries(&app)?;
     let entry = entries
         .as_array()
-        .and_then(|list| list.iter().find(|entry| entry.get("id").and_then(Value::as_str) == Some(id.as_str())))
+        .and_then(|list| {
+            list.iter()
+                .find(|entry| entry.get("id").and_then(Value::as_str) == Some(id.as_str()))
+        })
         .ok_or_else(|| "插件索引中未找到该插件".to_string())?;
     if id == plugins::BUNDLED_PLUGIN_ID {
         return Err("索引不能安装或覆盖 Twilight Echo 自带插件".to_string());
@@ -132,7 +138,8 @@ pub async fn install_from_index(app: AppHandle, id: String) -> Result<Value, Str
         return Err(format!("插件索引 {id} checksumSha256 必须是 64 位 sha256"));
     }
 
-    let bytes = plugin_index_gateway::proxy_package_bytes(source_url, Duration::from_secs(120)).await?;
+    let bytes =
+        plugin_index_gateway::proxy_package_bytes(source_url, Duration::from_secs(120)).await?;
     let actual_checksum = sha256_hex(&bytes);
     if actual_checksum != expected_checksum {
         return Err(format!("插件包 checksum 不匹配：{id}"));
@@ -142,7 +149,9 @@ pub async fn install_from_index(app: AppHandle, id: String) -> Result<Value, Str
     let temp_dir = temp_package_dir()?;
     let package_path = temp_dir.join("package.tep");
     fs::write(&package_path, &bytes).map_err(|error| format!("写入临时插件包失败：{error}"))?;
-    let result = plugins_install::install_index_package(app, package_path.to_string_lossy().into_owned()).await;
+    let result =
+        plugins_install::install_index_package(app, package_path.to_string_lossy().into_owned())
+            .await;
     let _ = fs::remove_dir_all(&temp_dir);
     result
 }
@@ -155,9 +164,13 @@ pub fn set_native_dsp_parameters(
 ) -> Result<Value, String> {
     let id = normalize_plugin_id(&id)?;
     let policy = path_policy::get_path_policy(&app);
-    let descriptor = plugins::find_descriptor(&app, &policy, &id)
-        .ok_or_else(|| format!("插件未找到：{id}"))?;
-    if !descriptor.get("isDsp").and_then(Value::as_bool).unwrap_or(false) {
+    let descriptor =
+        plugins::find_descriptor(&app, &policy, &id).ok_or_else(|| format!("插件未找到：{id}"))?;
+    if !descriptor
+        .get("isDsp")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         return Err("只有 DSP 插件支持原生参数".to_string());
     }
 
@@ -188,8 +201,7 @@ pub fn set_native_dsp_parameters(
     record.insert("updatedAt".to_string(), json!(now));
     plugins::write_plugin_state(&policy, &state);
 
-    plugins::find_descriptor(&app, &policy, &id)
-        .ok_or_else(|| format!("插件未找到：{id}"))
+    plugins::find_descriptor(&app, &policy, &id).ok_or_else(|| format!("插件未找到：{id}"))
 }
 
 // ── 索引读取与条目合成 ────────────────────────────────────────────────
@@ -203,13 +215,15 @@ fn bundled_index_path(app: &AppHandle) -> PathBuf {
         }
     }
     if let Ok(cwd) = std::env::current_dir() {
-        let candidate = cwd.join("resources").join("plugin-index").join("plugins.json");
+        let candidate = cwd
+            .join("resources")
+            .join("plugin-index")
+            .join("plugins.json");
         if candidate.is_file() {
             return candidate;
         }
     }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../resources/plugin-index/plugins.json")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../resources/plugin-index/plugins.json")
 }
 
 /// 索引文件 `file://` URL（`getIndexStatus.sourceUrl` 使用）。
@@ -223,11 +237,15 @@ fn index_file_url(app: &AppHandle) -> String {
 fn read_index_entries(app: &AppHandle) -> Result<Value, String> {
     let path = bundled_index_path(app);
     let raw = fs::read_to_string(&path).map_err(|error| format!("读取插件索引失败：{error}"))?;
-    let index: Value = serde_json::from_str(&raw).map_err(|error| format!("插件索引不是合法 JSON：{error}"))?;
+    let index: Value =
+        serde_json::from_str(&raw).map_err(|error| format!("插件索引不是合法 JSON：{error}"))?;
     if !is_valid_index(&index) {
         return Err("插件索引必须是包含 schemaVersion 和 plugins 的对象".to_string());
     }
-    Ok(index.get("plugins").cloned().unwrap_or(Value::Array(vec![])))
+    Ok(index
+        .get("plugins")
+        .cloned()
+        .unwrap_or(Value::Array(vec![])))
 }
 
 /// 最小索引结构校验（镜像 Electron `isPluginIndexRaw`）。
@@ -244,11 +262,17 @@ fn listing_from_entries(app: &AppHandle, entries: Value) -> Vec<Value> {
     entries_array
         .into_iter()
         .map(|entry| {
-            let id = entry.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+            let id = entry
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             let install_state = describe_install_state(&entry, &installed_array);
             let installed_version = installed_array
                 .iter()
-                .find(|descriptor| descriptor.get("id").and_then(Value::as_str) == Some(id.as_str()))
+                .find(|descriptor| {
+                    descriptor.get("id").and_then(Value::as_str) == Some(id.as_str())
+                })
                 .and_then(|descriptor| descriptor.get("version").and_then(Value::as_str))
                 .map(String::from);
             let mut listed = entry;
@@ -281,7 +305,10 @@ fn describe_install_state(entry: &Value, installed: &[Value]) -> &'static str {
     else {
         return "not-installed";
     };
-    let entry_version = entry.get("version").and_then(Value::as_str).unwrap_or("0.0.0");
+    let entry_version = entry
+        .get("version")
+        .and_then(Value::as_str)
+        .unwrap_or("0.0.0");
     let installed_version = descriptor
         .get("version")
         .and_then(Value::as_str)
@@ -415,16 +442,25 @@ mod tests {
         let installed = installed.as_array().unwrap();
 
         let built_in = json!({ "id": plugins::BUNDLED_PLUGIN_ID, "engines": { "twilightEcho": ">=0.20.0" }, "version": "0.1.0" });
-        assert_eq!(describe_install_state(&built_in, installed), "built-in-blocked");
+        assert_eq!(
+            describe_install_state(&built_in, installed),
+            "built-in-blocked"
+        );
 
         let incompatible = json!({ "id": "com.example.x", "engines": { "twilightEcho": ">=99.0.0" }, "version": "0.1.0" });
-        assert_eq!(describe_install_state(&incompatible, installed), "incompatible");
+        assert_eq!(
+            describe_install_state(&incompatible, installed),
+            "incompatible"
+        );
 
         let fresh = json!({ "id": "com.example.new", "engines": { "twilightEcho": ">=0.20.0" }, "version": "0.1.0" });
         assert_eq!(describe_install_state(&fresh, installed), "not-installed");
 
         let update = json!({ "id": "com.example.installed", "engines": { "twilightEcho": ">=0.20.0" }, "version": "0.2.0" });
-        assert_eq!(describe_install_state(&update, installed), "update-available");
+        assert_eq!(
+            describe_install_state(&update, installed),
+            "update-available"
+        );
 
         let same = json!({ "id": "com.example.installed", "engines": { "twilightEcho": ">=0.20.0" }, "version": "0.1.0" });
         assert_eq!(describe_install_state(&same, installed), "installed");
@@ -432,8 +468,12 @@ mod tests {
 
     #[test]
     fn is_valid_index_accepts_bundled_shape() {
-        assert!(is_valid_index(&json!({ "schemaVersion": 1, "plugins": [] })));
-        assert!(!is_valid_index(&json!({ "schemaVersion": 2, "plugins": [] })));
+        assert!(is_valid_index(
+            &json!({ "schemaVersion": 1, "plugins": [] })
+        ));
+        assert!(!is_valid_index(
+            &json!({ "schemaVersion": 2, "plugins": [] })
+        ));
         assert!(!is_valid_index(&json!({ "schemaVersion": 1 })));
         assert!(!is_valid_index(&json!({ "plugins": [] })));
     }

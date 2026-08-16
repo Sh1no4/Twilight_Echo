@@ -2655,6 +2655,102 @@ html[data-te-motion='full'] .swatch.active {
   white-space: nowrap;
 }
 
+/* Stage 1: async manifest detail card under the aggregate grid */
+.manifest-card {
+  display: grid;
+  gap: 12px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--te-card-border, rgba(255, 255, 255, 0.1));
+}
+
+.manifest-card h3 {
+  margin: 0;
+  color: var(--te-settings-text, #1a1a1a);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.manifest-load-failed {
+  margin: 0;
+  color: var(--te-settings-text-muted, #8a8f98);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.manifest-capability {
+  display: grid;
+  gap: 6px;
+}
+
+.manifest-capability-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.manifest-capability-head strong {
+  color: var(--te-settings-text-muted, #8a8f98);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.manifest-method-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.manifest-method {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.manifest-method code {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--te-settings-text-muted, #8a8f98);
+}
+
+.manifest-method-badge {
+  flex: none;
+  font-size: 11px;
+}
+
+.manifest-capability-ok {
+  margin: 0;
+  color: var(--te-success-soft-fg, #2e7d32);
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .capability-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .capability-entry {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .capability-entry dd {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .capability-detail {
+    white-space: normal;
+  }
+}
+
 .about-links {
   display: flex;
   flex-wrap: wrap;

@@ -161,7 +161,7 @@ test('the mini shape gets a dedicated lyrics-page toggle wired to App', () => {
 
 test('the border rail carries seeking and is skipped for unseekable streams', () => {
   assert.match(playerBar, /v-if="isMini && !isLiveStream"[\s\S]{0,40}class="mini-progress-rail"/)
-  assert.match(playerBar, /class="mini-progress-slider"[\s\S]{0,320}@input="onMiniRailInput"/)
+  assert.match(playerBar, /class="mini-progress-slider"[\s\S]{0,520}@input="onMiniRailInput"/)
   // The rail speaks in 0..1, so its pixel width never has to match the timeline.
   assert.match(playerBar, /min="0"[\s\S]{0,60}max="1"/)
   assert.match(

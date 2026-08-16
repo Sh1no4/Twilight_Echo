@@ -17,7 +17,7 @@
   "src/renderer/src/components/onboarding/OnboardingWizard.css": 105,
   "src/renderer/src/components/player-bar/HiFiSidebar.vue": 50,
   "src/renderer/src/components/player-bar/LyricsManagerPanel.vue": 26,
-  "src/renderer/src/components/player-bar/PlayerBar.css": 329,
+  "src/renderer/src/components/player-bar/PlayerBar.css": 334,
   "src/renderer/src/components/PlayingMusic.vue": 76,
   "src/renderer/src/components/PluginExtensionPage.vue": 15,
   "src/renderer/src/components/PluginPage.vue": 79,
@@ -35,7 +35,10 @@
   "src/renderer/src/components/StreamingLibrary.vue": 150,
   "src/renderer/src/components/StreamingSearch.vue": 49,
   "src/renderer/src/components/theme-studio/ThemeStudioPage.css": 8,
-  "src/renderer/src/components/TitleBar.vue": 9,
+  "src/renderer/src/components/TitleBar.vue": 10,
   "src/renderer/src/mini-player/MiniPlayer.css": 7,
-  "src/renderer/src/mini-player/MiniPlayerCustomizer.css": 6
+  "src/renderer/src/mini-player/MiniPlayerCustomizer.css": 6,
+  "src/renderer/src/components/AmlLyricsStage.vue": 3,
+  "src/renderer/src/components/settings-page/ShortcutsSettingsSection.vue": 7,
+  "src/renderer/src/components/StreamingPage.vue": 9
 }

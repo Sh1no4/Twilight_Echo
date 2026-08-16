@@ -24,7 +24,7 @@ const electronApp = resolveElectronApp()
 export function getNativeAddonCandidates(): string[] {
   const binary = 'twilight_audio_node.node'
   const appPath = electronApp?.getAppPath?.() ?? process.cwd()
-  return [
+  const candidates = [
     join(process.resourcesPath ?? '', 'audio-engine', binary),
     join(appPath, 'resources', 'audio-engine', binary),
     join(appPath, 'audio-engine', 'build', 'default', binary),
@@ -34,6 +34,14 @@ export function getNativeAddonCandidates(): string[] {
     join(appPath, '..', 'audio-engine', 'build', 'mingw-static', binary),
     join(appPath, '..', 'audio-engine', 'build', 'windows-msvc', binary)
   ]
+  // The Tauri audio sidecar is spawned from a bundled resource directory, so
+  // the Electron `resourcesPath` / `appPath` heuristics do not apply. The Rust
+  // supervisor sets TWILIGHT_AUDIO_RESOURCE_DIR to the unpacked resource dir.
+  const tauriResourceDir = process.env.TWILIGHT_AUDIO_RESOURCE_DIR
+  if (tauriResourceDir) {
+    candidates.unshift(join(tauriResourceDir, 'audio-engine', binary))
+  }
+  return candidates
 }
 
 export function rendererFallbackAllowed(): boolean {

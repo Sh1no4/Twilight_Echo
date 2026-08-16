@@ -113,7 +113,7 @@ test('bundled provider missing-method errors mention restarting the app', () => 
 })
 
 test('plugin host exposes account login provider methods', () => {
-  const source = readFileSync(new URL('../pluginHost.ts', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('./hostCore.ts', import.meta.url), 'utf8')
 
   assert.match(source, /'sendCaptcha'/)
   assert.match(source, /'loginByPhonePassword'/)

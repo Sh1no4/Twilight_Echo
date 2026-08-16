@@ -460,10 +460,14 @@ function applySnapshot(snapshot: SettingsSnapshot): void {
 function setupListener(): void {
   if (listenerSetup) return
   listenerSetup = true
-  window.api.settings.onChanged((snapshot) => {
+  const subscription = window.api.settings.onChanged((snapshot) => {
     if (pendingSettingsUpdates > 0) return
     applySnapshot(snapshot)
   })
+  // Runtimes without a real settings change event source reject the
+  // subscription instead of returning an unsubscribe; swallow that so startup
+  // keeps working and no unhandled rejection escapes.
+  void Promise.resolve(subscription).catch(() => {})
 }
 
 if (typeof document !== 'undefined') {

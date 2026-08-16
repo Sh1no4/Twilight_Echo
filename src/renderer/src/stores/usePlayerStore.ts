@@ -3153,11 +3153,17 @@ function setupAudioEngineListeners(): void {
   )
 
   if (settingsApi?.onPlayerShortcut) {
-    cleanupFns.push(
-      settingsApi.onPlayerShortcut((action) => {
-        void handlePlayerShortcutAction(action)
-      })
-    )
+    const unsub = settingsApi.onPlayerShortcut((action) => {
+      void handlePlayerShortcutAction(action)
+    })
+    if (typeof unsub === 'function') {
+      cleanupFns.push(unsub)
+    } else {
+      // Runtimes without a real player-shortcut event source reject the
+      // subscription; swallow that instead of pushing a rejected promise into
+      // the cleanup list.
+      void Promise.resolve(unsub).catch(() => {})
+    }
   }
 
   // Publish playback snapshot for LAN web remote / SSE.

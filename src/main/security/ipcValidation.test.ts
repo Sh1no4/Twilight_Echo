@@ -295,12 +295,18 @@ test('Electron documents use local CSP, denied permissions, and trusted IPC send
     lifecycleSource,
     /protocol\.handle\('cover'[\s\S]*Access-Control-Allow-Origin['"]:\s*['"]\*['"]/
   )
-  assert.doesNotMatch(rendererHtml, /(?:img-src|media-src)[^;]*\bhttps?:/)
+  assert.match(
+    rendererHtml,
+    /img-src 'self' data: blob: cover: background: theme-asset: twilight-media: asset\.localhost http:\/\/asset\.localhost/
+  )
+  assert.match(
+    rendererHtml,
+    /media-src 'self' blob: twilight-audio: twilight-media: asset\.localhost http:\/\/asset\.localhost/
+  )
   assert.doesNotMatch(rendererHtml, /unpkg\.com|fonts\.googleapis\.com|unsafe-inline' https:/)
   assert.match(rendererHtml, /script-src 'self'/)
   assert.match(rendererHtml, /frame-src 'self'/)
   assert.doesNotMatch(rendererHtml, /frame-src 'none'/)
-
   assert.match(dataSource, /assertTrustedIpcSender|shouldAcceptIpcEvent/)
   assert.match(pluginsSource, /assertTrustedIpcSender/)
   assert.match(audioIpcSource, /assertTrustedIpcSender/)
