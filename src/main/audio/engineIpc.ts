@@ -360,7 +360,7 @@ function recordPlaybackDiagnostic(
 }
 
 async function captureAudioDiagnosticSnapshot(): Promise<AudioDiagnosticSnapshot> {
-  const engine = requireAudioEngine()
+  const engine = await ensureAudioEngineRuntime()
   const configuredProcessing = runtime.appSettings.audioProcessing
   const effectiveProcessing = getEffectiveAudioProcessing()
   const outputConfig = engine.getOutputConfig()
@@ -424,7 +424,20 @@ function isPlaybackInfo(
   )
 }
 
-export async function setupAudioEngineIpc(): Promise<void> {
+let audioEngineRuntimePromise: Promise<void> | null = null
+
+/**
+ * Handlers are registered before the engine runtime finishes initializing so
+ * the renderer can never race an unregistered channel; calls that arrive
+ * during the background init simply await this bridge.
+ */
+export function ensureAudioEngineRuntime(): Promise<AudioEngineManager> {
+  if (runtime.audioEngineManager) return Promise.resolve(runtime.audioEngineManager)
+  audioEngineRuntimePromise ??= initializeAudioEngineRuntime()
+  return audioEngineRuntimePromise.then(() => requireAudioEngine())
+}
+
+async function initializeAudioEngineRuntime(): Promise<void> {
   app.on('before-quit', () => {
     flushSoftwareVolumePersist()
   })
@@ -578,6 +591,20 @@ export async function setupAudioEngineIpc(): Promise<void> {
     runtime.mainWindow?.webContents.send(IPC.audioEngine.loudnormStatus, event)
   })
 
+  runtime.audioEngineManager.start().catch((err: Error) => {
+    console.error('原生音频引擎启动失败：', err.message)
+  })
+}
+
+export function setupAudioEngineIpc(): void {
+  audioEngineRuntimePromise ??= initializeAudioEngineRuntime()
+  void audioEngineRuntimePromise.catch((error) => {
+    console.error('[音频引擎] 初始化失败：', error instanceof Error ? error.message : error)
+  })
+  registerAudioEngineIpcHandlers()
+}
+
+function registerAudioEngineIpcHandlers(): void {
   ipcMain.handle(IPC.audioEngine.loadQueue, async (_event, items: unknown, startIndex?: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     if (!Array.isArray(items) || items.length > MAX_AUDIO_QUEUE_ITEMS) {
@@ -600,7 +627,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
       0,
       Math.max(0, authorizedQueue.length - 1)
     )
-    await requireAudioEngine().loadQueue(authorizedQueue, normalizedStartIndex)
+    ;(await ensureAudioEngineRuntime()).loadQueue(authorizedQueue, normalizedStartIndex)
   })
 
   ipcMain.handle(IPC.audioEngine.play, async (_event, source: string, startTime?: number) => {
@@ -620,7 +647,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
       startTime: normalizedStartTime
     })
     try {
-      const result = await requireAudioEngine().play(authorizedSource, normalizedStartTime)
+      const result = await (await ensureAudioEngineRuntime()).play(authorizedSource, normalizedStartTime)
       audioDiagnosticRecorder?.record(
         'play-result',
         result,
@@ -644,12 +671,12 @@ export async function setupAudioEngineIpc(): Promise<void> {
 
   ipcMain.handle(IPC.audioEngine.togglePause, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
-    await requireAudioEngine().togglePause()
+    ;(await ensureAudioEngineRuntime()).togglePause()
   })
 
   ipcMain.handle(IPC.audioEngine.seek, async (_event, time: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
-    await requireAudioEngine().seek(
+    ;(await ensureAudioEngineRuntime()).seek(
       normalizeFiniteNumber(time, 'seek time', 0, 0, Number.MAX_SAFE_INTEGER)
     )
   })
@@ -657,7 +684,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
   ipcMain.handle(IPC.audioEngine.setVolume, async (_event, volume: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     const normalizedVolume = normalizeFiniteNumber(volume, 'volume', 1, 0, 1)
-    await requireAudioEngine().setVolume(normalizedVolume)
+    ;(await ensureAudioEngineRuntime()).setVolume(normalizedVolume)
     // The renderer's debounced persistence depends on a setTimeout in the
     // window that drove the change. When that window is hidden (mini-player
     // mode) Chromium throttles or suspends the timer, so the last volume was
@@ -673,7 +700,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
   ipcMain.handle(IPC.audioEngine.setPlaybackRate, async (_event, rate: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     const normalizedRate = normalizeFiniteNumber(rate, 'playback rate', 1, 0.5, 2)
-    await requireAudioEngine().setPlaybackRate(normalizedRate)
+    ;(await ensureAudioEngineRuntime()).setPlaybackRate(normalizedRate)
     audioDiagnosticRecorder?.record('playback-rate-changed', { playbackRate: normalizedRate })
   })
 
@@ -684,40 +711,40 @@ export async function setupAudioEngineIpc(): Promise<void> {
       const start =
         typeof startSeconds === 'number' && Number.isFinite(startSeconds) ? startSeconds : -1
       const end = typeof endSeconds === 'number' && Number.isFinite(endSeconds) ? endSeconds : -1
-      return await requireAudioEngine().setLoopRange(start, end)
+      return await (await ensureAudioEngineRuntime()).setLoopRange(start, end)
     }
   )
 
   ipcMain.handle(IPC.audioEngine.stop, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
-    await requireAudioEngine().stop()
+    ;(await ensureAudioEngineRuntime()).stop()
   })
 
   ipcMain.handle(IPC.audioEngine.next, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
-    await requireAudioEngine().next()
+    ;(await ensureAudioEngineRuntime()).next()
   })
 
   ipcMain.handle(IPC.audioEngine.previous, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
-    await requireAudioEngine().previous()
+    ;(await ensureAudioEngineRuntime()).previous()
   })
 
   ipcMain.handle(IPC.audioEngine.setPlayMode, async (_event, mode: PlayMode) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
-    await requireAudioEngine().setPlayMode(
+    ;(await ensureAudioEngineRuntime()).setPlayMode(
       mode === 'repeat' || mode === 'shuffle' ? mode : 'sequential'
     )
   })
 
   ipcMain.handle(IPC.audioEngine.getUpcomingTrack, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
-    return requireAudioEngine().getUpcomingTrack()
+    return await (await ensureAudioEngineRuntime()).getUpcomingTrack()
   })
 
   ipcMain.handle(IPC.audioEngine.setExclusiveMode, async (_event, enabled: boolean) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
-    const state = await requireAudioEngine().setExclusiveMode(enabled === true)
+    const state = await (await ensureAudioEngineRuntime()).setExclusiveMode(enabled === true)
     persistAudioOutputState(state)
     audioDiagnosticRecorder?.record('exclusive-mode-changed', state)
     return state
@@ -725,14 +752,14 @@ export async function setupAudioEngineIpc(): Promise<void> {
 
   ipcMain.handle(IPC.audioEngine.getExclusiveMode, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
-    return await requireAudioEngine().getExclusiveMode()
+    return await (await ensureAudioEngineRuntime()).getExclusiveMode()
   })
 
   ipcMain.handle(
     IPC.audioEngine.setAudioOutput,
     async (_event, output: string, device?: string) => {
       assertTrustedIpcSender(_event, 'audio engine IPC')
-      const state = await requireAudioEngine().setAudioOutput(
+      const state = await (await ensureAudioEngineRuntime()).setAudioOutput(
         normalizeIpcString(output, 'audio output', 64) as AudioOutputId,
         normalizeOptionalIpcString(device, 'audio device', MAX_AUDIO_DEVICE_LENGTH)
       )
@@ -744,7 +771,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
 
   ipcMain.handle(IPC.audioEngine.setAudioDevice, async (_event, device: string) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
-    const state = await requireAudioEngine().setAudioDevice(
+    const state = await (await ensureAudioEngineRuntime()).setAudioDevice(
       normalizeIpcString(device, 'audio device', MAX_AUDIO_DEVICE_LENGTH)
     )
     persistAudioOutputState(state)
@@ -755,7 +782,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
   ipcMain.handle(IPC.audioEngine.setOutputConfig, async (_event, config: unknown) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     const normalized = normalizeOutputConfig(config)
-    const engine = requireAudioEngine()
+    const engine = await ensureAudioEngineRuntime()
     await engine.setOutputConfig(normalized)
     const applied = engine.getOutputConfig()
     persistAudioOutputConfig(applied)
@@ -769,22 +796,22 @@ export async function setupAudioEngineIpc(): Promise<void> {
 
   ipcMain.handle(IPC.audioEngine.getOutputConfigApplyStatus, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
-    return requireAudioEngine().getOutputConfigApplyStatus()
+    return await (await ensureAudioEngineRuntime()).getOutputConfigApplyStatus()
   })
 
   ipcMain.handle(IPC.audioEngine.getAudioOutput, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
-    return await requireAudioEngine().getAudioOutput()
+    return await (await ensureAudioEngineRuntime()).getAudioOutput()
   })
 
   ipcMain.handle(IPC.audioEngine.getAudioOutputOptions, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
-    return requireAudioEngine().getAudioOutputOptions()
+    return await (await ensureAudioEngineRuntime()).getAudioOutputOptions()
   })
 
   ipcMain.handle(IPC.audioEngine.getAudioOutputState, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
-    return await requireAudioEngine().getAudioOutputState()
+    return await (await ensureAudioEngineRuntime()).getAudioOutputState()
   })
 
   ipcMain.handle(
@@ -823,7 +850,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
 
   ipcMain.handle(IPC.audioEngine.getDspSceneState, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
-    return requireAudioEngine().getDspSceneState()
+    return await (await ensureAudioEngineRuntime()).getDspSceneState()
   })
 
   ipcMain.handle(
@@ -836,7 +863,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
         normalizedScenes.some((scene) => scene.id === pinnedSceneId)
           ? pinnedSceneId
           : null
-      const state = await requireAudioEngine().setDspScenes(normalizedScenes, normalizedPin)
+      const state = await (await ensureAudioEngineRuntime()).setDspScenes(normalizedScenes, normalizedPin)
       persistDspSceneState(state)
       await reconcileDspAssetReferences()
       return state
@@ -849,7 +876,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
       partial && typeof partial === 'object' && !Array.isArray(partial)
         ? (partial as Record<string, unknown>)
         : {}
-    const state = await requireAudioEngine().setOutputStage(raw)
+    const state = await (await ensureAudioEngineRuntime()).setOutputStage(raw)
     persistDspSceneState(state)
     return state
   })
@@ -860,7 +887,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
       partial && typeof partial === 'object' && !Array.isArray(partial)
         ? (partial as Record<string, unknown>)
         : {}
-    const state = await requireAudioEngine().setStereoImage(raw)
+    const state = await (await ensureAudioEngineRuntime()).setStereoImage(raw)
     persistDspSceneState(state)
     return state
   })
@@ -869,7 +896,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     IPC.audioEngine.applyDspScene,
     async (event, sceneId: unknown, confirmDsdPcmFallback?: unknown) => {
       assertTrustedIpcSender(event, 'audio engine IPC')
-      const state = await requireAudioEngine().applyDspScene(
+      const state = await (await ensureAudioEngineRuntime()).applyDspScene(
         typeof sceneId === 'string' ? sceneId : null,
         confirmDsdPcmFallback === true
       )
@@ -881,7 +908,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
 
   ipcMain.handle(IPC.audioEngine.getDspGraphStatus, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
-    return requireAudioEngine().getDspGraphStatus()
+    return await (await ensureAudioEngineRuntime()).getDspGraphStatus()
   })
 
   ipcMain.handle(IPC.audioEngine.getDspAssets, async (event) => {
@@ -1000,7 +1027,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
       scenes.some((scene) => scene.id === imported.profile.pinnedSceneId)
         ? imported.profile.pinnedSceneId
         : null
-    const state = await requireAudioEngine().setDspScenes(scenes, pinnedSceneId)
+    const state = await (await ensureAudioEngineRuntime()).setDspScenes(scenes, pinnedSceneId)
     persistDspSceneState(state)
     await reconcileDspAssetReferences()
     return { state, profile: imported.profile, importedAssets: imported.importedAssets }
@@ -1014,7 +1041,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
   ipcMain.handle(IPC.audioEngine.setVst3Enabled, async (event, enabled: unknown) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const state = await requireVst3Catalog().setEnabled(enabled === true)
-    requireAudioEngine().refreshDspGraph()
+    ;(await ensureAudioEngineRuntime()).refreshDspGraph()
     return state
   })
 
@@ -1035,14 +1062,14 @@ export async function setupAudioEngineIpc(): Promise<void> {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const authorized = await resolveAuthorizedVst3SearchPaths(paths)
     const state = await requireVst3Catalog().setSearchPaths(authorized)
-    requireAudioEngine().refreshDspGraph()
+    ;(await ensureAudioEngineRuntime()).refreshDspGraph()
     return state
   })
 
   ipcMain.handle(IPC.audioEngine.scanVst3Plugins, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const state = await requireVst3Catalog().scan()
-    requireAudioEngine().refreshDspGraph()
+    ;(await ensureAudioEngineRuntime()).refreshDspGraph()
     return state
   })
 
@@ -1055,8 +1082,9 @@ export async function setupAudioEngineIpc(): Promise<void> {
     // into the graph. A bad module remains isolated when the probe fails.
     const state = await catalog.scan()
     const entry = state.entries.find((candidate) => candidate.id === catalogId)
-    if (entry?.status === 'available') requireAudioEngine().clearVst3RecoveryBypass(catalogId)
-    requireAudioEngine().refreshDspGraph()
+    if (entry?.status === 'available')
+await (await ensureAudioEngineRuntime()).clearVst3RecoveryBypass(catalogId)
+    ;(await ensureAudioEngineRuntime()).refreshDspGraph()
     return state
   })
 
@@ -1090,7 +1118,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
       convolverIrPath
     })
     await persistAndApplyAudioProcessingState(normalized)
-    return requireAudioEngine().getConvolverInfo()
+    return await (await ensureAudioEngineRuntime()).getConvolverInfo()
   })
 
   ipcMain.handle(IPC.audioEngine.unloadImpulseResponse, async (event) => {
@@ -1101,12 +1129,12 @@ export async function setupAudioEngineIpc(): Promise<void> {
       convolverIrPath: ''
     })
     await persistAndApplyAudioProcessingState(normalized)
-    return requireAudioEngine().getConvolverInfo()
+    return await (await ensureAudioEngineRuntime()).getConvolverInfo()
   })
 
   ipcMain.handle(IPC.audioEngine.getConvolverInfo, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
-    return requireAudioEngine().getConvolverInfo()
+    return await (await ensureAudioEngineRuntime()).getConvolverInfo()
   })
 
   ipcMain.handle(
@@ -1200,7 +1228,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
 
   ipcMain.handle(IPC.audioEngine.getMetadata, async (_event, source: string) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
-    return await requireAudioEngine().getMetadataAsync(
+    return await (await ensureAudioEngineRuntime()).getMetadataAsync(
       await resolveAuthorizedAudioSource(
         normalizeIpcString(source, 'metadata source', MAX_AUDIO_SOURCE_LENGTH)
       )
@@ -1209,7 +1237,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
 
   ipcMain.handle(IPC.audioEngine.getPlaybackInfo, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
-    return await requireAudioEngine().getPlaybackInfo()
+    return await (await ensureAudioEngineRuntime()).getPlaybackInfo()
   })
 
   ipcMain.handle(IPC.audioEngine.exportDiagnostics, async (event) => {
@@ -1235,19 +1263,15 @@ export async function setupAudioEngineIpc(): Promise<void> {
 
   ipcMain.handle(IPC.audioEngine.getSpectrumData, async (_event, points?: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
-    return requireAudioEngine().getSpectrumData(
+    return await (await ensureAudioEngineRuntime()).getSpectrumData(
       normalizeInteger(points, 'spectrum points', 128, 8, 4096)
     )
   })
 
   ipcMain.handle(IPC.audioEngine.getVisualizationData, async (_event, options?: unknown) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
-    return requireAudioEngine().getVisualizationData(
+    return await (await ensureAudioEngineRuntime()).getVisualizationData(
       typeof options === 'object' && options !== null ? options : {}
     )
-  })
-
-  runtime.audioEngineManager.start().catch((err: Error) => {
-    console.error('原生音频引擎启动失败：', err.message)
   })
 }
