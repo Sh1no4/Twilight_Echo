@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import PuzzleIcon from './icons/PuzzleIcon.vue'
+import { useEscapeToClose, useFocusTrap } from '@renderer/app/useDismissLayer'
 import {
   pluginIndexLoadedFromLabel,
   pluginIndexSourceLabel,
@@ -26,9 +27,7 @@ const searchText = ref('')
 // The current runtime (Tauri) may not implement the plugin surface at all. In
 // that case the page must say "not supported here" instead of pretending the
 // user simply has nothing installed — a business-empty list would be a lie.
-const pluginsUnsupported = computed(
-  () => getCapabilityState('plugins').status === 'unsupported'
-)
+const pluginsUnsupported = computed(() => getCapabilityState('plugins').status === 'unsupported')
 
 const installedPlugins = ref<TwilightPluginDescriptor[]>([])
 const indexEntries = ref<TwilightPluginIndexEntry[]>([])
@@ -45,32 +44,32 @@ function switchTab(tabId: string) {
   activeTab.value = tabId
 }
 
+const TAB_ORDER = ['installed', 'discover', 'updates'] as const
+
+function moveTab(direction: -1 | 1) {
+  const current = TAB_ORDER.indexOf(activeTab.value as (typeof TAB_ORDER)[number])
+  const next = TAB_ORDER[(current + direction + TAB_ORDER.length) % TAB_ORDER.length]
+  switchTab(next)
+  document.getElementById(`plugin-tab-${next}`)?.focus()
+}
+
 /* ---------- helpers ---------- */
 
-function getIconInfo(id: string, type: string[]): { cls: string; icon: string; style?: string } {
+function getIconInfo(id: string, type: string[]): { cls: string; icon: string } {
   if (id.includes('ncm')) return { cls: 'ncm', icon: 'pi pi-cloud' }
   if (type.includes('provider')) return { cls: 'provider', icon: 'pi pi-music' }
   if (type.includes('dsp')) return { cls: 'dsp', icon: 'pi pi-wave-pulse' }
-  return {
-    cls: '',
-    icon: 'pi pi-puzzle',
-    style: 'background: linear-gradient(135deg, #e0e7ff, #c7d2fe); color: #4f46e5;'
-  }
+  return { cls: 'fallback', icon: 'pi pi-puzzle' }
 }
 
-function getTags(type: string[]): Array<{ label: string; cls: string; style?: string }> {
-  const tags: Array<{ label: string; cls: string; style?: string }> = []
+function getTags(type: string[]): Array<{ label: string; cls: string }> {
+  const tags: Array<{ label: string; cls: string }> = []
   for (const t of type) {
     if (t === 'provider') tags.push({ label: 'PROVIDER', cls: 'provider' })
     else if (t === 'ui') tags.push({ label: 'UI', cls: 'ui' })
     else if (t === 'dsp') tags.push({ label: 'DSP NATIVE', cls: 'dsp' })
     else if (t === 'tool') tags.push({ label: 'TOOL', cls: 'tool' })
-    else if (t === 'theme')
-      tags.push({
-        label: 'THEME',
-        cls: '',
-        style: 'background: rgba(168, 85, 247, 0.1); color: #a855f7;'
-      })
+    else if (t === 'theme') tags.push({ label: 'THEME', cls: 'theme' })
   }
   return tags
 }
@@ -187,8 +186,21 @@ async function togglePlugin(plugin: TwilightPluginDescriptor) {
   }
 }
 
-async function uninstallPlugin(plugin: TwilightPluginDescriptor) {
-  if (busyIds.value.has(plugin.id)) return
+const uninstallTarget = ref<TwilightPluginDescriptor | null>(null)
+const uninstallConfirmRef = ref<HTMLElement | null>(null)
+
+function requestUninstall(plugin: TwilightPluginDescriptor) {
+  uninstallTarget.value = plugin
+}
+
+function closeUninstallConfirm() {
+  uninstallTarget.value = null
+}
+
+async function confirmUninstall() {
+  const plugin = uninstallTarget.value
+  if (!plugin) return
+  uninstallTarget.value = null
   busyIds.value.add(plugin.id)
   try {
     await window.api.plugins.uninstall(plugin.id)
@@ -199,6 +211,9 @@ async function uninstallPlugin(plugin: TwilightPluginDescriptor) {
     busyIds.value.delete(plugin.id)
   }
 }
+
+useEscapeToClose(() => uninstallTarget.value !== null, closeUninstallConfirm)
+useFocusTrap(uninstallConfirmRef, () => uninstallTarget.value !== null)
 
 async function openLog(plugin: TwilightPluginDescriptor) {
   try {
@@ -320,17 +335,21 @@ onUnmounted(() => {
         <div class="sidebar-header">
           <h1><PuzzleIcon /> 扩展中心</h1>
         </div>
-        <nav class="nav-menu">
+        <nav class="nav-menu" role="tablist" aria-label="扩展中心分类">
           <div
             class="nav-item"
             data-te-interactive
-            role="button"
-            tabindex="0"
-            :aria-pressed="activeTab === 'installed'"
+            role="tab"
+            id="plugin-tab-installed"
+            :tabindex="activeTab === 'installed' ? 0 : -1"
+            :aria-selected="activeTab === 'installed'"
+            aria-controls="plugin-panel-installed"
             :class="{ active: activeTab === 'installed' }"
             @click="switchTab('installed')"
             @keydown.enter.prevent="switchTab('installed')"
             @keydown.space.prevent="switchTab('installed')"
+            @keydown.left.prevent="moveTab(-1)"
+            @keydown.right.prevent="moveTab(1)"
           >
             <i class="pi pi-check-circle"></i>
             <span>已安装</span>
@@ -338,13 +357,17 @@ onUnmounted(() => {
           <div
             class="nav-item"
             data-te-interactive
-            role="button"
-            tabindex="0"
-            :aria-pressed="activeTab === 'discover'"
+            role="tab"
+            id="plugin-tab-discover"
+            :tabindex="activeTab === 'discover' ? 0 : -1"
+            :aria-selected="activeTab === 'discover'"
+            aria-controls="plugin-panel-discover"
             :class="{ active: activeTab === 'discover' }"
             @click="switchTab('discover')"
             @keydown.enter.prevent="switchTab('discover')"
             @keydown.space.prevent="switchTab('discover')"
+            @keydown.left.prevent="moveTab(-1)"
+            @keydown.right.prevent="moveTab(1)"
           >
             <i class="pi pi-compass"></i>
             <span>发现市场</span>
@@ -352,27 +375,24 @@ onUnmounted(() => {
           <div
             class="nav-item"
             data-te-interactive
-            role="button"
-            tabindex="0"
-            :aria-pressed="activeTab === 'updates'"
+            role="tab"
+            id="plugin-tab-updates"
+            :tabindex="activeTab === 'updates' ? 0 : -1"
+            :aria-selected="activeTab === 'updates'"
+            aria-controls="plugin-panel-updates"
             :class="{ active: activeTab === 'updates' }"
             @click="switchTab('updates')"
             @keydown.enter.prevent="switchTab('updates')"
             @keydown.space.prevent="switchTab('updates')"
+            @keydown.left.prevent="moveTab(-1)"
+            @keydown.right.prevent="moveTab(1)"
           >
             <i class="pi pi-cloud-download"></i>
             <span
               >更新
               <span
                 v-if="updateEntries.length > 0"
-                style="
-                  background: #ef4444;
-                  color: #fff;
-                  font-size: 10px;
-                  padding: 2px 6px;
-                  border-radius: 100px;
-                  margin-left: 4px;
-                "
+                class="te-status-badge te-status-badge--danger nav-badge"
                 >{{ updateEntries.length }}</span
               ></span
             >
@@ -474,23 +494,19 @@ onUnmounted(() => {
         </div>
 
         <!-- Scroll Area: Installed -->
-        <div class="scroll-area" v-if="activeTab === 'installed'">
+        <div
+          class="scroll-area"
+          id="plugin-panel-installed"
+          role="tabpanel"
+          aria-labelledby="plugin-tab-installed"
+          tabindex="0"
+          v-if="activeTab === 'installed'"
+        >
           <!-- Unsupported runtime -->
-          <div
-            v-if="pluginsUnsupported"
-            style="
-              text-align: center;
-              padding: 60px 20px;
-              color: var(--te-neutral-400, #9ca3af);
-              font-size: 14px;
-            "
-          >
-            <i
-              class="pi pi-puzzle-piece"
-              style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3"
-            ></i>
-            <p style="color: var(--te-neutral-700, #374151)">当前运行时不支持插件系统</p>
-            <p style="margin-top: 8px">插件与在线音源仅在完整运行时（Electron）中提供。</p>
+          <div v-if="pluginsUnsupported" class="te-empty-state">
+            <div class="te-empty-state__icon"><i class="pi pi-puzzle-piece"></i></div>
+            <div class="te-empty-state__title">当前运行时不支持插件系统</div>
+            <div class="te-empty-state__hint">插件与在线音源仅在完整运行时（Electron）中提供。</div>
           </div>
 
           <template v-else>
@@ -499,425 +515,390 @@ onUnmounted(() => {
             </div>
 
             <!-- Empty state -->
-            <div
-              v-if="filteredInstalled.length === 0"
-              style="
-                text-align: center;
-                padding: 60px 20px;
-                color: var(--te-neutral-400, #9ca3af);
-                font-size: 14px;
-              "
-            >
-              <i
-                class="pi pi-inbox"
-                style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3"
-              ></i>
-              <p>{{ searchText ? '没有匹配的插件' : '暂无已安装插件' }}</p>
-              <button
-                v-if="!searchText"
-                type="button"
-                class="btn btn-outline"
-                style="margin-top: 16px"
-                @click="switchTab('discover')"
-              >
-                去发现插件
-              </button>
+            <div v-if="filteredInstalled.length === 0" class="te-empty-state">
+              <div class="te-empty-state__icon"><i class="pi pi-inbox"></i></div>
+              <div class="te-empty-state__title">
+                {{ searchText ? '没有匹配的插件' : '暂无已安装插件' }}
+              </div>
+              <div v-if="!searchText" class="te-empty-state__action">
+                <button type="button" class="btn btn-outline" @click="switchTab('discover')">
+                  去发现插件
+                </button>
+              </div>
             </div>
 
             <div class="plugin-grid" v-else>
-            <div
-              v-for="plugin in filteredInstalled"
-              :key="plugin.id"
-              class="plugin-card"
-              :style="{ opacity: plugin.enabled ? 1 : 0.7 }"
-            >
-              <div v-if="plugin.builtIn" class="builtin-label">系统内置</div>
-              <div class="plugin-card-header">
-                <div
-                  class="plugin-icon"
-                  :class="getIconInfo(plugin.id, plugin.type).cls"
-                  :style="getIconInfo(plugin.id, plugin.type).style"
-                >
-                  <i :class="getIconInfo(plugin.id, plugin.type).icon"></i>
-                </div>
-                <div class="plugin-info">
-                  <div class="plugin-title-row">
-                    <div class="plugin-name">{{ plugin.name }}</div>
-                    <div class="plugin-version">v{{ plugin.version }}</div>
-                  </div>
-                  <div class="plugin-author">
-                    <i class="pi pi-user"></i>
-                    {{ plugin.author }}
-                  </div>
-                  <div class="plugin-tags">
-                    <span
-                      v-for="(tag, idx) in getTags(plugin.type)"
-                      :key="idx"
-                      class="tag"
-                      :class="tag.cls"
-                      :style="tag.style"
-                      >{{ tag.label }}</span
-                    >
-                  </div>
-                </div>
-              </div>
-              <div class="plugin-desc">
-                {{ plugin.description }}
-                <div v-if="plugin.error" style="margin-top: 8px; color: #ef4444; font-size: 12px">
-                  <i class="pi pi-exclamation-circle"></i> {{ plugin.error }}
-                </div>
-              </div>
-              <div class="plugin-footer">
-                <div
-                  class="switch-wrap"
-                  data-te-interactive
-                  role="switch"
-                  tabindex="0"
-                  :aria-label="`启用 ${plugin.name}`"
-                  :aria-checked="plugin.enabled"
-                  @click="togglePlugin(plugin)"
-                  @keydown.enter.prevent="togglePlugin(plugin)"
-                  @keydown.space.prevent="togglePlugin(plugin)"
-                >
-                  <div class="switch" :class="{ on: plugin.enabled }"></div>
-                  <span class="switch-label">{{ plugin.enabled ? '已启用' : '已停用' }}</span>
-                </div>
-                <div class="plugin-actions">
-                  <button
-                    v-if="!plugin.builtIn || plugin.error"
-                    class="icon-btn"
-                    title="查看日志"
-                    @click="openLog(plugin)"
-                  >
-                    <i class="pi pi-align-left"></i>
-                  </button>
-                  <button
-                    v-if="!plugin.builtIn"
-                    class="icon-btn danger"
-                    title="卸载"
-                    @click="uninstallPlugin(plugin)"
-                  >
-                    <i class="pi pi-trash"></i>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-          </template>
-        </div>
-
-        <!-- Scroll Area: Discover -->
-        <div class="scroll-area" v-else-if="activeTab === 'discover'">
-          <!-- Unsupported runtime -->
-          <div
-            v-if="pluginsUnsupported"
-            style="
-              text-align: center;
-              padding: 60px 20px;
-              color: var(--te-neutral-400, #9ca3af);
-              font-size: 14px;
-            "
-          >
-            <i
-              class="pi pi-puzzle-piece"
-              style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3"
-            ></i>
-            <p style="color: var(--te-neutral-700, #374151)">当前运行时不支持插件系统</p>
-            <p style="margin-top: 8px">插件与在线音源仅在完整运行时（Electron）中提供。</p>
-          </div>
-
-          <template v-else>
-          <div class="discover-banner">
-            <div class="banner-text">
-              <h2>{{ indexSourceLabel }}</h2>
-              <p>
-                当前索引用于发现插件；安装前展示来源、有效期、SHA-256、签名、权限与代码执行风险。
-              </p>
-            </div>
-            <div class="banner-art">
-              <i class="pi pi-server"></i>
-            </div>
-            <button
-              v-if="marketRepoUrl"
-              class="btn btn-outline"
-              style="
-                position: absolute;
-                right: 32px;
-                bottom: 32px;
-                background: rgba(255, 255, 255, 0.1);
-                border-color: rgba(255, 255, 255, 0.2);
-                color: #fff;
-              "
-              @click="openExternal(marketRepoUrl)"
-            >
-              浏览插件仓库 <i class="pi pi-external-link"></i>
-            </button>
-          </div>
-
-          <div v-if="indexStatus" class="market-status">
-            <span><i class="pi pi-database"></i> {{ indexLoadedFromLabel }}</span>
-            <span>获取：{{ formatIndexTime(indexStatus.lastFetchedAt) }}</span>
-            <span>过期：{{ formatIndexTime(indexStatus.expiresAt) }}</span>
-            <span v-if="indexStatus.stale" class="warn">使用回退索引</span>
-            <span v-if="indexStatus.expired" class="warn">索引已过期</span>
-            <span v-if="!indexStatus.originVerified" class="warn">来源未验证</span>
-            <span v-if="indexStatus.trustStoreError" class="warn">签名信任库不可用</span>
-            <span v-if="indexStatus.error" class="warn">最近错误：{{ indexStatus.error }}</span>
-            <span class="source-url" :title="indexStatus.sourceUrl">{{
-              indexStatus.sourceUrl
-            }}</span>
-            <span
-              v-if="indexStatus.configuredSourceUrl !== indexStatus.sourceUrl"
-              class="source-url warn"
-              :title="indexStatus.configuredSourceUrl"
-            >
-              配置：{{ indexStatus.configuredSourceUrl }}
-            </span>
-          </div>
-
-          <div class="page-title" style="font-size: 18px; margin-bottom: 16px">可用插件</div>
-
-          <!-- Empty state -->
-          <div
-            v-if="filteredIndex.length === 0"
-            style="
-              text-align: center;
-              padding: 60px 20px;
-              color: var(--te-neutral-400, #9ca3af);
-              font-size: 14px;
-            "
-          >
-            <i
-              class="pi pi-search"
-              style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3"
-            ></i>
-            {{ searchText ? '没有匹配的插件' : '插件市场暂无可用插件' }}
-          </div>
-
-          <div class="plugin-grid" v-else>
-            <div
-              v-for="entry in filteredIndex"
-              :key="entry.id"
-              class="plugin-card"
-              :style="{ opacity: entry.installState === 'incompatible' ? 0.6 : 1 }"
-            >
-              <div class="plugin-card-header">
-                <div
-                  class="plugin-icon"
-                  :class="getIconInfo(entry.id, entry.type).cls"
-                  :style="getIconInfo(entry.id, entry.type).style"
-                >
-                  <i :class="getIconInfo(entry.id, entry.type).icon"></i>
-                </div>
-                <div class="plugin-info">
-                  <div class="plugin-title-row">
-                    <div class="plugin-name">{{ entry.name }}</div>
-                    <div class="plugin-version">v{{ entry.version }}</div>
-                  </div>
-                  <div class="plugin-author" :title="pluginTrust(entry).detail">
-                    <i :class="pluginTrust(entry).icon"></i>
-                    {{ entry.author }}
-                  </div>
-                  <div class="plugin-tags">
-                    <span
-                      v-for="(tag, idx) in getTags(entry.type)"
-                      :key="idx"
-                      class="tag"
-                      :class="tag.cls"
-                      :style="tag.style"
-                      >{{ tag.label }}</span
-                    >
-                  </div>
-                </div>
-              </div>
-              <div class="plugin-desc">
-                {{ entry.description }}
-              </div>
-              <div class="plugin-footer">
-                <div class="plugin-trust-stack">
-                  <div
-                    class="plugin-trust"
-                    :class="`trust-${pluginTrust(entry).tone}`"
-                    :title="pluginTrust(entry).detail"
-                  >
-                    <i :class="pluginTrust(entry).icon"></i> {{ pluginTrust(entry).label }}
-                  </div>
-                  <span
-                    class="signature-evidence"
-                    :title="entry.verification.keyFingerprintSha256 || entry.verification.reason"
-                  >
-                    签名 {{ entry.verification.signatureStatus }} · 指纹
-                    {{ entry.verification.keyFingerprintSha256?.slice(0, 12) || '无' }}
-                  </span>
-                </div>
-
-                <!-- Install states -->
-                <button
-                  v-if="entry.installState === 'not-installed'"
-                  class="btn btn-primary"
-                  style="padding: 6px 16px"
-                  :disabled="busyIds.has(entry.id)"
-                  @click="installFromIndex(entry)"
-                >
-                  <i v-if="busyIds.has(entry.id)" class="pi pi-spin pi-spinner"></i>
-                  {{ busyIds.has(entry.id) ? '安装中' : '获取' }}
-                </button>
-                <span
-                  v-else-if="entry.installState === 'installed'"
-                  style="
-                    font-size: 13px;
-                    font-weight: 600;
-                    color: var(--te-neutral-400);
-                    display: flex;
-                    align-items: center;
-                    gap: 4px;
-                  "
-                >
-                  <i class="pi pi-check"></i> 已安装
-                </span>
-                <button
-                  v-else-if="entry.installState === 'update-available'"
-                  class="btn btn-primary"
-                  style="padding: 6px 16px"
-                  :disabled="busyIds.has(entry.id)"
-                  @click="installFromIndex(entry)"
-                >
-                  <i v-if="busyIds.has(entry.id)" class="pi pi-spin pi-spinner"></i>
-                  {{ busyIds.has(entry.id) ? '更新中' : '更新' }}
-                </button>
-                <span
-                  v-else-if="entry.installState === 'incompatible'"
-                  style="font-size: 13px; font-weight: 600; color: var(--te-neutral-400)"
-                >
-                  不兼容
-                </span>
-              </div>
-            </div>
-          </div>
-          </template>
-        </div>
-
-        <!-- Scroll Area: Updates -->
-        <div class="scroll-area" v-else-if="activeTab === 'updates'">
-          <!-- Unsupported runtime -->
-          <div
-            v-if="pluginsUnsupported"
-            style="
-              text-align: center;
-              padding: 60px 20px;
-              color: var(--te-neutral-400, #9ca3af);
-              font-size: 14px;
-            "
-          >
-            <i
-              class="pi pi-puzzle-piece"
-              style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3"
-            ></i>
-            <p style="color: var(--te-neutral-700, #374151)">当前运行时不支持插件系统</p>
-            <p style="margin-top: 8px">插件与在线音源仅在完整运行时（Electron）中提供。</p>
-          </div>
-
-          <template v-else>
-          <div class="page-title">
-            可用更新
-            <span
-              v-if="updateEntries.length > 0"
-              class="badge"
-              style="background: var(--te-danger-soft-bg); color: var(--te-danger-soft-fg)"
-              >{{ updateEntries.length }}</span
-            >
-          </div>
-
-          <!-- Empty state -->
-          <div
-            v-if="updateEntries.length === 0"
-            style="
-              text-align: center;
-              padding: 60px 20px;
-              color: var(--te-neutral-400, #9ca3af);
-              font-size: 14px;
-            "
-          >
-            <i
-              class="pi pi-check-circle"
-              style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3"
-            ></i>
-            所有插件均为最新版本
-          </div>
-
-          <template v-else>
-            <div
-              style="
-                margin-bottom: 24px;
-                padding: 16px;
-                background: rgba(99, 102, 241, 0.05);
-                border: 1px solid rgba(99, 102, 241, 0.1);
-                border-radius: 16px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-              "
-            >
-              <div style="font-size: 14px; font-weight: 600; color: var(--te-primary-600)">
-                有 {{ updateEntries.length }} 个插件可以更新。
-              </div>
-              <button class="btn btn-primary" @click="updateAll">全部更新</button>
-            </div>
-
-            <div class="plugin-grid" style="grid-template-columns: 1fr">
               <div
-                v-for="entry in updateEntries"
-                :key="entry.id"
+                v-for="plugin in filteredInstalled"
+                :key="plugin.id"
                 class="plugin-card"
-                style="
-                  flex-direction: row;
-                  align-items: center;
-                  justify-content: space-between;
-                  padding: 20px;
-                "
+                :style="{ opacity: plugin.enabled ? 1 : 0.7 }"
               >
-                <div class="plugin-card-header" style="align-items: center; margin-bottom: 0">
-                  <div
-                    class="plugin-icon"
-                    :class="getIconInfo(entry.id, entry.type).cls"
-                    :style="getIconInfo(entry.id, entry.type).style"
-                    style="width: 48px; height: 48px; font-size: 20px"
-                  >
-                    <i :class="getIconInfo(entry.id, entry.type).icon"></i>
+                <div v-if="plugin.builtIn" class="builtin-label">系统内置</div>
+                <div class="plugin-card-header">
+                  <div class="plugin-icon" :class="getIconInfo(plugin.id, plugin.type).cls">
+                    <i :class="getIconInfo(plugin.id, plugin.type).icon"></i>
                   </div>
-                  <div class="plugin-info" style="margin-left: 16px">
+                  <div class="plugin-info">
                     <div class="plugin-title-row">
-                      <div class="plugin-name" style="font-size: 16px">{{ entry.name }}</div>
+                      <div class="plugin-name">{{ plugin.name }}</div>
+                      <div class="plugin-version">v{{ plugin.version }}</div>
                     </div>
                     <div class="plugin-author">
-                      {{ entry.installedVersion ? `v${entry.installedVersion}` : '未知版本' }}
-                      <i class="pi pi-arrow-right" style="font-size: 10px; margin: 0 4px"></i>
-                      <span style="color: var(--te-primary-600); font-weight: 600"
-                        >v{{ entry.version }}</span
+                      <i class="pi pi-user"></i>
+                      {{ plugin.author }}
+                    </div>
+                    <div class="plugin-tags">
+                      <span
+                        v-for="(tag, idx) in getTags(plugin.type)"
+                        :key="idx"
+                        class="tag"
+                        :class="tag.cls"
+                        >{{ tag.label }}</span
                       >
                     </div>
                   </div>
                 </div>
-                <div style="flex: 1; margin: 0 32px; font-size: 13px; color: var(--te-neutral-500)">
-                  {{ entry.description }}
+                <div class="plugin-desc">
+                  {{ plugin.description }}
+                  <div v-if="plugin.error" class="plugin-error">
+                    <i class="pi pi-exclamation-circle"></i> {{ plugin.error }}
+                  </div>
                 </div>
-                <button
-                  class="btn btn-primary"
-                  style="padding: 6px 16px"
-                  :disabled="busyIds.has(entry.id)"
-                  @click="installFromIndex(entry)"
-                >
-                  <i v-if="busyIds.has(entry.id)" class="pi pi-spin pi-spinner"></i>
-                  {{ busyIds.has(entry.id) ? '更新中' : '更新' }}
-                </button>
+                <div class="plugin-footer">
+                  <div
+                    class="switch-wrap"
+                    data-te-interactive
+                    role="switch"
+                    tabindex="0"
+                    :aria-label="`启用 ${plugin.name}`"
+                    :aria-checked="plugin.enabled"
+                    @click="togglePlugin(plugin)"
+                    @keydown.enter.prevent="togglePlugin(plugin)"
+                    @keydown.space.prevent="togglePlugin(plugin)"
+                  >
+                    <div class="switch" :class="{ on: plugin.enabled }"></div>
+                    <span class="switch-label">{{ plugin.enabled ? '已启用' : '已停用' }}</span>
+                  </div>
+                  <div class="plugin-actions">
+                    <button
+                      v-if="!plugin.builtIn || plugin.error"
+                      class="icon-btn"
+                      title="查看日志"
+                      aria-label="查看日志"
+                      @click="openLog(plugin)"
+                    >
+                      <i class="pi pi-align-left"></i>
+                    </button>
+                    <button
+                      v-if="!plugin.builtIn"
+                      class="icon-btn danger"
+                      title="卸载"
+                      aria-label="卸载"
+                      @click="requestUninstall(plugin)"
+                    >
+                      <i class="pi pi-trash"></i>
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           </template>
+        </div>
+
+        <!-- Scroll Area: Discover -->
+        <div
+          class="scroll-area"
+          id="plugin-panel-discover"
+          role="tabpanel"
+          aria-labelledby="plugin-tab-discover"
+          tabindex="0"
+          v-else-if="activeTab === 'discover'"
+        >
+          <!-- Unsupported runtime -->
+          <div v-if="pluginsUnsupported" class="te-empty-state">
+            <div class="te-empty-state__icon"><i class="pi pi-puzzle-piece"></i></div>
+            <div class="te-empty-state__title">当前运行时不支持插件系统</div>
+            <div class="te-empty-state__hint">插件与在线音源仅在完整运行时（Electron）中提供。</div>
+          </div>
+
+          <template v-else>
+            <div class="discover-banner">
+              <div class="banner-text">
+                <h2>{{ indexSourceLabel }}</h2>
+                <p>
+                  当前索引用于发现插件；安装前展示来源、有效期、SHA-256、签名、权限与代码执行风险。
+                </p>
+              </div>
+              <div class="banner-art" role="img" aria-label="插件展台">
+                <i class="pi pi-server" aria-hidden="true"></i>
+              </div>
+              <button
+                v-if="marketRepoUrl"
+                class="btn btn-outline"
+                style="
+                  position: absolute;
+                  right: 32px;
+                  bottom: 32px;
+                  background: rgba(255, 255, 255, 0.1);
+                  border-color: rgba(255, 255, 255, 0.2);
+                  color: #fff;
+                "
+                @click="openExternal(marketRepoUrl)"
+              >
+                浏览插件仓库 <i class="pi pi-external-link"></i>
+              </button>
+            </div>
+
+            <div v-if="indexStatus" class="market-status">
+              <span><i class="pi pi-database"></i> {{ indexLoadedFromLabel }}</span>
+              <span>获取：{{ formatIndexTime(indexStatus.lastFetchedAt) }}</span>
+              <span>过期：{{ formatIndexTime(indexStatus.expiresAt) }}</span>
+              <span v-if="indexStatus.stale" class="warn">使用回退索引</span>
+              <span v-if="indexStatus.expired" class="warn">索引已过期</span>
+              <span v-if="!indexStatus.originVerified" class="warn">来源未验证</span>
+              <span v-if="indexStatus.trustStoreError" class="warn">签名信任库不可用</span>
+              <span v-if="indexStatus.error" class="warn">最近错误：{{ indexStatus.error }}</span>
+              <span class="source-url" :title="indexStatus.sourceUrl">{{
+                indexStatus.sourceUrl
+              }}</span>
+              <span
+                v-if="indexStatus.configuredSourceUrl !== indexStatus.sourceUrl"
+                class="source-url warn"
+                :title="indexStatus.configuredSourceUrl"
+              >
+                配置：{{ indexStatus.configuredSourceUrl }}
+              </span>
+            </div>
+
+            <div class="page-title" style="font-size: 18px; margin-bottom: 16px">可用插件</div>
+
+            <!-- Empty state -->
+            <div v-if="filteredIndex.length === 0" class="te-empty-state">
+              <div class="te-empty-state__icon"><i class="pi pi-search"></i></div>
+              <div class="te-empty-state__title">
+                {{ searchText ? '没有匹配的插件' : '插件市场暂无可用插件' }}
+              </div>
+            </div>
+
+            <div class="plugin-grid" v-else>
+              <div
+                v-for="entry in filteredIndex"
+                :key="entry.id"
+                class="plugin-card"
+                :style="{ opacity: entry.installState === 'incompatible' ? 0.6 : 1 }"
+              >
+                <div class="plugin-card-header">
+                  <div class="plugin-icon" :class="getIconInfo(entry.id, entry.type).cls">
+                    <i :class="getIconInfo(entry.id, entry.type).icon"></i>
+                  </div>
+                  <div class="plugin-info">
+                    <div class="plugin-title-row">
+                      <div class="plugin-name">{{ entry.name }}</div>
+                      <div class="plugin-version">v{{ entry.version }}</div>
+                    </div>
+                    <div class="plugin-author" :title="pluginTrust(entry).detail">
+                      <i :class="pluginTrust(entry).icon"></i>
+                      {{ entry.author }}
+                    </div>
+                    <div class="plugin-tags">
+                      <span
+                        v-for="(tag, idx) in getTags(entry.type)"
+                        :key="idx"
+                        class="tag"
+                        :class="tag.cls"
+                        >{{ tag.label }}</span
+                      >
+                    </div>
+                  </div>
+                </div>
+                <div class="plugin-desc">
+                  {{ entry.description }}
+                </div>
+                <div class="plugin-footer">
+                  <div class="plugin-trust-stack">
+                    <div
+                      class="plugin-trust"
+                      :class="`trust-${pluginTrust(entry).tone}`"
+                      :title="pluginTrust(entry).detail"
+                    >
+                      <i :class="pluginTrust(entry).icon"></i> {{ pluginTrust(entry).label }}
+                    </div>
+                    <span
+                      class="signature-evidence"
+                      :title="entry.verification.keyFingerprintSha256 || entry.verification.reason"
+                    >
+                      签名 {{ entry.verification.signatureStatus }} · 指纹
+                      {{ entry.verification.keyFingerprintSha256?.slice(0, 12) || '无' }}
+                    </span>
+                  </div>
+
+                  <!-- Install states -->
+                  <button
+                    v-if="entry.installState === 'not-installed'"
+                    class="btn btn-primary"
+                    style="padding: 6px 16px"
+                    :disabled="busyIds.has(entry.id)"
+                    @click="installFromIndex(entry)"
+                  >
+                    <i v-if="busyIds.has(entry.id)" class="pi pi-spin pi-spinner"></i>
+                    {{ busyIds.has(entry.id) ? '安装中' : '获取' }}
+                  </button>
+                  <span
+                    v-else-if="entry.installState === 'installed'"
+                    style="
+                      font-size: 13px;
+                      font-weight: 600;
+                      color: var(--te-neutral-500);
+                      display: flex;
+                      align-items: center;
+                      gap: 4px;
+                    "
+                  >
+                    <i class="pi pi-check"></i> 已安装
+                  </span>
+                  <button
+                    v-else-if="entry.installState === 'update-available'"
+                    class="btn btn-primary"
+                    style="padding: 6px 16px"
+                    :disabled="busyIds.has(entry.id)"
+                    @click="installFromIndex(entry)"
+                  >
+                    <i v-if="busyIds.has(entry.id)" class="pi pi-spin pi-spinner"></i>
+                    {{ busyIds.has(entry.id) ? '更新中' : '更新' }}
+                  </button>
+                  <span
+                    v-else-if="entry.installState === 'incompatible'"
+                    style="font-size: 13px; font-weight: 600; color: var(--te-neutral-500)"
+                  >
+                    不兼容
+                  </span>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Scroll Area: Updates -->
+        <div
+          class="scroll-area"
+          id="plugin-panel-updates"
+          role="tabpanel"
+          aria-labelledby="plugin-tab-updates"
+          tabindex="0"
+          v-else-if="activeTab === 'updates'"
+        >
+          <!-- Unsupported runtime -->
+          <div v-if="pluginsUnsupported" class="te-empty-state">
+            <div class="te-empty-state__icon"><i class="pi pi-puzzle-piece"></i></div>
+            <div class="te-empty-state__title">当前运行时不支持插件系统</div>
+            <div class="te-empty-state__hint">插件与在线音源仅在完整运行时（Electron）中提供。</div>
+          </div>
+
+          <template v-else>
+            <div class="page-title">
+              可用更新
+              <span
+                v-if="updateEntries.length > 0"
+                class="te-status-badge te-status-badge--danger"
+                >{{ updateEntries.length }}</span
+              >
+            </div>
+
+            <!-- Empty state -->
+            <div v-if="updateEntries.length === 0" class="te-empty-state">
+              <div class="te-empty-state__icon"><i class="pi pi-check-circle"></i></div>
+              <div class="te-empty-state__title">所有插件均为最新版本</div>
+            </div>
+
+            <template v-else>
+              <div class="update-banner">
+                <div class="update-banner-copy">有 {{ updateEntries.length }} 个插件可以更新。</div>
+                <button class="btn btn-primary" @click="updateAll">全部更新</button>
+              </div>
+
+              <div class="plugin-grid" style="grid-template-columns: 1fr">
+                <div
+                  v-for="entry in updateEntries"
+                  :key="entry.id"
+                  class="plugin-card"
+                  style="
+                    flex-direction: row;
+                    align-items: center;
+                    justify-content: space-between;
+                    padding: 20px;
+                  "
+                >
+                  <div class="plugin-card-header" style="align-items: center; margin-bottom: 0">
+                    <div
+                      class="plugin-icon"
+                      :class="getIconInfo(entry.id, entry.type).cls"
+                      style="width: 48px; height: 48px; font-size: 20px"
+                    >
+                      <i :class="getIconInfo(entry.id, entry.type).icon"></i>
+                    </div>
+                    <div class="plugin-info" style="margin-left: 16px">
+                      <div class="plugin-title-row">
+                        <div class="plugin-name" style="font-size: 16px">{{ entry.name }}</div>
+                      </div>
+                      <div class="plugin-author">
+                        {{ entry.installedVersion ? `v${entry.installedVersion}` : '未知版本' }}
+                        <i class="pi pi-arrow-right" style="font-size: 10px; margin: 0 4px"></i>
+                        <span style="color: var(--te-primary-500); font-weight: 600"
+                          >v{{ entry.version }}</span
+                        >
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    style="flex: 1; margin: 0 32px; font-size: 13px; color: var(--te-neutral-500)"
+                  >
+                    {{ entry.description }}
+                  </div>
+                  <button
+                    class="btn btn-primary"
+                    style="padding: 6px 16px"
+                    :disabled="busyIds.has(entry.id)"
+                    @click="installFromIndex(entry)"
+                  >
+                    <i v-if="busyIds.has(entry.id)" class="pi pi-spin pi-spinner"></i>
+                    {{ busyIds.has(entry.id) ? '更新中' : '更新' }}
+                  </button>
+                </div>
+              </div>
+            </template>
           </template>
         </div>
       </main>
     </div>
   </div>
+
+  <Teleport to="body">
+    <Transition name="uninstall-dialog">
+      <div v-if="uninstallTarget" class="uninstall-overlay" @click.self="closeUninstallConfirm">
+        <section
+          ref="uninstallConfirmRef"
+          class="uninstall-dialog"
+          role="alert"
+          aria-labelledby="uninstall-dialog-title"
+        >
+          <div class="uninstall-dialog-icon" aria-hidden="true"><i class="pi pi-trash"></i></div>
+          <div class="uninstall-dialog-copy">
+            <h3 id="uninstall-dialog-title">卸载插件</h3>
+            <p>确定要卸载「{{ uninstallTarget.name }}」吗？此操作会移除插件包及其相关状态。</p>
+          </div>
+          <div class="uninstall-dialog-actions">
+            <button type="button" class="btn btn-outline" @click="closeUninstallConfirm">
+              取消
+            </button>
+            <button type="button" class="btn btn-danger" @click="confirmUninstall">
+              <i class="pi pi-trash"></i> 确认卸载
+            </button>
+          </div>
+        </section>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -950,11 +931,9 @@ onUnmounted(() => {
 /* Sidebar */
 .sidebar {
   width: 240px;
-  /* Frosted surface: the bottom-most global background shows through. */
-  background: transparent;
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border-right: 1px solid var(--te-border-color, #e5e7eb);
+  /* Opaque settings surface (sibling of the Settings rail, not a glass layer). */
+  background: var(--te-settings-bg);
+  border-right: 1px solid var(--te-card-border);
   display: flex;
   flex-direction: column;
 }
@@ -970,12 +949,12 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--te-neutral-900, #111827);
+  color: var(--te-neutral-900);
 }
 
 .sidebar-header h1 i,
 .sidebar-header h1 .puzzle-icon {
-  color: var(--te-neutral-900, #111827);
+  color: var(--te-neutral-900);
   font-size: 20px;
 }
 
@@ -993,7 +972,7 @@ onUnmounted(() => {
   gap: 12px;
   padding: 12px 16px;
   border-radius: 12px;
-  color: var(--te-neutral-600, #4b5563);
+  color: var(--te-settings-nav-text);
   cursor: pointer;
   transition: all 0.2s;
   font-weight: 500;
@@ -1006,22 +985,53 @@ onUnmounted(() => {
 }
 
 .nav-item:hover {
-  background: var(--te-bg-hover, #f3f4f6);
-  color: var(--te-neutral-900, #111827);
+  background: var(--te-settings-nav-hover);
+  color: var(--te-settings-text);
 }
 
 .nav-item.active {
-  background: rgba(99, 102, 241, 0.1);
-  color: var(--te-primary-600, #6366f1);
+  position: relative;
+  background: var(--te-settings-nav-active);
+  color: var(--te-settings-text);
+  font-weight: 600;
+  box-shadow: var(--te-settings-shadow-soft);
+}
+
+.nav-item.active::before {
+  /* Signature rail: 3px primary bar with the stage-8 activation shimmer. */
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 3px;
+  height: 60%;
+  min-height: 16px;
+  border-radius: 0 999px 999px 0;
+  background: linear-gradient(180deg, var(--te-primary-500), var(--te-primary-300));
+  background-position: 0 0;
+  background-size: 100% 200%;
+  transform: translateY(-50%);
+  animation:
+    te-rail-in var(--te-motion-panel) var(--te-ease-out-quint) both,
+    te-rail-shimmer calc(var(--te-motion-panel) * 3) var(--te-ease-out-quint) var(--te-motion-panel)
+      none;
 }
 
 .nav-item.active i {
   opacity: 1;
+  color: var(--te-primary-500);
+}
+
+/* Update-count badge next to the "更新" nav label (global .te-status-badge base). */
+.nav-badge {
+  margin-left: 4px;
+  font-size: 10px;
+  padding: 2px 6px;
 }
 
 .sidebar-footer {
   padding: 20px 24px;
-  border-top: 1px solid var(--te-border-color, #e5e7eb);
+  border-top: 1px solid var(--te-card-border);
 }
 
 .dev-mode-toggle {
@@ -1030,13 +1040,13 @@ onUnmounted(() => {
   justify-content: space-between;
   font-size: 13px;
   font-weight: 500;
-  color: var(--te-neutral-600, #4b5563);
+  color: var(--te-settings-nav-text);
 }
 
 .switch {
   width: 36px;
   height: 20px;
-  background: var(--te-border-color, #e5e7eb);
+  background: var(--te-neutral-300);
   border-radius: 20px;
   position: relative;
   cursor: pointer;
@@ -1057,7 +1067,7 @@ onUnmounted(() => {
 }
 
 .switch.on {
-  background: var(--te-primary-600, #6366f1);
+  background: var(--te-primary-500);
 }
 
 .switch.on::after {
@@ -1069,7 +1079,7 @@ onUnmounted(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: #fafaf9; /* 极浅暖灰背景，区分侧边栏 */
+  background: var(--te-settings-bg);
 }
 
 .topbar {
@@ -1095,11 +1105,11 @@ onUnmounted(() => {
 
 .search-box:focus-within {
   background: var(--te-card-bg);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--te-primary-500) 20%, transparent);
 }
 
 .search-box i {
-  color: var(--te-neutral-400, #9ca3af);
+  color: var(--te-neutral-500);
   margin-right: 8px;
 }
 
@@ -1109,11 +1119,11 @@ onUnmounted(() => {
   outline: none;
   font-size: 13px;
   width: 100%;
-  color: var(--te-neutral-800, #1f2937);
+  color: var(--te-neutral-700);
 }
 
 .search-box input::placeholder {
-  color: var(--te-neutral-400, #9ca3af);
+  color: var(--te-neutral-500);
 }
 
 .top-actions {
@@ -1136,21 +1146,21 @@ onUnmounted(() => {
 
 .btn-outline {
   background: transparent;
-  border: 1px solid var(--te-border-color, #e5e7eb);
-  color: var(--te-neutral-700, #374151);
+  border: 1px solid var(--te-card-border);
+  color: var(--te-neutral-700);
 }
 
 .btn-outline:hover {
-  background: var(--te-bg-hover, #f3f4f6);
+  background: var(--te-hover-bg);
 }
 
 .btn-primary {
-  background: var(--te-primary-600, #6366f1);
-  color: #fff;
+  background: var(--te-primary-500);
+  color: #fff; /* keep-white: primary button label */
 }
 
 .btn-primary:hover {
-  background: var(--te-primary-500, #818cf8);
+  background: var(--te-primary-400);
 }
 
 .scroll-area {
@@ -1162,7 +1172,7 @@ onUnmounted(() => {
 .page-title {
   font-size: 24px;
   font-weight: 700;
-  color: var(--te-neutral-900, #111827);
+  color: var(--te-neutral-900);
   margin-bottom: 24px;
   display: flex;
   align-items: center;
@@ -1173,7 +1183,7 @@ onUnmounted(() => {
   font-size: 12px;
   font-weight: 600;
   background: rgba(0, 0, 0, 0.06);
-  color: var(--te-neutral-600, #4b5563);
+  color: var(--te-neutral-500);
   padding: 4px 10px;
   border-radius: 100px;
 }
@@ -1190,7 +1200,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   margin: -16px 0 24px;
-  color: var(--te-neutral-500, #6b7280);
+  color: var(--te-neutral-500);
   font-size: 12px;
   font-weight: 700;
 }
@@ -1217,10 +1227,10 @@ onUnmounted(() => {
 
 /* Cards */
 .plugin-card {
-  background: var(--te-bg-card, #fff);
+  background: var(--te-card-bg);
   border-radius: 16px;
   padding: 24px;
-  border: 1px solid var(--te-border-color, #e5e7eb);
+  border: 1px solid var(--te-card-border);
   display: flex;
   flex-direction: column;
   position: relative;
@@ -1231,7 +1241,7 @@ onUnmounted(() => {
 .plugin-card:hover {
   box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.05);
   transform: translateY(-2px);
-  border-color: rgba(99, 102, 241, 0.3);
+  border-color: color-mix(in srgb, var(--te-primary-500) 30%, transparent);
 }
 
 .builtin-label {
@@ -1240,7 +1250,7 @@ onUnmounted(() => {
   right: 16px;
   font-size: 11px;
   font-weight: 600;
-  color: var(--te-neutral-400, #9ca3af);
+  color: var(--te-neutral-500);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -1263,13 +1273,26 @@ onUnmounted(() => {
 }
 
 .plugin-icon.ncm {
-  background: linear-gradient(135deg, #fee2e2, #fecaca);
-  color: #ef4444;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--te-danger-soft-fg) 10%, transparent),
+    color-mix(in srgb, var(--te-danger-soft-fg) 18%, transparent)
+  );
+  color: var(--te-danger-soft-fg);
 }
 
 .plugin-icon.provider {
   background: linear-gradient(135deg, #e0f2fe, #ccfbf1);
   color: #0891b2;
+}
+
+.plugin-icon.fallback {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--te-primary-500) 10%, transparent),
+    color-mix(in srgb, var(--te-primary-400) 18%, transparent)
+  );
+  color: var(--te-primary-500);
 }
 
 .plugin-icon.dsp {
@@ -1295,7 +1318,7 @@ onUnmounted(() => {
 .plugin-name {
   font-size: 15px;
   font-weight: 700;
-  color: var(--te-neutral-900, #111827);
+  color: var(--te-neutral-900);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1303,7 +1326,7 @@ onUnmounted(() => {
 
 .plugin-version {
   font-size: 11px;
-  color: var(--te-neutral-400, #9ca3af);
+  color: var(--te-neutral-500);
   background: rgba(0, 0, 0, 0.04);
   padding: 2px 6px;
   border-radius: 6px;
@@ -1311,7 +1334,7 @@ onUnmounted(() => {
 
 .plugin-author {
   font-size: 12px;
-  color: var(--te-neutral-500, #6b7280);
+  color: var(--te-neutral-500);
   display: flex;
   align-items: center;
   gap: 4px;
@@ -1332,13 +1355,13 @@ onUnmounted(() => {
 }
 
 .signature-evidence {
-  color: var(--te-neutral-400, #9ca3af);
+  color: var(--te-neutral-500);
   font-size: 10px;
   letter-spacing: 0;
 }
 
 .plugin-trust.trust-official {
-  color: #4f46e5;
+  color: var(--te-primary-500);
 }
 
 .plugin-trust.trust-signed {
@@ -1350,7 +1373,7 @@ onUnmounted(() => {
 }
 
 .plugin-trust.trust-unverified {
-  color: var(--te-neutral-400, #9ca3af);
+  color: var(--te-neutral-500);
 }
 
 .plugin-tags {
@@ -1367,8 +1390,8 @@ onUnmounted(() => {
 }
 
 .tag.provider {
-  background: rgba(99, 102, 241, 0.1);
-  color: var(--te-primary-600, #6366f1);
+  background: color-mix(in srgb, var(--te-primary-500) 10%, transparent);
+  color: var(--te-primary-500);
 }
 
 .tag.ui {
@@ -1386,12 +1409,26 @@ onUnmounted(() => {
   color: #059669;
 }
 
+.tag.theme {
+  background: color-mix(in srgb, var(--te-primary-500) 10%, transparent);
+  color: var(--te-primary-500);
+}
+
 .plugin-desc {
   font-size: 13px;
-  color: var(--te-neutral-600, #4b5563);
+  color: var(--te-neutral-500);
   line-height: 1.5;
   flex: 1;
   margin-bottom: 20px;
+}
+
+.plugin-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--te-danger-soft-fg);
 }
 
 .plugin-footer {
@@ -1411,7 +1448,7 @@ onUnmounted(() => {
 .switch-label {
   font-size: 12px;
   font-weight: 600;
-  color: var(--te-neutral-500, #6b7280);
+  color: var(--te-neutral-500);
 }
 
 .plugin-actions {
@@ -1425,7 +1462,7 @@ onUnmounted(() => {
   border-radius: 8px;
   border: none;
   background: rgba(0, 0, 0, 0.04);
-  color: var(--te-neutral-600, #4b5563);
+  color: var(--te-neutral-500);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1435,7 +1472,7 @@ onUnmounted(() => {
 
 .icon-btn:hover {
   background: rgba(0, 0, 0, 0.08);
-  color: var(--te-neutral-900, #111827);
+  color: var(--te-neutral-900);
 }
 
 .icon-btn.danger:hover {
@@ -1445,7 +1482,7 @@ onUnmounted(() => {
 
 /* Discover Banner */
 .discover-banner {
-  background: linear-gradient(135deg, #4f46e5, #818cf8);
+  background: linear-gradient(135deg, var(--te-primary-500), var(--te-primary-400));
   border-radius: 20px;
   padding: 32px;
   color: #fff;
@@ -1476,7 +1513,104 @@ onUnmounted(() => {
   right: -20px;
   bottom: -40px;
   font-size: 180px;
-  opacity: 0.1;
+  opacity: 0.08;
   transform: rotate(-15deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .banner-art {
+    transform: none;
+  }
+}
+
+/* Uninstall confirmation dialog */
+.uninstall-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 24px;
+}
+
+.uninstall-dialog {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  max-width: 400px;
+  width: 100%;
+  padding: 28px 32px;
+  border-radius: 16px;
+  background: var(--te-card-bg);
+  border: 1px solid var(--te-card-border);
+  box-shadow: var(--te-glass-shadow, 0 12px 40px rgba(0, 0, 0, 0.2));
+}
+
+.uninstall-dialog-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  color: var(--te-danger-soft-fg);
+  background: var(--te-danger-soft-bg);
+}
+
+.uninstall-dialog-copy {
+  text-align: center;
+}
+
+.uninstall-dialog-copy h3 {
+  margin: 0 0 6px 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--te-neutral-900);
+}
+
+.uninstall-dialog-copy p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--te-neutral-500);
+}
+
+.uninstall-dialog-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.btn-danger {
+  background: var(--te-danger-soft-fg);
+  color: #fff; /* keep-white: destructive button label */
+}
+
+.btn-danger:hover {
+  background: color-mix(in srgb, var(--te-danger-soft-fg) 88%, #000);
+}
+
+.uninstall-dialog-enter-active,
+.uninstall-dialog-leave-active {
+  transition: opacity 0.2s var(--te-ease-out-quint);
+}
+
+.uninstall-dialog-enter-active .uninstall-dialog,
+.uninstall-dialog-leave-active .uninstall-dialog {
+  transition: transform 0.2s var(--te-ease-out-quint);
+}
+
+.uninstall-dialog-enter-from,
+.uninstall-dialog-leave-to {
+  opacity: 0;
+}
+
+.uninstall-dialog-enter-from .uninstall-dialog,
+.uninstall-dialog-leave-to .uninstall-dialog {
+  transform: scale(0.96) translateY(8px);
 }
 </style>
