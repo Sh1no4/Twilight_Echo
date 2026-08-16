@@ -2877,6 +2877,7 @@ onMounted(async () => {
             class="btn-back"
             data-te-back-button="icon"
             title="返回"
+            aria-label="返回"
             @click="currentDetail ? goBack() : clearSearch()"
           >
             <i class="pi pi-arrow-left"></i>
@@ -3108,14 +3109,14 @@ onMounted(async () => {
           />
         </div>
         <div v-else :key="streamingViewKey" class="streaming-content-body stream-view-panel">
-          <div v-if="!hasOnlineNavigationEntries && !currentDetail" class="streaming-placeholder">
-            <i class="pi pi-plug" style="font-size: 48px; color: #ccc"></i>
+          <div
+            v-if="!hasOnlineNavigationEntries && !currentDetail"
+            class="streaming-placeholder"
+            role="status"
+          >
+            <div class="te-empty-state__icon"><i class="pi pi-plug"></i></div>
             <p class="placeholder-title">
-              {{
-                providerRuntimeUnsupported
-                  ? '当前运行时不支持在线音源'
-                  : '未启用可用的在线音源'
-              }}
+              {{ providerRuntimeUnsupported ? '当前运行时不支持在线音源' : '未启用可用的在线音源' }}
             </p>
             <p class="placeholder-hint">
               {{
@@ -3175,8 +3176,9 @@ onMounted(async () => {
           <div
             v-else-if="(!activeProviderAvailable || activeProviderUnavailable) && !currentDetail"
             class="streaming-placeholder"
+            role="status"
           >
-            <i class="pi pi-ban" style="font-size: 48px; color: #ccc"></i>
+            <div class="te-empty-state__icon"><i class="pi pi-ban"></i></div>
             <p class="placeholder-title">
               {{ isExternalActive ? `${activeProviderLabel} 插件已停用` : '网易云音乐插件已停用' }}
             </p>
@@ -3190,8 +3192,12 @@ onMounted(async () => {
             </p>
           </div>
 
-          <div v-else-if="!activeLoggedIn && !currentDetail" class="streaming-placeholder">
-            <i class="pi pi-user" style="font-size: 48px; color: #ccc"></i>
+          <div
+            v-else-if="!activeLoggedIn && !currentDetail"
+            class="streaming-placeholder"
+            role="status"
+          >
+            <div class="te-empty-state__icon"><i class="pi pi-user"></i></div>
             <p class="placeholder-title">
               {{ isExternalActive ? `请先登录 ${activeProviderLabel}` : '请先登录网易云音乐' }}
             </p>
@@ -3218,8 +3224,9 @@ onMounted(async () => {
           <div
             v-else-if="activeTab === 'library' && !currentDetail && activeLibraryError"
             class="streaming-placeholder"
+            role="status"
           >
-            <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
+            <div class="te-empty-state__icon"><i class="pi pi-exclamation-triangle"></i></div>
             <p class="placeholder-title">加载失败</p>
             <p class="placeholder-hint">{{ activeLibraryError }}</p>
             <button type="button" class="stream-action-btn" @click="retryCurrentView">
@@ -3235,8 +3242,12 @@ onMounted(async () => {
 
             <!-- Track playlist / rec / liked / album / recent / ranking: editorial stage -->
             <template v-if="showTrackDetailStage">
-              <div v-if="detailError" class="streaming-placeholder detail-placeholder">
-                <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
+              <div
+                v-if="detailError"
+                class="streaming-placeholder detail-placeholder"
+                role="status"
+              >
+                <div class="te-empty-state__icon"><i class="pi pi-exclamation-triangle"></i></div>
                 <p class="placeholder-title">加载失败</p>
                 <p class="placeholder-hint">{{ detailError }}</p>
                 <button type="button" class="stream-action-btn" @click="retryCurrentView">
@@ -3836,7 +3847,7 @@ onMounted(async () => {
 }
 
 .provider-download-item-info small.error {
-  color: var(--te-danger, #ef4444);
+  color: var(--te-danger-soft-fg);
 }
 
 .provider-download-item-info small.path {
@@ -3863,8 +3874,8 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  background: var(--te-accent, #7c3aed);
-  color: #fff;
+  background: var(--te-accent, var(--te-primary-500));
+  color: var(--te-neutral-50);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   transition: transform 0.15s;
 }
@@ -3880,8 +3891,8 @@ onMounted(async () => {
   min-width: 18px;
   height: 18px;
   border-radius: 9px;
-  background: var(--te-danger, #ef4444);
-  color: #fff;
+  background: #ef4444;
+  color: var(--te-neutral-50);
   font-size: 10px;
   font-weight: 700;
   display: flex;

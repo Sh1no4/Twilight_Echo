@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import type { MediaProviderPlaylistSummary, MediaProviderProfile } from '../providers/mediaProvider'
 import {
   buildProviderHealthPresentation,
@@ -52,6 +52,8 @@ const emit = defineEmits<{
 // toggle button appears once a second provider (e.g. ytmusic) is loaded and
 // disappears when it is gone.
 const providerMenuOpen = ref(false)
+const providerTriggerRef = ref<HTMLElement | null>(null)
+const providerMenuRef = ref<HTMLElement | null>(null)
 
 const providerOptions = computed<ProviderOption[]>(() => props.availableProviders ?? [])
 const canSwitchProvider = computed(() => providerOptions.value.length > 1)
@@ -66,11 +68,57 @@ const activeProviderIcon = computed(() => {
   return active?.icon ?? 'pi pi-music'
 })
 
-function onProviderMenuBlur(): void {
-  // Defer so a menu-item click can register before the menu closes.
-  setTimeout(() => {
-    providerMenuOpen.value = false
-  }, 120)
+function providerMenuOptions(): HTMLElement[] {
+  const container = providerMenuRef.value
+  if (!container) return []
+  return Array.from(container.querySelectorAll<HTMLElement>('.provider-menu-item'))
+}
+
+// Close only when focus leaves the whole dropdown — a blur timeout would race
+// against keyboard activation of the (focusable) options. Mirrors the
+// search-source listbox pattern in StreamingPage.vue.
+function onProviderMenuFocusOut(event: FocusEvent): void {
+  const next = event.relatedTarget as Node | null
+  const container = event.currentTarget as HTMLElement | null
+  if (!next || !container?.contains(next)) providerMenuOpen.value = false
+}
+
+function openProviderMenu(fromTop: boolean): void {
+  if (providerMenuOpen.value) return
+  providerMenuOpen.value = true
+  void nextTick(() => {
+    const options = providerMenuOptions()
+    if (fromTop) options[0]?.focus()
+    else options[options.length - 1]?.focus()
+  })
+}
+
+function onProviderMenuKeydown(event: KeyboardEvent): void {
+  const options = providerMenuOptions()
+  if (options.length === 0) return
+  const currentIndex = options.indexOf(document.activeElement as HTMLElement)
+  let nextIndex: number
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    nextIndex = currentIndex + 1 >= options.length ? 0 : currentIndex + 1
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    nextIndex = currentIndex - 1 < 0 ? options.length - 1 : currentIndex - 1
+  } else if (event.key === 'Home') {
+    event.preventDefault()
+    nextIndex = 0
+  } else if (event.key === 'End') {
+    event.preventDefault()
+    nextIndex = options.length - 1
+  } else {
+    return
+  }
+  options[nextIndex]?.focus()
+}
+
+function closeProviderMenu(): void {
+  providerMenuOpen.value = false
+  providerTriggerRef.value?.focus()
 }
 
 function selectProvider(id: string): void {
@@ -144,28 +192,47 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
         <div class="profile-info">
           <div class="profile-title-row">
             <h3>{{ providerLabel || '在线音源' }}个人音乐库</h3>
-            <div v-if="canSwitchProvider" class="provider-switcher">
+            <div
+              v-if="canSwitchProvider"
+              class="provider-switcher"
+              @focusout="onProviderMenuFocusOut"
+              @keydown="onProviderMenuKeydown"
+              @keydown.esc.prevent="closeProviderMenu"
+            >
               <button
+                ref="providerTriggerRef"
                 type="button"
                 class="provider-switch-btn"
                 :class="{ active: providerMenuOpen }"
                 :title="`切换音源（当前：${activeProviderName}）`"
+                aria-haspopup="listbox"
+                :aria-expanded="providerMenuOpen"
                 @click="providerMenuOpen = !providerMenuOpen"
-                @blur="onProviderMenuBlur"
+                @keydown.arrow-down.prevent="openProviderMenu(true)"
+                @keydown.arrow-up.prevent="openProviderMenu(false)"
               >
                 <i :class="activeProviderIcon"></i>
                 <span class="provider-switch-name">{{ activeProviderName }}</span>
                 <i class="pi pi-chevron-down provider-switch-caret"></i>
               </button>
-              <div v-if="providerMenuOpen" class="provider-menu">
-                <button
+              <div
+                v-if="providerMenuOpen"
+                ref="providerMenuRef"
+                class="provider-menu"
+                role="listbox"
+                aria-label="切换音源"
+              >
+                <div
                   v-for="provider in providerOptions"
                   :key="provider.id"
-                  type="button"
-                  class="provider-menu-item"
+                  role="option"
+                  tabindex="-1"
+                  :aria-selected="provider.id === activeProvider"
                   :class="{ active: provider.id === activeProvider }"
                   :title="providerMenuHealthDetail(provider)"
                   @mousedown.prevent="selectProvider(provider.id)"
+                  @keydown.enter.prevent="selectProvider(provider.id)"
+                  @keydown.space.prevent="selectProvider(provider.id)"
                 >
                   <i :class="provider.icon"></i>
                   <span>
@@ -178,7 +245,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
                     v-if="provider.id === activeProvider"
                     class="pi pi-check provider-menu-check"
                   ></i>
-                </button>
+                </div>
               </div>
             </div>
           </div>
@@ -420,17 +487,17 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   gap: 24px;
   cursor: default;
   background: rgba(255, 255, 255, 0.82);
-  border: 1px solid rgba(194, 112, 61, 0.1);
+  border: 1px solid var(--te-card-border);
   box-shadow:
-    0 20px 50px rgba(194, 112, 61, 0.07),
-    0 4px 16px rgba(42, 33, 24, 0.03),
+    0 20px 50px rgba(15, 23, 42, 0.06),
+    0 4px 16px rgba(15, 23, 42, 0.03),
     inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 .profile-card:hover {
   transform: none;
   box-shadow:
-    0 20px 50px rgba(194, 112, 61, 0.07),
-    0 4px 16px rgba(42, 33, 24, 0.03),
+    0 20px 50px rgba(15, 23, 42, 0.06),
+    0 4px 16px rgba(15, 23, 42, 0.03),
     inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
@@ -441,8 +508,8 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 .profile-avatar-ring {
   padding: 4px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #f6d365, #fda085, #a8edea);
-  box-shadow: 0 8px 24px rgba(194, 112, 61, 0.15);
+  background: linear-gradient(135deg, var(--te-primary-500), var(--te-primary-400));
+  box-shadow: var(--te-glass-shadow);
 }
 .profile-avatar {
   width: 96px;
@@ -456,8 +523,8 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   font-size: 32px;
 }
 .profile-avatar-placeholder {
-  color: #c2703d;
-  background: #fef3e2;
+  color: var(--te-primary-500);
+  background: color-mix(in srgb, var(--te-primary-500) 10%, transparent);
 }
 
 .profile-info {
@@ -503,9 +570,9 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 }
 .provider-switch-btn:hover,
 .provider-switch-btn.active {
-  background: rgba(var(--te-primary-rgb, 99, 102, 241), 0.1);
-  border-color: rgba(var(--te-primary-rgb, 99, 102, 241), 0.3);
-  color: var(--te-primary-500, #6366f1);
+  background: rgba(var(--te-primary-rgb), 0.1);
+  border-color: rgba(var(--te-primary-rgb), 0.3);
+  color: var(--te-primary-500);
 }
 .provider-switch-btn i:first-child {
   font-size: 13px;
@@ -529,9 +596,9 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   right: 0;
   min-width: 180px;
   background: var(--te-card-bg);
-  border: 1px solid rgba(15, 23, 42, 0.08);
+  border: 1px solid var(--te-card-border);
   border-radius: 14px;
-  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.14);
+  box-shadow: var(--te-glass-shadow);
   padding: 6px;
   z-index: 20;
   animation: provider-menu-in 0.16s ease both;
@@ -553,13 +620,19 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
     background 0.15s,
     color 0.15s;
   text-align: left;
+  user-select: none;
 }
 .provider-menu-item:hover {
-  background: rgba(15, 23, 42, 0.04);
+  background: color-mix(in srgb, var(--te-primary-500) 8%, transparent);
+  color: var(--te-primary-500);
+}
+.provider-menu-item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--te-focus-ring);
 }
 .provider-menu-item.active {
-  color: var(--te-primary-500, #6366f1);
-  background: rgba(var(--te-primary-rgb, 99, 102, 241), 0.08);
+  color: var(--te-primary-500);
+  background: color-mix(in srgb, var(--te-primary-500) 8%, transparent);
 }
 .provider-menu-item span {
   flex: 1;
@@ -589,7 +662,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 .profile-info h1 {
   font-size: 28px;
   font-weight: 800;
-  color: #2a2118;
+  color: var(--te-neutral-900, #1e293b);
   margin: 0 0 4px 0;
   letter-spacing: -0.5px;
   white-space: nowrap;
@@ -598,7 +671,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 }
 .profile-info p {
   font-size: 14px;
-  color: #a08a72;
+  color: var(--te-neutral-500, #64748b);
   margin: 0 0 16px 0;
   white-space: nowrap;
   overflow: hidden;
@@ -610,13 +683,13 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   gap: 12px;
 }
 .stat-badge {
-  background: rgba(194, 112, 61, 0.06);
+  background: color-mix(in srgb, var(--te-primary-500) 6%, transparent);
   padding: 7px 16px;
   border-radius: 12px;
-  border: 1px solid rgba(194, 112, 61, 0.1);
+  border: 1px solid color-mix(in srgb, var(--te-primary-500) 10%, transparent);
   font-size: 13px;
   font-weight: 700;
-  color: #2a2118;
+  color: var(--te-neutral-900, #1e293b);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -624,11 +697,11 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   transition: all 0.2s;
 }
 .stat-badge:hover {
-  background: rgba(194, 112, 61, 0.1);
-  border-color: rgba(194, 112, 61, 0.2);
+  background: color-mix(in srgb, var(--te-primary-500) 10%, transparent);
+  border-color: color-mix(in srgb, var(--te-primary-500) 20%, transparent);
 }
 .stat-badge span {
-  color: #a08a72;
+  color: var(--te-neutral-500, #64748b);
   font-weight: 600;
 }
 
@@ -646,11 +719,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   right: -50px;
   width: 200px;
   height: 200px;
-  background: radial-gradient(
-    circle,
-    rgba(var(--te-primary-rgb, 99, 102, 241), 0.15) 0%,
-    transparent 70%
-  );
+  background: radial-gradient(circle, rgba(var(--te-primary-rgb), 0.15) 0%, transparent 70%);
   border-radius: 50%;
   pointer-events: none;
 }
@@ -661,7 +730,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 }
 .favorites-info .tag {
   display: inline-block;
-  background: rgba(var(--te-primary-rgb, 99, 102, 241), 0.1);
+  background: rgba(var(--te-primary-rgb), 0.1);
   color: var(--te-primary-500);
   font-size: 12px;
   font-weight: 700;
@@ -684,8 +753,8 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 }
 
 .btn-play {
-  background: linear-gradient(135deg, var(--te-primary-500, #6366f1), #818cf8);
-  color: #fff;
+  background: linear-gradient(135deg, var(--te-primary-500), var(--te-primary-400));
+  color: var(--te-neutral-50);
   border: none;
   padding: 12px 32px;
   border-radius: 999px;
@@ -694,13 +763,13 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  box-shadow: 0 10px 24px rgba(var(--te-primary-rgb, 99, 102, 241), 0.3);
+  box-shadow: 0 10px 24px rgba(var(--te-primary-rgb), 0.3);
   transition: all 0.3s;
   cursor: pointer;
 }
 .btn-play:hover {
   transform: translateY(-2px) scale(1.02);
-  box-shadow: 0 14px 32px rgba(var(--te-primary-rgb, 99, 102, 241), 0.4);
+  box-shadow: 0 14px 32px rgba(var(--te-primary-rgb), 0.4);
 }
 
 .favorites-cover {
@@ -728,7 +797,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   font-size: 40px;
 }
 .liked-card-cover-placeholder {
-  color: var(--te-favorite-500, #ef4444);
+  color: var(--te-favorite-500);
   background: var(--te-subtle-bg);
 }
 
@@ -793,8 +862,8 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 }
 
 .recent-card .icon-wrap {
-  background: rgba(var(--te-primary-rgb, 99, 102, 241), 0.15);
-  color: var(--te-primary-500, #6366f1);
+  background: rgba(var(--te-primary-rgb), 0.15);
+  color: var(--te-primary-500);
 }
 
 .ranking-card .icon-wrap {
@@ -834,7 +903,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 .feature-card:hover .enter-btn {
   transform: scale(1.1) translateX(4px);
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.1);
-  color: var(--te-primary-500, #6366f1);
+  color: var(--te-primary-500);
 }
 
 .feature-preview {
@@ -856,9 +925,9 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
-  border: 1px solid rgba(var(--te-primary-rgb, 99, 102, 241), 0.22);
-  background: rgba(var(--te-primary-rgb, 99, 102, 241), 0.1);
-  color: var(--te-primary-600, #4f46e5);
+  border: 1px solid rgba(var(--te-primary-rgb), 0.22);
+  background: rgba(var(--te-primary-rgb), 0.1);
+  color: var(--te-primary-500);
   border-radius: 999px;
   padding: 10px 16px;
   font-size: 13px;
@@ -869,8 +938,8 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 
 .create-playlist-btn:hover {
   transform: translateY(-1px);
-  background: rgba(var(--te-primary-rgb, 99, 102, 241), 0.16);
-  box-shadow: 0 10px 24px rgba(var(--te-primary-rgb, 99, 102, 241), 0.16);
+  background: rgba(var(--te-primary-rgb), 0.16);
+  box-shadow: 0 10px 24px rgba(var(--te-primary-rgb), 0.16);
 }
 
 .playlist-delete-button {
@@ -981,7 +1050,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 }
 .playlist-cover-placeholder {
   background: #f3f0ff;
-  color: var(--te-primary-500, #6366f1);
+  color: var(--te-primary-500);
 }
 
 .playlist-item:hover .playlist-item-cover {
@@ -1018,7 +1087,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 }
 
 .playlist-item:hover .playlist-item-arrow {
-  color: var(--te-primary-500, #6366f1);
+  color: var(--te-primary-500);
   transform: translateX(4px);
 }
 
@@ -1076,7 +1145,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   width: 48px;
   height: 48px;
   border-radius: 12px;
-  color: var(--te-primary-500, #6366f1);
+  color: var(--te-primary-500);
   background: #f3f0ff;
   font-size: 20px;
 }

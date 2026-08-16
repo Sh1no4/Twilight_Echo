@@ -1148,7 +1148,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   inset: 0;
   display: grid;
   place-items: center;
-  color: #fff;
+  color: var(--te-neutral-50);
   background: color-mix(in srgb, var(--te-neutral-900) 44%, transparent);
   font-size: 13px;
   opacity: 0;
@@ -1170,7 +1170,7 @@ function playPersonalizedStream(section: RecSection | null): void {
 .chart-eq i {
   width: 3px;
   border-radius: 2px;
-  background: #fff;
+  background: var(--te-neutral-50);
   animation: chart-eq-bounce 0.9s ease-in-out infinite;
 }
 
@@ -1320,7 +1320,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
-  color: #fff;
+  color: var(--te-neutral-50);
   background: color-mix(in srgb, var(--te-neutral-900) 46%, transparent);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
@@ -1348,7 +1348,7 @@ function playPersonalizedStream(section: RecSection | null): void {
   border-radius: 999px;
   font-size: 12px;
   color: var(--te-neutral-900);
-  background: color-mix(in srgb, #ffffff 92%, transparent);
+  background: color-mix(in srgb, var(--te-neutral-50) 92%, transparent);
   box-shadow: 0 10px 22px color-mix(in srgb, var(--te-neutral-900) 30%, transparent);
   opacity: 0;
   transform: translateY(6px) scale(0.9);
@@ -1411,7 +1411,7 @@ function playPersonalizedStream(section: RecSection | null): void {
 .invite-orb {
   position: absolute;
   border-radius: 999px;
-  filter: blur(52px);
+  filter: blur(28px);
   pointer-events: none;
 }
 
@@ -1867,6 +1867,23 @@ function playPersonalizedStream(section: RecSection | null): void {
   .sk-shimmer::after {
     animation: none;
   }
+}
+
+/* App-level reduced-motion: keep a single invite orb and freeze the collage.
+   base.css already zeroes every animation when html[data-te-motion] is reduced/off;
+   these make the intent explicit and drop the secondary decorative orb. */
+::global(html[data-te-motion='reduced']) .invite-orb-b,
+::global(html[data-te-motion='off']) .invite-orb-b {
+  display: none;
+}
+
+::global(html[data-te-motion='reduced']) .hero-collage-card-0,
+::global(html[data-te-motion='reduced']) .hero-collage-card-1,
+::global(html[data-te-motion='reduced']) .hero-collage-card-2,
+::global(html[data-te-motion='off']) .hero-collage-card-0,
+::global(html[data-te-motion='off']) .hero-collage-card-1,
+::global(html[data-te-motion='off']) .hero-collage-card-2 {
+  animation: none;
 }
 </style>
 
