@@ -1102,6 +1102,7 @@ class FakeAudioServiceBinding extends EventEmitter implements AudioEngineService
     this.queue = JSON.parse(queueJson) as AudioEngineQueueItem[]
     this.queueIndex = startIndex
   }
+  SetPlayMode = (_mode: PlayMode): void => {}
   SetDspConfig = (json: string): void => {
     this.dspConfig = JSON.parse(json) as Partial<AudioProcessingSettings>
   }
@@ -6844,4 +6845,87 @@ test('loudnorm status event, library RG queue fields, and cancel IPC are wired e
       'notifyLoudnessCacheCleared'
     )
   )
+})
+
+test('paused native polling throttles service refreshes to one per four ticks', async () => {
+  let now = 500
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding,
+    {
+      now: () => now
+    }
+  )
+
+  await manager.play('track.flac', 0)
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    state: 'paused',
+    position: 3
+  }
+  const tickManager = manager as unknown as { tick: () => void }
+  tickManager.tick()
+
+  let nativeReads = 0
+  const original = nativeBinding.GetPlaybackInfo
+  nativeBinding.GetPlaybackInfo = () => {
+    nativeReads += 1
+    return original.call(nativeBinding)
+  }
+
+  for (let index = 0; index < 8; index += 1) {
+    now += 250
+    tickManager.tick()
+  }
+  assert.equal(nativeReads, 2)
+
+  nativeBinding.GetPlaybackInfo = original
+  const info = await manager.getPlaybackInfo()
+  assert.equal(info.state, 'paused')
+})
+
+test('failed service-mode queue load rolls the native queue back to the local mirror', async () => {
+  const service = new FakeAudioServiceBinding()
+  const manager = new AudioEngineManager(
+    { exclusiveMode: false },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+  const firstQueue: AudioEngineQueueItem[] = [{ id: 'one', source: 'first.flac', title: 'First' }]
+  const secondQueue: AudioEngineQueueItem[] = [
+    { id: 'two', source: 'second.flac', title: 'Second' }
+  ]
+  await manager.loadQueue(firstQueue, 0)
+  assert.deepEqual(service.queue, firstQueue)
+
+  let loadQueueCalls = 0
+  const originalLoadQueue = service.LoadQueue
+  service.LoadQueue = (queueJson: string, startIndex: number): void => {
+    loadQueueCalls += 1
+    originalLoadQueue.call(service, queueJson, startIndex)
+  }
+  let failedOnce = false
+  service.SetPlayMode = (): void => {
+    if (!failedOnce) {
+      failedOnce = true
+      throw new Error('transient play-mode failure')
+    }
+  }
+
+  await assert.rejects(manager.loadQueue(secondQueue, 0), /原生播放模式同步失败/)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.deepEqual(service.queue, firstQueue)
+  assert.equal(service.queueIndex, 0)
+  assert.equal(loadQueueCalls, 2)
+
+  manager.destroy()
 })

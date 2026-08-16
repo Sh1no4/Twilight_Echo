@@ -99,6 +99,11 @@ export interface PlaybackControllerHost {
   emit(event: string, payload?: unknown): void
 }
 
+// While paused/stopped with no in-flight transition the native state cannot
+// advance on its own, so the 250ms tick only refreshes the service cache every
+// Nth tick; demand reads (getPlaybackInfo) still bypass this via the TTL gate.
+const NATIVE_IDLE_POLL_INTERVAL_TICKS = 4
+
 export class PlaybackController {
   queue: AudioEngineQueueItem[] = []
   queueJson = '[]'
@@ -106,6 +111,7 @@ export class PlaybackController {
   timer: NodeJS.Timeout | null = null
   lastTick = 0
   lastNativePlaybackInfoTickReadAt = Number.NEGATIVE_INFINITY
+  nativeIdlePollTick = 0
   lastNativeReportedPosition = Number.NaN
   pendingNativePositionTarget: number | null = null
   nativeConfigRevisionObserved = false
@@ -622,22 +628,36 @@ export class PlaybackController {
     const nextQueueJson = JSON.stringify(nextQueue)
     if (nextQueueJson === this.queueJson && nextQueueIndex === this.playbackInfo.queueIndex) return
 
-    const queueLoaded = await this.callNativeMaybeAsync(
-      '加载队列',
-      'LoadQueue',
-      nextQueueJson,
-      nextQueueIndex
-    )
-    if (!queueLoaded) {
-      throw new Error(`原生音频队列加载失败：${this.lastNativeError || '原生音频引擎不可用'}`)
-    }
-    const playModeSynced = await this.callNativeMaybeAsync(
-      '加载队列后同步播放模式',
-      'SetPlayMode',
-      nativePlayMode(this.playbackInfo.playMode)
-    )
-    if (!playModeSynced) {
-      throw new Error(`原生播放模式同步失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+    const previousQueueJson = this.queueJson
+    const previousQueueIndex = this.playbackInfo.queueIndex
+    const hasPreviousQueue = this.queue.length > 0
+    try {
+      const queueLoaded = await this.callNativeMaybeAsync(
+        '加载队列',
+        'LoadQueue',
+        nextQueueJson,
+        nextQueueIndex
+      )
+      if (!queueLoaded) {
+        throw new Error(`原生音频队列加载失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+      }
+      const playModeSynced = await this.callNativeMaybeAsync(
+        '加载队列后同步播放模式',
+        'SetPlayMode',
+        nativePlayMode(this.playbackInfo.playMode)
+      )
+      if (!playModeSynced) {
+        throw new Error(`原生播放模式同步失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+      }
+    } catch (error) {
+      // In service mode a rejected LoadQueue does not prove the native side
+      // never ran (slow-tier timeouts reject while the load may still land),
+      // which would leave the engine on the new queue while the local mirror
+      // keeps the old one. Best-effort restore closes that divergence.
+      if (hasPreviousQueue) {
+        this.rollbackQueueAfterFailedLoad(previousQueueJson, previousQueueIndex)
+      }
+      throw error
     }
 
     this.queue = nextQueue
@@ -645,6 +665,21 @@ export class PlaybackController {
     this.playbackInfo.queueIndex = nextQueueIndex
     this.invalidateUpcomingTrackCache()
     this.emit('queue-change', this.queue)
+  }
+
+  private rollbackQueueAfterFailedLoad(queueJson: string, queueIndex: number): void {
+    const native = this.native
+    const callAsync = native?.callAsync?.bind(native)
+    if (typeof callAsync !== 'function') return
+    void (async () => {
+      await callAsync('LoadQueue', [queueJson, queueIndex])
+      await callAsync('SetPlayMode', [nativePlayMode(this.playbackInfo.playMode)])
+    })().catch((error) => {
+      console.warn(
+        '[音频引擎] 队列加载失败后的回滚未完成：',
+        error instanceof Error ? error.message : String(error)
+      )
+    })
   }
 
   async next(): Promise<void> {
@@ -1288,6 +1323,18 @@ export class PlaybackController {
     this.pollAudioDeviceOptionsForChanges()
 
     if (this.nativePlaybackActive) {
+      const nativeIdle =
+        this.playbackInfo.state !== 'playing' &&
+        this.pendingNativeSource === null &&
+        this.pendingNativePositionTarget === null
+      if (nativeIdle) {
+        this.nativeIdlePollTick += 1
+        if (this.nativeIdlePollTick < NATIVE_IDLE_POLL_INTERVAL_TICKS) {
+          this.publishProperty('time-pos', this.playbackInfo.position)
+          return
+        }
+      }
+      this.nativeIdlePollTick = 0
       const previousCapabilitySignature = this.createDeviceCapabilityRefreshSignature(
         this.playbackInfo
       )
