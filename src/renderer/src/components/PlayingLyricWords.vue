@@ -6,7 +6,12 @@ import {
   buildKaraokeMaskPlan,
   buildWordFloatAnimation,
   computeEmphasisStrength,
+  emphasisGraphemes,
+  MAX_EMPHASIS_GRAPHEMES,
   shouldEmphasizeChunk,
+  splitGraphemes,
+  type LyricAnimationVoiceRole,
+  type LyricDirection,
   type WordMeasurement
 } from '../utils/lyricEmphasis'
 import {
@@ -37,22 +42,34 @@ interface LyricClockSnapshot {
   position: number
 }
 
-const props = defineProps<{
-  words: LyricWord[]
-  active: boolean
-  karaokeEnabled: boolean
-  offsetSeconds: number
-  clock: {
-    snapshot: Ref<LyricClockSnapshot>
-    isPlaying: Ref<boolean>
-    positionAt: (at?: number) => number
+type LyricMotionMode = 'full' | 'reduced' | 'off'
+
+const props = withDefaults(
+  defineProps<{
+    words: LyricWord[]
+    active: boolean
+    karaokeEnabled: boolean
+    offsetSeconds: number
+    motionMode?: LyricMotionMode
+    voiceRole?: LyricAnimationVoiceRole
+    direction?: LyricDirection
+    clock: {
+      snapshot: Ref<LyricClockSnapshot>
+      isPlaying: Ref<boolean>
+      positionAt: (at?: number) => number
+    }
+  }>(),
+  {
+    motionMode: 'full',
+    voiceRole: 'lead',
+    direction: 'ltr'
   }
-}>()
+)
 
 interface RenderSyllable {
   key: number
   word: ResolvedLyricWord
-  /** Split per character only when the word is emphasised. */
+  /** Split per grapheme only when the word is emphasised. */
   chars: string[] | null
 }
 
@@ -71,9 +88,7 @@ let activeAnimations: Animation[] = []
 let cancelScheduledBuild: (() => void) | null = null
 let buildGeneration = 0
 
-const resolvedWords = computed<ResolvedLyricWord[]>(() =>
-  resolveLyricWordTimings(props.words)
-)
+const resolvedWords = computed<ResolvedLyricWord[]>(() => resolveLyricWordTimings(props.words))
 
 const lineStartSeconds = computed(() => {
   let start = Number.POSITIVE_INFINITY
@@ -87,7 +102,10 @@ const lineEndSeconds = computed(() => {
   return Number.isFinite(end) ? end : lineStartSeconds.value
 })
 
+const emphasisPlan = new Map<string, { span: ResolvedLyricWord; isLast: boolean }>()
+
 const renderChunks = computed<RenderChunk[]>(() => {
+  emphasisPlan.clear()
   const chunks = chunkAndSplitLyricWords(resolvedWords.value)
   const result: RenderChunk[] = []
   let syllableKey = 0
@@ -100,8 +118,13 @@ const renderChunks = computed<RenderChunk[]>(() => {
 
     const span = chunkSpan(chunk)
     const isLast = chunks.slice(index + 1).every((rest) => rest.kind === 'space')
-    const emphasized = props.karaokeEnabled && shouldEmphasizeChunk(chunk)
+    const emphasized =
+      props.motionMode === 'full' && props.karaokeEnabled && shouldEmphasizeChunk(chunk)
     const words = chunk.kind === 'word' ? [chunk.word] : chunk.words
+    const splitForEmphasis =
+      emphasized &&
+      props.voiceRole === 'lead' &&
+      splitGraphemes(span?.text ?? '').length <= MAX_EMPHASIS_GRAPHEMES
 
     result.push({
       kind: 'word',
@@ -110,7 +133,7 @@ const renderChunks = computed<RenderChunk[]>(() => {
       syllables: words.map((word) => ({
         key: syllableKey++,
         word,
-        chars: emphasized ? [...word.text.trim()] : null
+        chars: splitForEmphasis ? emphasisGraphemes(word.text) : null
       }))
     })
 
@@ -120,9 +143,6 @@ const renderChunks = computed<RenderChunk[]>(() => {
 
   return result
 })
-
-/** Emphasis inputs, keyed per chunk, filled while the render model is built. */
-const emphasisPlan = new Map<string, { span: ResolvedLyricWord; isLast: boolean }>()
 
 function setCharElement(key: string, element: Element | null): void {
   if (element instanceof HTMLElement) charElements.value.set(key, element)
@@ -158,6 +178,7 @@ function releaseAnimations(): void {
     element.style.removeProperty('-webkit-mask-size')
     element.style.removeProperty('mask-repeat')
     element.style.removeProperty('mask-origin')
+    element.classList.remove('lyric-word--karaoke')
   }
 }
 
@@ -179,7 +200,13 @@ function measureWords(): WordMeasurement[] {
  */
 function buildAnimations(): void {
   releaseAnimations()
-  if (!supportsWebAnimations() || !props.active || resolvedWords.value.length === 0) return
+  if (
+    props.motionMode !== 'full' ||
+    !supportsWebAnimations() ||
+    !props.active ||
+    resolvedWords.value.length === 0
+  )
+    return
 
   const words = resolvedWords.value
   const measurements = measureWords()
@@ -203,26 +230,35 @@ function buildAnimations(): void {
       if (!element) continue
 
       if (props.karaokeEnabled) {
-        const mask = buildKaraokeMaskPlan(words, measurements, index, lineStart, lineEnd)
+        const mask = buildKaraokeMaskPlan(
+          words,
+          measurements,
+          index,
+          lineStart,
+          lineEnd,
+          props.direction
+        )
         if (mask) {
           element.style.setProperty('mask-image', mask.maskImage)
           element.style.setProperty('-webkit-mask-image', mask.maskImage)
           element.style.setProperty('mask-size', mask.maskSize)
           element.style.setProperty('-webkit-mask-size', mask.maskSize)
           element.style.setProperty('mask-repeat', 'no-repeat')
-          element.style.setProperty('mask-origin', 'left')
+          element.style.setProperty('mask-origin', mask.maskOrigin)
+          element.classList.add('lyric-word--karaoke')
           try {
             activeAnimations.push(element.animate(mask.keyframes, mask.timing))
           } catch {
             // A malformed keyframe set must not take the line down with it.
             element.style.removeProperty('mask-image')
             element.style.removeProperty('-webkit-mask-image')
+            element.classList.remove('lyric-word--karaoke')
           }
         }
       }
 
       // Every word lifts slightly while sung, emphasised or not.
-      const float = buildWordFloatAnimation(syllable.word, lineStart)
+      const float = buildWordFloatAnimation(syllable.word, lineStart, props.voiceRole)
       activeAnimations.push(element.animate(float.keyframes, float.timing))
 
       if (!strength || !syllable.chars) continue
@@ -235,10 +271,13 @@ function buildAnimations(): void {
           charIndex,
           syllable.chars?.length ?? 1,
           strength,
-          startDelayMs
+          startDelayMs,
+          props.voiceRole
         )
-        activeAnimations.push(charElement.animate(emphasis.glow, emphasis.glowTiming))
-        activeAnimations.push(charElement.animate(emphasis.float, emphasis.floatTiming))
+        if (emphasis.glow.length > 0)
+          activeAnimations.push(charElement.animate(emphasis.glow, emphasis.glowTiming))
+        if (emphasis.float.length > 0)
+          activeAnimations.push(charElement.animate(emphasis.float, emphasis.floatTiming))
       })
     }
   }
@@ -280,22 +319,23 @@ function syncAnimations(hard = false): void {
 }
 
 function scheduleBuild(): void {
+  if (props.motionMode !== 'full') return
   const generation = ++buildGeneration
   cancelScheduledBuild?.()
-  cancelScheduledBuild = requestAnimationFrameWithFallback(
-    () => {
-      cancelScheduledBuild = null
-      if (generation !== buildGeneration) return
-      buildAnimations()
-    },
-    BUILD_FRAME_FALLBACK_MS
-  )
+  cancelScheduledBuild = requestAnimationFrameWithFallback(() => {
+    cancelScheduledBuild = null
+    if (generation !== buildGeneration) return
+    buildAnimations()
+  }, BUILD_FRAME_FALLBACK_MS)
 }
 
 watch(
   [
     () => props.active,
     () => props.karaokeEnabled,
+    () => props.motionMode,
+    () => props.voiceRole,
+    () => props.direction,
     () => props.words,
     () => props.offsetSeconds,
     () => props.clock.snapshot.value.epoch
@@ -305,6 +345,7 @@ watch(
     cancelScheduledBuild?.()
     cancelScheduledBuild = null
     releaseAnimations()
+    if (props.motionMode !== 'full') return
     await nextTick()
     if (generation !== buildGeneration) return
     scheduleBuild()
@@ -316,12 +357,13 @@ watch(
 watch(
   () => (props.active ? props.clock.snapshot.value.revision : null),
   () => {
-    if (!props.active) return
+    if (!props.active || props.motionMode !== 'full') return
     syncAnimations()
   }
 )
 
 watch(props.clock.isPlaying, () => {
+  if (props.motionMode !== 'full') return
   syncAnimations(true)
 })
 
@@ -334,7 +376,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <span class="lyric-text lyric-text--words">
+  <span
+    class="lyric-text lyric-text--words"
+    :class="{ 'lyric-text--static': motionMode !== 'full' }"
+    :dir="direction"
+    :data-motion-mode="motionMode"
+    :data-voice-role="voiceRole"
+  >
     <template v-for="chunk in renderChunks" :key="chunk.key">
       <span v-if="chunk.kind === 'space'" class="lyric-space">{{ chunk.text }}</span>
       <span
@@ -345,9 +393,7 @@ onBeforeUnmount(() => {
         <span
           v-for="syllable in chunk.syllables"
           :key="syllable.key"
-          :ref="
-            (element) => (wordElements[syllable.key] = (element as HTMLElement | null) ?? null)
-          "
+          :ref="(element) => (wordElements[syllable.key] = (element as HTMLElement | null) ?? null)"
           class="lyric-word"
           :data-word-text="syllable.word.text"
         >
@@ -366,3 +412,16 @@ onBeforeUnmount(() => {
     </template>
   </span>
 </template>
+
+<style scoped>
+.lyric-word--karaoke {
+  color: var(--te-playback-lyric-karaoke, currentColor);
+}
+
+.lyric-text--static .lyric-word {
+  mask-image: none !important;
+  -webkit-mask-image: none !important;
+  transform: none !important;
+  text-shadow: none !important;
+}
+</style>

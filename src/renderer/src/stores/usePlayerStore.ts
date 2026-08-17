@@ -73,6 +73,7 @@ import {
 } from '../utils/playbackQueueVirtualization.ts'
 import { clampProviderReliability, findPlaybackFallbackTrack } from '../utils/playbackFallback.ts'
 import { findProviderRematchCandidate } from '../utils/libraryRepair.ts'
+import { stripValidLyricVoiceTags } from '../utils/lyrics.ts'
 import { useNcmStore } from './useNcmStore.ts'
 import { useLyricsManagement } from './lyricsManagement.ts'
 import { usePlaybackBookmarks } from './playbackBookmarks'
@@ -99,6 +100,10 @@ import { syncPluginProviders, useMediaProviders } from '../providers'
 import { useSettingsStore } from './useSettingsStore'
 import { useMusicStore } from './useMusicStore'
 import { type SleepTimerMode, type SleepTimerState } from '../../../shared/sleepTimer.ts'
+import {
+  projectManagedLyrics,
+  type LyricSource
+} from '../../../shared/lyricsManagement.ts'
 import { DEFAULT_SOFTWARE_VOLUME } from '../../../shared/audioProcessingOptions.ts'
 import { createPlayerSleepTimer } from './player/usePlayerSleepTimer.ts'
 import { useAppNoticeStore } from './useAppNoticeStore'
@@ -330,6 +335,7 @@ const loudnormStatusSource = ref<string | null>(null)
 const outputInfo = computed<NativeOutputInfo | null>(() => playbackInfo.value?.outputInfo ?? null)
 const visualizationData = ref<NativeVisualizationData>(createInactiveVisualizationData())
 const { settings: appSettings, updateSettings } = useSettingsStore()
+const lyricsManagement = useLyricsManagement()
 let playbackAudio: HTMLAudioElement | null = null
 let playbackObjectUrl: string | null = null
 let nativePlaybackActive = false
@@ -3142,17 +3148,49 @@ let mediaSessionHandlersBound = false
 let mediaSessionMetadataKey = ''
 let discordPlayStartTimestamp: number | null = null
 let desktopLyricsTimeThrottle = 0
+
+function normalizeDesktopLyricSource(source: string | null | undefined): LyricSource | null {
+  return source === 'embedded' ||
+    source === 'local' ||
+    source === 'provider' ||
+    source === 'manual' ||
+    source === 'online'
+    ? source
+    : null
+}
+
 function syncDesktopLyricsSnapshot(): void {
   const desktopLyricsApi = window.api?.desktopLyrics
   if (!desktopLyricsApi) return
 
   const track = currentTrack.value
   if (track) {
-    desktopLyricsApi.updateTrack({
-      lyrics: track.lyrics ?? null,
-      translatedLyrics: track.translatedLyrics ?? null,
+    const automaticSources = {
       lyricsSource: track.lyricsSource ?? null,
-      translatedLyricsSource: track.translatedLyricsSource ?? null,
+      translatedLyricsSource: track.translatedLyricsSource ?? null
+    }
+    const lyrics = projectManagedLyrics(
+      {
+        original: track.lyrics,
+        translation: track.translatedLyrics,
+        romanization: track.romanizedLyrics,
+        originalSource: track.lyricsSource,
+        translationSource: track.translatedLyricsSource,
+        romanizationSource: track.romanizedLyricsSource
+      },
+      lyricsManagement.entryFor(track.id)
+    )
+    desktopLyricsApi.updateTrack({
+      lyrics: stripValidLyricVoiceTags(lyrics.original),
+      translatedLyrics: stripValidLyricVoiceTags(lyrics.translation),
+      lyricsSource:
+        lyrics.originalSource === track.lyricsSource
+          ? automaticSources.lyricsSource
+          : normalizeDesktopLyricSource(lyrics.originalSource),
+      translatedLyricsSource:
+        lyrics.translationSource === track.translatedLyricsSource
+          ? automaticSources.translatedLyricsSource
+          : normalizeDesktopLyricSource(lyrics.translationSource),
       title: track.title || '',
       artist: track.artist || ''
     })
@@ -3303,6 +3341,7 @@ function updateDiscordActivity(): void {
 function setupPlayerIntegrationSideEffects(): void {
   if (playerIntegrationSideEffectsSetup) return
   playerIntegrationSideEffectsSetup = true
+  void lyricsManagement.ensureLoaded()
   if (window.api.sleepTimer) {
     void window.api.sleepTimer.getState().then((state) => {
       if (state?.active) getSleepTimerController().applyAuthoritativeState(state)
@@ -3411,7 +3450,11 @@ function setupPlayerIntegrationSideEffects(): void {
     { immediate: true }
   )
 
-  watch(currentTrack, () => syncDesktopLyricsSnapshot(), { immediate: true })
+  watch(
+    [currentTrack, lyricsManagement.document],
+    () => syncDesktopLyricsSnapshot(),
+    { immediate: true }
+  )
 
   watch(
     [() => currentTrack.value?.queueEntryId, () => currentTrack.value?.id, queueIndex],

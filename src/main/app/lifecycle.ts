@@ -28,8 +28,8 @@ import {
 } from '../integrations/desktopLyrics'
 import { restoreMainWindowFromMiniPlayer, setupMiniPlayerIpc } from '../integrations/miniPlayer'
 import { setupTrayPlayerIpc } from '../integrations/trayPlayer'
-import { setupNcmIpc, setupNcmApi } from '../ncm/api'
-import { setupAudioEngineIpc } from '../audio/engineIpc'
+import { setupNcmIpc } from '../ncm/api'
+import { ensureAudioEngineRuntime, setupAudioEngineIpc } from '../audio/engineIpc'
 import { AudioAnalysisServiceClient } from '../audioAnalysisServiceClient.ts'
 import { LocalLibraryScanServiceClient } from '../library/libraryScanServiceClient.ts'
 import { setupBpmAnalysisIpc } from '../bpm/bpmIpc'
@@ -37,6 +37,7 @@ import { setupLoudnessAnalysisIpc } from '../audio/loudnessIpc'
 import { setupOpraIpc } from '../ipc/opra'
 import { setupPluginIpc } from '../ipc/plugins'
 import { setupDataIpc } from '../ipc/data'
+import { ensureActiveLibraryExclusionsLoaded } from '../ipc/libraryIpc.ts'
 import { setupThemeIpc } from '../ipc/themes'
 import { resolveThemeAssetFile } from '../themes/themeArchive.ts'
 import { setupRadioMediaIpc, destroyRadioMediaIpc } from '../radio/radioMediaIpc.ts'
@@ -330,11 +331,7 @@ export function startApp(): void {
       setupMiniPlayerIpc()
       setupTrayPlayerIpc()
 
-      if (runtime.appSettings.desktopLyrics.enabled) {
-        showDesktopLyrics()
-      }
-
-      await setupAudioEngineIpc()
+      setupAudioEngineIpc()
       runtime.audioAnalysisService = new AudioAnalysisServiceClient({
         serviceEntry: join(__dirname, 'audioAnalysisService.js'),
         maxConcurrency: Math.max(1, Math.min(4, Math.floor(cpus().length / 2)))
@@ -347,7 +344,6 @@ export function startApp(): void {
       setupNetworkSourceIpc()
       setupOpraIpc()
       setupPluginIpc()
-      setupNcmApi()
 
       // Linux 上透明窗口必须等合成器视觉就绪后再建窗，否则内容不渲染
       if (
@@ -356,14 +352,10 @@ export function startApp(): void {
         supportsNativeWindowTransparency()
       ) {
         setTimeout(() => {
-          createWindow()
-          applyRuntimeSettings()
-          showAppSettingsLoadIssue(consumeAppSettingsLoadIssue())
+          createMainWindowAndScheduleDeferredStartup()
         }, 360)
       } else {
-        createWindow()
-        applyRuntimeSettings()
-        showAppSettingsLoadIssue(consumeAppSettingsLoadIssue())
+        createMainWindowAndScheduleDeferredStartup()
       }
 
       app.on('activate', function () {
@@ -411,8 +403,37 @@ export function startApp(): void {
         runtime.ncmServer.close()
         runtime.ncmServer = null
       }
+      runtime.ncmServerPromise = null
     })
   }
+}
+
+function createMainWindowAndScheduleDeferredStartup(): void {
+  createWindow()
+  showAppSettingsLoadIssue(consumeAppSettingsLoadIssue())
+  const mainWindow = runtime.mainWindow
+  if (!mainWindow) return
+  mainWindow.once('ready-to-show', () => {
+    if (runtime.mainWindow !== mainWindow || mainWindow.isDestroyed() || runtime.forceQuit) return
+    if (runtime.appSettings.desktopLyrics.enabled) showDesktopLyrics()
+    void ensureAudioEngineRuntime().catch((error) => {
+      console.error('[音频引擎] 初始化失败：', error instanceof Error ? error.message : error)
+    })
+    setTimeout(() => {
+      void ensureActiveLibraryExclusionsLoaded()
+        .catch((error) => {
+          console.error(
+            '[library] failed to initialize exclusions before starting watchers:',
+            error instanceof Error ? error.message : error
+          )
+        })
+        .then(() => {
+          if (runtime.mainWindow !== mainWindow || mainWindow.isDestroyed() || runtime.forceQuit)
+            return
+          applyRuntimeSettings()
+        })
+    }, 0)
+  })
 }
 
 function showAppSettingsLoadIssue(issue: SettingsFileLoadIssue | null): void {

@@ -432,9 +432,16 @@ let audioEngineRuntimePromise: Promise<void> | null = null
  * during the background init simply await this bridge.
  */
 export function ensureAudioEngineRuntime(): Promise<AudioEngineManager> {
+  if (audioEngineRuntimePromise) {
+    return audioEngineRuntimePromise.then(() => requireAudioEngine())
+  }
   if (runtime.audioEngineManager) return Promise.resolve(runtime.audioEngineManager)
-  audioEngineRuntimePromise ??= initializeAudioEngineRuntime()
-  return audioEngineRuntimePromise.then(() => requireAudioEngine())
+  const initialization = initializeAudioEngineRuntime()
+  audioEngineRuntimePromise = initialization
+  void initialization.catch(() => {
+    if (audioEngineRuntimePromise === initialization) audioEngineRuntimePromise = null
+  })
+  return initialization.then(() => requireAudioEngine())
 }
 
 async function initializeAudioEngineRuntime(): Promise<void> {
@@ -501,6 +508,7 @@ async function initializeAudioEngineRuntime(): Promise<void> {
         }
     }
   )
+  runtime.audioEngineManager.setLoudnessAnalysisManager(runtime.loudnessAnalysisManager)
   runtime.vst3Catalog = new Vst3CatalogService(join(app.getPath('userData'), 'dsp-vst3'), {
     scan: (modulePath) => requireAudioEngine().scanVst3Module(modulePath)
   })
@@ -591,16 +599,12 @@ async function initializeAudioEngineRuntime(): Promise<void> {
     runtime.mainWindow?.webContents.send(IPC.audioEngine.loudnormStatus, event)
   })
 
-  runtime.audioEngineManager.start().catch((err: Error) => {
+  await runtime.audioEngineManager.start().catch((err: Error) => {
     console.error('原生音频引擎启动失败：', err.message)
   })
 }
 
 export function setupAudioEngineIpc(): void {
-  audioEngineRuntimePromise ??= initializeAudioEngineRuntime()
-  void audioEngineRuntimePromise.catch((error) => {
-    console.error('[音频引擎] 初始化失败：', error instanceof Error ? error.message : error)
-  })
   registerAudioEngineIpcHandlers()
 }
 
@@ -647,7 +651,9 @@ function registerAudioEngineIpcHandlers(): void {
       startTime: normalizedStartTime
     })
     try {
-      const result = await (await ensureAudioEngineRuntime()).play(authorizedSource, normalizedStartTime)
+      const result = await (
+        await ensureAudioEngineRuntime()
+      ).play(authorizedSource, normalizedStartTime)
       audioDiagnosticRecorder?.record(
         'play-result',
         result,
@@ -759,7 +765,9 @@ function registerAudioEngineIpcHandlers(): void {
     IPC.audioEngine.setAudioOutput,
     async (_event, output: string, device?: string) => {
       assertTrustedIpcSender(_event, 'audio engine IPC')
-      const state = await (await ensureAudioEngineRuntime()).setAudioOutput(
+      const state = await (
+        await ensureAudioEngineRuntime()
+      ).setAudioOutput(
         normalizeIpcString(output, 'audio output', 64) as AudioOutputId,
         normalizeOptionalIpcString(device, 'audio device', MAX_AUDIO_DEVICE_LENGTH)
       )
@@ -771,9 +779,9 @@ function registerAudioEngineIpcHandlers(): void {
 
   ipcMain.handle(IPC.audioEngine.setAudioDevice, async (_event, device: string) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
-    const state = await (await ensureAudioEngineRuntime()).setAudioDevice(
-      normalizeIpcString(device, 'audio device', MAX_AUDIO_DEVICE_LENGTH)
-    )
+    const state = await (
+      await ensureAudioEngineRuntime()
+    ).setAudioDevice(normalizeIpcString(device, 'audio device', MAX_AUDIO_DEVICE_LENGTH))
     persistAudioOutputState(state)
     audioDiagnosticRecorder?.record('audio-device-changed', state)
     return state
@@ -863,7 +871,9 @@ function registerAudioEngineIpcHandlers(): void {
         normalizedScenes.some((scene) => scene.id === pinnedSceneId)
           ? pinnedSceneId
           : null
-      const state = await (await ensureAudioEngineRuntime()).setDspScenes(normalizedScenes, normalizedPin)
+      const state = await (
+        await ensureAudioEngineRuntime()
+      ).setDspScenes(normalizedScenes, normalizedPin)
       persistDspSceneState(state)
       await reconcileDspAssetReferences()
       return state
@@ -896,10 +906,9 @@ function registerAudioEngineIpcHandlers(): void {
     IPC.audioEngine.applyDspScene,
     async (event, sceneId: unknown, confirmDsdPcmFallback?: unknown) => {
       assertTrustedIpcSender(event, 'audio engine IPC')
-      const state = await (await ensureAudioEngineRuntime()).applyDspScene(
-        typeof sceneId === 'string' ? sceneId : null,
-        confirmDsdPcmFallback === true
-      )
+      const state = await (
+        await ensureAudioEngineRuntime()
+      ).applyDspScene(typeof sceneId === 'string' ? sceneId : null, confirmDsdPcmFallback === true)
       persistDspSceneState(state)
       await reconcileDspAssetReferences()
       return state
@@ -913,11 +922,13 @@ function registerAudioEngineIpcHandlers(): void {
 
   ipcMain.handle(IPC.audioEngine.getDspAssets, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
+    await ensureAudioEngineRuntime()
     return await requireDspAssets().list()
   })
 
   ipcMain.handle(IPC.audioEngine.importDspAsset, async (event, kind: unknown) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
+    await ensureAudioEngineRuntime()
     const assetKind = normalizeDspAssetKind(kind)
     const win = BrowserWindow.getFocusedWindow() ?? runtime.mainWindow
     const result = win
@@ -932,6 +943,7 @@ function registerAudioEngineIpcHandlers(): void {
 
   ipcMain.handle(IPC.audioEngine.importDspCorrectionProfile, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
+    await ensureAudioEngineRuntime()
     const win = BrowserWindow.getFocusedWindow() ?? runtime.mainWindow
     const options = assetDialogOptions('correctionProfile')
     const result = win
@@ -961,6 +973,7 @@ function registerAudioEngineIpcHandlers(): void {
 
   ipcMain.handle(IPC.audioEngine.getDspCorrectionProfile, async (event, assetId: unknown) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
+    await ensureAudioEngineRuntime()
     const id = normalizeIpcString(assetId, 'DSP correction asset id', 160)
     if (!/^correctionProfile:[a-f0-9]{64}$/.test(id)) {
       throw new Error('DSP 校正资料标识无效')
@@ -973,6 +986,7 @@ function registerAudioEngineIpcHandlers(): void {
 
   ipcMain.handle(IPC.audioEngine.deleteDspAsset, async (event, assetId: unknown) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
+    await ensureAudioEngineRuntime()
     const id = normalizeIpcString(assetId, 'DSP asset id', 160)
     if (!/^[a-zA-Z]+:[a-f0-9]{64}$/.test(id)) throw new Error('DSP 资料标识无效')
     await requireDspAssets().remove(id)
@@ -981,6 +995,7 @@ function registerAudioEngineIpcHandlers(): void {
 
   ipcMain.handle(IPC.audioEngine.exportDspProfile, async (event, name?: unknown) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
+    await ensureAudioEngineRuntime()
     const win = BrowserWindow.getFocusedWindow() ?? runtime.mainWindow
     const result = win
       ? await dialog.showSaveDialog(win, {
@@ -1007,6 +1022,7 @@ function registerAudioEngineIpcHandlers(): void {
 
   ipcMain.handle(IPC.audioEngine.importDspProfile, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
+    await ensureAudioEngineRuntime()
     const win = BrowserWindow.getFocusedWindow() ?? runtime.mainWindow
     const result = win
       ? await dialog.showOpenDialog(win, {
@@ -1035,13 +1051,15 @@ function registerAudioEngineIpcHandlers(): void {
 
   ipcMain.handle(IPC.audioEngine.getVst3Catalog, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
+    await ensureAudioEngineRuntime()
     return await requireVst3Catalog().getState()
   })
 
   ipcMain.handle(IPC.audioEngine.setVst3Enabled, async (event, enabled: unknown) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
+    const engine = await ensureAudioEngineRuntime()
     const state = await requireVst3Catalog().setEnabled(enabled === true)
-    ;(await ensureAudioEngineRuntime()).refreshDspGraph()
+    engine.refreshDspGraph()
     return state
   })
 
@@ -1060,21 +1078,24 @@ function registerAudioEngineIpcHandlers(): void {
 
   ipcMain.handle(IPC.audioEngine.setVst3SearchPaths, async (event, paths: unknown) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
+    const engine = await ensureAudioEngineRuntime()
     const authorized = await resolveAuthorizedVst3SearchPaths(paths)
     const state = await requireVst3Catalog().setSearchPaths(authorized)
-    ;(await ensureAudioEngineRuntime()).refreshDspGraph()
+    engine.refreshDspGraph()
     return state
   })
 
   ipcMain.handle(IPC.audioEngine.scanVst3Plugins, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
+    const engine = await ensureAudioEngineRuntime()
     const state = await requireVst3Catalog().scan()
-    ;(await ensureAudioEngineRuntime()).refreshDspGraph()
+    engine.refreshDspGraph()
     return state
   })
 
   ipcMain.handle(IPC.audioEngine.clearVst3Quarantine, async (event, id: unknown) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
+    const engine = await ensureAudioEngineRuntime()
     const catalogId = normalizeIpcString(id, 'VST3 catalog id', 160)
     const catalog = requireVst3Catalog()
     await catalog.clearQuarantine(catalogId)
@@ -1082,9 +1103,8 @@ function registerAudioEngineIpcHandlers(): void {
     // into the graph. A bad module remains isolated when the probe fails.
     const state = await catalog.scan()
     const entry = state.entries.find((candidate) => candidate.id === catalogId)
-    if (entry?.status === 'available')
-await (await ensureAudioEngineRuntime()).clearVst3RecoveryBypass(catalogId)
-    ;(await ensureAudioEngineRuntime()).refreshDspGraph()
+    if (entry?.status === 'available') await engine.clearVst3RecoveryBypass(catalogId)
+    engine.refreshDspGraph()
     return state
   })
 
@@ -1228,7 +1248,9 @@ await (await ensureAudioEngineRuntime()).clearVst3RecoveryBypass(catalogId)
 
   ipcMain.handle(IPC.audioEngine.getMetadata, async (_event, source: string) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
-    return await (await ensureAudioEngineRuntime()).getMetadataAsync(
+    return await (
+      await ensureAudioEngineRuntime()
+    ).getMetadataAsync(
       await resolveAuthorizedAudioSource(
         normalizeIpcString(source, 'metadata source', MAX_AUDIO_SOURCE_LENGTH)
       )
@@ -1263,15 +1285,15 @@ await (await ensureAudioEngineRuntime()).clearVst3RecoveryBypass(catalogId)
 
   ipcMain.handle(IPC.audioEngine.getSpectrumData, async (_event, points?: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
-    return await (await ensureAudioEngineRuntime()).getSpectrumData(
-      normalizeInteger(points, 'spectrum points', 128, 8, 4096)
-    )
+    return await (
+      await ensureAudioEngineRuntime()
+    ).getSpectrumData(normalizeInteger(points, 'spectrum points', 128, 8, 4096))
   })
 
   ipcMain.handle(IPC.audioEngine.getVisualizationData, async (_event, options?: unknown) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
-    return await (await ensureAudioEngineRuntime()).getVisualizationData(
-      typeof options === 'object' && options !== null ? options : {}
-    )
+    return await (
+      await ensureAudioEngineRuntime()
+    ).getVisualizationData(typeof options === 'object' && options !== null ? options : {})
   })
 }

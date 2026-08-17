@@ -109,12 +109,9 @@ test('now playing exposes independent lyric customization with live persisted pr
 
   assert.match(source, /import LyricsAppearanceCustomizer/)
   assert.match(source, /个性化歌词/)
-  assert.match(
-    source,
-    /:style="lyricStyleVars\(item\.index === highlightedLyricIndex \? 'active' : 'normal'\)"/
-  )
-  assert.match(source, /:style="lyricStyleVars\('translation'\)"/)
-  assert.match(source, /:style="lyricStyleVars\('romanization'\)"/)
+  assert.match(source, /:style="lyricStyleVars\(item\.singing \? 'active' : 'normal'\)"/)
+  assert.match(source, /:translation-style="lyricStyleVars\('translation'\)"/)
+  assert.match(source, /:romanization-style="lyricStyleVars\('romanization'\)"/)
   assert.match(source, /resolveLyricsFontFamily\(appearance\.styles\.active\)/)
   assert.doesNotMatch(source, /customFontFamily:\s*''/)
   assert.match(source, /font-family: var\(--te-lyric-font-family, inherit\)/)
@@ -188,6 +185,7 @@ test('font size is per layer, with an explicit action to unify it', () => {
 
 test('lyrics keep the full timeline mounted while the viewport follows the active row', () => {
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+  const line = readFileSync(new URL('./PlayingLyricLine.vue', import.meta.url), 'utf8')
   const renderedLines = source.match(/const renderedLyricLines = computed\([\s\S]*?\n\)/)?.[0] ?? ''
 
   assert.match(
@@ -200,9 +198,11 @@ test('lyrics keep the full timeline mounted while the viewport follows the activ
   assert.doesNotMatch(renderedLines, /getLyricFocusLineIndices|lyricFocusWindow/)
   assert.match(source, /getFocusWindow: \(\) => lyricFocusWindow\.value/)
   assert.doesNotMatch(source, /lyricLeavingIndex|lyricEnteringIndex/)
-  assert.match(source, /class="lyric-row-content"/)
+  assert.match(source, /<PlayingLyricLine/)
+  assert.match(line, /class="lyric-row-content"/)
   assert.match(source, /@wheel\.passive="onLyricsManualScroll"/)
-  assert.match(source, /@touchmove\.passive="onLyricsManualScroll"/)
+  assert.match(source, /@touchstart\.passive="onLyricsTouchStart"/)
+  assert.match(source, /@touchmove\.passive="onLyricsTouchMove"/)
   assert.doesNotMatch(source, /@pointerdown="onLyricsManualScroll"/)
 })
 
@@ -220,6 +220,7 @@ test('clicking a timed lyric releases manual scroll lock before seeking', () => 
 
 test('now playing isolates high-frequency playhead updates from the full lyrics list', () => {
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+  const line = readFileSync(new URL('./PlayingLyricLine.vue', import.meta.url), 'utf8')
   const words = readFileSync(new URL('./PlayingLyricWords.vue', import.meta.url), 'utf8')
   const timeChip = readFileSync(new URL('./PlayingMusicTimeChip.vue', import.meta.url), 'utf8')
 
@@ -230,7 +231,8 @@ test('now playing isolates high-frequency playhead updates from the full lyrics 
   )
   assert.doesNotMatch(source, /predictedLyricTime|scheduleLyricIndexBoundary|lyricIndexTimer/)
   assert.match(source, /snapshot: playbackClockSnapshot/)
-  assert.match(source, /<PlayingLyricWords[\s\S]*:clock="lyricWordClock"/)
+  assert.match(source, /<PlayingLyricLine[\s\S]*:clock="lyricWordClock"/)
+  assert.match(line, /<PlayingLyricWords[\s\S]*:clock="clock"/)
   assert.match(source, /lyrics-column--karaoke-disabled/)
   assert.match(source, /<PlayingMusicTimeChip/)
   assert.doesNotMatch(source, /formatTime\(currentTime\)/)

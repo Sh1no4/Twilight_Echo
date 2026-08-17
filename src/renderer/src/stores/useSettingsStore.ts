@@ -23,6 +23,7 @@ import {
   clonePlayerBarSettings,
   normalizePlayerBarSettings
 } from '../../../shared/playerBar.ts'
+import type { AppStartupSnapshot } from '../../../shared/appStartup.ts'
 import type {
   AppSettings,
   AudioOutputId,
@@ -487,6 +488,7 @@ export function useSettingsStore(): {
   restartRequired: ComputedRef<boolean>
   restartReasons: Ref<string[]>
   loadSettings: () => Promise<AppSettings>
+  hydrateStartupSnapshot: (snapshot: AppStartupSnapshot) => AppSettings
   updateSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>
   chooseCacheFolder: () => Promise<void>
   chooseBackgroundImage: () => Promise<string | null>
@@ -513,6 +515,12 @@ export function useSettingsStore(): {
     formatBytes(loudnessAnalysisCacheSize.value)
   )
   const restartRequired = computed(() => restartReasons.value.length > 0)
+
+  function hydrateStartupSnapshot(startup: AppStartupSnapshot): AppSettings {
+    setupListener()
+    applySnapshot(startup.settings)
+    return settings.value
+  }
 
   async function loadSettings(): Promise<AppSettings> {
     setupListener()
@@ -750,6 +758,7 @@ export function useSettingsStore(): {
     restartRequired,
     restartReasons,
     loadSettings,
+    hydrateStartupSnapshot,
     updateSettings,
     chooseCacheFolder,
     chooseBackgroundImage,

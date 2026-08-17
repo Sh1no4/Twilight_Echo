@@ -51,6 +51,7 @@ export const runtime = {
   latestDesktopLyricsTrack: null as DesktopLyricsTrackPayload | null,
   latestDesktopLyricsTime: 0,
   ncmServer: null as import('http').Server | null,
+  ncmServerPromise: null as Promise<void> | null,
   tray: null as Tray | null,
   refreshTrayMenu: null as (() => void) | null,
   forceQuit: false,

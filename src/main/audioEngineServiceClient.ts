@@ -211,7 +211,6 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
       1,
       Math.floor(options.maxInFlightRequests ?? DEFAULT_MAX_IN_FLIGHT_REQUESTS)
     )
-    this.start()
   }
 
   /**
@@ -220,9 +219,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
    */
   callAsync(method: string, args: unknown[]): Promise<unknown> {
     if (method === 'AnalyzeBpm' || method === 'AnalyzeLoudness') {
-      return Promise.reject(
-        new Error(`${method} must use the isolated audio analysis service`)
-      )
+      return Promise.reject(new Error(`${method} must use the isolated audio analysis service`))
     }
     return this.call(method as keyof NativeAudioBinding, args)
   }
@@ -504,7 +501,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   }
 
   private start(): void {
-    if (this.stopped) return
+    if (this.stopped || this.child || this.restarting) return
     if (shouldUseNodeAudioService()) {
       this.startNodeChildProcess()
       return
@@ -568,10 +565,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
         },
         on: (event, listener) => {
           if (event === 'message') {
-            child.on(
-              'message',
-              listener as (message: unknown) => void
-            )
+            child.on('message', listener as (message: unknown) => void)
           } else if (event === 'exit') {
             child.on('exit', listener as (code: number | null) => void)
           } else {
@@ -643,7 +637,8 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
           this.handleFatal(capabilityError)
           return
         }
-        this.serviceCapabilities = (record.capabilities as AudioServiceCapabilities | undefined) ?? null
+        this.serviceCapabilities =
+          (record.capabilities as AudioServiceCapabilities | undefined) ?? null
         this.emit('ready', this.serviceCapabilities)
       } catch {
         this.handleProtocolViolation(AUDIO_SERVICE_INVALID_MESSAGE)
@@ -693,7 +688,10 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     const { response } = parsed
     const pending = this.pending.get(response.requestId)
     if (!pending) return
-    if (!inspectUtilityProcessPayload(response.value, this.responseByteLimitForMethod(pending.method)).ok) {
+    if (
+      !inspectUtilityProcessPayload(response.value, this.responseByteLimitForMethod(pending.method))
+        .ok
+    ) {
       this.handleProtocolViolation(AUDIO_SERVICE_INVALID_MESSAGE)
       return
     }
@@ -743,8 +741,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     // ~2s crash/restart storm. A child that survived a full stability window
     // resets the ladder.
     const livedMs = Date.now() - this.lastChildSpawnedAt
-    this.restartAttempts =
-      livedMs < AUDIO_SERVICE_STABLE_CHILD_MS ? this.restartAttempts + 1 : 1
+    this.restartAttempts = livedMs < AUDIO_SERVICE_STABLE_CHILD_MS ? this.restartAttempts + 1 : 1
     const backoffMs = Math.min(
       this.restartDelayMs * 2 ** (this.restartAttempts - 1),
       MAX_AUDIO_SERVICE_RESTART_BACKOFF_MS
@@ -951,11 +948,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     const requestedRevision = this.lastDspGraphStatus.requestedRevision ?? status.revision
     const applied = status.revision >= requestedRevision
     const applyState =
-      requestedRevision === 0
-        ? 'idle'
-        : applied
-          ? 'applied'
-          : this.lastDspGraphStatus.applyState
+      requestedRevision === 0 ? 'idle' : applied ? 'applied' : this.lastDspGraphStatus.applyState
     this.lastDspGraphStatus = {
       ...status,
       requestedRevision,
@@ -966,6 +959,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   }
 
   private call(method: keyof NativeAudioBinding, args: unknown[]): Promise<unknown> {
+    if (!this.child && !this.restarting) this.start()
     const child = this.child
     if (!child) return Promise.reject(new Error('音频服务不可用'))
     if (this.pending.size >= this.maxInFlightRequests) {
@@ -1116,8 +1110,7 @@ function createEmptyDspGraphStatus(): DspGraphStatus {
 
 function parseRequestedDspGraphRevision(json: string): number {
   const value = parseJsonObject(json, 'DSP graph payload')
-  const revision =
-    (value as { revision?: unknown }).revision
+  const revision = (value as { revision?: unknown }).revision
   if (!Number.isSafeInteger(revision) || (revision as number) <= 0) {
     throw new Error('DSP graph payload requires a positive integer revision')
   }
@@ -1146,10 +1139,7 @@ function parseDspStatePayload(json: string, revision: number): DspStatePayload {
   )
 }
 
-function normalizeDspStatePayload(
-  payload: DspStatePayload,
-  revision: number
-): DspStatePayload {
+function normalizeDspStatePayload(payload: DspStatePayload, revision: number): DspStatePayload {
   assertPositiveDspRevision(revision)
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('DSP state payload must be an object')
@@ -1195,7 +1185,6 @@ function parseDspGraphStatus(value: unknown): DspGraphStatus {
   return status as DspGraphStatus
 }
 
-
 /**
  * Electron 自带 Chromium 的 libffmpeg.so，与引擎链接的系统 libav* 同名符号
  * 抢占全局符号表，导致音频服务（utility 进程）里 FFmpeg 协议注册表损坏
@@ -1230,7 +1219,8 @@ function audioServiceEnv(): NodeJS.ProcessEnv {
   if (process.platform === 'linux') {
     const preload = systemFfmpegPreloadPaths()
     if (preload.length > 0) {
-      const existing = typeof env.LD_PRELOAD === 'string' && env.LD_PRELOAD ? env.LD_PRELOAD + ':' : ''
+      const existing =
+        typeof env.LD_PRELOAD === 'string' && env.LD_PRELOAD ? env.LD_PRELOAD + ':' : ''
       env.LD_PRELOAD = existing + preload.join(':')
     }
   }

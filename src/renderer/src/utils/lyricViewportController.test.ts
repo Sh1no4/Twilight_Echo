@@ -18,10 +18,11 @@ function createStage(height = STAGE_HEIGHT): LyricStageElement {
   return { clientHeight: height, clientWidth: 1440 }
 }
 
-function createRow(height = ROW_HEIGHT): FakeRow {
+function createRow(height = ROW_HEIGHT, scrollHeight = height): FakeRow {
   const properties = new Map<string, string>()
   return {
     offsetHeight: height,
+    scrollHeight,
     isConnected: true,
     properties,
     style: {
@@ -129,6 +130,51 @@ test('each line gets its own target, so lines are no longer one rigid block', as
   }
 })
 
+test('rows use their full scroll height when layered vocals exceed the button box', async () => {
+  const { controller, activeIndex } = harness(0)
+  controller.registerRow(0, createRow(72, 154))
+  controller.registerRow(1, createRow(72, 72))
+  activeIndex.value = 0
+
+  await controller.follow(0, { mode: 'snap' })
+
+  const firstTop = controller.getRowTop(0) as number
+  const secondTop = controller.getRowTop(1) as number
+  assert.equal(secondTop - firstTop, 154)
+})
+
+test('a configured row gap preserves breathing room between scaled lyric groups', async () => {
+  const { controller, activeIndex } = harness(0, { getRowGapPx: () => 10 })
+  controller.registerRow(0, createRow(72, 154))
+  controller.registerRow(1, createRow(72, 72))
+  activeIndex.value = 0
+
+  await controller.follow(0, { mode: 'snap' })
+
+  const firstTop = controller.getRowTop(0) as number
+  const secondTop = controller.getRowTop(1) as number
+  assert.equal(secondTop - firstTop, 164)
+})
+
+test('resize remeasures responsive row content before stacking following rows', async () => {
+  const { controller, manual, activeIndex } = harness(0, { getRowGapPx: () => 10 })
+  const responsiveRow = createRow(72, 154)
+  controller.registerRow(0, responsiveRow)
+  controller.registerRow(1, createRow(72, 72))
+  activeIndex.value = 0
+  await controller.follow(0, { mode: 'snap' })
+
+  responsiveRow.scrollHeight = 200
+  controller.onResize('snap')
+  manual.runFrame()
+  await Promise.resolve()
+
+  const firstTop = controller.getRowTop(0) as number
+  const secondTop = controller.getRowTop(1) as number
+  assert.equal(secondTop - firstTop, 210)
+  assert.equal(manual.pendingFrames(), 0, 'responsive geometry should not animate through overlap')
+})
+
 test('the anchored line lands at the align position', async () => {
   const { controller, activeIndex } = harness()
   activeIndex.value = 3
@@ -221,7 +267,7 @@ test('scale trails position, so the motion is not perfectly rigid', async () => 
 
   const scale = controller.getRowScale(1) as number
   assert.notEqual(scale, restingScale, 'the scale spring is moving')
-  assert.ok(scale < 100, 'and has not snapped straight to full size')
+  assert.ok(scale > 100 && scale < 104, 'and has not snapped straight to the active size')
 })
 
 test('snap mode places lines without consuming a frame', async () => {
@@ -420,18 +466,24 @@ test('automatic following never reports manual browsing', async () => {
   assert.deepEqual(manualBrowseStates, [])
 })
 
-test('resize recentres the anchor once per frame', async () => {
+test('content resize recentres once per frame without snapping away lyric motion', async () => {
   const { controller, manual, activeIndex } = harness()
   activeIndex.value = 5
   await controller.follow(5, { mode: 'snap' })
+  const before = controller.getRowTop(5) as number
 
   controller.attach(createStage(400))
-  controller.onResize()
-  controller.onResize()
+  controller.onResize('spring')
+  controller.onResize('spring')
   manual.runFrames(1)
   await Promise.resolve()
-  manual.runFrames(400)
+  manual.runFrames(3)
 
+  const moving = controller.getRowTop(5) as number
+  assert.notEqual(moving, before, 'content remeasurement should start the lyric spring')
+  assert.ok(Math.abs(moving - 164) > 1.5, 'content remeasurement must not snap to its target')
+
+  manual.runFrames(400)
   // 0.5 of 400 = 200, minus half a row = 164.
   assert.ok(Math.abs((controller.getRowTop(5) as number) - 164) < 1.5)
 })

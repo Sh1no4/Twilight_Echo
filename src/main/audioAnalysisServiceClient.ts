@@ -135,6 +135,7 @@ export class AudioAnalysisServiceClient extends EventEmitter {
   private readonly maxStartupFailures: number
   private readonly now: () => number
   private readonly workers: AnalysisWorker[]
+  private workersStarted = false
   private readonly queued: AnalysisTask[] = []
   private readonly active = new Map<string, AnalysisTask>()
   private sequence = 0
@@ -192,7 +193,6 @@ export class AudioAnalysisServiceClient extends EventEmitter {
       disabled: false,
       logBudget: new UtilityProcessLogBudget()
     }))
-    for (const worker of this.workers) this.startWorker(worker)
   }
 
   async analyzeBpm(
@@ -336,9 +336,17 @@ export class AudioAnalysisServiceClient extends EventEmitter {
         timer: null
       }
       if (!this.admitTask(task, now)) return
+      this.ensureWorkersStarted()
+      if (this.unavailableError) return
       this.scheduleQueueMaintenance(now)
       this.pump()
     })
+  }
+
+  private ensureWorkersStarted(): void {
+    if (this.workersStarted || this.stopped) return
+    this.workersStarted = true
+    for (const worker of this.workers) this.startWorker(worker)
   }
 
   private startWorker(worker: AnalysisWorker): void {

@@ -28,6 +28,9 @@ import {
   type ThemeWindowInheritance
 } from '../../../shared/theme.ts'
 import { useExtensionRegistry, type ThemeContribution } from '../extensions/registry'
+import { getStartupSnapshot } from '../app/startupSnapshot'
+import type { AppStartupSnapshot } from '../../../shared/appStartup.ts'
+import { markThemeRuntimeFresh, persistThemeRuntimeCache } from '../app/themeRuntimeCache'
 import { resolvePluginThemeRuntimeContract } from '../extensions/pluginThemeRuntime'
 import { getPluginThemeKey } from '../extensions/themeSelection'
 import {
@@ -236,18 +239,25 @@ function applyBootstrapThemeMode(
   cacheSettingsAppearance(bootstrap.settings)
 }
 
-export async function bootstrapThemeRuntime(): Promise<void> {
+export async function bootstrapThemeRuntime(startupSnapshot?: AppStartupSnapshot): Promise<void> {
   if (bootstrapPromise) return bootstrapPromise
   bootstrapPromise = (async () => {
     if (!window.api?.themes || !window.api?.settings) return
-    const [settingsBootstrap, themeBootstrap, nativeTone] = await Promise.all([
-      window.api.settings.get(),
-      window.api.themes.getBootstrap(),
-      window.api.themes.getSystemTone()
-    ])
-    systemTone.value = nativeTone
-    applyBootstrapThemeMode(settingsBootstrap)
-    acceptBootstrap(themeBootstrap)
+    const startup = startupSnapshot ?? (await getStartupSnapshot())
+    if (startup) {
+      systemTone.value = startup.systemTone
+      applyBootstrapThemeMode(startup.settings)
+      acceptBootstrap(startup.themeBootstrap)
+    } else {
+      const [settingsBootstrap, themeBootstrap, nativeTone] = await Promise.all([
+        window.api.settings.get(),
+        window.api.themes.getBootstrap(),
+        window.api.themes.getSystemTone()
+      ])
+      systemTone.value = nativeTone
+      applyBootstrapThemeMode(settingsBootstrap)
+      acceptBootstrap(themeBootstrap)
+    }
     setupThemeListeners()
     await applyActiveTheme(false)
   })()
@@ -800,6 +810,15 @@ export async function applyActiveTheme(
     applyLiquidGlassRuntimeVariables(state.tone)
     document.documentElement.dataset.activeTheme = state.activeTheme
     document.documentElement.dataset.tePresetLayout = state.presetLayout
+    if (operation === 'apply') {
+      persistThemeRuntimeCache({
+        css: state.css,
+        attributes: state.dataAttributes,
+        activeTheme: state.activeTheme,
+        tone: state.tone
+      })
+      markThemeRuntimeFresh()
+    }
     error.value = ''
     recordThemePerformance(operation, startedAt)
     decodeThemeResources(state.resourceUrls)
