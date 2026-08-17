@@ -58,18 +58,15 @@ jobs:
 
       - name: Set up MinGW native audio toolchain
         run: |
-          # w64devkit: download the official x64 self-extracting 7z release (no choco
-          # package exists). It is a .exe 7z self-extractor; run it with -y into a
-          # clean RUNNER_TEMP dir (w64devkit 7z SFX writes in-place).
+          # w64devkit: download the official x64 7z self-extracting release (no
+          # choco package exists). The 7z SFX extracts with `-y -o<dir>` and nests
+          # a `w64devkit/` folder under that dir, so the toolchain root is
+          # "<dir>/w64devkit".
           curl.exe -L --retry 3 -o "$RUNNER_TEMP/w64devkit.exe" `
             https://github.com/skeeto/w64devkit/releases/download/v2.9.1/w64devkit-x64-2.9.1.7z.exe
-          mkdir -Force "$RUNNER_TEMP/w64devkit"
-          Push-Location "$RUNNER_TEMP/w64devkit"
-          & "$RUNNER_TEMP/w64devkit.exe" -y
-          Pop-Location
-          Get-ChildItem "$RUNNER_TEMP/w64devkit" | Select-Object -First 5
-          if (-not (Test-Path "$RUNNER_TEMP/w64devkit/bin/gcc.exe")) { throw "w64devkit extraction failed" }
-          echo "W64DEVKIT_ROOT=$RUNNER_TEMP/w64devkit" >> "$env:GITHUB_ENV"
+          & "$RUNNER_TEMP/w64devkit.exe" -y -o"$RUNNER_TEMP/w64devkit-extract"
+          if (-not (Test-Path "$RUNNER_TEMP/w64devkit-extract/w64devkit/bin/gcc.exe")) { throw "w64devkit extraction failed" }
+          echo "W64DEVKIT_ROOT=$RUNNER_TEMP/w64devkit-extract/w64devkit" >> "$env:GITHUB_ENV"
           "VCPKG_ROOT=$RUNNER_TEMP/vcpkg" >> "$env:GITHUB_ENV"
           "TWILIGHT_GNU_PATCH=C:\Program Files\Git\usr\bin\patch.exe" >> "$env:GITHUB_ENV"
           # vcpkg: shallow clone the pinned baseline; MinGW FFmpeg manifest uses it.
