@@ -135,9 +135,13 @@ also satisfy [`docs/local-library-removal-policy.md`](local-library-removal-poli
 
 ## Required GitHub Check
 
-`.github/workflows/audio-engine.yml` runs for every push and pull request without path filters, so
-changes under any `src/**` path execute the full repository gate and native audio matrix. Its final
-`Required Quality Gate` job fails unless every required job succeeds.
+`.github/workflows/audio-engine.yml` runs for every push and pull request. A `changes` pre-job
+path-filters the workload so the full Electron test battery only runs when Electron-relevant paths
+changed (`src/**`, electron config, lockfile, …); the fast core (install policy, lint, typecheck,
+`test:plugins` which carries the WindowAPI parity / Tauri contracts, and `test:audio-manager`) always
+runs. The `native-audio` 3-OS matrix runs only when `audio-engine/**` or its toolchain scripts
+changed. Skipped jobs report success, so a Tauri-only push still passes the final `Required Quality
+Gate` job, which fails unless every required job succeeds.
 
 Repository administrators must configure the `main` branch ruleset in GitHub to require the
 `Required Quality Gate` status check, require the branch to be up to date before merging, and block

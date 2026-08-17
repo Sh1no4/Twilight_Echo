@@ -13,10 +13,56 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      # electron = any change outside the Tauri-only / audio-engine / CI-only
+      # paths (i.e. something the Electron test battery actually covers).
+      electron: ${{ steps.filter.outputs.electron }}
+      # audio = the native audio engine or its toolchain scripts changed.
+      audio: ${{ steps.filter.outputs.audio }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Filter changed paths
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            electron:
+              - '!src-tauri/**'
+              - '!vite.plugin-host.config.ts'
+              - '!vite.audio-engine.config.ts'
+              - '!vite.ncm-gateway.config.ts'
+              - '!resources/sidecar/**'
+              - '!resources/audio-engine/**'
+              - '!scripts/stage-node-runtime.cjs'
+              - '!scripts/verify-tauri-release-gate.cjs'
+              - '!scripts/extract-rust-docs.cjs'
+              - '!scripts/generate-ncm-module-defs.cjs'
+              - '!audio-engine/**'
+              - '!scripts/audio-engine-toolchain.cjs'
+              - '!scripts/configure-audio-engine-mingw.cjs'
+              - '!scripts/run-audio-engine-mingw.cjs'
+              - '!scripts/stage-audio-engine.cjs'
+              - '!.github/workflows/build-tauri.yml'
+              - '!docs/rust-comments/**'
+            audio:
+              - 'audio-engine/**'
+              - 'scripts/audio-engine-toolchain.cjs'
+              - 'scripts/configure-audio-engine-mingw.cjs'
+              - 'scripts/run-audio-engine-mingw.cjs'
+              - 'scripts/stage-audio-engine.cjs'
+
   repository:
     name: Repository Quality
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    needs: [changes]
 
     steps:
       - name: Checkout
@@ -72,19 +118,25 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
+      # Fast core that always runs: plugins suite covers the WindowAPI parity +
+      # Tauri contract gates; audio-manager covers realtime/offline audio services.
       - name: Test plugins
         run: pnpm run test:plugins
 
       - name: Test realtime and offline audio services
         run: pnpm run test:audio-manager
 
+      # ── Electron-heavy battery: only when Electron-relevant paths changed ──
       - name: Test tag and duplicate management
+        if: needs.changes.outputs.electron == 'true'
         run: xvfb-run -a pnpm run test:tag-duplicate-management
 
       - name: Verify duplicate detection benchmark contract
+        if: needs.changes.outputs.electron == 'true'
         run: pnpm run test:duplicate-detection-benchmark
 
       - name: Run isolated duplicate detection 10k benchmark
+        if: needs.changes.outputs.electron == 'true'
         run: >-
           pnpm run benchmark:duplicate-detection:ci --
           --output "$RUNNER_TEMP/duplicate-detection-benchmark.json"
@@ -101,57 +153,76 @@ jobs:
           if-no-files-found: warn
 
       - name: Test playback routing
+        if: needs.changes.outputs.electron == 'true'
         run: pnpm run test:playback-routing
 
       - name: Test playlist lifecycle
+        if: needs.changes.outputs.electron == 'true'
         run: xvfb-run -a pnpm run test:playlist-lifecycle
 
       - name: Test lyrics management
+        if: needs.changes.outputs.electron == 'true'
         run: xvfb-run -a pnpm run test:lyrics-management
 
       - name: Test radio, podcast, library watcher, and remote control
+        if: needs.changes.outputs.electron == 'true'
         run: pnpm run test:radio-remote
 
       - name: Test CUE support
+        if: needs.changes.outputs.electron == 'true'
         run: pnpm run test:cue
 
       - name: Test local performance
+        if: needs.changes.outputs.electron == 'true'
         run: pnpm run test:local-perf
 
       - name: Test themes
+        if: needs.changes.outputs.electron == 'true'
         run: pnpm run test:themes
 
       - name: Test DSP graph
+        if: needs.changes.outputs.electron == 'true'
         run: pnpm run test:dsp-graph
 
       - name: Test DSP assets
+        if: needs.changes.outputs.electron == 'true'
         run: pnpm run test:dsp-assets
 
       - name: Test plugin tooling
+        if: needs.changes.outputs.electron == 'true'
         run: pnpm run test:plugin-tooling
 
+      # Audio toolchain scripts are exercised when either Electron or audio changes.
       - name: Test audio toolchain scripts
+        if: needs.changes.outputs.electron == 'true' || needs.changes.outputs.audio == 'true'
         run: pnpm run test:audio-toolchain
 
       - name: Test application contracts
+        if: needs.changes.outputs.electron == 'true'
         run: pnpm run test:app
 
       - name: Test renderer data tooling
+        if: needs.changes.outputs.electron == 'true'
         run: pnpm run test:renderer-data-tooling
 
       - name: Test sleep timer
+        if: needs.changes.outputs.electron == 'true'
         run: pnpm run test:sleep-timer
 
       - name: Test cross-cutting regressions
+        if: needs.changes.outputs.electron == 'true'
         run: pnpm run test:cross-cutting-regressions
 
       - name: Production build
+        if: needs.changes.outputs.electron == 'true'
         run: pnpm run build:electron
 
   native-audio:
     name: Native Audio (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    needs: [changes]
+    if: needs.changes.outputs.audio == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -229,7 +300,7 @@ jobs:
   required:
     name: Required Quality Gate
     if: always()
-    needs: [repository, native-audio]
+    needs: [changes, repository, native-audio]
     runs-on: ubuntu-latest
     steps:
       - name: Require every quality job
@@ -237,5 +308,6 @@ jobs:
           REPOSITORY_RESULT: ${{ needs.repository.result }}
           NATIVE_AUDIO_RESULT: ${{ needs.native-audio.result }}
         run: |
+          # Skipped jobs report "success", so a Tauri-only push still passes the gate.
           test "$REPOSITORY_RESULT" = "success"
           test "$NATIVE_AUDIO_RESULT" = "success"
