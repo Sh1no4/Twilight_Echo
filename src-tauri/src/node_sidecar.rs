@@ -30,10 +30,20 @@ const SIDECAR_CHANNEL_CAPACITY: usize = 64;
 // `{resource}/sidecar/node.exe`（Windows 固定版本运行时）→ 系统 `node`
 // （仅开发/回退路径）。结果缓存到进程级 `OnceLock`，`.setup()` 时初始化。
 static NODE_BINARY: OnceLock<PathBuf> = OnceLock::new();
+/// 随包资源目录（`{resource}`），供网关/宿主脚本解析；`.setup()` 时与 Node 一起缓存。
+static RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 pub(crate) fn init_node_binary(app: &AppHandle) {
     let resolved = resolve_node_binary(app);
     let _ = NODE_BINARY.set(resolved);
+    if let Ok(dir) = app.path().resource_dir() {
+        let _ = RESOURCE_DIR.set(dir);
+    }
+}
+
+/// 返回随包资源目录（仅打包构建存在；dev 构建未设置时返回 `None`）。
+pub(crate) fn resource_dir() -> Option<PathBuf> {
+    RESOURCE_DIR.get().cloned()
 }
 
 fn resolve_node_binary(app: &AppHandle) -> PathBuf {

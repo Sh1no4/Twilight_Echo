@@ -172,3 +172,6 @@ resources/sponsor/wechat.png
 
 # Optional full MiSans faces (multi-MB; keep local)
 resources/font/misans/full/*.woff2
+
+# Build-generated NCM gateway module registry
+src/main/ncm/moduleDefs.generated.ts

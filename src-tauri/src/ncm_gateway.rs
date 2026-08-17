@@ -28,6 +28,14 @@ fn gateway_script_path() -> Option<PathBuf> {
             return Some(candidate);
         }
     }
+    // 打包发布：随包分发的固定版本网关单文件（`sidecar/ncmGateway.js`，内含
+    // 全部路由与依赖，用随包 Node 运行时自举）。数据文件随包在 `data/`。
+    if let Some(resource_dir) = crate::node_sidecar::resource_dir() {
+        let candidate = resource_dir.join("sidecar").join("ncmGateway.js");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
     // 开发构建默认定位到仓库 `scripts/ncm-gateway.mjs`（编译期嵌入 manifest 目录）。
     let candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts/ncm-gateway.mjs");
     if candidate.is_file() {

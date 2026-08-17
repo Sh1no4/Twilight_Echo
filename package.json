@@ -11,6 +11,7 @@
     "build:plugin-api": "tsc -p packages/plugin-api/tsconfig.json && tsc -p packages/plugin-api/tsconfig.typecheck.json",
     "build:plugin-host": "vite build --config vite.plugin-host.config.ts",
     "build:audio-engine:node": "vite build --config vite.audio-engine.config.ts",
+    "build:ncm-gateway": "vite build --config vite.ncm-gateway.config.ts",
     "generate:plugin-theme-contract": "node --experimental-strip-types scripts/generate-plugin-theme-contract.ts",
     "evidence:themes": "node scripts/theme-visual-regression.cjs",
     "test:plugin-tooling": "node --test packages/create-twilight-plugin/test/cli.test.cjs",

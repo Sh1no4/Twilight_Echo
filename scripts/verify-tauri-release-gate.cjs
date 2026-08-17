@@ -141,16 +141,19 @@ const resources = tauriConf.bundle?.resources
 const tauriDir = join(root, 'src-tauri')
 const sidecarScripts = [
   ['../out/plugin-host/pluginHostNode.js', 'sidecar/pluginHostNode.js'],
-  ['../out/audio-engine/audioEngineNode.js', 'sidecar/audioEngineNode.js']
+  ['../out/audio-engine/audioEngineNode.js', 'sidecar/audioEngineNode.js'],
+  ['../out/ncm-gateway/ncmGateway.js', 'sidecar/ncmGateway.js'],
+  ['../out/data/china_ip_ranges.txt', 'data/china_ip_ranges.txt'],
+  ['../out/data/deviceid.txt', 'data/deviceid.txt']
 ]
 for (const [from, to] of sidecarScripts) {
   // bundle.resources paths are relative to src-tauri/ (the Tauri config dir).
   const declared = resources && resources[from] === to
   if (!declared) fail('sidecar', `bundle.resources must map ${from} → ${to}`)
   const source = resolve(tauriDir, from)
-  if (!existsSync(source)) fail('sidecar', `sidecar source missing: ${source} (run build:plugin-host/build:audio-engine:node)`)
+  if (!existsSync(source)) fail('sidecar', `sidecar source missing: ${source} (run build:plugin-host/build:audio-engine:node/build:ncm-gateway)`)
 }
-ok('sidecar: plugin host + audio engine scripts bundled')
+ok('sidecar: plugin host + audio engine + ncm gateway scripts bundled')
 
 // ── 6. Node runtime + native audio engine closure ─────────────────────────
 const nodeResourceMap = resources && resources['../resources/sidecar/node.exe']
