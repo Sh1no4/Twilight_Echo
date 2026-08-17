@@ -20,11 +20,15 @@ import {
 import type { Track } from '../types/music'
 import { createUnifiedRecentTrackResolver } from '../utils/unifiedRecentTracks'
 import CoverImg from './CoverImg.vue'
+import ImportDialog from './ImportDialog.vue'
 
 const emit = defineEmits<{
   (event: 'select-view', category: string, filter: string | null): void
   (event: 'open-library-settings'): void
 }>()
+
+/* 单轨导入由侧栏 ImportDialog 承担；空态复用同一组件完成“从文件导入单曲”。 */
+const showImportDialog = ref(false)
 
 // Relative so the packaged file:// build resolves it next to index.html
 // instead of the filesystem root.
@@ -886,11 +890,16 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
             <span>添加音乐库文件夹</span>
           </span>
         </button>
-        <div class="empty-chips" aria-hidden="true">
-          <span><i class="ph ph-folder-simple-plus"></i> 批量扫描</span>
-          <span><i class="ph ph-disc"></i> 无损格式</span>
-          <span><i class="ph ph-chart-line-up"></i> 聆听统计</span>
-        </div>
+        <p class="empty-alt">
+          也可以
+          <button
+            type="button"
+            class="empty-alt-link"
+            @click="showImportDialog = true"
+          >
+            从文件导入单曲
+          </button>
+        </p>
       </section>
 
       <template v-else>
@@ -1291,6 +1300,8 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
         </section>
       </template>
     </main>
+
+    <ImportDialog :show="showImportDialog" @close="showImportDialog = false" />
 
     <Transition name="dsp-route-dialog">
       <div

@@ -464,6 +464,43 @@ body.te-no-blur .home .empty-orb {
   transform: scale(var(--te-motion-press-scale));
 }
 
+.empty-alt {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--home-muted);
+}
+
+.empty-alt-link {
+  border: none;
+  background: transparent;
+  padding: 2px 4px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--home-accent);
+  cursor: pointer;
+  transition: color var(--te-motion-hover);
+}
+
+.empty-alt-link:hover {
+  color: color-mix(in srgb, var(--home-accent) 76%, var(--home-ink));
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.empty-alt-link:focus-visible {
+  outline: 2px solid var(--home-accent);
+  outline-offset: 2px;
+}
+
 .empty-chips {
   position: relative;
   z-index: 1;
