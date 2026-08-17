@@ -7,6 +7,20 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager};
 use tokio::sync::mpsc;
 
+// Windows 下 `CommandExt` 提供 `creation_flags`（CREATE_NO_WINDOW 抑制控制台）。
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+/// 子进程创建标志：禁止为 spawn 的 Node sidecar 分配控制台窗口（`CREATE_NO_WINDOW`）。
+/// 打包发布时 `twilight-echo.exe` 是 GUI 子系统，但子进程 `node.exe`（GUI 配额/默认继承）
+/// 若不带此标志会弹出并挂着一个终端窗口。仅 Windows 相关；他用 `#[cfg]` 编译成无操作。
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Windows 下为子进程抑制控制台窗口。
+#[cfg(not(target_os = "windows"))]
+const CREATE_NO_WINDOW: u32 = 0;
+
 pub const SIDECAR_LINE_MAX_BYTES: usize = 1024 * 1024;
 const SIDECAR_CHANNEL_CAPACITY: usize = 64;
 
@@ -72,6 +86,7 @@ pub fn spawn_node_process(node_args: &[&str], script: &Path) -> Result<(), Strin
         command.arg(arg);
     }
     let child = command
+        .creation_flags(CREATE_NO_WINDOW)
         .arg(script)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -126,6 +141,7 @@ impl NodeSidecar {
             command.arg(arg);
         }
         let mut command = command
+            .creation_flags(CREATE_NO_WINDOW)
             .arg(script)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

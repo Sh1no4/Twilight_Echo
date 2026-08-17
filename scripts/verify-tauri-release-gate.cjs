@@ -152,7 +152,7 @@ for (const [from, to] of sidecarScripts) {
 }
 ok('sidecar: plugin host + audio engine scripts bundled')
 
-// ── 6. Node runtime closure ────────────────────────────────────────────────
+// ── 6. Node runtime + native audio engine closure ─────────────────────────
 const nodeResourceMap = resources && resources['../resources/sidecar/node.exe']
 const nodeStaged = existsSync(join(root, 'resources/sidecar/node.exe'))
 const nodeDeclared = nodeResourceMap === 'sidecar/node.exe'
@@ -161,6 +161,23 @@ if (!nodeStaged) {
   fail('node-runtime', 'resources/sidecar/node.exe missing — run pnpm run stage:node-runtime')
 }
 ok('node-runtime: node.exe staged and bundled for clean-PATH packaging')
+
+// Native engine must be declared and staged, else the audio sidecar degrades
+// to HTMLAudio fallback (native-unavailable) instead of native WASAPI playback.
+const nativeEngineFiles = [
+  ['../resources/audio-engine/twilight-audio-engine.dll', 'audio-engine/twilight-audio-engine.dll'],
+  ['../resources/audio-engine/twilight_audio_node.node', 'audio-engine/twilight_audio_node.node']
+]
+for (const [from, to] of nativeEngineFiles) {
+  if (!resources || resources[from] !== to) {
+    fail('native-engine', `bundle.resources must map ${from} → ${to}`)
+  }
+  const staged = resolve(tauriDir, from)
+  if (!existsSync(staged)) {
+    fail('native-engine', `native engine source missing: ${staged} (run build:audio-engine:mingw && stage:audio-engine)`)
+  }
+}
+ok('native-engine: twilight-audio-engine.dll + twilight_audio_node.node staged and bundled')
 
 // ── 7. Windows-only crate guard ────────────────────────────────────────────
 const libPath = join(root, 'src-tauri/src/lib.rs')

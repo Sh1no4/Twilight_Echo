@@ -8,7 +8,7 @@
 // It is idempotent: when the staged runtime already reports the pinned version,
 // it skips the download so `tauri build` stays fast and offline-friendly after
 // the first stage. Use `--force` to re-download.
-const { createWriteStream, existsSync, mkdirSync } = require('node:fs')
+const { createWriteStream, existsSync, mkdirSync, statSync } = require('node:fs')
 const { tmpdir } = require('node:os')
 const { join } = require('node:path')
 const { spawnSync } = require('node:child_process')
@@ -78,6 +78,74 @@ async function main() {
     }
     if (current) console.log(`Staged node is ${current}; re-staging ${NODE_VERSION}`)
   }
+
+  mkdirSync(TARGET_DIR, { recursive: true })
+  const tmpZip = join(tmpdir(), ZIP_NAME)
+  console.log(`Downloading ${ZIP_URL} …`)
+  await download(ZIP_URL, tmpZip)
+
+  const extractRoot = join(tmpdir(), `node-stage-${process.pid}`)
+  mkdirSync(extractRoot, { recursive: true })
+  extractZip(tmpZip, extractRoot)
+  const extracted = join(
+    extractRoot,
+    `node-${NODE_VERSION}-win-x64`,
+    'node.exe'
+  )
+  if (!existsSync(extracted)) {
+    throw new Error(`node.exe not found in extracted archive: ${extracted}`)
+  }
+
+  const verify = spawnSync(extracted, ['--version'], { encoding: 'utf8', timeout: 15_000 })
+  if (verify.status !== 0 || verify.stdout.trim() !== NODE_VERSION) {
+    throw new Error(`downloaded node.exe version mismatch: ${verify.stdout?.trim() ?? 'unknown'}`)
+  }
+
+  const { copyFileSync, rmSync, statSync } = require('node:fs')
+  copyFileSync(extracted, TARGET_EXE)
+  rmSync(extractRoot, { recursive: true, force: true })
+  rmSync(tmpZip, { force: true })
+  const sizeMiB = (statSync(TARGET_EXE).size / 1024 / 1024).toFixed(1)
+  console.log(`Staged Node runtime: ${verify.stdout.trim()} (${sizeMiB} MiB) → ${TARGET_EXE}`)
+}
+
+// ── Stage the native audio engine ───────────────────────────────────────────
+// The Tauri bundle ships the MinGW-built engine (`twilight-audio-engine.dll` +
+// `twilight_audio_node.node`) under the app's `audio-engine/` resource dir so
+// the audio sidecar reports nativeAvailable=true. The binary sources are the
+// same `resources/audio-engine/**` artifacts (gitignored) that electron-builder
+// stages for Electron — build them first with the MinGW toolchain
+// (`pnpm run build:audio-engine:mingw && pnpm run stage:audio-engine`).
+const AUDIO_RESOURCE_DIR = join(__dirname, '..', 'resources', 'audio-engine')
+const AUDIO_RUNTIME_FILES = ['twilight-audio-engine.dll', 'twilight_audio_node.node']
+
+async function stageAudioEngine() {
+  const missing = AUDIO_RUNTIME_FILES.filter((file) => !existsSync(join(AUDIO_RESOURCE_DIR, file)))
+  if (missing.length > 0) {
+    throw new Error(
+      `audio-engine runtime files missing from ${AUDIO_RESOURCE_DIR}: ${missing.join(
+        ', '
+      )}. Run pnpm run build:audio-engine:mingw && pnpm run stage:audio-engine first.`
+    )
+  }
+  for (const file of AUDIO_RUNTIME_FILES) {
+    const sizeMiB = (statSync(join(AUDIO_RESOURCE_DIR, file)).size / 1024 / 1024).toFixed(1)
+    console.log(`Audio engine staged: ${file} (${sizeMiB} MiB)`)
+  }
+}
+
+async function main() {
+  await stageNodeRuntime()
+  await stageAudioEngine()
+}
+
+async function stageNodeRuntime() {
+  const current = FORCE ? null : stagedVersion()
+  if (current === NODE_VERSION) {
+    console.log(`Node runtime already staged: ${current} (${TARGET_EXE})`)
+    return
+  }
+  if (current) console.log(`Staged node is ${current}; re-staging ${NODE_VERSION}`)
 
   mkdirSync(TARGET_DIR, { recursive: true })
   const tmpZip = join(tmpdir(), ZIP_NAME)

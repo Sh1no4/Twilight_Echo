@@ -1,5 +1,4 @@
 import extract from 'extract-zip'
-import { createRequire } from 'module'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'fs/promises'
 import { dirname, extname, join, relative, resolve } from 'path'
 import { tmpdir } from 'os'
@@ -8,27 +7,17 @@ import type { DspAsset, DspProfile, DspScene } from '../../shared/dspGraph.ts'
 import { DspAssetLibrary } from './dspAssetLibrary.ts'
 import { parseCorrectionProfileFile } from './correctionProfile.ts'
 import { tryParseJsonWithNestingLimit } from '../security/jsonSafety.ts'
-
-const require = createRequire(import.meta.url)
-const yauzl = require('yauzl') as {
-  open: (
-    path: string,
-    options: { lazyEntries: true; validateEntrySizes: false },
-    callback: (error: Error | null, zipFile?: ZipFile) => void
-  ) => void
-}
+// `yauzl` is a transitive dependency of `extract-zip` and must stay INLINEABLE by
+// the sidecar bundler (`vite.audio-engine.config.ts` ssr.noExternal). Import it
+// through the same module graph as `extract-zip` so Rollup rewrites the reference
+// to the inlined implementation — a `createRequire`-driven `require('yauzl')`
+// would resolve at runtime against the shipped directory and crash the packaged
+// sidecar with MODULE_NOT_FOUND.
+import { open as openYauzlZip } from 'yauzl'
 
 const MAX_PROFILE_ARCHIVE_BYTES = 512 * 1024 * 1024
 const MAX_PROFILE_FILES = 1024
 const MAX_PROFILE_MANIFEST_BYTES = 4 * 1024 * 1024
-
-interface ZipFile {
-  readEntry: () => void
-  close: () => void
-  on: (event: 'entry', handler: (entry: ZipEntry) => void) => void
-  once(event: 'end', handler: () => void): void
-  once(event: 'error', handler: (error: Error) => void): void
-}
 
 interface ZipEntry {
   fileName: string
@@ -232,7 +221,7 @@ function isArchiveAsset(value: unknown): value is ProfileArchiveManifest['assets
 
 async function inspectProfileArchive(source: string): Promise<void> {
   await new Promise<void>((resolveInspect, rejectInspect) => {
-    yauzl.open(source, { lazyEntries: true, validateEntrySizes: false }, (error, zipFile) => {
+    openYauzlZip(source, { lazyEntries: true, validateEntrySizes: false }, (error, zipFile) => {
       if (error || !zipFile) {
         rejectInspect(error ?? new Error('无法读取 DSP 配置包'))
         return

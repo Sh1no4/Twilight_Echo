@@ -90,7 +90,9 @@
       "../resources/plugin-index": "plugin-index",
       "../out/plugin-host/pluginHostNode.js": "sidecar/pluginHostNode.js",
       "../out/audio-engine/audioEngineNode.js": "sidecar/audioEngineNode.js",
-      "../resources/sidecar/node.exe": "sidecar/node.exe"
+      "../resources/sidecar/node.exe": "sidecar/node.exe",
+      "../resources/audio-engine/twilight-audio-engine.dll": "audio-engine/twilight-audio-engine.dll",
+      "../resources/audio-engine/twilight_audio_node.node": "audio-engine/twilight_audio_node.node"
     }
   }
 }
