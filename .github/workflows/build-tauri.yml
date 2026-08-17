@@ -56,6 +56,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build sidecars and stage Node runtime
+        run: pnpm run build:plugin-host && pnpm run build:audio-engine:node && pnpm run stage:node-runtime
+
       - name: Test Tauri Rust crate
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
 
