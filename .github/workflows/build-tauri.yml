@@ -56,6 +56,20 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Set up MinGW native audio toolchain
+        run: |
+          echo "VCPKG_ROOT=$RUNNER_TEMP/vcpkg" >> "$GITHUB_ENV"
+          echo "W64DEVKIT_ROOT=$RUNNER_TEMP/w64devkit" >> "$GITHUB_ENV"
+          echo "TWILIGHT_GNU_PATCH=C:\Program Files\Git\usr\bin\patch.exe" >> "$GITHUB_ENV"
+          # w64devkit ships a BusyBox patch; Git for Windows patch is preferred.
+          choco install w64devkit -y --no-progress
+          choco install vcpkg -y --no-progress
+
+      - name: Configure + build native audio engine (MinGW static) and stage it
+        run: |
+          pnpm run configure:audio-engine:mingw
+          pnpm run build:audio-engine:mingw
+
       - name: Build sidecars and stage Node runtime + native engine
         run: pnpm run build:plugin-host && pnpm run build:audio-engine:node && pnpm run stage:node-runtime
 

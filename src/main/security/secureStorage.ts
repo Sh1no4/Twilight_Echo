@@ -1,6 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto'
 import { hostname, userInfo } from 'os'
-import * as electron from 'electron'
 import { tryParseJsonWithNestingLimit } from './jsonSafety.ts'
 
 export interface SecureValueEnvelope {
@@ -136,8 +135,20 @@ function safeUserFingerprint(): { username: string; homedir: string } {
 }
 
 function loadElectronSafeStorage(): ElectronSafeStorage | null {
-  const direct = electron as unknown as { safeStorage?: ElectronSafeStorage }
-  if (direct.safeStorage) return direct.safeStorage
-  const nested = electron as unknown as { default?: { safeStorage?: ElectronSafeStorage } | string }
-  return typeof nested.default === 'object' ? (nested.default.safeStorage ?? null) : null
+  // Electron's `safeStorage` is only available inside the real Electron main
+  // process. When this module is bundled into a Tauri Node sidecar (plugin host /
+  // audio engine) there is no Electron runtime, so we must not `require('electron')`
+  // — that would crash the sidecar with MODULE_NOT_FOUND. Resolve it lazily and
+  // only when present; otherwise fall back to the machine-keyed AES-GCM backend.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require('electron') as unknown as {
+      safeStorage?: ElectronSafeStorage
+      default?: { safeStorage?: ElectronSafeStorage }
+    }
+    if (mod.safeStorage) return mod.safeStorage
+    return typeof mod.default === 'object' ? (mod.default.safeStorage ?? null) : null
+  } catch {
+    return null
+  }
 }
