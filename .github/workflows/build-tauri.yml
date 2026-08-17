@@ -57,6 +57,34 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # ── Toolchain caches: w64devkit + vcpkg are version-pinned; only re-download
+      # when the pinned version/baseline changes.
+      - name: Cache w64devkit toolchain
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/w64devkit-extract
+          key: w64devkit-2.9.1
+
+      - name: Cache vcpkg checkout
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg
+          key: vcpkg-2026.07.29
+
+      # ── Engine cache: the MinGW static FFmpeg install (vcpkg_installed) and the
+      # staged native engine are huge (~1.2 GiB) and expensive to rebuild. Key on
+      # audio-engine sources so a Tauri-only push reuses the previous engine; only
+      # audio-engine/** changes invalidate it.
+      - name: Cache MinGW vcpkg_installed + staged engine
+        uses: actions/cache@v4
+        with:
+          path: |
+            audio-engine/build/mingw-static/vcpkg_installed
+            resources/audio-engine
+          key: mingw-engine-${{ hashFiles('audio-engine/**') }}
+          restore-keys: |
+            mingw-engine-
+
       - name: Set up MinGW native audio toolchain
         run: |
           # w64devkit: download the official x64 7z self-extracting release (no
@@ -64,21 +92,32 @@ jobs:
           # a `w64devkit/` folder under that dir. Use cmd's call so the
           # self-extractor runs synchronously (the SFX spawns a child extractor;
           # under PowerShell `&` returns before it finishes, so Test-Path sees empty).
-          curl.exe -L --retry 3 -o "$RUNNER_TEMP\w64devkit.exe" `
-            https://github.com/skeeto/w64devkit/releases/download/v2.9.1/w64devkit-x64-2.9.1.7z.exe
-          cmd /c call "$RUNNER_TEMP\w64devkit.exe" -y -o"$RUNNER_TEMP\w64devkit-extract"
+          if (-not (Test-Path "$RUNNER_TEMP\w64devkit-extract\w64devkit\bin\gcc.exe")) {
+            curl.exe -L --retry 3 -o "$RUNNER_TEMP\w64devkit.exe" `
+              https://github.com/skeeto/w64devkit/releases/download/v2.9.1/w64devkit-x64-2.9.1.7z.exe
+            cmd /c call "$RUNNER_TEMP\w64devkit.exe" -y -o"$RUNNER_TEMP\w64devkit-extract"
+          }
           if (-not (Test-Path "$RUNNER_TEMP\w64devkit-extract\w64devkit\bin\gcc.exe")) { throw "w64devkit extraction failed" }
           echo "W64DEVKIT_ROOT=$RUNNER_TEMP\w64devkit-extract\w64devkit" >> "$env:GITHUB_ENV"
           "VCPKG_ROOT=$RUNNER_TEMP\vcpkg" >> "$env:GITHUB_ENV"
           "TWILIGHT_GNU_PATCH=C:\Program Files\Git\usr\bin\patch.exe" >> "$env:GITHUB_ENV"
-          # vcpkg: shallow clone the pinned baseline; MinGW FFmpeg manifest uses it.
-          git clone --depth 1 --branch 2026.07.29 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP\vcpkg"
-          & "$RUNNER_TEMP\vcpkg\bootstrap-vcpkg.sh" -disableMetrics
+          # vcpkg: shallow clone the pinned baseline only if the cache missed.
+          if (-not (Test-Path "$RUNNER_TEMP\vcpkg\scripts\buildsystems\vcpkg.cmake")) {
+            git clone --depth 1 --branch 2026.07.29 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP\vcpkg"
+            & "$RUNNER_TEMP\vcpkg\bootstrap-vcpkg.sh" -disableMetrics
+          }
 
       - name: Configure + build native audio engine (MinGW static) and stage it
+        shell: pwsh
         run: |
-          pnpm run configure:audio-engine:mingw
-          pnpm run build:audio-engine:mingw
+          # Skip the expensive FFmpeg/engine build when a cached staged engine was
+          # restored (Tauri-only push); only build when the cache missed.
+          if (Test-Path "resources/audio-engine/twilight_audio_node.node") {
+            Write-Host "cached native engine present; skipping MinGW build"
+          } else {
+            pnpm run configure:audio-engine:mingw
+            pnpm run build:audio-engine:mingw
+          }
 
       - name: Build sidecars and stage Node runtime + native engine
         run: pnpm run build:plugin-host && pnpm run build:audio-engine:node && pnpm run build:ncm-gateway && pnpm run stage:node-runtime
