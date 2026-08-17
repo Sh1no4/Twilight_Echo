@@ -60,18 +60,19 @@ jobs:
         run: |
           # w64devkit: download the official x64 7z self-extracting release (no
           # choco package exists). The 7z SFX extracts with `-y -o<dir>` and nests
-          # a `w64devkit/` folder under that dir, so the toolchain root is
-          # "<dir>/w64devkit".
-          curl.exe -L --retry 3 -o "$RUNNER_TEMP/w64devkit.exe" `
+          # a `w64devkit/` folder under that dir. Use cmd's call so the
+          # self-extractor runs synchronously (the SFX spawns a child extractor;
+          # under PowerShell `&` returns before it finishes, so Test-Path sees empty).
+          curl.exe -L --retry 3 -o "$RUNNER_TEMP\w64devkit.exe" `
             https://github.com/skeeto/w64devkit/releases/download/v2.9.1/w64devkit-x64-2.9.1.7z.exe
-          & "$RUNNER_TEMP/w64devkit.exe" -y -o"$RUNNER_TEMP/w64devkit-extract"
-          if (-not (Test-Path "$RUNNER_TEMP/w64devkit-extract/w64devkit/bin/gcc.exe")) { throw "w64devkit extraction failed" }
-          echo "W64DEVKIT_ROOT=$RUNNER_TEMP/w64devkit-extract/w64devkit" >> "$env:GITHUB_ENV"
-          "VCPKG_ROOT=$RUNNER_TEMP/vcpkg" >> "$env:GITHUB_ENV"
+          cmd /c call "$RUNNER_TEMP\w64devkit.exe" -y -o"$RUNNER_TEMP\w64devkit-extract"
+          if (-not (Test-Path "$RUNNER_TEMP\w64devkit-extract\w64devkit\bin\gcc.exe")) { throw "w64devkit extraction failed" }
+          echo "W64DEVKIT_ROOT=$RUNNER_TEMP\w64devkit-extract\w64devkit" >> "$env:GITHUB_ENV"
+          "VCPKG_ROOT=$RUNNER_TEMP\vcpkg" >> "$env:GITHUB_ENV"
           "TWILIGHT_GNU_PATCH=C:\Program Files\Git\usr\bin\patch.exe" >> "$env:GITHUB_ENV"
           # vcpkg: shallow clone the pinned baseline; MinGW FFmpeg manifest uses it.
-          git clone --depth 1 --branch 2026.07.29 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
-          & "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          git clone --depth 1 --branch 2026.07.29 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP\vcpkg"
+          & "$RUNNER_TEMP\vcpkg\bootstrap-vcpkg.sh" -disableMetrics
 
       - name: Configure + build native audio engine (MinGW static) and stage it
         run: |
