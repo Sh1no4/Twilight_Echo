@@ -10,10 +10,12 @@ import type {
   MiniPlayerSettings,
   MiniPlayerStateSnapshot
 } from '../../../shared/miniPlayer.ts'
+import type { TrayNavigationTarget } from '../../../shared/trayPlayer.ts'
 import type { MotionPreference } from '../../../shared/motion.ts'
 import type {
   AudioOutputId,
   AudioProcessingSettings,
+  DesktopLyricsSettings,
   SettingsSnapshot
 } from '../types/settings.ts'
 import {
@@ -21,6 +23,7 @@ import {
   isTauriRuntime,
   type RuntimeCapabilityId
 } from './runtimeCapabilities'
+import type { SleepTimerState } from '../../../shared/sleepTimer'
 
 function capabilityError(
   id: RuntimeCapabilityId,
@@ -198,6 +201,11 @@ export function installTauriHostBridge(): void {
       },
       openExternal: async (url) => openUrl(url)
     },
+    discord: {
+      getStatus: rejectMethod('discord', 'getStatus'),
+      updateActivity: rejectMethod('discord', 'updateActivity'),
+      clearActivity: rejectMethod('discord', 'clearActivity')
+    },
     fs: {
       scanMusicFiles: (folderPath: string) => invoke('fs_scan_music_files', { folderPath }),
       readAudioFile: async (filePath: string) => {
@@ -215,8 +223,15 @@ export function installTauriHostBridge(): void {
     app: {
       ...existing?.app,
       relaunch: async () => invoke('relaunch'),
-      onNavigate: rejectMethod('app', 'onNavigate'),
-      consumePendingNavigation: rejectMethod('app', 'consumePendingNavigation'),
+      onNavigate: (cb: (target: TrayNavigationTarget) => void) =>
+        subscribeToTauriEvent<TrayNavigationTarget>('app:navigate', cb),
+      consumePendingNavigation: () =>
+        invoke<TrayNavigationTarget | null>('tray_player_consume_pending_navigation'),
+      checkForUpdates: rejectMethod('app', 'checkForUpdates'),
+      downloadUpdate: rejectMethod('app', 'downloadUpdate'),
+      cancelUpdateDownload: rejectMethod('app', 'cancelUpdateDownload'),
+      installUpdate: rejectMethod('app', 'installUpdate'),
+      onUpdateProgress: rejectMethod('app', 'onUpdateProgress'),
       onSavePlaybackSession: rejectMethod('app', 'onSavePlaybackSession')
     },
     library: {
@@ -229,6 +244,10 @@ export function installTauriHostBridge(): void {
       removeTracks: (request: unknown) => invoke('library_remove_tracks', { request }),
       restoreExclusions: (request: unknown) => invoke('library_restore_exclusions', { request }),
       reset: () => invoke('library_reset'),
+      detectDuplicates: rejectMethod('library', 'detectDuplicates'),
+      writeTags: rejectMethod('library', 'writeTags'),
+      restoreTags: rejectMethod('library', 'restoreTags'),
+      getWatcherStatus: rejectMethod('library', 'getWatcherStatus'),
       onChanged: (cb: (change: unknown) => void) =>
         subscribeToTauriEvent<unknown>('library:changed', cb),
       onCoversMissing: (cb: (info: { dirtyCount: number }) => void) =>
@@ -267,12 +286,24 @@ export function installTauriHostBridge(): void {
       getShortcutStatuses: () => invoke('settings_get_shortcut_statuses'),
       onChanged: (cb: (snapshot: SettingsSnapshot) => void) =>
         subscribeToTauriEvent<SettingsSnapshot>('settings:changed', cb),
+      exportBackup: () => invoke<string>('settings_export_backup'),
+      importBackup: (json: string) => invoke<SettingsSnapshot>('settings_import_backup', { jsonString: json }),
       chooseCacheFolder: rejectMethod('settings', 'chooseCacheFolder'),
       chooseBackgroundImage: rejectMethod('settings', 'chooseBackgroundImage'),
       importBackgroundImage: rejectMethod('settings', 'importBackgroundImage'),
-      exportBackup: rejectMethod('settings', 'exportBackup'),
-      importBackup: rejectMethod('settings', 'importBackup'),
       onPlayerShortcut: rejectMethod('settings', 'onPlayerShortcut')
+    },
+    sleepTimer: {
+      configure: (state: SleepTimerState) =>
+        invoke<SleepTimerState>('sleep_timer_configure', { state }),
+      cancel: () => invoke<null>('sleep_timer_cancel'),
+      getState: () => invoke<SleepTimerState | null>('sleep_timer_get_state'),
+      boundary: (boundary: 'trackEnd' | 'queueEnd') =>
+        invoke<SleepTimerState | null>('sleep_timer_boundary', { boundary }),
+      onState: (cb: (state: SleepTimerState | null) => void) =>
+        subscribeToTauriEvent<SleepTimerState | null>('sleepTimer:status', (state) => cb(state)),
+      onTrigger: (cb: (state: SleepTimerState) => void) =>
+        subscribeToTauriEvent<SleepTimerState>('sleepTimer:trigger', (state) => cb(state))
     },
     themes: {
       getSystemTone: async (): Promise<ThemeTone> => resolveSystemTone(),
@@ -306,6 +337,72 @@ export function installTauriHostBridge(): void {
       cancel: rejectMethod('ncmCloud', 'cancel'),
       onProgress: rejectMethod('ncmCloud', 'onProgress')
     },
+    opra: {
+      search: rejectMethod('opra', 'search'),
+      getProfile: rejectMethod('opra', 'getProfile'),
+      refresh: rejectMethod('opra', 'refresh'),
+      getStatus: rejectMethod('opra', 'getStatus')
+    },
+    ncm: {
+      getPort: rejectMethod('ncm', 'getPort'),
+      request: rejectMethod('ncm', 'request'),
+      getCachedSong: rejectMethod('ncm', 'getCachedSong'),
+      cacheSong: rejectMethod('ncm', 'cacheSong')
+    },
+    radio: {
+      loadStations: () => invoke('radio_load_stations'),
+      saveStations: (document, expectedRevision) =>
+        invoke('radio_save_stations', { document, expectedRevision }),
+      importPlaylist: rejectMethod('radio', 'importPlaylist'),
+      searchDirectory: rejectMethod('radio', 'searchDirectory')
+    },
+    podcast: {
+      loadSubscriptions: () => invoke('podcast_load_subscriptions'),
+      saveSubscriptions: (document, expectedRevision) =>
+        invoke('podcast_save_subscriptions', { document, expectedRevision }),
+      subscribe: rejectMethod('podcast', 'subscribe'),
+      refresh: rejectMethod('podcast', 'refresh'),
+      refreshAll: rejectMethod('podcast', 'refreshAll')
+    },
+    providerDownloads: {
+      list: rejectMethod('providerDownloads', 'list'),
+      create: rejectMethod('providerDownloads', 'create'),
+      cancel: rejectMethod('providerDownloads', 'cancel'),
+      retry: rejectMethod('providerDownloads', 'retry'),
+      onChanged: rejectMethod('providerDownloads', 'onChanged')
+    },
+    remote: {
+      getStatus: rejectMethod('remote', 'getStatus'),
+      setEnabled: rejectMethod('remote', 'setEnabled'),
+      rotatePin: rejectMethod('remote', 'rotatePin'),
+      publishState: rejectMethod('remote', 'publishState'),
+      discoverDlna: rejectMethod('remote', 'discoverDlna'),
+      getDlnaDevices: rejectMethod('remote', 'getDlnaDevices'),
+      castToDevice: rejectMethod('remote', 'castToDevice'),
+      stopCast: rejectMethod('remote', 'stopCast'),
+      getCastTarget: rejectMethod('remote', 'getCastTarget'),
+      controlCast: rejectMethod('remote', 'controlCast')
+    },
+    networkSources: {
+      listProfiles: rejectMethod('networkSources', 'listProfiles'),
+      createProfile: rejectMethod('networkSources', 'createProfile'),
+      updateProfile: rejectMethod('networkSources', 'updateProfile'),
+      deleteProfile: rejectMethod('networkSources', 'deleteProfile'),
+      listDirectory: rejectMethod('networkSources', 'listDirectory'),
+      testConnection: rejectMethod('networkSources', 'testConnection'),
+      resolvePlayback: rejectMethod('networkSources', 'resolvePlayback'),
+      scanDirectory: rejectMethod('networkSources', 'scanDirectory'),
+      listLibrary: rejectMethod('networkSources', 'listLibrary'),
+      removeLibraryEntry: rejectMethod('networkSources', 'removeLibraryEntry'),
+      enrichLibrary: rejectMethod('networkSources', 'enrichLibrary'),
+      cacheInfo: rejectMethod('networkSources', 'cacheInfo'),
+      clearCache: rejectMethod('networkSources', 'clearCache'),
+      searchLibrary: rejectMethod('networkSources', 'searchLibrary'),
+      coverDataUrl: rejectMethod('networkSources', 'coverDataUrl')
+    },
+    debug: {
+      appendNativeTrace: (message: string) => invoke('debug_append_native_trace', { message })
+    },
     miniPlayer: {
       // ── Stage 7A: standalone mini-player window through Tauri commands ──
       open: () => invoke('mini_player_open'),
@@ -326,6 +423,46 @@ export function installTauriHostBridge(): void {
         ),
       onCommand: (cb: (command: MiniPlayerCommand) => void) =>
         subscribeToTauriEvent<MiniPlayerCommand>('miniPlayer:command', (command) => cb(command))
+    },
+    trayPlayer: {
+      // ── Stage 7B: standalone tray-player window through Tauri commands ──
+      getBootstrap: () => invoke<{ state: MiniPlayerStateSnapshot }>('tray_player_get_bootstrap'),
+      command: (command: MiniPlayerCommand) => invoke('tray_player_command', { command }),
+      navigate: (target: TrayNavigationTarget) => invoke('tray_player_navigate', { target }),
+      hide: () => invoke('tray_player_hide'),
+      onState: (cb: (state: MiniPlayerStateSnapshot) => void) =>
+        subscribeToTauriEvent<MiniPlayerStateSnapshot>('trayPlayer:state', (state) => cb(state)),
+      toggle: () => invoke<boolean>('tray_player_toggle'),
+      isVisible: () => invoke<boolean>('tray_player_is_visible')
+    },
+    desktopLyrics: {
+      // ── Stage 7C: standalone desktop-lyrics window through Tauri commands ──
+      toggle: () => invoke<boolean>('desktop_lyrics_toggle'),
+      show: () => invoke('desktop_lyrics_show'),
+      hide: () => invoke('desktop_lyrics_hide'),
+      updateTrack: (data: Record<string, unknown>) =>
+        invoke('desktop_lyrics_publish_track', { data }),
+      updateTime: (time: number) => invoke('desktop_lyrics_publish_time', { time }),
+      updateSettings: (settingsInput: DesktopLyricsSettings) =>
+        invoke('desktop_lyrics_update_settings', { settingsInput }),
+      getPosition: () => invoke('desktop_lyrics_get_position'),
+      move: (x: number, y: number) => invoke('desktop_lyrics_move', { data: { x, y } }),
+      requestClose: () => invoke('desktop_lyrics_request_close'),
+      onToggle: (cb: (enabled: boolean) => void) =>
+        subscribeToTauriEvent<boolean>('desktopLyrics:toggleChanged', cb),
+      onInitSettings: (cb: (settingsInput: DesktopLyricsSettings) => void) =>
+        subscribeToTauriEvent<DesktopLyricsSettings>('desktopLyrics:initSettings', cb),
+      onTrackUpdate: (cb: (data: Record<string, unknown>) => void) =>
+        subscribeToTauriEvent<Record<string, unknown>>('desktopLyrics:updateTrack', cb),
+      onTimeUpdate: (cb: (time: number) => void) =>
+        subscribeToTauriEvent<number>('desktopLyrics:updateTime', cb),
+      onSettingsUpdate: (cb: (settingsInput: DesktopLyricsSettings) => void) =>
+        subscribeToTauriEvent<DesktopLyricsSettings>('desktopLyrics:updateSettings', cb),
+      onLoadFailed: (cb: (payload: { code: number; description: string }) => void) =>
+        subscribeToTauriEvent<{ code: number; description: string }>(
+          'desktopLyrics:loadFailed',
+          cb
+        )
     },
     providers: {
       list: () => invoke('providers_list'),
@@ -350,6 +487,12 @@ export function installTauriHostBridge(): void {
       saveMusicLibrary: (data) => invoke('data_save_music_library', { data }),
       getCover: (handle: string) => invoke<string | null>('data_get_cover', { handle }),
       grantRemoteCover: rejectMethod('data', 'grantRemoteCover'),
+      getLyrics: rejectMethod('data', 'getLyrics'),
+      importLyrics: rejectMethod('data', 'importLyrics'),
+      saveLyrics: rejectMethod('data', 'saveLyrics'),
+      searchOnlineLyrics: rejectMethod('data', 'searchOnlineLyrics'),
+      saveCookie: rejectMethod('data', 'saveCookie'),
+      loadCookie: rejectMethod('data', 'loadCookie'),
       loadPlaybackSession: () => invoke('data_load_playback_session'),
       savePlaybackSession: (session, expectedRevision) =>
         invoke('data_save_playback_session', { session, expectedRevision }),

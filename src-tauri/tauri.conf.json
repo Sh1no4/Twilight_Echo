@@ -10,6 +10,7 @@
     "frontendDist": "../out/renderer"
   },
   "app": {
+    "withGlobalTauri": true,
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: cover: background: theme-asset: twilight-media: https:; media-src 'self' blob: asset: data: https:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:3100 http://127.0.0.1:3101 https:; font-src 'self' data: asset:; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'",
       "assetProtocol": {
@@ -33,6 +34,7 @@
       {
         "label": "mini-player",
         "title": "Twilight Echo Mini Player",
+        "url": "index.html?window=mini-player",
         "width": 480,
         "height": 300,
         "minWidth": 420,
@@ -43,6 +45,32 @@
         "transparent": true,
         "resizable": true,
         "skipTaskbar": false,
+        "visible": false
+      },
+      {
+        "label": "tray-player",
+        "title": "Twilight Echo Tray Player",
+        "url": "index.html?window=tray-player",
+        "width": 360,
+        "height": 176,
+        "decorations": false,
+        "transparent": true,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false
+      },
+      {
+        "label": "desktop-lyrics",
+        "title": "Twilight Echo 桌面歌词",
+        "url": "desktop-lyrics.html",
+        "width": 900,
+        "height": 160,
+        "decorations": false,
+        "transparent": true,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
         "visible": false
       }
     ]

@@ -147,7 +147,8 @@ test('Tauri bridge rejects unmigrated methods instead of returning business-shap
   const source = readFileSync(new URL('./tauriHostBridge.ts', import.meta.url), 'utf8')
   assert.doesNotMatch(source, /makeStubMethod|makeStubSurface|warnedStubMethods|emptyThemeLibrarySnapshot/)
   assert.match(source, /function rejectMethod\(surface: string, method: string\)/)
-  assert.match(source, /onNavigate: rejectMethod\('app', 'onNavigate'\)/)
+  assert.match(source, /onNavigate: \(cb: \(target: TrayNavigationTarget\) => void\) =>/)
+  assert.match(source, /consumePendingNavigation: \(\) =>/)
   // Stage 4 wired the local library scan surface; methods that still lack a
   // backend (watcher status, tag writer, duplicate detection) fall through the
   // surrogate proxy reject and are not declared as fake defaults.
@@ -161,13 +162,9 @@ test('Tauri bridge rejects unmigrated methods instead of returning business-shap
 test('Tauri bridge rejects unmigrated writes instead of returning success or default snapshots', () => {
   const source = readFileSync(new URL('./tauriHostBridge.ts', import.meta.url), 'utf8')
   // settings sub-surfaces that previously returned null/0/'{}'/[] fake success.
-  for (const method of [
-    'chooseCacheFolder',
-    'chooseBackgroundImage',
-    'importBackgroundImage',
-    'exportBackup',
-    'importBackup'
-  ]) {
+  // Stage 7D wired exportBackup/importBackup to real commands; the remaining
+  // dialog/path-copy methods still reject explicitly.
+  for (const method of ['chooseCacheFolder', 'chooseBackgroundImage', 'importBackgroundImage']) {
     assert.match(
       source,
       new RegExp(`${method}: rejectMethod\\('settings', '${method}'\\)`),
@@ -202,6 +199,16 @@ test('Tauri bridge wires Stage 3 persistence (settings cache, data, themes, font
   assert.ok(source.includes("invoke<number>('settings_get_cache_size'"), 'settings.getCacheSize must invoke settings_get_cache_size')
   assert.ok(source.includes("invoke<number>('settings_clear_cache'"), 'settings.clearCache must invoke settings_clear_cache')
   assert.ok(source.includes("invoke('settings_get_shortcut_statuses'"), 'settings.getShortcutStatuses must invoke settings_get_shortcut_statuses')
+  // Stage 7D wired backup export/import through real commands; paths with
+  // system-dialog/copy semantics still reject explicitly.
+  assert.ok(
+    source.includes("exportBackup: () => invoke<string>('settings_export_backup')"),
+    'settings.exportBackup must invoke settings_export_backup'
+  )
+  assert.ok(
+    source.includes("importBackup: (json: string) => invoke<SettingsSnapshot>('settings_import_backup', { jsonString: json })"),
+    'settings.importBackup must invoke settings_import_backup'
+  )
   // settings/themes change events subscribe through the Tauri event bridge.
   assert.ok(
     source.includes("subscribeToTauriEvent<SettingsSnapshot>('settings:changed', cb)"),

@@ -1948,6 +1948,8 @@ interface WindowAPI {
     navigate: (target: TrayNavigationTarget) => void
     hide: () => void
     onState: (cb: (state: MiniPlayerStateSnapshot) => void) => () => void
+    toggle: () => Promise<boolean>
+    isVisible: () => Promise<boolean>
   }
   debug: {
     appendNativeTrace: (message: string) => Promise<void>

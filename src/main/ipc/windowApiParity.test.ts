@@ -261,6 +261,7 @@ const PRELOAD_ALIASES = [
   'miniPlayerWindowApi',
   'miniPlayerHostApi',
   'trayPlayerWindowApi',
+  'trayPlayerHostApi',
   'duplicateDetectionApi',
   'miniPlayerCoverDataApi'
 ]

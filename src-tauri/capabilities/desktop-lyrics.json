@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-lyrics-capability",
+  "description": "Minimal capabilities for the Twilight Echo desktop lyrics window",
+  "windows": ["desktop-lyrics"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-hide",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-ignore-cursor-events"
+  ]
+}

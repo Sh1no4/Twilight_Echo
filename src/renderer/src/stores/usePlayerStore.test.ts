@@ -236,7 +236,7 @@ test('desktop lyrics uses the built renderer asset in packaged builds', () => {
 
 test('desktop lyrics html falls back to untimed plain lyrics', () => {
   const source = readFileSync(
-    new URL('../../../../resources/desktop-lyrics.html', import.meta.url),
+    new URL('../../../../resources/desktop-lyrics.js', import.meta.url),
     'utf8'
   )
 
@@ -249,7 +249,7 @@ test('desktop lyrics html falls back to untimed plain lyrics', () => {
 
 test('desktop lyrics html flattens NetEase JSON credit lines (作词/作曲)', () => {
   const source = readFileSync(
-    new URL('../../../../resources/desktop-lyrics.html', import.meta.url),
+    new URL('../../../../resources/desktop-lyrics.js', import.meta.url),
     'utf8'
   )
 
@@ -262,7 +262,7 @@ test('desktop lyrics html flattens NetEase JSON credit lines (作词/作曲)', (
 
 test('desktop lyrics html rotates single lyrics (row0 becomes 3rd while row1 highlights)', () => {
   const source = readFileSync(
-    new URL('../../../../resources/desktop-lyrics.html', import.meta.url),
+    new URL('../../../../resources/desktop-lyrics.js', import.meta.url),
     'utf8'
   )
 
@@ -274,7 +274,7 @@ test('desktop lyrics html rotates single lyrics (row0 becomes 3rd while row1 hig
 
 test('desktop lyrics html applies configurable lineOffset stagger', () => {
   const source = readFileSync(
-    new URL('../../../../resources/desktop-lyrics.html', import.meta.url),
+    new URL('../../../../resources/desktop-lyrics.js', import.meta.url),
     'utf8'
   )
   const settingsSource = readFileSync(
@@ -291,7 +291,7 @@ test('desktop lyrics html applies configurable lineOffset stagger', () => {
 
 test('desktop lyrics html supports bilingual original+translation layout', () => {
   const source = readFileSync(
-    new URL('../../../../resources/desktop-lyrics.html', import.meta.url),
+    new URL('../../../../resources/desktop-lyrics.js', import.meta.url),
     'utf8'
   )
   const settingsSource = readFileSync(

@@ -421,6 +421,15 @@ const trayPlayerWindowApi = {
   }
 }
 
+// The main window also needs programmatic access to show/hide/query the tray
+// player popup (the Electron renderer added `toggle`/`isVisible` alongside the
+// tray-player-window surface; they live on the host api below only for the main window).
+const trayPlayerHostApi = {
+  ...trayPlayerWindowApi,
+  toggle: (): Promise<boolean> => ipcRenderer.invoke('trayPlayer:toggle'),
+  isVisible: (): Promise<boolean> => ipcRenderer.invoke('trayPlayer:isVisible')
+}
+
 const duplicateDetectionApi: DuplicateDetectionReadApi = {
   detectDuplicates: (): Promise<
     import('../shared/duplicateDetection.ts').DuplicateDetectionResult
@@ -1317,7 +1326,7 @@ const api = {
     }
   },
   miniPlayer: miniPlayerHostApi,
-  trayPlayer: trayPlayerWindowApi,
+  trayPlayer: trayPlayerHostApi,
   debug: {
     appendNativeTrace: (message: string): Promise<void> =>
       ipcRenderer.invoke('debug:appendNativeTrace', message)

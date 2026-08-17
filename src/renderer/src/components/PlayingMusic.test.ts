@@ -385,7 +385,7 @@ test('playbar lyrics section hosts the lyrics manager panel', () => {
 
 test('desktop lyrics html exposes lyric source metadata on hover', () => {
   const source = readFileSync(
-    new URL('../../../../resources/desktop-lyrics.html', import.meta.url),
+    new URL('../../../../resources/desktop-lyrics.js', import.meta.url),
     'utf8'
   )
 

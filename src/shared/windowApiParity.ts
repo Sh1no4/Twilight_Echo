@@ -138,14 +138,14 @@ export const WINDOW_API_MANIFEST: WindowApiSurfaceRecord[] = [
   s(
     'sleepTimer',
     [
-      m('configure', 'sleepTimer:configure', { mutates: true, params: ['state'] }),
-      m('cancel', 'sleepTimer:cancel', { mutates: true }),
-      m('getState', 'sleepTimer:getState'),
-      m('boundary', 'sleepTimer:boundary', { mutates: true, params: ['boundary'] }),
-      m('onState', 'sleepTimer:status', { params: ['callback'], events: ['sleepTimer:status'] }),
-      m('onTrigger', 'sleepTimer:trigger', { params: ['callback'], events: ['sleepTimer:trigger'] })
+      m('configure', 'sleepTimer:configure', { mutates: true, params: ['state'], tauriTransport: 'tauri-invoke' }),
+      m('cancel', 'sleepTimer:cancel', { mutates: true, tauriTransport: 'tauri-invoke' }),
+      m('getState', 'sleepTimer:getState', { tauriTransport: 'tauri-invoke' }),
+      m('boundary', 'sleepTimer:boundary', { mutates: true, params: ['boundary'], tauriTransport: 'tauri-invoke' }),
+      m('onState', 'sleepTimer:status', { params: ['callback'], events: ['sleepTimer:status'], tauriTransport: 'tauri-native' }),
+      m('onTrigger', 'sleepTimer:trigger', { params: ['callback'], events: ['sleepTimer:trigger'], tauriTransport: 'tauri-native' })
     ],
-    { testEvidence: ['test:sleep-timer'], transport: 'tauri-unmigrated' }
+    { testEvidence: ['test:sleep-timer'], transport: 'tauri-invoke' }
   ),
   s(
     'window',
@@ -177,7 +177,7 @@ export const WINDOW_API_MANIFEST: WindowApiSurfaceRecord[] = [
       m('updateActivity', 'discord:updateActivity', { mutates: true, params: ['data'] }),
       m('clearActivity', 'discord:clearActivity', { mutates: true })
     ],
-    { securityBoundary: 'richPresence', transport: 'tauri-unmigrated' }
+    { securityBoundary: 'richPresence', transport: 'tauri-reject' }
   ),
   s(
     'library',
@@ -185,13 +185,13 @@ export const WINDOW_API_MANIFEST: WindowApiSurfaceRecord[] = [
       m('removeTracks', 'library:removeTracks', { mutates: true, params: ['request'], tauriTransport: 'tauri-invoke' }),
       m('restoreExclusions', 'library:restoreExclusions', { mutates: true, params: ['request'], tauriTransport: 'tauri-invoke' }),
       m('reset', 'library:reset', { mutates: true, tauriTransport: 'tauri-invoke' }),
-      m('detectDuplicates', 'library:detectDuplicates', { tauriTransport: 'tauri-unmigrated' }),
-      m('writeTags', 'library:writeTags', { mutates: true, params: ['request'], tauriTransport: 'tauri-unmigrated' }),
-      m('restoreTags', 'library:restoreTags', { mutates: true, params: ['request'], tauriTransport: 'tauri-unmigrated' }),
+      m('detectDuplicates', 'library:detectDuplicates', { tauriTransport: 'tauri-reject' }),
+      m('writeTags', 'library:writeTags', { mutates: true, params: ['request'], tauriTransport: 'tauri-reject' }),
+      m('restoreTags', 'library:restoreTags', { mutates: true, params: ['request'], tauriTransport: 'tauri-reject' }),
       m('scanStartup', 'library:scanStartup', { mutates: true, tauriTransport: 'tauri-invoke' }),
       m('scanFull', 'library:scanFull', { mutates: true, tauriTransport: 'tauri-invoke' }),
       m('getScanStatus', 'library:getScanStatus', { tauriTransport: 'tauri-invoke' }),
-      m('getWatcherStatus', 'library:getWatcherStatus', { tauriTransport: 'tauri-unmigrated' }),
+      m('getWatcherStatus', 'library:getWatcherStatus', { tauriTransport: 'tauri-reject' }),
       m('pauseScan', 'library:pauseScan', { mutates: true, tauriTransport: 'tauri-invoke' }),
       m('resumeScan', 'library:resumeScan', { mutates: true, tauriTransport: 'tauri-invoke' }),
       m('cancelScan', 'library:cancelScan', { mutates: true, tauriTransport: 'tauri-invoke' }),
@@ -346,7 +346,7 @@ export const WINDOW_API_MANIFEST: WindowApiSurfaceRecord[] = [
     {
       securityBoundary: 'audioEngine',
       testEvidence: ['test:playback-routing', 'test:audio-engine'],
-      transport: 'tauri-unmigrated'
+      transport: 'tauri-invoke'
     }
   ),
   s(
@@ -375,41 +375,47 @@ export const WINDOW_API_MANIFEST: WindowApiSurfaceRecord[] = [
   s(
     'opra',
     [
-      m('search', 'opra:search', { params: ['query'] }),
-      m('getProfile', 'opra:getProfile', { params: ['eqId'] }),
-      m('refresh', 'opra:refresh', { mutates: true }),
-      m('getStatus', 'opra:getStatus')
+      m('search', 'opra:search', { params: ['query'], tauriTransport: 'tauri-reject' }),
+      m('getProfile', 'opra:getProfile', { params: ['eqId'], tauriTransport: 'tauri-reject' }),
+      m('refresh', 'opra:refresh', { mutates: true, tauriTransport: 'tauri-reject' }),
+      m('getStatus', 'opra:getStatus', { tauriTransport: 'tauri-reject' })
     ],
-    { testEvidence: ['test:app'], transport: 'tauri-unmigrated' }
+    { testEvidence: ['test:app'], transport: 'tauri-reject' }
   ),
   s(
     'app',
     [
-      m('consumePendingNavigation', 'app:consumePendingNavigation', { tauriTransport: 'tauri-reject' }),
+      m('consumePendingNavigation', 'app:consumePendingNavigation', {
+        tauriTransport: 'tauri-invoke'
+      }),
       m('relaunch', 'app:relaunch', { mutates: true, tauriTransport: 'tauri-invoke' }),
-      m('checkForUpdates', 'app:checkForUpdates'),
-      m('downloadUpdate', 'app:downloadUpdate', { mutates: true }),
-      m('cancelUpdateDownload', 'app:cancelUpdateDownload', { mutates: true }),
-      m('installUpdate', 'app:installUpdate', { mutates: true }),
-      m('onUpdateProgress', 'app:update-progress', { params: ['cb'], events: ['app:update-progress'] }),
+      m('checkForUpdates', 'app:checkForUpdates', { tauriTransport: 'tauri-reject' }),
+      m('downloadUpdate', 'app:downloadUpdate', { mutates: true, tauriTransport: 'tauri-reject' }),
+      m('cancelUpdateDownload', 'app:cancelUpdateDownload', { mutates: true, tauriTransport: 'tauri-reject' }),
+      m('installUpdate', 'app:installUpdate', { mutates: true, tauriTransport: 'tauri-reject' }),
+      m('onUpdateProgress', 'app:update-progress', { params: ['cb'], events: ['app:update-progress'], tauriTransport: 'tauri-reject' }),
       m('onSavePlaybackSession', 'app:save-playback-session', {
         params: ['cb'],
         events: ['app:save-playback-session'],
         tauriTransport: 'tauri-reject'
       }),
-      m('onNavigate', 'app:navigate', { params: ['cb'], events: ['app:navigate'], tauriTransport: 'tauri-reject' })
+      m('onNavigate', 'app:navigate', {
+        params: ['cb'],
+        events: ['app:navigate'],
+        tauriTransport: 'tauri-native'
+      })
     ],
     { securityBoundary: 'appLifecycle', testEvidence: ['test:app'] }
   ),
   s(
     'ncm',
     [
-      m('getPort', 'ncm:getPort'),
-      m('request', 'ncm:request', { params: ['path', 'cookie'] }),
-      m('getCachedSong', 'ncm:getCachedSong', { params: ['songId'] }),
-      m('cacheSong', 'ncm:cacheSong', { mutates: true, params: ['songId', 'url', 'fileName'] })
+      m('getPort', 'ncm:getPort', { tauriTransport: 'tauri-reject' }),
+      m('request', 'ncm:request', { params: ['path', 'cookie'], tauriTransport: 'tauri-reject' }),
+      m('getCachedSong', 'ncm:getCachedSong', { params: ['songId'], tauriTransport: 'tauri-reject' }),
+      m('cacheSong', 'ncm:cacheSong', { mutates: true, params: ['songId', 'url', 'fileName'], tauriTransport: 'tauri-reject' })
     ],
-    { transport: 'tauri-unmigrated' }
+    { transport: 'tauri-reject' }
   ),
   s(
     'ncmCloud',
@@ -425,64 +431,65 @@ export const WINDOW_API_MANIFEST: WindowApiSurfaceRecord[] = [
   s(
     'radio',
     [
-      m('loadStations', 'radio:loadStations'),
-      m('saveStations', 'radio:saveStations', { mutates: true, revisionCas: true, params: ['document', 'expectedRevision'] }),
-      m('importPlaylist', 'radio:importPlaylist', { mutates: true, params: ['payload'] }),
-      m('searchDirectory', 'radio:searchDirectory', { params: ['payload'] })
+      m('loadStations', 'radio:loadStations', { tauriTransport: 'tauri-invoke' }),
+      m('saveStations', 'radio:saveStations', { mutates: true, revisionCas: true, params: ['document', 'expectedRevision'], tauriTransport: 'tauri-invoke' }),
+      m('importPlaylist', 'radio:importPlaylist', { mutates: true, params: ['payload'], tauriTransport: 'tauri-reject' }),
+      m('searchDirectory', 'radio:searchDirectory', { params: ['payload'], tauriTransport: 'tauri-reject' })
     ],
-    { testEvidence: ['test:radio-remote'], transport: 'tauri-unmigrated' }
+    { testEvidence: ['test:radio-remote'], transport: 'tauri-invoke' }
   ),
   s(
     'podcast',
     [
-      m('loadSubscriptions', 'podcast:loadSubscriptions'),
+      m('loadSubscriptions', 'podcast:loadSubscriptions', { tauriTransport: 'tauri-invoke' }),
       m('saveSubscriptions', 'podcast:saveSubscriptions', {
         mutates: true,
         revisionCas: true,
-        params: ['document', 'expectedRevision']
+        params: ['document', 'expectedRevision'],
+        tauriTransport: 'tauri-invoke'
       }),
-      m('subscribe', 'podcast:subscribe', { mutates: true, params: ['feedUrl'] }),
-      m('refresh', 'podcast:refresh', { mutates: true, params: ['subscriptionId'] }),
-      m('refreshAll', 'podcast:refreshAll', { mutates: true })
+      m('subscribe', 'podcast:subscribe', { mutates: true, params: ['feedUrl'], tauriTransport: 'tauri-reject' }),
+      m('refresh', 'podcast:refresh', { mutates: true, params: ['subscriptionId'], tauriTransport: 'tauri-reject' }),
+      m('refreshAll', 'podcast:refreshAll', { mutates: true, tauriTransport: 'tauri-reject' })
     ],
-    { testEvidence: ['test:radio-remote'], transport: 'tauri-unmigrated' }
+    { testEvidence: ['test:radio-remote'], transport: 'tauri-invoke' }
   ),
   s(
     'networkSources',
     [
-      m('listProfiles', 'networkSources:listProfiles'),
-      m('createProfile', 'networkSources:createProfile', { mutates: true, params: ['input'] }),
-      m('updateProfile', 'networkSources:updateProfile', { mutates: true, params: ['id', 'patch'] }),
-      m('deleteProfile', 'networkSources:deleteProfile', { mutates: true, params: ['id'] }),
-      m('listDirectory', 'networkSources:listDirectory', { params: ['profileId', 'remotePath'] }),
-      m('testConnection', 'networkSources:testConnection', { params: ['profileId'] }),
-      m('resolvePlayback', 'networkSources:resolvePlayback', { params: ['profileId', 'entry'] }),
-      m('scanDirectory', 'networkSources:scanDirectory', { mutates: true, params: ['profileId', 'remotePath'] }),
-      m('listLibrary', 'networkSources:listLibrary', { params: ['profileId', 'query'] }),
-      m('removeLibraryEntry', 'networkSources:removeLibraryEntry', { mutates: true, params: ['profileId', 'entryId'] }),
-      m('enrichLibrary', 'networkSources:enrichLibrary', { mutates: true, params: ['profileId'] }),
-      m('cacheInfo', 'networkSources:cacheInfo'),
-      m('clearCache', 'networkSources:clearCache', { mutates: true }),
-      m('searchLibrary', 'networkSources:searchLibrary', { params: ['query'] }),
-      m('coverDataUrl', 'networkSources:coverDataUrl', { params: ['profileId', 'entryId'] })
+      m('listProfiles', 'networkSources:listProfiles', { tauriTransport: 'tauri-reject' }),
+      m('createProfile', 'networkSources:createProfile', { mutates: true, params: ['input'], tauriTransport: 'tauri-reject' }),
+      m('updateProfile', 'networkSources:updateProfile', { mutates: true, params: ['id', 'patch'], tauriTransport: 'tauri-reject' }),
+      m('deleteProfile', 'networkSources:deleteProfile', { mutates: true, params: ['id'], tauriTransport: 'tauri-reject' }),
+      m('listDirectory', 'networkSources:listDirectory', { params: ['profileId', 'remotePath'], tauriTransport: 'tauri-reject' }),
+      m('testConnection', 'networkSources:testConnection', { params: ['profileId'], tauriTransport: 'tauri-reject' }),
+      m('resolvePlayback', 'networkSources:resolvePlayback', { params: ['profileId', 'entry'], tauriTransport: 'tauri-reject' }),
+      m('scanDirectory', 'networkSources:scanDirectory', { mutates: true, params: ['profileId', 'remotePath'], tauriTransport: 'tauri-reject' }),
+      m('listLibrary', 'networkSources:listLibrary', { params: ['profileId', 'query'], tauriTransport: 'tauri-reject' }),
+      m('removeLibraryEntry', 'networkSources:removeLibraryEntry', { mutates: true, params: ['profileId', 'entryId'], tauriTransport: 'tauri-reject' }),
+      m('enrichLibrary', 'networkSources:enrichLibrary', { mutates: true, params: ['profileId'], tauriTransport: 'tauri-reject' }),
+      m('cacheInfo', 'networkSources:cacheInfo', { tauriTransport: 'tauri-reject' }),
+      m('clearCache', 'networkSources:clearCache', { mutates: true, tauriTransport: 'tauri-reject' }),
+      m('searchLibrary', 'networkSources:searchLibrary', { params: ['query'], tauriTransport: 'tauri-reject' }),
+      m('coverDataUrl', 'networkSources:coverDataUrl', { params: ['profileId', 'entryId'], tauriTransport: 'tauri-reject' })
     ],
-    { securityBoundary: 'networkSource', testEvidence: ['test:network-sources'], transport: 'tauri-unmigrated' }
+    { securityBoundary: 'networkSource', testEvidence: ['test:network-sources'], transport: 'tauri-reject' }
   ),
   s(
     'remote',
     [
-      m('getStatus', 'remote:getStatus'),
-      m('setEnabled', 'remote:setEnabled', { mutates: true, params: ['enabled'] }),
-      m('rotatePin', 'remote:rotatePin', { mutates: true }),
-      m('publishState', 'remote:publishState', { mutates: true, params: ['snapshot'] }),
-      m('discoverDlna', 'remote:discoverDlna'),
-      m('getDlnaDevices', 'remote:getDlnaDevices'),
-      m('castToDevice', 'remote:castToDevice', { mutates: true, params: ['payload'] }),
-      m('stopCast', 'remote:stopCast', { mutates: true }),
-      m('getCastTarget', 'remote:getCastTarget'),
-      m('controlCast', 'remote:controlCast', { mutates: true, params: ['payload'] })
+      m('getStatus', 'remote:getStatus', { tauriTransport: 'tauri-reject' }),
+      m('setEnabled', 'remote:setEnabled', { mutates: true, params: ['enabled'], tauriTransport: 'tauri-reject' }),
+      m('rotatePin', 'remote:rotatePin', { mutates: true, tauriTransport: 'tauri-reject' }),
+      m('publishState', 'remote:publishState', { mutates: true, params: ['snapshot'], tauriTransport: 'tauri-reject' }),
+      m('discoverDlna', 'remote:discoverDlna', { tauriTransport: 'tauri-reject' }),
+      m('getDlnaDevices', 'remote:getDlnaDevices', { tauriTransport: 'tauri-reject' }),
+      m('castToDevice', 'remote:castToDevice', { mutates: true, params: ['payload'], tauriTransport: 'tauri-reject' }),
+      m('stopCast', 'remote:stopCast', { mutates: true, tauriTransport: 'tauri-reject' }),
+      m('getCastTarget', 'remote:getCastTarget', { tauriTransport: 'tauri-reject' }),
+      m('controlCast', 'remote:controlCast', { mutates: true, params: ['payload'], tauriTransport: 'tauri-reject' })
     ],
-    { securityBoundary: 'remoteCast', testEvidence: ['test:radio-remote'], transport: 'tauri-unmigrated' }
+    { securityBoundary: 'remoteCast', testEvidence: ['test:radio-remote'], transport: 'tauri-reject' }
   ),
   s(
     'data',
@@ -491,10 +498,10 @@ export const WINDOW_API_MANIFEST: WindowApiSurfaceRecord[] = [
       m('loadMusicLibrary', 'data:loadMusicLibrary', { tauriTransport: 'tauri-invoke' }),
       m('getCover', 'cover:get', { params: ['handle'], windows: ['main', 'miniPlayer'], tauriTransport: 'tauri-invoke' }),
       m('grantRemoteCover', 'cover:grantRemote', { mutates: true, params: ['source'], windows: ['main', 'miniPlayer'], tauriTransport: 'tauri-reject' }),
-      m('getLyrics', 'lyrics:get', { params: ['dir', 'fileName', 'filePath'] }),
-      m('importLyrics', 'lyrics:import', { mutates: true }),
-      m('saveLyrics', 'lyrics:save', { mutates: true, params: ['contents'] }),
-      m('searchOnlineLyrics', 'lyrics:searchOnline', { params: ['query'] }),
+      m('getLyrics', 'lyrics:get', { params: ['dir', 'fileName', 'filePath'], tauriTransport: 'tauri-reject' }),
+      m('importLyrics', 'lyrics:import', { mutates: true, tauriTransport: 'tauri-reject' }),
+      m('saveLyrics', 'lyrics:save', { mutates: true, params: ['contents'], tauriTransport: 'tauri-reject' }),
+      m('searchOnlineLyrics', 'lyrics:searchOnline', { params: ['query'], tauriTransport: 'tauri-reject' }),
       m('saveLyricsManagement', 'data:saveLyricsManagement', {
         mutates: true,
         revisionCas: true,
@@ -529,8 +536,8 @@ export const WINDOW_API_MANIFEST: WindowApiSurfaceRecord[] = [
         tauriTransport: 'tauri-invoke'
       }),
       m('loadPlaylists', 'data:loadPlaylists', { tauriTransport: 'tauri-invoke' }),
-      m('saveCookie', 'data:saveCookie', { mutates: true, params: ['cookie'] }),
-      m('loadCookie', 'data:loadCookie')
+      m('saveCookie', 'data:saveCookie', { mutates: true, params: ['cookie'], tauriTransport: 'tauri-reject' }),
+      m('loadCookie', 'data:loadCookie', { tauriTransport: 'tauri-reject' })
     ],
     {
       securityBoundary: 'persistence',
@@ -542,11 +549,11 @@ export const WINDOW_API_MANIFEST: WindowApiSurfaceRecord[] = [
     [
       m('get', 'settings:get', { tauriTransport: 'tauri-invoke' }),
       m('update', 'settings:update', { mutates: true, params: ['patch'], tauriTransport: 'tauri-invoke' }),
-      m('chooseCacheFolder', 'settings:chooseCacheFolder'),
-      m('chooseBackgroundImage', 'settings:chooseBackgroundImage'),
-      m('importBackgroundImage', 'settings:importBackgroundImage', { mutates: true, params: ['fileName', 'data'] }),
-      m('exportBackup', 'settings:export'),
-      m('importBackup', 'settings:import', { mutates: true, params: ['json'] }),
+      m('chooseCacheFolder', 'settings:chooseCacheFolder', { tauriTransport: 'tauri-reject' }),
+      m('chooseBackgroundImage', 'settings:chooseBackgroundImage', { tauriTransport: 'tauri-reject' }),
+      m('importBackgroundImage', 'settings:importBackgroundImage', { mutates: true, params: ['fileName', 'data'], tauriTransport: 'tauri-reject' }),
+      m('exportBackup', 'settings:export', { tauriTransport: 'tauri-invoke' }),
+      m('importBackup', 'settings:import', { mutates: true, params: ['json'], tauriTransport: 'tauri-invoke' }),
       m('getCacheSize', 'settings:getCacheSize', { tauriTransport: 'tauri-invoke' }),
       m('clearCache', 'settings:clearCache', { mutates: true, tauriTransport: 'tauri-invoke' }),
       m('getShortcutStatuses', 'settings:getShortcutStatuses', { tauriTransport: 'tauri-invoke' }),
@@ -633,13 +640,13 @@ export const WINDOW_API_MANIFEST: WindowApiSurfaceRecord[] = [
   s(
     'providerDownloads',
     [
-      m('list', 'providerDownloads:list'),
-      m('create', 'providerDownloads:create', { mutates: true, params: ['input'] }),
-      m('cancel', 'providerDownloads:cancel', { mutates: true, params: ['taskId'] }),
-      m('retry', 'providerDownloads:retry', { mutates: true, params: ['taskId'] }),
-      m('onChanged', 'providerDownloads:changed', { params: ['cb'], events: ['providerDownloads:changed'] })
+      m('list', 'providerDownloads:list', { tauriTransport: 'tauri-reject' }),
+      m('create', 'providerDownloads:create', { mutates: true, params: ['input'], tauriTransport: 'tauri-reject' }),
+      m('cancel', 'providerDownloads:cancel', { mutates: true, params: ['taskId'], tauriTransport: 'tauri-reject' }),
+      m('retry', 'providerDownloads:retry', { mutates: true, params: ['taskId'], tauriTransport: 'tauri-reject' }),
+      m('onChanged', 'providerDownloads:changed', { params: ['cb'], events: ['providerDownloads:changed'], tauriTransport: 'tauri-reject' })
     ],
-    { securityBoundary: 'providerDownload', testEvidence: ['test:plugins'], transport: 'tauri-unmigrated' }
+    { securityBoundary: 'providerDownload', testEvidence: ['test:plugins'], transport: 'tauri-reject' }
   ),
   s(
     'extensions',
@@ -653,23 +660,79 @@ export const WINDOW_API_MANIFEST: WindowApiSurfaceRecord[] = [
   s(
     'desktopLyrics',
     [
-      m('toggle', 'desktopLyrics:toggle', { mutates: true }),
-      m('show', 'desktopLyrics:show', { mutates: true }),
-      m('hide', 'desktopLyrics:hide', { mutates: true }),
-      m('updateTrack', 'desktopLyrics:updateTrack', { mutates: true, params: ['data'], returns: 'void' }),
-      m('updateTime', 'desktopLyrics:updateTime', { mutates: true, params: ['time'], returns: 'void' }),
-      m('updateSettings', 'desktopLyrics:updateSettings', { mutates: true, params: ['settings'], returns: 'void' }),
-      m('onToggle', 'desktopLyrics:toggleChanged', { params: ['cb'], events: ['desktopLyrics:toggleChanged'] }),
-      m('onInitSettings', 'desktopLyrics:initSettings', { params: ['cb'], events: ['desktopLyrics:initSettings'] }),
-      m('onTrackUpdate', 'desktopLyrics:updateTrack', { params: ['cb'], events: ['desktopLyrics:updateTrack'] }),
-      m('onTimeUpdate', 'desktopLyrics:updateTime', { params: ['cb'], events: ['desktopLyrics:updateTime'] }),
-      m('onSettingsUpdate', 'desktopLyrics:updateSettings', { params: ['cb'], events: ['desktopLyrics:updateSettings'] }),
-      m('onLoadFailed', 'desktopLyrics:loadFailed', { params: ['cb'], events: ['desktopLyrics:loadFailed'] }),
-      m('getPosition', 'desktopLyrics:getPosition', { returns: 'void' }),
-      m('move', 'desktopLyrics:move', { mutates: true, params: ['x', 'y'], returns: 'void' }),
-      m('requestClose', 'desktopLyrics:requestClose', { mutates: true, returns: 'void' })
+      m('toggle', 'desktopLyrics:toggle', { mutates: true, tauriTransport: 'tauri-invoke' }),
+      m('show', 'desktopLyrics:show', { mutates: true, tauriTransport: 'tauri-invoke' }),
+      m('hide', 'desktopLyrics:hide', { mutates: true, tauriTransport: 'tauri-invoke' }),
+      m('updateTrack', 'desktopLyrics:updateTrack', {
+        mutates: true,
+        params: ['data'],
+        returns: 'void',
+        tauriTransport: 'tauri-invoke'
+      }),
+      m('updateTime', 'desktopLyrics:updateTime', {
+        mutates: true,
+        params: ['time'],
+        returns: 'void',
+        tauriTransport: 'tauri-invoke'
+      }),
+      m('updateSettings', 'desktopLyrics:updateSettings', {
+        mutates: true,
+        params: ['settings'],
+        returns: 'void',
+        tauriTransport: 'tauri-invoke'
+      }),
+      m('onToggle', 'desktopLyrics:toggleChanged', {
+        params: ['cb'],
+        events: ['desktopLyrics:toggleChanged'],
+        tauriTransport: 'tauri-native'
+      }),
+      m('onInitSettings', 'desktopLyrics:initSettings', {
+        params: ['cb'],
+        events: ['desktopLyrics:initSettings'],
+        tauriTransport: 'tauri-native'
+      }),
+      m('onTrackUpdate', 'desktopLyrics:updateTrack', {
+        params: ['cb'],
+        events: ['desktopLyrics:updateTrack'],
+        tauriTransport: 'tauri-native'
+      }),
+      m('onTimeUpdate', 'desktopLyrics:updateTime', {
+        params: ['cb'],
+        events: ['desktopLyrics:updateTime'],
+        tauriTransport: 'tauri-native'
+      }),
+      m('onSettingsUpdate', 'desktopLyrics:updateSettings', {
+        params: ['cb'],
+        events: ['desktopLyrics:updateSettings'],
+        tauriTransport: 'tauri-native'
+      }),
+      m('onLoadFailed', 'desktopLyrics:loadFailed', {
+        params: ['cb'],
+        events: ['desktopLyrics:loadFailed'],
+        tauriTransport: 'tauri-native'
+      }),
+      m('getPosition', 'desktopLyrics:getPosition', {
+        returns: 'void',
+        tauriTransport: 'tauri-invoke'
+      }),
+      m('move', 'desktopLyrics:move', {
+        mutates: true,
+        params: ['x', 'y'],
+        returns: 'void',
+        tauriTransport: 'tauri-invoke'
+      }),
+      m('requestClose', 'desktopLyrics:requestClose', {
+        mutates: true,
+        returns: 'void',
+        tauriTransport: 'tauri-invoke'
+      })
     ],
-    { windows: ['main', 'desktopLyrics'], securityBoundary: 'auxWindow', testEvidence: ['test:app'], transport: 'tauri-unmigrated' }
+    {
+      windows: ['main', 'desktopLyrics'],
+      securityBoundary: 'auxWindow',
+      testEvidence: ['test:app'],
+      transport: 'tauri-invoke'
+    }
   ),
   s(
     'miniPlayer',
@@ -752,18 +815,56 @@ export const WINDOW_API_MANIFEST: WindowApiSurfaceRecord[] = [
   s(
     'trayPlayer',
     [
-      m('getBootstrap', 'trayPlayer:getBootstrap'),
-      m('command', 'trayPlayer:command', { mutates: true, params: ['command'], returns: 'void' }),
-      m('navigate', 'trayPlayer:navigate', { mutates: true, params: ['target'], returns: 'void' }),
-      m('hide', 'trayPlayer:hide', { returns: 'void' }),
-      m('onState', 'trayPlayer:state', { params: ['cb'], events: ['trayPlayer:state'] })
+      m('getBootstrap', 'trayPlayer:getBootstrap', {
+        tauriTransport: 'tauri-invoke',
+        windows: ['main', 'trayPlayer']
+      }),
+      m('command', 'trayPlayer:command', {
+        mutates: true,
+        params: ['command'],
+        returns: 'void',
+        tauriTransport: 'tauri-invoke',
+        windows: ['main', 'trayPlayer']
+      }),
+      m('navigate', 'trayPlayer:navigate', {
+        mutates: true,
+        params: ['target'],
+        returns: 'void',
+        tauriTransport: 'tauri-invoke',
+        windows: ['main', 'trayPlayer']
+      }),
+      m('hide', 'trayPlayer:hide', {
+        returns: 'void',
+        tauriTransport: 'tauri-invoke',
+        windows: ['main', 'trayPlayer']
+      }),
+      m('onState', 'trayPlayer:state', {
+        params: ['cb'],
+        events: ['trayPlayer:state'],
+        tauriTransport: 'tauri-native',
+        windows: ['main', 'trayPlayer']
+      }),
+      m('toggle', 'trayPlayer:toggle', {
+        mutates: true,
+        tauriTransport: 'tauri-invoke',
+        windows: ['main']
+      }),
+      m('isVisible', 'trayPlayer:isVisible', {
+        tauriTransport: 'tauri-invoke',
+        windows: ['main']
+      })
     ],
-    { windows: ['main', 'trayPlayer'], securityBoundary: 'auxWindow', testEvidence: ['test:app'], transport: 'tauri-unmigrated' }
+    {
+      windows: ['main', 'trayPlayer'],
+      securityBoundary: 'auxWindow',
+      testEvidence: ['test:app'],
+      transport: 'tauri-invoke'
+    }
   ),
   s(
     'debug',
-    [m('appendNativeTrace', 'debug:appendNativeTrace', { mutates: true, params: ['message'] })],
-    { transport: 'tauri-unmigrated' }
+    [m('appendNativeTrace', 'debug:appendNativeTrace', { mutates: true, params: ['message'], tauriTransport: 'tauri-invoke' })],
+    { transport: 'tauri-invoke' }
   )
 ]
 

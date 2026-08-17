@@ -56,6 +56,23 @@ fn is_theme_library_data(value: &Value) -> bool {
         && object.get("activeTheme").is_some()
 }
 
+/// 备份导入校验入口：与 `is_theme_library_data` 相同（`ThemeLibraryDocument` 形状）。
+pub(crate) fn is_theme_library_document(value: &Value) -> bool {
+    is_theme_library_data(value)
+}
+
+/// 备份恢复入口：以 CAS 覆盖主题库并广播 `themes:changed`。
+pub(crate) fn replace_theme_library(
+    app: &AppHandle,
+    document: Value,
+    expected_revision: u64,
+) -> Result<Value, String> {
+    if !is_theme_library_data(&document) {
+        return Err("主题库文档无效".to_string());
+    }
+    write_library(app, load_library(app), document, expected_revision)
+}
+
 fn is_theme_selection(value: &Value) -> bool {
     let Some(object) = value.as_object() else {
         return false;

@@ -1,0 +1,562 @@
+/*
+ * Desktop lyrics page script — shared by Electron (preload exposes window.api)
+ * and Tauri (withGlobalTauri exposes window.__TAURI__).
+ *
+ * Under Tauri this standalone page has no preload and does not load the app
+ * bundle, so we build the desktopLyrics surface bridge from the injected
+ * global Tauri API. Every event subscription mirrors the Electron preload
+ * channels; the main window owns toggle/show/hide/updateTrack/updateTime/
+ * updateSettings and drives this page through those events.
+ */
+if (!window.api && window.__TAURI__) {
+  var __dlTauriCore = window.__TAURI__.core
+  var __dlTauriEvent = window.__TAURI__.event
+  var __dlBridge = {}
+  function __dlListen(channel, cb) {
+    var active = true
+    var unlisten = null
+    __dlTauriEvent
+      .listen(channel, function (event) {
+        if (active) cb(event.payload)
+      })
+      .then(function (handle) {
+        unlisten = handle
+      })
+    return function () {
+      active = false
+      if (unlisten) unlisten()
+    }
+  }
+  __dlBridge.onInitSettings = function (cb) {
+    return __dlListen('desktopLyrics:initSettings', cb)
+  }
+  __dlBridge.onTrackUpdate = function (cb) {
+    return __dlListen('desktopLyrics:updateTrack', cb)
+  }
+  __dlBridge.onTimeUpdate = function (cb) {
+    return __dlListen('desktopLyrics:updateTime', cb)
+  }
+  __dlBridge.onSettingsUpdate = function (cb) {
+    return __dlListen('desktopLyrics:updateSettings', cb)
+  }
+  __dlBridge.onToggle = function (cb) {
+    return __dlListen('desktopLyrics:toggleChanged', cb)
+  }
+  __dlBridge.onLoadFailed = function (cb) {
+    return __dlListen('desktopLyrics:loadFailed', cb)
+  }
+  __dlBridge.requestClose = function () {
+    __dlTauriCore.invoke('desktop_lyrics_request_close')
+  }
+  window.api = { desktopLyrics: __dlBridge }
+}
+
+;(function () {
+  var api = window.api && window.api.desktopLyrics;
+  if (!api) {
+    console.error('desktopLyrics API not available');
+    var contentMissing = document.getElementById('lyrics-content');
+    if (contentMissing) contentMissing.textContent = '桌面歌词加载失败：API 不可用';
+    return;
+  }
+
+  // ── State ──
+  var parsedLines = [];
+  var translatedLines = [];
+  var mergedLines = [];
+  var currentTime = 0;
+  var activeIndex = -1;
+  var activeWordIndex = -1;
+  var settings = null;
+  var displayLines = [];
+
+  // ── DOM ──
+  var container = document.getElementById('lyrics-container');
+  var contentEl = document.getElementById('lyrics-content');
+  var songInfoEl = document.getElementById('song-info');
+  var btnClose = document.getElementById('btn-close');
+
+  // ── LRC / YRC Parser ──
+  // NetEase lyric/new metadata & prose: {"t":-1,"c":[{"tx":"作词: "},{"tx":"ACO"}]}
+  var NETEASE_JSON_LINE_RE = /^\s*\{[\s\S]*"c"\s*:\s*\[[\s\S]*\]\s*\}\s*$/;
+
+  function looksLikeYrc(lyrics) {
+    return typeof lyrics === 'string' && /^\[\d+,\d+\]/m.test(lyrics) && /\(\d+,\d+,\d+\)/.test(lyrics);
+  }
+
+  function parseNeteaseJsonLyricLine(raw) {
+    var trimmed = String(raw || '').trim();
+    if (!trimmed || trimmed[0] !== '{' || !NETEASE_JSON_LINE_RE.test(trimmed)) return null;
+    try {
+      var parsed = JSON.parse(trimmed);
+      if (!Array.isArray(parsed.c)) return null;
+      var text = parsed.c
+        .map(function (part) {
+          return part && typeof part.tx === 'string' ? part.tx : '';
+        })
+        .join('')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!text) return null;
+      var timeMs = typeof parsed.t === 'number' && isFinite(parsed.t) ? parsed.t : null;
+      // t < 0 is NetEase credit / static metadata (作词 / 作曲 / 制作), not a playhead time.
+      var time = timeMs != null && timeMs >= 0 ? timeMs / 1000 : null;
+      return { time: time, text: text };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function isRawNeteaseJsonLyricLine(raw) {
+    var trimmed = String(raw || '').trim();
+    return trimmed.charAt(0) === '{' && NETEASE_JSON_LINE_RE.test(trimmed);
+  }
+
+  function parseYrc(yrc) {
+    if (!yrc) return [];
+    var lines = [];
+    var credits = [];
+    var rawLines = yrc.split('\n');
+    var lineRe = /^\[(\d+),(\d+)\](.*)$/;
+    var wordRe = /\((\d+),(\d+),\d+\)([^(]*)/g;
+    for (var ri = 0; ri < rawLines.length; ri++) {
+      var trimmed = rawLines[ri].trim();
+      if (!trimmed) continue;
+
+      var jsonLine = parseNeteaseJsonLyricLine(trimmed);
+      if (jsonLine) {
+        if (jsonLine.time != null) {
+          lines.push({ time: jsonLine.time, text: jsonLine.text, words: null });
+        } else {
+          // Credits (t:-1) at top with t=0 so they don't scroll as timed lines.
+          credits.push({ time: 0, text: jsonLine.text, words: null });
+        }
+        continue;
+      }
+      if (isRawNeteaseJsonLyricLine(trimmed)) continue;
+
+      var m = lineRe.exec(trimmed);
+      if (!m) continue;
+      var startMs = parseInt(m[1], 10);
+      var rest = m[3] || '';
+      var words = [];
+      var text = '';
+      wordRe.lastIndex = 0;
+      var wm;
+      while ((wm = wordRe.exec(rest)) !== null) {
+        var wordStart = parseInt(wm[1], 10) / 1000;
+        var wordText = wm[3] || '';
+        words.push({ time: wordStart, text: wordText });
+        text += wordText;
+      }
+      if (!text) continue;
+      lines.push({
+        time: startMs / 1000,
+        text: text,
+        words: words.length ? words : null
+      });
+    }
+    lines.sort(function (a, b) { return a.time - b.time; });
+    return credits.length > 0 ? credits.concat(lines) : lines;
+  }
+
+  function parseTimestampParts(min, sec, frac) {
+    var ms = 0;
+    if (frac) {
+      ms = parseInt(frac, 10);
+      if (frac.length === 2) ms *= 10;
+    }
+    return parseInt(min, 10) * 60 + parseInt(sec, 10) + ms / 1000;
+  }
+
+  function parseEnhancedWords(rawLine) {
+    var wordRe = /<(\d{1,3}):(\d{2})(?:[.:](\d{2,3}))?>/g;
+    if (!wordRe.test(rawLine)) return null;
+    var timestamps = [];
+    var match;
+    wordRe.lastIndex = 0;
+    while ((match = wordRe.exec(rawLine)) !== null) {
+      timestamps.push({
+        time: parseTimestampParts(match[1], match[2], match[3]),
+        index: match.index,
+        end: match.index + match[0].length
+      });
+    }
+    if (timestamps.length === 0) return null;
+    var words = [];
+    var plain = '';
+    for (var i = 0; i < timestamps.length; i++) {
+      var current = timestamps[i];
+      var next = timestamps[i + 1];
+      var wordText = rawLine.slice(current.end, next ? next.index : rawLine.length);
+      if (!wordText) continue;
+      words.push({ time: current.time, text: wordText });
+      plain += wordText;
+    }
+    var lineRe = /\[(\d{1,3}):(\d{2})(?:[.:](\d{2,3}))?\]/g;
+    var cleaned = plain.replace(lineRe, '').trim();
+    if (!cleaned || words.length === 0) return null;
+    return { text: cleaned, words: words };
+  }
+
+  function parseLrc(lrc) {
+    if (!lrc) return [];
+    var lines = [];
+    var credits = [];
+    var lineRe = /\[(\d{1,3}):(\d{2})(?:[.:](\d{2,3}))?\]/g;
+    var rawLines = lrc.split('\n');
+    for (var ri = 0; ri < rawLines.length; ri++) {
+      var trimmed = rawLines[ri].trim();
+      if (!trimmed) continue;
+
+      var jsonLine = parseNeteaseJsonLyricLine(trimmed);
+      if (jsonLine) {
+        if (jsonLine.time != null) {
+          lines.push({ time: jsonLine.time, text: jsonLine.text, words: null });
+        } else {
+          credits.push({ time: 0, text: jsonLine.text, words: null });
+        }
+        continue;
+      }
+      if (isRawNeteaseJsonLyricLine(trimmed)) continue;
+
+      var timestamps = [];
+      var match;
+      lineRe.lastIndex = 0;
+      while ((match = lineRe.exec(trimmed)) !== null) {
+        timestamps.push(parseTimestampParts(match[1], match[2], match[3]));
+      }
+      var enhanced = parseEnhancedWords(trimmed);
+      var text = enhanced
+        ? enhanced.text
+        : trimmed.replace(lineRe, '').replace(/<[^>]+>/g, '').trim();
+      var words = enhanced ? enhanced.words : null;
+      if (!text || timestamps.length === 0) continue;
+      for (var ti = 0; ti < timestamps.length; ti++) {
+        lines.push({ time: timestamps[ti], text: text, words: words });
+      }
+    }
+    lines.sort(function (a, b) { return a.time - b.time; });
+    return credits.length > 0 ? credits.concat(lines) : lines;
+  }
+
+  function parsePlainLyrics(lyrics) {
+    if (!lyrics) return [];
+    var timeTagRe = /\[\d{1,3}:\d{2}(?:[.:]\d{2,3})?\]/g;
+    var metadataTagRe = /^\[[a-zA-Z]+:.*\]$/;
+    return lyrics
+      .split('\n')
+      .map(function (line) {
+        var jsonLine = parseNeteaseJsonLyricLine(line);
+        if (jsonLine) return jsonLine.text;
+        if (isRawNeteaseJsonLyricLine(line)) return '';
+        return line.replace(timeTagRe, '').replace(/<[^>]+>/g, '').trim();
+      })
+      .filter(function (line) { return line.length > 0 && !metadataTagRe.test(line); });
+  }
+
+  function mergeLyrics(original, translated) {
+    if (original.length === 0) {
+      return translated.map(function (l) {
+        return { time: l.time, text: l.text, translation: null, words: l.words || null };
+      });
+    }
+    var result = original.map(function (l) {
+      return { time: l.time, text: l.text, translation: null, words: l.words || null };
+    });
+    if (translated.length > 0) {
+      for (var i = 0; i < translated.length; i++) {
+        var t = translated[i];
+        var idx = -1;
+        for (var j = 0; j < result.length; j++) {
+          if (result[j].time == null || t.time == null) continue;
+          if (Math.abs(result[j].time - t.time) < 0.5) { idx = j; break; }
+        }
+        if (idx >= 0) result[idx].translation = t.text;
+      }
+    }
+    return result;
+  }
+
+  function buildMergedLyrics(lyrics, translatedLyrics) {
+    var original = looksLikeYrc(lyrics) ? parseYrc(lyrics) : parseLrc(lyrics);
+    var translated = looksLikeYrc(translatedLyrics) ? parseYrc(translatedLyrics) : parseLrc(translatedLyrics);
+    if (original.length > 0 || translated.length > 0) return mergeLyrics(original, translated);
+
+    var plain = parsePlainLyrics(lyrics);
+    var plainTranslated = parsePlainLyrics(translatedLyrics);
+    var source = plain.length > 0 ? plain : plainTranslated;
+    return source.map(function (line, index) {
+      return {
+        time: null,
+        text: line,
+        translation: plain.length > 0 ? plainTranslated[index] || null : null,
+        words: null
+      };
+    });
+  }
+
+  function lyricSourceLabel(source) {
+    if (source === 'embedded') return '内嵌';
+    if (source === 'local') return '本地 LRC';
+    if (source === 'provider') return 'Provider';
+    if (source === 'online') return '在线';
+    return '';
+  }
+
+  function buildSourceLabel(data) {
+    var labels = [];
+    var original = lyricSourceLabel(data.lyricsSource);
+    var translated = lyricSourceLabel(data.translatedLyricsSource);
+    if (original) labels.push('原文: ' + original);
+    if (translated) labels.push('翻译: ' + translated);
+    return labels.join(' / ');
+  }
+
+  // ── Rendering ──
+  function hexToRgba(hex, alpha) {
+    if (!hex || !hex.startsWith('#')) return 'rgba(0,0,0,' + alpha + ')';
+    var r = parseInt(hex.slice(1, 3), 16);
+    var g = parseInt(hex.slice(3, 5), 16);
+    var b = parseInt(hex.slice(5, 7), 16);
+    return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+  }
+
+  function applySettings(s) {
+    settings = s;
+    var fontFamily = s.fontFamily === 'system' || !s.fontFamily
+      ? "system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif"
+      : s.fontFamily;
+    container.style.fontFamily = fontFamily;
+    container.style.fontSize = s.fontSize + 'px';
+    container.style.fontWeight = String(s.fontWeight);
+
+    var bgAlpha = s.bgOpacity / 100;
+    container.style.background = s.bgOpacity > 0 ? hexToRgba(s.bgColor, bgAlpha) : 'transparent';
+
+    container.style.textAlign = s.align;
+    container.style.justifyContent = s.align === 'left' ? 'flex-start' : 'center';
+    container.style.alignItems = s.align === 'left' ? 'flex-start' : 'center';
+
+    renderLines();
+  }
+
+  function appendLyricRow(opts) {
+    var text = opts.text;
+    var isActive = opts.isActive;
+    var isTranslation = opts.isTranslation;
+    var rowIndex = opts.rowIndex;
+    var lineIdx = opts.lineIdx;
+    var words = opts.words;
+    var shadow = opts.shadow;
+    var lineOffset = opts.lineOffset;
+
+    var rowOffsetX = (rowIndex % 2 === 0 ? -1 : 1) * lineOffset;
+    var parts = [];
+    if (rowOffsetX !== 0) parts.push('translateX(' + rowOffsetX + 'px)');
+    if (isActive && !isTranslation) parts.push('scale(1.05)');
+    var rowTransform = parts.length ? parts.join(' ') : '';
+
+    var div = document.createElement('div');
+    div.className = 'lyric-line' + (isTranslation ? ' translation' : '');
+    if (lineIdx != null) div.dataset.index = String(lineIdx);
+    if (isActive) div.classList.add('active');
+    if (!text) div.classList.add('empty');
+
+    div.style.color = isActive ? settings.highlightColor : settings.color;
+    div.style.textShadow = shadow;
+    if (rowTransform) div.style.transform = rowTransform;
+
+    if (!isTranslation && isActive && words && words.length) {
+      for (var wi = 0; wi < words.length; wi++) {
+        var span = document.createElement('span');
+        span.className = 'lyric-word' + (wi === activeWordIndex ? ' active' : '');
+        span.textContent = words[wi].text;
+        div.appendChild(span);
+      }
+    } else if (text) {
+      div.textContent = text;
+    } else {
+      div.innerHTML = '&nbsp;';
+    }
+
+    contentEl.appendChild(div);
+    displayLines.push({ el: div, index: lineIdx });
+  }
+
+  function renderLines() {
+    contentEl.innerHTML = '';
+    displayLines = [];
+    if (!settings) return;
+
+    var maxLines = settings.maxLines || 2;
+    var showTranslation = settings.showTranslation !== false;
+    var layout = settings.layout === 'multi' ? 'multi' : 'bilingual';
+    var shadow = settings.shadow ? '0 0 ' + settings.shadowBlur + 'px ' + settings.shadowColor : 'none';
+    var lineOffset = typeof settings.lineOffset === 'number' && isFinite(settings.lineOffset)
+      ? settings.lineOffset
+      : 0;
+
+    // Bilingual: row0 = original of current line, row1 = translation of current line.
+    if (layout === 'bilingual') {
+      var bIdx = activeIndex >= 0 ? activeIndex : (mergedLines.length > 0 ? 0 : -1);
+      var bLine = bIdx >= 0 ? mergedLines[bIdx] : null;
+      if (bLine) {
+        var bActive = activeIndex >= 0 && bIdx === activeIndex;
+        appendLyricRow({
+          text: bLine.text,
+          isActive: bActive,
+          isTranslation: false,
+          rowIndex: 0,
+          lineIdx: bIdx,
+          words: bLine.words,
+          shadow: shadow,
+          lineOffset: lineOffset
+        });
+        if (showTranslation) {
+          appendLyricRow({
+            text: bLine.translation || '',
+            isActive: bActive,
+            isTranslation: true,
+            rowIndex: 1,
+            lineIdx: bIdx,
+            words: null,
+            shadow: shadow,
+            lineOffset: lineOffset
+          });
+        }
+      }
+      contentEl.style.lineHeight = String(settings.lineSpacing);
+      return;
+    }
+
+    // Single-lyric rotation (not whole-page flip):
+    // maxLines=2:
+    //   active=0 → [0,1] hl row0
+    //   active=1 → [2,1] hl row1  (row0 already switches to the 3rd lyric)
+    //   active=2 → [2,3] hl row0
+    //   active=3 → [4,3] hl row1
+    // Rows already past the highlight are prefilled with the next cycle's lyrics.
+    var lineIndices = [];
+    if (mergedLines.length === 0 || maxLines <= 0) {
+      lineIndices = [];
+    } else if (activeIndex < 0) {
+      for (var pi = 0; pi < Math.min(maxLines, mergedLines.length); pi++) {
+        lineIndices.push(pi);
+      }
+    } else {
+      var pageSize = maxLines;
+      var base = Math.floor(activeIndex / pageSize) * pageSize;
+      var pos = activeIndex - base;
+      for (var ri = 0; ri < pageSize; ri++) {
+        var idx;
+        if (ri < pos) {
+          idx = base + pageSize + ri;
+        } else {
+          idx = base + ri;
+        }
+        if (idx >= 0 && idx < mergedLines.length) {
+          lineIndices.push(idx);
+        }
+      }
+      if (lineIndices.length === 0 && activeIndex < mergedLines.length) {
+        lineIndices.push(activeIndex);
+      }
+    }
+
+    // Even visual rows shift left, odd rows right (lineOffset px). Translation follows its line.
+    for (var i = 0; i < lineIndices.length; i++) {
+      var lineIdx = lineIndices[i];
+      var line = mergedLines[lineIdx];
+      if (!line) continue;
+      var isActive = lineIdx === activeIndex;
+
+      appendLyricRow({
+        text: line.text,
+        isActive: isActive,
+        isTranslation: false,
+        rowIndex: i,
+        lineIdx: lineIdx,
+        words: line.words,
+        shadow: shadow,
+        lineOffset: lineOffset
+      });
+
+      if (showTranslation && line.translation) {
+        appendLyricRow({
+          text: line.translation,
+          isActive: isActive,
+          isTranslation: true,
+          rowIndex: i,
+          lineIdx: lineIdx,
+          words: null,
+          shadow: shadow,
+          lineOffset: lineOffset
+        });
+      }
+    }
+
+    contentEl.style.lineHeight = String(settings.lineSpacing);
+  }
+
+  function updateActiveIndex() {
+    var newActive = -1;
+    for (var i = 0; i < mergedLines.length; i++) {
+      if (mergedLines[i].time == null) continue;
+      if (mergedLines[i].time <= currentTime) {
+        newActive = i;
+      } else {
+        break;
+      }
+    }
+    var newWord = -1;
+    if (newActive >= 0 && mergedLines[newActive].words && mergedLines[newActive].words.length) {
+      var words = mergedLines[newActive].words;
+      for (var wi = 0; wi < words.length; wi++) {
+        if (words[wi].time <= currentTime) newWord = wi;
+        else break;
+      }
+    }
+    if (newActive !== activeIndex || newWord !== activeWordIndex) {
+      activeIndex = newActive;
+      activeWordIndex = newWord;
+      renderLines();
+    }
+  }
+
+  // ── IPC via window.api ──
+  api.onInitSettings(function (s) { applySettings(s); });
+  api.onTrackUpdate(function (data) {
+    parsedLines = looksLikeYrc(data.lyrics) ? parseYrc(data.lyrics) : parseLrc(data.lyrics);
+    translatedLines = parseLrc(data.translatedLyrics);
+    mergedLines = buildMergedLyrics(data.lyrics, data.translatedLyrics);
+    activeIndex = -1;
+    activeWordIndex = -1;
+    var sourceLabel = buildSourceLabel(data);
+    if (data.title) {
+      songInfoEl.textContent =
+        (data.artist ? data.artist + ' - ' : '') +
+        data.title +
+        (sourceLabel ? ' · ' + sourceLabel : '');
+    } else {
+      songInfoEl.textContent = sourceLabel;
+    }
+    songInfoEl.title = sourceLabel;
+    renderLines();
+  });
+  api.onTimeUpdate(function (time) {
+    currentTime = time;
+    updateActiveIndex();
+  });
+  api.onSettingsUpdate(function (s) { applySettings(s); });
+
+  // Dragging is handled natively: Electron uses `-webkit-app-region: drag`,
+  // Tauri uses `data-tauri-drag-region="deep"` on the container (both are set
+  // in desktop-lyrics.html). The main process 'move' handler persists position.
+  // The Tauri bridge does not need to call move() during native dragging.
+
+  // ── Close button ──
+  btnClose.addEventListener('click', function () {
+    api.requestClose();
+  });
+})();

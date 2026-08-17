@@ -6,6 +6,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 mod audio_runtime;
 mod data;
+mod desktop_lyrics;
 mod fonts;
 mod library_scan;
 mod local_fs;
@@ -21,7 +22,11 @@ mod plugins_ext;
 mod plugins_index;
 mod plugins_install;
 mod plugins_zip;
+mod radio_media;
+mod settings_backup;
+mod sleep_timer;
 mod themes;
+mod tray_player;
 
 /// `miniPlayer` surface（Stage 7A）设置/快照/命令归一化辅助（见 `mini_player.rs`）。
 pub(crate) mod settings {
@@ -221,6 +226,55 @@ pub(crate) fn load_json_file(app: &AppHandle, name: &str, fallback: Value) -> Va
         .unwrap_or(fallback)
 }
 
+/// 过滤 settings update patch：路径类键（`libraryFolders` / `musicCachePath` /
+/// `cachePath`）仅当新值已位于当前授权音频根集合内才允许写入；否则忽略该键，
+fn auth_patch(app: &AppHandle, settings: &Value, patch: &mut Value) {
+    let Some(patch_object) = patch.as_object_mut() else {
+        return;
+    };
+    let authorized: Vec<String> = library_scan::authorized_audio_roots(app)
+        .into_iter()
+        .map(|root| root.to_string_lossy().into_owned())
+        .collect();
+    fn keep_path(value: &Value, authorized: &[String]) -> bool {
+        let Some(raw) = value.as_str() else {
+            return false;
+        };
+        let candidate = raw.trim();
+        if candidate.is_empty() {
+            return false;
+        }
+        let Ok(canonical) = std::fs::canonicalize(candidate) else {
+            return false;
+        };
+        let canonical = canonical.to_string_lossy().to_lowercase();
+        authorized.iter().any(|root| {
+            let Ok(root_canonical) = std::fs::canonicalize(root) else {
+                return root.to_lowercase() == candidate.to_lowercase();
+            };
+            canonical.starts_with(&root_canonical.to_string_lossy().to_lowercase())
+        })
+    }
+    for key in ["libraryFolders", "musicCachePath", "cachePath"] {
+        match patch_object.get(key) {
+            Some(Value::Array(folders)) if key == "libraryFolders" => {
+                if folders.iter().all(|folder| keep_path(folder, &authorized)) {
+                    // 整个数组都在授权根内，允许保留。
+                } else {
+                    patch_object.remove(key);
+                }
+            }
+            Some(single) if key != "libraryFolders" => {
+                if !keep_path(single, &authorized) {
+                    patch_object.remove(key);
+                }
+            }
+            _ => {}
+        }
+    }
+    let _ = settings;
+}
+
 pub(crate) fn save_json_file(app: &AppHandle, name: &str, data: &Value) -> Result<(), String> {
     let path = user_data_file(app, name);
     let serialized =
@@ -280,8 +334,12 @@ fn settings_update(app: AppHandle, patch: Value) -> Result<Value, String> {
             stored.insert(key.clone(), value.clone());
         }
     }
-    save_json_file(&app, "settings.json", &settings)?;
-    let snapshot = settings_snapshot(&app, &settings);
+    // 路径类键（libraryFolders / musicCachePath / cachePath）新值必须位于授权
+    // 音频根内，否则移除，防止渲染层把任意目录提升为授权根。
+    let mut filtered = settings.clone();
+    auth_patch(&app, &settings, &mut filtered);
+    save_json_file(&app, "settings.json", &filtered)?;
+    let snapshot = settings_snapshot(&app, &filtered);
     let _ = app.emit("settings:changed", snapshot.clone());
     Ok(snapshot)
 }
@@ -380,6 +438,25 @@ fn settings_get_shortcut_statuses() -> Value {
             })
             .collect(),
     )
+}
+
+/// `debug.appendNativeTrace`：把诊断消息追加到 `%TEMP%\twilight-native.log`
+/// （与 Electron `debug:appendNativeTrace` 一致）。诊断日志绝不能影响播放，出错静默。
+#[tauri::command]
+fn debug_append_native_trace(message: String) {
+    if message.is_empty() || message.len() > 500 {
+        return;
+    }
+    let line = format!("{} {message}\n", crate::persistence::now_iso8601());
+    let path = std::env::temp_dir().join("twilight-native.log");
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = file.write_all(line.as_bytes());
+    }
 }
 
 /// 与 Electron `src/main/security/localPaths.ts` 的 `resolveAuthorizedAudioFile`
@@ -560,6 +637,11 @@ pub fn run() {
         .manage(audio_runtime::AudioRuntimeRegistry::default())
         .manage(library_scan::LibraryScanManager::default())
         .manage(mini_player::MiniPlayerState)
+        .manage(tray_player::TrayPlayerState)
+        .manage(desktop_lyrics::DesktopLyricsState)
+        .manage(sleep_timer::SleepTimerStateInner(std::sync::Mutex::new(
+            sleep_timer::SleepTimerRuntime::default(),
+        )))
         .setup(|app| {
             library_scan::LibraryScanManager::grant_runtime_paths(app.handle());
             Ok(())
@@ -571,6 +653,9 @@ pub fn run() {
             settings_get_cache_size,
             settings_clear_cache,
             settings_get_shortcut_statuses,
+            debug_append_native_trace,
+            settings_backup::settings_export_backup,
+            settings_backup::settings_import_backup,
             data_load_music_library,
             data_save_music_library,
             data::data_load_playback_session,
@@ -602,6 +687,10 @@ pub fn run() {
             library_scan::library_reset,
             library_scan::fs_read_audio_file,
             library_scan::data_get_cover,
+            radio_media::radio_load_stations,
+            radio_media::radio_save_stations,
+            radio_media::podcast_load_subscriptions,
+            radio_media::podcast_save_subscriptions,
             plugins::plugins_list,
             plugins::plugins_enable,
             plugins::plugins_disable,
@@ -693,6 +782,26 @@ pub fn run() {
             mini_player::mini_player_minimize,
             mini_player::mini_player_return_to_main,
             mini_player::mini_player_choose_background_image,
+            tray_player::tray_player_toggle,
+            tray_player::tray_player_is_visible,
+            tray_player::tray_player_hide,
+            tray_player::tray_player_get_bootstrap,
+            tray_player::tray_player_command,
+            tray_player::tray_player_navigate,
+            tray_player::tray_player_consume_pending_navigation,
+            desktop_lyrics::desktop_lyrics_toggle,
+            desktop_lyrics::desktop_lyrics_show,
+            desktop_lyrics::desktop_lyrics_hide,
+            desktop_lyrics::desktop_lyrics_publish_track,
+            desktop_lyrics::desktop_lyrics_publish_time,
+            desktop_lyrics::desktop_lyrics_update_settings,
+            desktop_lyrics::desktop_lyrics_get_position,
+            desktop_lyrics::desktop_lyrics_move,
+            desktop_lyrics::desktop_lyrics_request_close,
+            sleep_timer::sleep_timer_configure,
+            sleep_timer::sleep_timer_cancel,
+            sleep_timer::sleep_timer_get_state,
+            sleep_timer::sleep_timer_boundary,
             runtime_get_manifest
         ])
         .on_page_load(|webview, _| {

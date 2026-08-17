@@ -311,7 +311,11 @@ pub fn mini_player_choose_background_image(app: AppHandle, window: tauri::Webvie
     import_background_image(&app, &path).map(Some)
 }
 
-fn import_background_image(app: &AppHandle, source: &Path) -> Result<String, String> {
+/// 把源图片复制进缓存根（`cache` 分类目录），返回 `background://<hash>.<ext>` 句柄。
+///
+/// 与 Electron `importBackgroundImageBuffer` / `miniPlayer` 的 `chooseBackgroundImage`
+/// 语义一致：扩展名白名单、20MB 上限、SHA256 前 24 hex 去重、jpeg 归一化为 jpg。
+pub(crate) fn import_background_image(app: &AppHandle, source: &Path) -> Result<String, String> {
     if !source.is_file()
         || source.metadata().map(|m| m.len()).unwrap_or(0) > MAX_BACKGROUND_IMAGE_BYTES
     {

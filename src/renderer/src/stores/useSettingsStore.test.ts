@@ -678,7 +678,7 @@ test('the three font chains stay separate: global UI, main lyrics, desktop lyric
     'utf8'
   )
   const desktopLyricsSource = readFileSync(
-    new URL('../../../../resources/desktop-lyrics.html', import.meta.url),
+    new URL('../../../../resources/desktop-lyrics.js', import.meta.url),
     'utf8'
   )
   const lyricsAppearanceSource = readFileSync(
