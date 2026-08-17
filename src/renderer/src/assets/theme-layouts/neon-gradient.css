@@ -54,17 +54,19 @@ html[data-te-preset-layout='neon-gradient'] .side-menu .menu-nav {
   gap: 8px;
 }
 
-/* 灯牌块：图标为主、竖排、斜切角 */
+/* 灯牌块：图标 + 标签横排，斜切角。保持霓虹字牌气质，但不再竖排隐藏标签。
+   导航在换主题后仍能靠图标 + 文字同时识别，符合 P0.2 跨主题骨架约束。 */
 html[data-te-preset-layout='neon-gradient'] .side-menu .menu-nav .menu-item,
 html[data-te-preset-layout='neon-gradient'] .side-menu .menu-bottom .menu-item {
-  flex-direction: column;
-  justify-content: center;
-  gap: 6px;
+  flex-direction: row;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 10px;
   height: auto;
-  min-height: 62px;
+  min-height: 48px;
   width: 100%;
   margin-left: 0;
-  padding: 10px 4px 8px;
+  padding: 8px 10px;
   border-radius: 0;
   clip-path: var(--ng-clip-tile);
   background: color-mix(in srgb, var(--te-card-bg) 26%, transparent);
@@ -107,20 +109,21 @@ html[data-te-preset-layout='neon-gradient'] .side-menu .menu-bottom .menu-item.a
 }
 
 html[data-te-preset-layout='neon-gradient'] .side-menu .menu-item .item-icon {
-  width: 28px;
-  height: 28px;
-  font-size: 24px;
+  width: 26px;
+  height: 26px;
+  font-size: 19px;
+  flex-shrink: 0;
 }
 
-/* 文字小号大写灯牌字 */
+/* 文字：横排时保持灯牌字感，但 10px 过小不利识别，提升到 12px 且不再强制居中 */
 html[data-te-preset-layout='neon-gradient'] .side-menu .menu-item .item-label {
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  white-space: normal;
-  text-align: center;
-  line-height: 1.25;
+  white-space: nowrap;
+  text-align: left;
+  line-height: 1.2;
 }
 
 html[data-te-preset-layout='neon-gradient'] .side-menu .menu-separator {

@@ -1,6 +1,6 @@
 # Twilight Echo UI/UX、视觉与性能改进交接
 
-> 状态：切片一已提交、切片二已完成（工作区未提交）（2026-08-18）
+> 状态：切片一 + 切片二 + 切片三已完成并提交（2026-08-18，本地 main 领先 origin 2 个提交，未推送）
 >
 > 评估日期：2026-08-17
 >
@@ -8,17 +8,24 @@
 
 ## 0. 实施进度（随切片更新）
 
-> 切片一 + 切片二已完成并提交（2026-08-18，本地 main 领先 origin 1 个提交，docs 尚未提交）
+> 切片一 + 切片二 + 切片三（阶段 D 主题稳定性）已完成并提交（2026-08-18）
+>
+> 切片一、切片二已提交（dabc4d0 等）；切片三为本周会话工作区改动，未推送。
 
 - [x] 切片一（前两阶段合并落地）：首页首屏降噪 + DSP 折叠 + DSP 轮询降频 + 首页材质预算 + 圆角/字号/图标统一
   - 提交：本批次为首次落地，提交信息含 `perf(ui): home focus + dsp collapse + blur budget` 等
   - 变更文件：LocalDashboard.vue/.css、PlayerBar.vue、SideMenu.vue、TitleBar.vue、player-bar/PlayerBar.css
 - [x] 切片二：无音乐单一 onboarding 空态统一（P0.1 第 4 条 + 阶段 A 第 3 步）
   - 落地内容：空态主 CTA 保持「添加音乐库文件夹」；移除三枚装饰性 chips（批量扫描/无损格式/聆听统计，原为 aria-hidden 纯装饰）；改为一行可用的辅助路径「也可以 从文件导入单曲」，复用侧栏 `ImportDialog` 打开单曲导入，形成「一个主路径 + 一个补充路径」
-  - 变更文件（工作区未提交）：LocalDashboard.vue、LocalDashboard.css
+  - 变更文件：LocalDashboard.vue、LocalDashboard.css、docs/ui-ux-visual-interaction-performance-audit-2026-08-17.md
+  - 提交：dabc4d0 `perf(ui): 无音乐空态收敛为单一引导，移除装饰 chips 并补充单曲导入路径`
   - 验证：vue-tsc web typecheck 通过；LocalDashboard.test.ts、scopedGlobalSelectors.test.ts 全绿；未改路由、导航 key、事件名与现有分析事件
   - 说明：ImportDialog 自带 fixed 全屏 overlay + scrim，custom-shell 双层滚动布局下锁 body 无效，故不再新增滚动锁（overlay 已拦截指针交互）
-- [ ] 待后续：主题稳定性（阶段 D：固定跨主题骨架、三主题验证）
+- [x] 切片三：主题稳定性（阶段 D：固定跨主题骨架、三主题验证）
+  - 落地内容：新增 `docs/theme-skeleton-contract.md`（跨主题骨架契约）与 `src/renderer/src/components/themeSkeletonContract.test.ts`（静态回归：六份内置 layout 都必须保留导航图标+标签、hover/active 语义、播放栏三列 grid）。修正 Paper 隐藏导航图标（恢复为 inline-flex，编号收窄为 18px 正文装饰）与 Neon 竖排图标墙（恢复横排图标+标签同时识别，字号 10→12px，图标 24→19px 压回紧凑宽度）
+  - 变更文件：paper-light.css、neon-gradient.css、docs/theme-skeleton-contract.md（新增）、themeSkeletonContract.test.ts（新增）、docs/ui-ux-visual-interaction-performance-audit-2026-08-17.md
+  - 验证：vue-tsc web typecheck 通过；themeSkeletonContract、themeColorAudit、themeTokenization、SideMenu、scopedGlobalSelectors、selectDarkThemeAudit、theme-visual-regression 全绿
+  - 说明：三主题（obsidian / paper / zen）验证需实际运行应用在「主题工作室」中切换，本环境无截图/运行态，视觉层需人工确认
 - [ ] 待后续：空/加载/错误状态结构统一（阶段 C.5）
 - [ ] 待后续：首页 DSP 弹窗打开时的滚动锁定复核（配合 100vh→min-height 改动；结论见切片二说明，倾向保持现状不锁）
 
