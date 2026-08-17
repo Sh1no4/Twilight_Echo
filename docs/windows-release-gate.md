@@ -227,6 +227,44 @@ packaged installer. A passing test is release-integrity evidence, not a platform
 macOS CoreAudio and Linux ALSA package targets remain unverified. Their buildability is not a
 release-readiness claim; keep their real-device smoke evidence separate from the Windows gate.
 
+## Tauri Release Gate (Windows)
+
+The Electron binary remains the full-featured baseline. The Tauri binary is only declared
+"fully supported" when its own Windows gate passes with real evidence; until then UI and docs
+keep the Electron baseline expression.
+
+Before publishing a Windows Tauri build, run:
+
+```powershell
+pnpm run test:tauri-gate
+cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+pnpm run build
+```
+
+- `test:tauri-gate` runs the static release gate (`verify:tauri-release-gate`), node + web
+  typecheck, and the parity/contract suites (`windowApiParity`, `runtimeCapabilities`,
+  `tauriPluginsContract`).
+- `scripts/verify-tauri-release-gate.cjs` asserts:
+  - the Tauri host bridge contains no legacy fake-stub helpers and no business
+    `tauri-unmigrated` transport; only the approved `matchMedia` tone stubs remain;
+  - CSP is an explicit policy (`script-src 'self'`, no `unsafe-eval`), and the asset scope is an
+    allow-list (`$APPDATA/**` / `$RESOURCE/**`), never the old global `"**"`;
+  - capabilities are split per window (main / mini-player / tray-player / desktop-lyrics) and
+    carry no broad `fs:` / `shell:` filesystem grants;
+  - the plugin-host and audio-engine sidecar scripts are declared in `bundle.resources`;
+  - `resources/sidecar/node.exe` is staged and bundled so the packaged app does not depend on a
+    user-preinstalled Node (run `pnpm run stage:node-runtime` before building);
+  - the crate refuses non-Windows builds (`compile_error!` on `not(target_os = "windows")`).
+- The `.github/workflows/build-tauri.yml` workflow runs `cargo test --lib` and
+  `pnpm run test:tauri-gate` before producing the Windows installers. macOS/Linux are not part of
+  the Tauri build or release matrix.
+
+Before updating the "Tauri fully supported" wording, additionally capture real-app E2E evidence
+on Windows: first start, directory scan + incremental reconcile on restart, local playback,
+theme/playlist persistence, a plugin provider call, NCM health before login, sidecar
+crash/recovery, unauthorized file/stylesheet rejection, and exit flush with no orphan processes.
+The packaged app must also start with a cleared Node PATH (bundled `sidecar/node.exe`).
+
 ## Plugin Boundary
 
 The app repository may bundle host/runtime code, built-in plugins, plugin API tooling, and the

@@ -1,34 +1,3 @@
-//! Tauri 插件 / Provider / Extension 能力（Stage 4 只读列表 + Stage 5A 生命周期 + Stage 5B Provider RPC）。
-//!
-//! 架构决策：Rust 原生 descriptor 读取与插件状态管理，不引入 Node sidecar，也不实现
-//! Rust 插件宿主（插件不在 Tauri 侧执行）。
-//! - `plugins_list`：读取分类插件目录下各 `{id}/{version}/plugin.json` manifest 合成
-//!   descriptor，并叠加 `plugin-state.json` 中持久化的启停/来源/时间信息；内置 NCM
-//!   插件在 Tauri 下不复制进插件目录，从资源目录读取 manifest 并合成。
-//! - `plugins_enable` / `plugins_disable` / `plugins_uninstall`：写入持久化插件状态，
-//!   纯文件操作（manifest/state/目录），不启动任何插件进程。
-//! - `plugins_get_log` / `plugins_open_log`：读取/打开插件日志（复用 Electron 尾部
-//!   20KB 截断与资源管理器定位语义）。
-//! - `providers_list`：Tauri 不运行插件，唯一真实 Provider 是内置 NCM 插件启用时静态
-//!   注册的 descriptor（`resources/plugins/ncm-provider/index.mjs` `activate()`），
-//!   以真实 `plugin.json` 存在 **且持久化状态为启用** 为门控；叠加 `provider-health.json`
-//!   持久化记录合成 `health`（镜像 Electron `getProviderHealth`）。
-//! - `providers_call` / `providers_cancel`：镜像 Electron `providers:call` /
-//!   `providers:cancel` 的参数校验（provider id / method 白名单 / args 上限 / options
-//!   白名单 / requestId），并保留超时分层与按 requestId 的中止注册表契约面。实际 NCM
-//!   调用经 `crate::ncm_gateway`（prototype）：把 Node 网关作为子进程 spawn 后通过本地
-//!   HTTP 代理到真实网易云接口；网关不可用 / 调用失败时记录一次健康失败（与 Electron
-//!   调用失败即记录一致）。
-//! - `extensions_list`：全部来自插件 manifest 的 `contributes` 声明，当前无任何声明，
-//!   返回真实空数组。
-//!
-//! - `plugins_install_from_path` / `plugins_choose_and_install`（Stage 5C）：`.tep`
-//!   包或目录来源安装，校验解压、信任确认、落盘到 `{pluginsRoot}/{id}/{version}/`。
-//! - `plugins_list_index` / `plugins_refresh_index` / `plugins_get_index_status` /
-//!   `plugins_install_from_index`（Stage 5C）：插件市场索引 + 校验下载安装。
-//! - `plugins_set_native_dsp_parameters`（Stage 5C）：DSP 插件原生参数持久化。
-//! - `extensions_execute_command` / `extensions_read_theme_stylesheet`（Stage 5C）：
-//!   Tauri 无扩展宿主，恒定报错以明确能力差异。
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -45,34 +14,23 @@ use crate::plugins_ext;
 use crate::plugins_index;
 use crate::plugins_install;
 
-/// 内置 NCM Provider 插件 id（与 Electron 侧 `bundledPluginIds` 一致）。
 pub const BUNDLED_PLUGIN_ID: &str = "com.twilightecho.provider.ncm";
-/// 内置 NCM Provider 激活时注册的 provider id（`index.mjs` 的 `PROVIDER_ID`）。
 const BUNDLED_NCM_PROVIDER_ID: &str = "ncm";
-/// 当前应用版本（与 `tauri.conf.json` / Electron `appVersion` 对齐）。
 pub(crate) const APP_VERSION: &str = "1.0.5";
 
 // ── Provider RPC 契约常量（镜像 `src/main/ipc/plugins.ts`）──────────────────────────
 
-/// Provider id 上限（Electron `MAX_PROVIDER_ID_LENGTH`）。
 const MAX_PROVIDER_ID_LENGTH: usize = 128;
-/// Provider method 上限（Electron `normalizeProviderMethod` 使用 80）。
 const MAX_PROVIDER_METHOD_LENGTH: usize = 80;
-/// Provider 调用参数数量上限（Electron `MAX_PROVIDER_ARGS`）。
 const MAX_PROVIDER_ARGS: usize = 16;
-/// Provider 调用参数序列化后的字节上限（Electron `MAX_PLUGIN_IPC_ARGS_BYTES`）。
 const MAX_PROVIDER_ARGS_BYTES: usize = 512 * 1024;
-/// Provider idempotency key 上限（Electron `MAX_PROVIDER_IDEMPOTENCY_KEY_LENGTH`）。
 const MAX_PROVIDER_IDEMPOTENCY_KEY_LENGTH: usize = 128;
-/// Provider request id 上限（Electron `normalizeProviderRequestId` 使用 128）。
 const MAX_PROVIDER_REQUEST_ID_LENGTH: usize = 128;
 
-/// Provider 调用超时分层（镜像 `manager.ts` 的 `getProviderCallTimeoutMs`）。
 const PLUGIN_PROVIDER_DEFAULT_TIMEOUT_MS: u32 = 15000;
 const PLUGIN_PROVIDER_MEDIUM_TIMEOUT_MS: u32 = 30000;
 const PLUGIN_PROVIDER_SLOW_TIMEOUT_MS: u32 = 120000;
 
-/// 慢超时层的方法（120s，镜像 Electron SLOW 列表，18 个）。
 const PROVIDER_SLOW_TIMEOUT_METHODS: [&str; 18] = [
     "fetchPlaylistTracks",
     "fetchLikedTracks",
@@ -94,7 +52,6 @@ const PROVIDER_SLOW_TIMEOUT_METHODS: [&str; 18] = [
     "fetchRecentSongs",
 ];
 
-/// 中速超时层的方法（30s，镜像 Electron MEDIUM 列表，8 个）。
 const PROVIDER_MEDIUM_TIMEOUT_METHODS: [&str; 8] = [
     "getPlaybackUrl",
     "getLyrics",
@@ -106,8 +63,6 @@ const PROVIDER_MEDIUM_TIMEOUT_METHODS: [&str; 8] = [
     "fetchHighQualityPlaylists",
 ];
 
-/// 全部 Twilight Media Provider 方法（镜像 `providerRouting.ts`
-/// `TWILIGHT_MEDIA_PROVIDER_METHODS`，56 个）。
 const TWILIGHT_MEDIA_PROVIDER_METHODS: [&str; 56] = [
     "getPlaybackUrl",
     "getLyrics",
@@ -167,7 +122,6 @@ const TWILIGHT_MEDIA_PROVIDER_METHODS: [&str; 56] = [
     "removeTracksFromPlaylist",
 ];
 
-/// 仅宿主可调用的方法（镜像 Electron `HOST_ONLY_PROVIDER_METHODS`）。
 const HOST_ONLY_PROVIDER_METHODS: [&str; 4] = [
     "createDownload",
     "getDownloadStatus",
@@ -187,9 +141,6 @@ pub(crate) fn plugin_logs_root_path(policy: &path_policy::PathPolicy) -> PathBuf
     path_policy::categorized_app_path(policy, "logs", &["plugins"], "logs/plugins")
 }
 
-/// 插件状态文件：portable 下位于 `data/plugins/plugin-state.json`，
-/// standard/fallback 下位于 `{standardRoot}/plugin-state.json`（与 Electron
-/// `stateFile` 一致，分类目录 `plugins` 的 legacy 相对路径为 `plugin-state.json`）。
 fn plugin_state_path(policy: &path_policy::PathPolicy) -> PathBuf {
     path_policy::categorized_app_path(
         policy,
@@ -206,8 +157,6 @@ pub(crate) fn read_plugin_state(policy: &path_policy::PathPolicy) -> Value {
         .unwrap_or_else(|| json!({}))
 }
 
-/// 写入插件状态；同时写 `.bak` 备份（镜像 Electron `PluginStatePersistence` 的双文件
-/// 布局）。与 Electron `queueStateSave` 一致，写失败不使命令失败。
 pub(crate) fn write_plugin_state(policy: &path_policy::PathPolicy, state: &Value) {
     let path = plugin_state_path(policy);
     if let Some(parent) = path.parent() {
@@ -219,8 +168,6 @@ pub(crate) fn write_plugin_state(policy: &path_policy::PathPolicy, state: &Value
     let _ = fs::write(backup, &serialized);
 }
 
-/// Provider 健康记录文件：与 `plugin-state.json` 同目录，portable 下位于
-/// `data/plugins/provider-health.json`，standard/fallback 下位于 `{standardRoot}/provider-health.json`。
 fn provider_health_path(policy: &path_policy::PathPolicy) -> PathBuf {
     path_policy::categorized_app_path(
         policy,
@@ -237,7 +184,6 @@ fn read_provider_health(policy: &path_policy::PathPolicy) -> Value {
         .unwrap_or_else(|| json!({}))
 }
 
-/// 写入 Provider 健康记录；同时写 `.bak` 备份（与 `write_plugin_state` 双文件布局一致）。
 fn write_provider_health(policy: &path_policy::PathPolicy, health: &Value) {
     let path = provider_health_path(policy);
     if let Some(parent) = path.parent() {
@@ -249,8 +195,6 @@ fn write_provider_health(policy: &path_policy::PathPolicy, health: &Value) {
     let _ = fs::write(backup, &serialized);
 }
 
-/// Provider cookie 记录文件（登录态）：与 `provider-health.json` 同目录双文件布局，
-/// portable 下位于 `data/plugins/provider-cookie.json`。
 fn provider_cookie_path(policy: &path_policy::PathPolicy) -> PathBuf {
     path_policy::categorized_app_path(
         policy,
@@ -272,7 +216,6 @@ fn read_provider_cookie(policy: &path_policy::PathPolicy) -> Option<String> {
         })
 }
 
-/// 写入 Provider cookie；同时写 `.bak` 备份（与 `write_provider_health` 双文件布局一致）。
 fn write_provider_cookie(policy: &path_policy::PathPolicy, cookie: &str) {
     let value = json!({ "cookie": cookie, "updatedAt": now_iso8601() });
     let path = provider_cookie_path(policy);
@@ -285,7 +228,6 @@ fn write_provider_cookie(policy: &path_policy::PathPolicy, cookie: &str) {
     let _ = fs::write(backup, &serialized);
 }
 
-/// 当前 UTC 时间，ISO-8601（与 Electron `new Date().toISOString()` 对齐）。
 pub(crate) fn now_iso8601() -> String {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
@@ -294,8 +236,6 @@ pub(crate) fn now_iso8601() -> String {
 
 // ── Provider RPC 参数归一化（镜像 `src/main/ipc/plugins.ts`）────────────────────────
 
-/// Provider id 首字符与整体长度检查：`[a-z0-9]` 开头，后续 `[a-z0-9._:-]`，
-/// 总长 1..=128（镜像 `PROVIDER_ID_PATTERN`）。
 fn is_valid_provider_id(id: &str) -> bool {
     let mut chars = id.chars();
     let valid_first = chars
@@ -306,8 +246,6 @@ fn is_valid_provider_id(id: &str) -> bool {
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "._:-".contains(c))
 }
 
-/// request id / idempotency key 检查：`[A-Za-z0-9]` 开头，后续 `[A-Za-z0-9._:-]`，
-/// 总长 1..=128（镜像 `PROVIDER_REQUEST_ID_PATTERN` / `PROVIDER_IDEMPOTENCY_KEY_PATTERN`）。
 fn is_valid_provider_request_id(id: &str) -> bool {
     let mut chars = id.chars();
     let valid_first = chars.next().is_some_and(|c| c.is_ascii_alphanumeric());
@@ -316,7 +254,6 @@ fn is_valid_provider_request_id(id: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))
 }
 
-/// 归一化 provider id：trim + 小写 + 模式校验（镜像 `normalizeProviderId`）。
 fn normalize_provider_id(value: &str) -> Result<String, String> {
     let id = value.trim().to_lowercase();
     if !is_valid_provider_id(&id) {
@@ -325,7 +262,6 @@ fn normalize_provider_id(value: &str) -> Result<String, String> {
     Ok(id)
 }
 
-/// 归一化 provider method：白名单 + host-only 门控（镜像 `normalizeProviderMethod`）。
 fn normalize_provider_method(value: &str) -> Result<String, String> {
     let method = value.trim();
     if method.len() > MAX_PROVIDER_METHOD_LENGTH
@@ -339,7 +275,6 @@ fn normalize_provider_method(value: &str) -> Result<String, String> {
     Ok(method.to_string())
 }
 
-/// 归一化 request id（镜像 `normalizeProviderRequestId`）。
 fn normalize_provider_request_id(value: &str) -> Result<String, String> {
     let request_id = value.trim();
     if !is_valid_provider_request_id(request_id) {
@@ -348,7 +283,6 @@ fn normalize_provider_request_id(value: &str) -> Result<String, String> {
     Ok(request_id.to_string())
 }
 
-/// 归一化 idempotency key（镜像 `normalizeProviderCallOptions` 的 key 分支）。
 fn normalize_provider_idempotency_key(value: &str) -> Result<String, String> {
     let key = value.trim();
     if key.len() > MAX_PROVIDER_IDEMPOTENCY_KEY_LENGTH || !is_valid_provider_request_id(key) {
@@ -357,8 +291,6 @@ fn normalize_provider_idempotency_key(value: &str) -> Result<String, String> {
     Ok(key.to_string())
 }
 
-/// 归一化 Provider 调用参数：非数组视为空数组，切片到 `MAX_PROVIDER_ARGS` 项，
-/// 并校验序列化字节数（镜像 `normalizePluginIpcArgs` + `stringifyJsonForIpcStorage`）。
 fn normalize_provider_args(value: Option<Value>) -> Result<Value, String> {
     let args = match value {
         Some(Value::Array(items)) => {
@@ -373,8 +305,6 @@ fn normalize_provider_args(value: Option<Value>) -> Result<Value, String> {
     Ok(args)
 }
 
-/// 归一化 Provider 调用 options：仅允许 `idempotencyKey` / `requestId` 两个键
-/// （镜像 `normalizeProviderCallOptions`）。返回 `(request_id, idempotency_key)`。
 fn normalize_provider_call_options(
     value: Option<Value>,
 ) -> Result<(Option<String>, Option<String>), String> {
@@ -408,7 +338,6 @@ fn normalize_provider_call_options(
     Ok((request_id, idempotency_key))
 }
 
-/// Provider 调用超时分层（镜像 `manager.ts` `getProviderCallTimeoutMs`）。
 fn get_provider_call_timeout_ms(method: &str) -> u32 {
     if PROVIDER_SLOW_TIMEOUT_METHODS.contains(&method) {
         return PLUGIN_PROVIDER_SLOW_TIMEOUT_MS;
@@ -421,13 +350,9 @@ fn get_provider_call_timeout_ms(method: &str) -> u32 {
 
 // ── Provider 健康记录（镜像 `manager.ts` 的 health 机械）────────────────────────────
 
-/// 进行中的 Provider 调用注册表（requestId → providerId）。Tauri 下 dispatch 同步
-/// 完成，请求注册后随即注销，因此 `providers_cancel` 通常命中不到活动条目；该注册表
-/// 保留 cancel 契约面，网关迁移为异步后即可真正中断活动请求。
 #[derive(Default)]
 pub struct ProviderCallRegistry(pub Mutex<HashMap<String, String>>);
 
-/// 取某个 Provider 的持久化健康记录；无记录时返回默认形状。
 fn provider_health_record(health: &Value, provider_id: &str) -> Value {
     health.get(provider_id).cloned().unwrap_or_else(|| {
         json!({
@@ -443,10 +368,6 @@ fn provider_health_record(health: &Value, provider_id: &str) -> Value {
     })
 }
 
-/// 记录一次 Provider 调用结果（镜像 Electron `recordProviderCallSuccess` /
-/// `recordProviderCallFailure`）：success 时 `successfulCalls+1`、`lastError=null`，
-/// failure 时 `failedCalls+1`、`lastError=message`；两者都刷新 `lastCheckedAt` 并
-/// 同步更新 `methodStats` 子记录。
 fn record_provider_call(
     policy: &path_policy::PathPolicy,
     provider_id: &str,
@@ -561,8 +482,6 @@ fn record_provider_call(
     write_provider_health(policy, &health);
 }
 
-/// 由持久化健康记录合成 provider 的 `health` descriptor（镜像 Electron
-/// `getProviderHealth` + `getProviderMethodStats`）。
 fn provider_health_descriptor(record: Option<&Value>, plugin_status: &str) -> Value {
     let record = record.cloned().unwrap_or_else(|| json!({}));
     let total_calls = record
@@ -635,21 +554,6 @@ fn provider_health_descriptor(record: Option<&Value>, plugin_status: &str) -> Va
     })
 }
 
-/// 分派 NCM Provider 调用（prototype：Node 网关子进程 + 本地 HTTP 代理）。
-///
-/// Electron 侧的网易云网关是 Node HTTP 服务（`serveNcmApi`），只能在 Node 环境运行；
-/// Tauri 侧离线 crate 不携带 TLS 与 WEAPI 加密能力，无法直连 `music.163.com`。因此这里
-/// 经 `crate::ncm_gateway::proxy_json_call` 把请求代理到由本进程 spawn 的本地网关，
-/// 拿到真实网易云 JSON。方法→网关路径映射与 `resources/plugins/ncm-provider/index.mjs`
-/// 保持一致：`getQrKey` → `/login/qr/key`（零鉴权）；`getQrImage`/`getQrLogin`/`checkQrLogin`
-/// 覆盖扫码登录闭环；`checkLogin`/`getProfile`/`logout` 维护登录态；`searchSongs` 在线搜索；
-/// `getPlaybackUrl` 按 quality 降级取播放地址。登录后方法把 `provider-cookie.json` 中的
-/// cookie 作为 `Cookie` 头传给网关（镜像 provider 的 `requestOptionalAuth`/`requestAuthed`）。
-/// 未映射方法返回结构化的"原型未映射"错误，由 `providers_call` 记录一次健康失败。
-///
-/// Stage 5B 起 `providers_call` 改为经插件宿主 sidecar（`plugin_host`）路由，真实插件
-/// 代码（`resources/plugins/ncm-provider/index.mjs`）通过 `internal/ncmRequest` 走同一
-/// `ncm_gateway` 代理；本 Rust 写死映射保留为离线/无宿主时的降级路径。
 #[allow(dead_code)]
 async fn dispatch_ncm_provider_call(
     provider_id: &str,
@@ -987,13 +891,10 @@ async fn dispatch_ncm_provider_call(
     }
 }
 
-/// 百分号编码查询参数值（镜像 `encodeURIComponent`；`url` crate 已在 Cargo.toml）。
 fn url_encode(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
-/// 构造网关路径：追加查询参数（值百分号编码）与 `timestamp`（镜像 Electron
-/// `requestNcmApi` 的统一时间戳，与原始原型行为一致）。
 fn ncm_path(base_path: &str, params: &[(&str, &str)]) -> String {
     let mut query: Vec<String> = params
         .iter()
@@ -1008,8 +909,6 @@ fn ncm_path(base_path: &str, params: &[(&str, &str)]) -> String {
     format!("{base_path}{sep}{}", query.join("&"))
 }
 
-/// 代理单个网关请求。`authed` 为真时把 `provider-cookie.json` 的 cookie 作为
-/// `Cookie` 头传给网关（镜像 provider 的 `requestOptionalAuth`：有登录态才带）。
 async fn proxy_ncm(
     policy: &path_policy::PathPolicy,
     path: &str,
@@ -1032,7 +931,6 @@ async fn proxy_ncm(
         .await
 }
 
-/// 取参数数组第 `index` 项：字符串原样、数字转字符串，否则 None。
 fn arg_string(args: &Value, index: usize) -> Option<String> {
     match args.get(index) {
         Some(Value::String(s)) => Some(s.clone()),
@@ -1041,7 +939,6 @@ fn arg_string(args: &Value, index: usize) -> Option<String> {
     }
 }
 
-/// 取参数数组第 `index` 项为 u64（数字或可解析字符串），否则 None。
 fn arg_u64(args: &Value, index: usize) -> Option<u64> {
     match args.get(index) {
         Some(Value::Number(n)) => n.as_u64(),
@@ -1050,8 +947,6 @@ fn arg_u64(args: &Value, index: usize) -> Option<u64> {
     }
 }
 
-/// 提取二维码图片 data URL（镜像 index.mjs getQrImage：`data.data.qrimg`，
-/// 缺 `data:` 前缀时补 `data:image/png;base64,`）。
 fn extract_qr_image_data_url(resp: &Value) -> Value {
     let qrimg = resp
         .pointer("/data/qrimg")
@@ -1066,8 +961,6 @@ fn extract_qr_image_data_url(resp: &Value) -> Value {
     }
 }
 
-/// 登录态检查（镜像 index.mjs checkLogin）：无 cookie 或网关失败 → `{loggedIn:false,
-/// profile:null}`；`/login/status` code 200 且有 profile → 归一化后的资料。
 async fn ncm_login_status(
     policy: &path_policy::PathPolicy,
     idempotency_key: Option<&str>,
@@ -1110,7 +1003,6 @@ async fn ncm_login_status(
     }
 }
 
-/// 归一化网易云用户资料（镜像 index.mjs buildProfile / normalizeRemoteAssetUrl）。
 fn ncm_profile_value(profile: &Value) -> Value {
     let avatar_url = profile
         .get("avatarUrl")
@@ -1133,7 +1025,6 @@ fn ncm_profile_value(profile: &Value) -> Value {
     })
 }
 
-/// 归一化国家区号（镜像 index.mjs normalizeCountryCode：仅 `[0-9]{1,6}` 合法，否则 86）。
 fn ncm_country_code(value: Option<String>) -> String {
     let value = value.unwrap_or_default().trim().to_string();
     if value.is_empty() || value.len() > 6 || !value.chars().all(|c| c.is_ascii_digit()) {
@@ -1143,7 +1034,6 @@ fn ncm_country_code(value: Option<String>) -> String {
     }
 }
 
-/// 从响应提取服务端消息（镜像 index.mjs normalizeApiMessage）。
 fn ncm_api_message(resp: &Value) -> String {
     resp.get("message")
         .and_then(Value::as_str)
@@ -1155,7 +1045,6 @@ fn ncm_api_message(resp: &Value) -> String {
         .to_string()
 }
 
-/// 取服务端消息，空时用 fallback（镜像 normalizeApiMessage 的 fallback 参数）。
 fn ncm_fallback_message(resp: &Value, fallback: &str) -> String {
     let message = ncm_api_message(resp);
     if message.is_empty() {
@@ -1165,7 +1054,6 @@ fn ncm_fallback_message(resp: &Value, fallback: &str) -> String {
     }
 }
 
-/// 登录错误消息（镜像 index.mjs describeApiError 的常用分支）。
 fn ncm_login_error_message(code: i64, resp: &Value) -> String {
     match code {
         301 => {
@@ -1179,8 +1067,6 @@ fn ncm_login_error_message(code: i64, resp: &Value) -> String {
     }
 }
 
-/// 账号登录收尾（镜像 index.mjs finishAccountLogin）：成功响应带 `MUSIC_U=` cookie 时
-/// 保存登录态并返回 `checkLogin()` 结果；否则报登录错误。
 async fn ncm_account_login_response(
     policy: &path_policy::PathPolicy,
     resp: Value,
@@ -1203,7 +1089,6 @@ async fn ncm_account_login_response(
     }
 }
 
-/// 在线搜索结果（镜像 index.mjs searchSongs）：`{ items, total }`。
 fn ncm_search_result(resp: &Value) -> Value {
     let result = resp
         .pointer("/result")
@@ -1224,8 +1109,6 @@ fn ncm_search_result(resp: &Value) -> Value {
     json!({ "items": items, "total": total })
 }
 
-/// 归一化单曲（镜像 index.mjs normalizeTrack / formatDuration / getSongAudioMeta /
-/// normalizeRemoteAssetUrl）。
 fn ncm_normalize_track(song: &Value) -> Value {
     let song_id = song.get("id").and_then(Value::as_u64).unwrap_or(0);
     let title = song.get("name").and_then(Value::as_str).unwrap_or("");
@@ -1274,7 +1157,6 @@ fn ncm_normalize_track(song: &Value) -> Value {
     })
 }
 
-/// 镜像 index.mjs normalizeRemoteAssetUrl：`//` 补 `https:`，空串 → null。
 fn normalize_remote_asset_url(value: &str) -> Value {
     if value.is_empty() {
         Value::Null
@@ -1285,7 +1167,6 @@ fn normalize_remote_asset_url(value: &str) -> Value {
     }
 }
 
-/// 镜像 index.mjs getSongAudioMeta：按清晰度候选取第一份含 br/bitrate 的音频元信息。
 fn ncm_song_audio_meta(song: &Value) -> Value {
     for key in ["sq", "hr", "h", "m", "l"] {
         if let Some(item) = song.get(key) {
@@ -1305,8 +1186,6 @@ fn ncm_song_audio_meta(song: &Value) -> Value {
     json!({})
 }
 
-/// 解析 track 的网易云歌曲 id（镜像 index.mjs getSongIdFromTrack）：
-/// 优先 `ncmSongId`，否则取 `id`（去掉 `ncm:` 前缀），需 > 0。
 fn ncm_track_song_id(track: &Value) -> Option<u64> {
     if let Some(id) = track.get("ncmSongId").and_then(Value::as_u64) {
         if id > 0 {
@@ -1323,12 +1202,10 @@ fn ncm_track_song_id(track: &Value) -> Option<u64> {
     }
 }
 
-/// 歌单取歌上限 / track/all 分页大小 / song/detail 分片大小（镜像 index.mjs）。
 const NCM_MAX_PLAYLIST_TRACKS: usize = 5000;
 const NCM_PLAYLIST_TRACK_PAGE_SIZE: usize = 1000;
 const NCM_SONG_DETAIL_CHUNK_SIZE: usize = 100;
 
-/// 取当前登录用户 id（镜像 provider ensureProfile）：未登录 → Err。
 async fn ncm_current_uid(
     policy: &path_policy::PathPolicy,
     idempotency_key: Option<&str>,
@@ -1345,7 +1222,6 @@ async fn ncm_current_uid(
         .ok_or_else(|| "请先登录网易云音乐".to_string())
 }
 
-/// 提取歌单数组（镜像 index.mjs getPlaylistItems）。
 fn ncm_playlist_items(data: &Value) -> Vec<Value> {
     for path in [
         "/playlist",
@@ -1360,7 +1236,6 @@ fn ncm_playlist_items(data: &Value) -> Vec<Value> {
     Vec::new()
 }
 
-/// 提取歌曲数组（镜像 index.mjs getSongItems，最后 `/data` 兜底）。
 fn ncm_song_items(data: &Value) -> Vec<Value> {
     for path in [
         "/songs",
@@ -1382,7 +1257,6 @@ fn ncm_song_items(data: &Value) -> Vec<Value> {
     Vec::new()
 }
 
-/// 判断"我喜欢的音乐"歌单（镜像 index.mjs isLikedPlaylistItem）。
 fn ncm_is_liked_playlist(item: &Value) -> bool {
     let is_special = item
         .get("specialType")
@@ -1395,7 +1269,6 @@ fn ncm_is_liked_playlist(item: &Value) -> bool {
     is_special || item.get("name").and_then(Value::as_str) == Some("喜欢的音乐")
 }
 
-/// 从对象取正整数 id（镜像 Number(id) 且 >0 的过滤）。
 fn ncm_value_u64_id(value: &Value) -> Option<u64> {
     let id = value.get("id")?;
     match id {
@@ -1405,7 +1278,6 @@ fn ncm_value_u64_id(value: &Value) -> Option<u64> {
     }
 }
 
-/// 归一化歌单封面并放大到 `param=600y600`（镜像 normalizePlaylistCoverUrl）。
 fn ncm_playlist_cover_value(playlist: &Value) -> Value {
     let raw = playlist
         .get("coverImgUrl")
@@ -1436,8 +1308,6 @@ fn ncm_playlist_cover_value(playlist: &Value) -> Value {
     json!(format!("{url}{sep}param=600y600"))
 }
 
-/// 归一化歌单摘要（镜像 index.mjs normalizePlaylist；`owned` 仅在能确定
-/// 创建者时输出，`creatorName` 仅在存在时输出，与 JS 的 undefined 省略一致）。
 fn ncm_normalize_playlist(playlist: &Value, owner_uid: u64) -> Value {
     let mut map = serde_json::Map::new();
     map.insert(
@@ -1483,7 +1353,6 @@ fn ncm_normalize_playlist(playlist: &Value, owner_uid: u64) -> Value {
     Value::Object(map)
 }
 
-/// 提取喜欢歌曲 ID 列表（镜像 index.mjs getLikelistIds）。
 fn ncm_likelist_ids(data: &Value) -> Vec<u64> {
     let raw = if let Some(Value::Array(ids)) = data.get("ids") {
         ids
@@ -1501,7 +1370,6 @@ fn ncm_likelist_ids(data: &Value) -> Vec<u64> {
         .collect()
 }
 
-/// 提取歌单 trackIds（镜像 index.mjs getPlaylistTrackIds）。
 fn ncm_playlist_track_ids(data: &Value) -> Vec<u64> {
     let raw = if let Some(Value::Array(items)) = data.pointer("/playlist/trackIds") {
         items
@@ -1527,8 +1395,6 @@ fn ncm_playlist_track_ids(data: &Value) -> Vec<u64> {
         .collect()
 }
 
-/// 分片批量取歌曲详情（镜像 index.mjs fetchSongDetailsByIds / fetchSongDetailChunk）；
-/// `authed=true` 在有登录 cookie 时附加（对应 requestOptionalAuthRead）。
 async fn ncm_fetch_song_details(
     ids: &[u64],
     policy: &path_policy::PathPolicy,
@@ -1552,8 +1418,6 @@ async fn ncm_fetch_song_details(
     Ok(songs)
 }
 
-/// 歌单 detail 兜底（镜像 index.mjs fetchPlaylistTracksViaDetail）：优先 trackIds →
-/// song/detail 保序取详情，否则用内联 tracks。失败返回 None。
 async fn ncm_playlist_tracks_via_detail(
     playlist_id: &str,
     policy: &path_policy::PathPolicy,
@@ -1594,8 +1458,6 @@ async fn ncm_playlist_tracks_via_detail(
     }
 }
 
-/// 歌单全部歌曲（镜像 index.mjs fetchPlaylistTracks）：track/all 分页去重，
-/// 空则回退 playlist/detail。
 async fn ncm_playlist_tracks(
     playlist_id: &str,
     policy: &path_policy::PathPolicy,
@@ -1657,7 +1519,6 @@ async fn ncm_playlist_tracks(
     songs
 }
 
-/// 镜像 index.mjs NCM_PLAYBACK_QUALITY_FALLBACKS：偏好质量 → 降级链。
 fn ncm_playback_levels(quality: &str) -> &'static [&'static str] {
     match quality {
         "hires" => &["hires", "lossless", "exhigh", "standard"],
@@ -1668,8 +1529,6 @@ fn ncm_playback_levels(quality: &str) -> &'static [&'static str] {
     }
 }
 
-/// 播放地址（镜像 index.mjs getPlaybackUrl）：level 路径 → 码率路径 → 反解兜底
-/// 依次尝试，返回第一个可用 URL（未登录已由调用方拦截）。
 async fn ncm_playback_url(
     song_id: u64,
     quality: &str,
@@ -1709,8 +1568,6 @@ async fn ncm_playback_url(
     Ok(None)
 }
 
-/// 镜像 index.mjs getPlaybackStreamItems + getOfficialPlaybackUrl +
-/// normalizePlaybackStreamUrl：取第一个 code==200 的流 URL。
 fn ncm_official_playback_url(data: &Value) -> Option<String> {
     let items: Vec<&Value> = if let Some(array) = data.get("data").and_then(Value::as_array) {
         array.iter().collect()
@@ -1743,7 +1600,6 @@ fn ncm_official_playback_url(data: &Value) -> Option<String> {
     None
 }
 
-/// 镜像 index.mjs normalizePlaybackStreamUrl：`//` → `https:`，非 http(s) 返回 None。
 fn normalize_playback_stream_url(url: &str) -> Option<String> {
     let normalized = if let Some(rest) = url.strip_prefix("//") {
         format!("https:{rest}")
@@ -1757,7 +1613,6 @@ fn normalize_playback_stream_url(url: &str) -> Option<String> {
     }
 }
 
-/// 镜像 index.mjs getUnblockedPlaybackUrl：反解兜底，`data.code === 200` 时取候选字段。
 fn ncm_unblocked_playback_url(data: &Value) -> Option<String> {
     if data.get("code").and_then(Value::as_u64) != Some(200) {
         return None;
@@ -1780,12 +1635,6 @@ fn ncm_unblocked_playback_url(data: &Value) -> Option<String> {
     None
 }
 
-/// `providers.call`：校验并分派 Provider 调用。
-///
-/// 参数校验镜像 Electron `providers:call`（provider id / method 白名单 / args 上限 /
-/// options 仅允许 idempotencyKey+requestId / requestId 模式）；Provider 未启用或内置
-/// manifest 缺失时返回 `Provider 未启用`（不记录健康）。NCM 调用经 `ncm_gateway`
-/// 代理到本地 Node 网关；成功记录健康成功，失败（含网关不可用）记录一次健康失败。
 #[tauri::command]
 pub async fn providers_call(
     app: AppHandle,
@@ -1887,10 +1736,6 @@ pub async fn providers_call(
     }
 }
 
-/// `providers.cancel`：校验 requestId 并从活动调用注册表移除，中止 sidecar RPC。
-///
-/// Tauri 的 Provider 调用在 `plugin_host::provider_call` 的读循环中检查注册表：
-/// 条目被移除后下一次读前即返回「已取消」，从而真正中断在途调用。
 #[tauri::command]
 pub fn providers_cancel(
     registry: State<'_, ProviderCallRegistry>,
@@ -1925,8 +1770,6 @@ pub(crate) fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
     Some((major, minor, patch))
 }
 
-/// 极小引擎范围检查：支持 `>=x.y.z` 与裸 `x.y.z`，其余范围一律视为兼容，
-/// 避免只读列表误拒绝。与 Electron `isCompatibleTwilightRange` 的常见用例对齐。
 pub(crate) fn engine_range_compatible(range: &str) -> bool {
     let spec = range.trim();
     let version = spec.strip_prefix(">=").unwrap_or(spec);
@@ -1939,7 +1782,6 @@ pub(crate) fn engine_range_compatible(range: &str) -> bool {
     app >= required
 }
 
-/// 校验 manifest 是否为可展示的插件 descriptor；返回错误文本时表示 `invalid`。
 pub(crate) fn validate_manifest(manifest: &Value, version_root: &Path) -> Result<(), String> {
     let object = manifest
         .as_object()
@@ -2011,11 +1853,6 @@ fn paths_json(id: &str, version_root: &Path, data_root: &Path, logs_root: &Path)
     })
 }
 
-/// 由合法 manifest 合成 descriptor。`enabled` 为无持久化状态时的默认启用态（仅内置
-/// 插件默认启用），`built_in` 标记内置插件；`error` 为 `None` 时状态为 enabled/disabled
-/// 或（存在持久化 lastError）failed，为 `Some` 时状态为 invalid。`state_record` 为
-/// `plugin-state.json` 中该插件 id 的记录，用于叠加 installedAt/updatedAt/source/
-/// enabled/activeVersion/lastError（与 Electron `readDescriptor` 的合并语义一致）。
 pub(crate) fn manifest_descriptor(
     manifest: &Value,
     version_root: &Path,
@@ -2097,8 +1934,6 @@ pub(crate) fn manifest_descriptor(
     Value::Object(out)
 }
 
-/// 目录名推断的无效 descriptor（manifest 缺失或校验失败），与 Electron
-/// `readDescriptor` 的 catch 分支形状一致。
 fn invalid_descriptor(
     id: &str,
     version: &str,
@@ -2131,8 +1966,6 @@ fn invalid_descriptor(
     })
 }
 
-/// 单个 `{id}/{version}` 目录的 descriptor：合法 manifest 走 `manifest_descriptor`，
-/// 校验失败走 `invalid_descriptor`；`state` 为整个插件状态文件（当前仅取 `id` 记录）。
 fn descriptor_for_version_root(
     id: &str,
     version: &str,
@@ -2168,7 +2001,6 @@ fn descriptor_for_version_root(
     }
 }
 
-/// 指定插件 id 的 descriptor：先扫插件目录，未命中且为内置插件时回退到资源目录合成。
 pub(crate) fn find_descriptor(
     app: &AppHandle,
     policy: &path_policy::PathPolicy,
@@ -2225,8 +2057,6 @@ pub(crate) fn find_descriptor(
     None
 }
 
-/// 内置 NCM 插件根目录：打包后位于 `{resource_dir}/plugins/ncm-provider`，
-/// 开发模式回退到仓库根 `{cwd}/resources/plugins/ncm-provider`。
 pub(crate) fn bundled_plugin_root(app: &AppHandle) -> Option<PathBuf> {
     if let Ok(resource_dir) = app.path().resource_dir() {
         let candidate = resource_dir.join("plugins").join("ncm-provider");
@@ -2243,8 +2073,6 @@ pub(crate) fn bundled_plugin_root(app: &AppHandle) -> Option<PathBuf> {
     None
 }
 
-/// 内置 NCM Provider 的静态注册 descriptor（镜像 `index.mjs` `activate()`
-/// 注册的 provider，仅 manifest 可读时返回）。
 fn bundled_ncm_provider_registration() -> Value {
     json!({
         "id": BUNDLED_NCM_PROVIDER_ID,
@@ -2273,8 +2101,6 @@ fn bundled_ncm_provider_registration() -> Value {
     })
 }
 
-/// `plugins.list`：读取分类插件目录下已安装插件 manifest，叠加持久化启停状态，
-/// 并合成内置 NCM 插件。
 #[tauri::command]
 pub fn plugins_list(app: AppHandle) -> Value {
     let policy = path_policy::get_path_policy(&app);
@@ -2352,9 +2178,6 @@ pub fn plugins_list(app: AppHandle) -> Value {
     Value::Array(descriptors)
 }
 
-/// 将插件持久化状态切换为 `enabled` 并返回更新后的 descriptor；插件不存在或无效时
-/// 返回 Err（与 Electron `enable`/`disable` 抛错语义一致）。状态记录形状与 Electron
-/// `setEnabled` 对齐：保留原 installedAt/source，刷新 updatedAt，清除 lastError。
 fn set_plugin_enabled(app: &AppHandle, id: &str, enabled: bool) -> Result<Value, String> {
     let policy = path_policy::get_path_policy(app);
     let descriptor =
@@ -2397,11 +2220,6 @@ fn set_plugin_enabled(app: &AppHandle, id: &str, enabled: bool) -> Result<Value,
     Ok(find_descriptor(app, &policy, id).unwrap_or(descriptor))
 }
 
-/// `plugins.enable`：启用插件并激活宿主（写入持久化状态 + spawn Node sidecar）。
-/// 仅有 `main` 入口的 JS 插件会启动宿主；无 `main`（如纯 DSP/声明式插件）只写状态，
-/// 与 Electron `enableUnchecked` 的 `if (refreshed.main) startPlugin` 分支一致。
-/// 宿主启动/激活失败时，把持久化状态回滚为未启用并抛回错误（与 Electron `enableUnchecked`
-/// 的失败标记语义一致）。
 #[tauri::command]
 pub async fn plugins_enable(app: AppHandle, id: String) -> Result<Value, String> {
     let has_main = {
@@ -2426,15 +2244,12 @@ pub async fn plugins_enable(app: AppHandle, id: String) -> Result<Value, String>
     }
 }
 
-/// `plugins.disable`：停用插件（写入持久化状态 + 停止宿主进程）。
 #[tauri::command]
 pub async fn plugins_disable(app: AppHandle, id: String) -> Result<Value, String> {
     crate::plugin_host::stop_host(&app, &id).await;
     set_plugin_enabled(&app, &id, false)
 }
 
-/// `plugins.uninstall`：删除插件目录（可选删除数据目录）并清除状态。
-/// 内置插件拒绝卸载（与 Electron `uninstallUnchecked` 一致）。
 #[tauri::command]
 pub async fn plugins_uninstall(
     app: AppHandle,
@@ -2470,8 +2285,6 @@ pub async fn plugins_uninstall(
     Ok(json!({ "removed": true }))
 }
 
-/// `plugins.getLog`：返回插件日志尾部 20KB（与 Electron `raw.slice(-20000)` 对齐）；
-/// 日志不存在时返回空串。
 #[tauri::command]
 pub fn plugins_get_log(app: AppHandle, id: String) -> Result<String, String> {
     let policy = path_policy::get_path_policy(&app);
@@ -2495,8 +2308,6 @@ pub fn plugins_get_log(app: AppHandle, id: String) -> Result<String, String> {
     }
 }
 
-/// `plugins.openLog`：确保日志文件存在后在文件管理器中定位（与 Electron
-/// `shell.showItemInFolder` 对齐）。
 #[tauri::command]
 pub fn plugins_open_log(app: AppHandle, id: String) -> Result<(), String> {
     let policy = path_policy::get_path_policy(&app);
@@ -2519,9 +2330,6 @@ pub fn plugins_open_log(app: AppHandle, id: String) -> Result<(), String> {
         .map_err(|error| format!("打开插件日志目录失败：{error}"))
 }
 
-/// `providers.list`：返回内置 NCM Provider 的静态注册，叠加 `provider-health.json`
-/// 持久化记录合成 `health`（镜像 Electron `getProviderHealth`），以真实 `plugin.json`
-/// 存在 **且持久化状态为启用** 为门控；资源缺失或已停用时返回真实空数组。
 #[tauri::command]
 pub fn providers_list(app: AppHandle) -> Value {
     let policy = path_policy::get_path_policy(&app);
@@ -2554,8 +2362,6 @@ pub fn providers_list(app: AppHandle) -> Value {
     }
 }
 
-/// `extensions.list`：扩展全部来自插件 manifest 的 `contributes` 声明，
-/// 当前没有插件声明任何 contributes，返回真实空数组。
 #[tauri::command]
 pub fn extensions_list() -> Value {
     Value::Array(vec![])
@@ -2563,7 +2369,6 @@ pub fn extensions_list() -> Value {
 
 // ── Stage 5C：安装 / 索引 / 扩展命令薄封装 ──────────────────────────────
 
-/// `plugins.installFromPath`：从目录或 `.tep` 包安装插件。
 #[tauri::command]
 pub async fn plugins_install_from_path(
     app: AppHandle,
@@ -2572,37 +2377,31 @@ pub async fn plugins_install_from_path(
     plugins_install::install_from_path(app, source_path).await
 }
 
-/// `plugins.chooseAndInstall`：文件对话框选择 `.tep` 包安装；取消返回 `None`。
 #[tauri::command]
 pub async fn plugins_choose_and_install(app: AppHandle) -> Result<Option<Value>, String> {
     plugins_install::choose_and_install(app).await
 }
 
-/// `plugins.listIndex`：读取插件市场索引并叠加安装状态。
 #[tauri::command]
 pub fn plugins_list_index(app: AppHandle) -> Result<Vec<Value>, String> {
     plugins_index::list_index(app)
 }
 
-/// `plugins.refreshIndex`：经网关拉远端索引，失败回退打包索引。
 #[tauri::command]
 pub async fn plugins_refresh_index(app: AppHandle) -> Result<Vec<Value>, String> {
     plugins_index::refresh_index(app).await
 }
 
-/// `plugins.getIndexStatus`：插件市场索引状态。
 #[tauri::command]
 pub fn plugins_get_index_status(app: AppHandle) -> Result<Value, String> {
     plugins_index::get_index_status(app)
 }
 
-/// `plugins.installFromIndex`：从插件市场下载、校验并安装。
 #[tauri::command]
 pub async fn plugins_install_from_index(app: AppHandle, id: String) -> Result<Value, String> {
     plugins_index::install_from_index(app, id).await
 }
 
-/// `plugins.setNativeDspParameters`：DSP 插件原生参数持久化。
 #[tauri::command]
 pub fn plugins_set_native_dsp_parameters(
     app: AppHandle,
@@ -2612,8 +2411,6 @@ pub fn plugins_set_native_dsp_parameters(
     plugins_index::set_native_dsp_parameters(app, id, parameters)
 }
 
-/// `extensions.executeCommand`：扩展命令（Tauri 无扩展宿主，恒定报错）。
-/// 若插件宿主已激活且注册了对应 UI command，则经宿主转发；否则返回结构化错误。
 #[tauri::command]
 pub async fn extensions_execute_command(
     app: AppHandle,
@@ -2623,7 +2420,6 @@ pub async fn extensions_execute_command(
     plugins_ext::execute_command(&app, &command, args).await
 }
 
-/// `extensions.readThemeStylesheet`：主题 stylesheet（Tauri 无扩展宿主，恒定报错）。
 #[tauri::command]
 pub async fn extensions_read_theme_stylesheet(
     app: AppHandle,
@@ -2638,7 +2434,6 @@ mod tests {
     use crate::path_policy::PathPolicy;
     use std::collections::HashMap;
 
-    /// 构造一个指向 `root` 的 standard 模式路径策略（跳过 AppHandle 依赖）。
     fn standard_policy(root: &Path) -> PathPolicy {
         let mut categories = HashMap::new();
         for category in crate::path_policy::DATA_ROOT_CATEGORIES {
@@ -2845,3 +2640,4 @@ mod tests {
         );
     }
 }
+

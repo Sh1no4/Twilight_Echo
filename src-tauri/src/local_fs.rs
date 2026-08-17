@@ -1,13 +1,11 @@
 use serde_json::Value;
 use std::path::Path;
 
-/// 与 Electron `src/main/library/libraryFiles.ts` 的 `SUPPORTED_EXTENSIONS` 对齐。
 const AUDIO_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "wav", "wave", "aac", "ogg", "wma", "m4a", "mp4", "aiff", "aif", "opus", "webm",
     "alac", "ape", "wv", "dsf", "dff", "mqa", "iso",
 ];
 
-/// FNV-1a 64-bit 哈希，用于给本地文件生成稳定的 id（不引入新 crate）。
 pub(crate) fn fnv1a(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for &b in bytes {
@@ -27,8 +25,6 @@ pub(crate) fn is_audio_path(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// 递归扫描目录下的音频文件，返回真实元数据 TrackData 描述。
-/// 委托给 `library_scan::scan_folder_tracks`（lofty 元数据解析 + 文件名回退）。
 #[tauri::command]
 pub fn fs_scan_music_files(folder_path: String) -> Result<Value, String> {
     crate::library_scan::scan_folder_tracks(&folder_path)
@@ -92,3 +88,4 @@ mod tests {
         assert_ne!(fnv1a(b"abc"), fnv1a(b"abd"));
     }
 }
+

@@ -129,7 +129,9 @@ function s(
     ...(testEvidence ? { testEvidence } : {}),
     methods: methods.map((method) => ({
       ...method,
-      tauriTransport: method.tauriTransport ?? transport ?? 'tauri-unmigrated'
+      // 自 Stage 7D 起业务方法不允许再落到默认 unmigrated；显式声明每个
+      // surface/method 的 transport。
+      tauriTransport: method.tauriTransport ?? transport ?? 'tauri-reject'
     }))
   }
 }
@@ -600,7 +602,7 @@ export const WINDOW_API_MANIFEST: WindowApiSurfaceRecord[] = [
         params: ['cb'],
         events: ['themes:systemToneChanged'],
         tauriTransport: 'tauri-stub'
-      })
+      }),
     ],
     { securityBoundary: 'themePersistence', testEvidence: ['test:themes'], transport: 'tauri-reject' }
   ),

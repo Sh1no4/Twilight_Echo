@@ -1,23 +1,10 @@
-//! 共享 JSON 持久化（Stage 3）。
-//!
-//! 与 Electron `src/main/persistence/jsonFile.ts` + `versionedDataStore.ts` +
-//! `src/shared/versionedPersistence.ts` 保持同一套语义：
-//! - 原子写入（临时文件 + rename），写前把当前文件轮换为 `.bak` 备份；
-//! - 读取主文件失败时回退 `.bak`，并把损坏副本保留为 `.corrupt`；
-//! - versioned envelope `{ version: 2, revision, savedAt, data }`，写操作带
-//!   `expectedRevision` 做 CAS，冲突时返回 Electron 同款
-//!   `{ code: 'ERR_PERSISTENCE_REVISION_CONFLICT', expectedRevision, current }`，
-//!   由 preload 的 `invokeVersionedDataWrite` 还原成 `PersistentDataRevisionConflictError`。
-//! - 写失败 / 结构无效以 `Err(String)` 传播，不再静默忽略目录创建或写入错误。
 
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// 版本化信封版本号（与 `VersionedDataEnvelope.version = 2` 对齐）。
 const ENVELOPE_VERSION: u64 = 2;
 
-/// 当前 UTC 时间，ISO-8601（与 Electron `new Date().toISOString()` 对齐）。
 pub fn now_iso8601() -> String {
     use time::format_description::well_known::Rfc3339;
     time::OffsetDateTime::now_utc()
@@ -37,7 +24,6 @@ fn temporary_path(path: &Path) -> PathBuf {
     path.with_extension("json.tmp")
 }
 
-/// 读取 JSON 文件：缺失 / 空 / 超限 / 无法解析时返回 `None`（不抛错）。
 fn read_json(path: &Path, max_bytes: u64) -> Option<Value> {
     let metadata = fs::metadata(path).ok()?;
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > max_bytes {
@@ -50,14 +36,12 @@ fn read_json(path: &Path, max_bytes: u64) -> Option<Value> {
     serde_json::from_str(&raw).ok()
 }
 
-/// 把当前文件复制为 `.corrupt` 保留损坏副本（失败时静默）。
 fn preserve_corrupt_copy(path: &Path) {
     if path.is_file() {
         let _ = fs::copy(path, corrupt_path(path));
     }
 }
 
-/// 原子写入：临时文件 + 重命名，写前把当前文件轮换为 `.bak`。
 pub fn write_json_atomic(path: &Path, value: &Value, max_bytes: u64) -> Result<(), String> {
     let serialized =
         serde_json::to_vec_pretty(value).map_err(|error| format!("序列化失败：{error}"))?;
@@ -75,9 +59,6 @@ pub fn write_json_atomic(path: &Path, value: &Value, max_bytes: u64) -> Result<(
     Ok(())
 }
 
-/// 读取版本化信封；主文件与备份都无效时返回 `None`。
-///
-/// 兼容 legacy：文件里是合法 `data` 但缺信封时，自动迁移为 revision 0 信封并写回。
 pub fn load_versioned(
     path: &Path,
     max_bytes: u64,
@@ -122,8 +103,6 @@ pub fn load_versioned(
     Ok(None)
 }
 
-/// 带 CAS 的版本化写：`expected_revision` 不等于当前 revision 时返回冲突响应（Ok 值，
-/// 与 Electron `createPersistentDataRevisionConflictResponse` 一致，由 preload 还原为错误）。
 pub fn save_versioned(
     path: &Path,
     max_bytes: u64,
@@ -273,3 +252,4 @@ mod tests {
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 }
+

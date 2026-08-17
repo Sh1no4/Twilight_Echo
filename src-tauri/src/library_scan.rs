@@ -1,16 +1,3 @@
-//! Stage 4: 本地曲库扫描引擎、真实元数据解析、授权音频文件读取与事件发布。
-//!
-//! 与 Electron `src/main/library/` 的扫描语义对齐（`scan.ts` / `libraryScanService.ts` /
-//! `libraryIndexCoordinator.ts`），但把扫描放到后台线程执行，避免在 command 主线程做
-//! 大目录同步扫描。元数据通过 `lofty` 解析（duration / artist / album / cover /
-//! sampleRate / bitrate / bitDepth）。嵌入封面写入 `{cache}/cover-cache` 磁盘缓存，
-//! 曲目 `cover` 只存 `cover://<hash>.<ext>` 句柄（由 `data.getCover` 物化为 data URL），
-//! 与 Electron cover cache 的轻量句柄设计一致。
-//!
-//! 本阶段范围：startup/full scan、增量 reconciliation（added/updated/removed）、
-//! 进度 / pause / resume / cancel、`library:changed` / `library:scan-progress` /
-//! `library:scan-status` / `library:covers-missing` 事件、排除与恢复、授权读取。
-//! 文件系统 watcher、tag writer、CUE / 重复检测、导出导入等仍留待后续 stage。
 
 use crate::local_fs::{fnv1a, is_audio_path};
 use crate::path_policy;
@@ -29,7 +16,6 @@ use lofty::tag::Accessor;
 
 const UNKNOWN_ALBUM: &str = "未知专辑";
 const UNKNOWN_ARTIST: &str = "未知艺术家";
-/// 超过该体积的嵌入封面不再写盘（防止病态大图拖慢扫描）。
 const MAX_EMBEDDED_COVER_BYTES: usize = 8 * 1024 * 1024;
 
 // ── 基础工具 ─────────────────────────────────────────────────────────────────────
@@ -47,7 +33,6 @@ fn new_job_id() -> String {
     format!("scan-{}-{}", now_ms(), n)
 }
 
-/// 规范化本地路径用于比较：统一 `/`、去尾部分隔符、Windows 大小写不敏感。
 fn normalize(value: &str) -> String {
     value
         .replace('\\', "/")
@@ -95,7 +80,6 @@ fn file_identity(path: &Path) -> (u64, u64, String) {
     (size, mtime_ms, format)
 }
 
-/// 与 Electron `scan.ts getNameFromFile` 对齐：「Artist - Title.ext」→ (Artist, Title)。
 fn name_from_file(path: &Path) -> (String, String) {
     let stem = path
         .file_stem()
@@ -171,8 +155,6 @@ fn load_settings(app: &AppHandle) -> Value {
 
 // ── 授权范围（与 Electron `src/main/security/localPaths.ts` 语义对齐）───────────────
 
-/// 授权音频根目录：settings 的 libraryFolders / musicCachePath / cachePath，以及
-/// 已保存音乐库的 folders。扫描和授权读取都只在这些 canonical root 内进行。
 pub(crate) fn authorized_audio_roots(app: &AppHandle) -> Vec<PathBuf> {
     let settings = load_settings(app);
     let library = load_music_library(app);
@@ -200,9 +182,6 @@ pub(crate) fn authorized_audio_roots(app: &AppHandle) -> Vec<PathBuf> {
     roots
 }
 
-/// 判定音频文件是否可被授权读取：文件存在、扩展名受支持，且 canonical 路径位于
-/// 某个授权 root 之下（`fs::canonicalize` 会解析 symlink，因此 symlink 逃逸到
-/// root 之外的路径会被拒绝）。
 pub(crate) fn is_authorized_audio_file(app: &AppHandle, file_path: &str) -> Result<bool, String> {
     let path = PathBuf::from(file_path);
     if !path.is_file() || !is_audio_path(&path) {
@@ -257,8 +236,6 @@ fn cache_picture(app: &AppHandle, pic: &Picture) -> Option<String> {
     Some(format!("cover://{name}"))
 }
 
-/// `data.getCover`：把 `cover://<file>` / `background://<file>` 句柄物化为 data URL
-/// （无则返回 null）。封面缓存与背景图缓存共用 `{cache}` 分类目录。
 #[tauri::command]
 pub fn data_get_cover(app: AppHandle, handle: String) -> Result<Option<String>, String> {
     let subdir = if handle.starts_with("cover://") {
@@ -385,8 +362,6 @@ fn build_track(
     track
 }
 
-/// 解析单个音频文件为曲目 JSON。`app` 传 `Some` 时启用嵌入封面磁盘缓存；
-/// 传 `None` 时（如 `fs_scan_music_files` 增量单文件扫描）跳过封面缓存。
 fn parse_track(
     app: Option<&AppHandle>,
     path: &Path,
@@ -479,7 +454,6 @@ fn parse_track(
     )
 }
 
-/// `fs.scanMusicFiles`：扫描单目录返回完整曲目（真实元数据）。
 pub(crate) fn scan_folder_tracks(folder_path: &str) -> Result<Value, String> {
     let root = PathBuf::from(folder_path);
     if !root.is_dir() {
@@ -511,7 +485,6 @@ pub(crate) fn scan_folder_tracks(folder_path: &str) -> Result<Value, String> {
 
 // ── 扫描状态机（后台线程 + 命令共享）──────────────────────────────────────────────
 
-/// Tauri 托管状态：扫描标志与当前状态。
 pub struct LibraryScanManager {
     pub inner: Arc<Mutex<ScanControl>>,
 }
@@ -538,10 +511,6 @@ impl Default for LibraryScanManager {
 }
 
 impl LibraryScanManager {
-    /// 启动期授予 asset scope：app_data_dir 与 resource_dir 递归。`getAudioFileUrl`
-    /// 的 `convertFileSrc` 只对授权路径返回真实 asset URL，否则返回占位 false 请求；
-    /// 显式授予保证播放 URL 可解析。媒体级根校验仍由 `is_audio_file_authorized`
-    /// 把关（`fs_read_audio_file` 读取前强制重新校验）。
     pub fn grant_runtime_paths(app: &AppHandle) {
         #[cfg(debug_assertions)]
         {
@@ -610,7 +579,6 @@ fn wait_if_paused(inner: &Arc<Mutex<ScanControl>>) {
     }
 }
 
-/// 进度事件与共享状态更新（事件按 20 个文件节流，状态每次都更新）。
 fn emit_progress(
     app: &AppHandle,
     inner: &Arc<Mutex<ScanControl>>,
@@ -1221,8 +1189,6 @@ pub fn library_reset(app: AppHandle) -> Result<Value, String> {
 
 // ── 授权音频文件读取 ───────────────────────────────────────────────────────────────
 
-/// `fs.readAudioFile`：授权后读取文件字节（base64，避免大数组 JSON）。playback 走
-/// `getAudioFileUrl` 的 asset URL，不在 renderer 复制大文件。
 #[tauri::command]
 pub fn fs_read_audio_file(app: AppHandle, file_path: String) -> Result<Value, String> {
     if !is_authorized_audio_file(&app, &file_path)? {
@@ -1314,3 +1280,4 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 }
+

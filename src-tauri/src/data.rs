@@ -1,12 +1,3 @@
-//! `data` surface 共享持久化（Stage 3）。
-//!
-//! 迁移 Electron `data:loadPlaybackSession` / `savePlaybackSession` /
-//! `clearPlaybackSession` / `loadPlaylists` / `savePlaylists` /
-//! `loadLyricsManagement` / `saveLyricsManagement` /
-//! `loadPlaybackBookmarks` / `savePlaybackBookmarks` 到真实 Tauri command，
-//! 复用 `persistence` 的 versioned envelope + CAS 语义，与 Electron 的
-//! `VersionedDataStore` 行为一致：写冲突返回
-//! `{ code: 'ERR_PERSISTENCE_REVISION_CONFLICT', ... }`，读失败返回 `null`。
 
 use serde_json::Value;
 use std::path::PathBuf;
@@ -90,7 +81,6 @@ fn is_playback_bookmarks_data(value: &Value) -> bool {
         && object.get("bookmarks").is_some_and(Value::is_array)
 }
 
-/// 读取版本化信封，缺失 / 损坏时返回 `null`（与 Electron 读失败返回 null 一致）。
 fn load_or_null(app: &AppHandle, name: &str, max_bytes: u64, is_data: fn(&Value) -> bool) -> Value {
     persistence::load_versioned(&data_file(app, name), max_bytes, is_data)
         .ok()
@@ -98,7 +88,6 @@ fn load_or_null(app: &AppHandle, name: &str, max_bytes: u64, is_data: fn(&Value)
         .unwrap_or(Value::Null)
 }
 
-/// `data.loadPlaybackSession`。
 #[tauri::command]
 pub fn data_load_playback_session(app: AppHandle) -> Value {
     load_or_null(
@@ -109,7 +98,6 @@ pub fn data_load_playback_session(app: AppHandle) -> Value {
     )
 }
 
-/// `data.savePlaybackSession`。
 #[tauri::command]
 pub fn data_save_playback_session(
     app: AppHandle,
@@ -125,7 +113,6 @@ pub fn data_save_playback_session(
     )
 }
 
-/// `data.clearPlaybackSession`。
 #[tauri::command]
 pub fn data_clear_playback_session(
     app: AppHandle,
@@ -140,7 +127,6 @@ pub fn data_clear_playback_session(
     )
 }
 
-/// `data.loadPlaylists`。
 #[tauri::command]
 pub fn data_load_playlists(app: AppHandle) -> Value {
     load_or_null(
@@ -151,7 +137,6 @@ pub fn data_load_playlists(app: AppHandle) -> Value {
     )
 }
 
-/// `data.savePlaylists`。
 #[tauri::command]
 pub fn data_save_playlists(
     app: AppHandle,
@@ -167,7 +152,6 @@ pub fn data_save_playlists(
     )
 }
 
-/// `data.loadLyricsManagement`。
 #[tauri::command]
 pub fn data_load_lyrics_management(app: AppHandle) -> Value {
     load_or_null(
@@ -178,7 +162,6 @@ pub fn data_load_lyrics_management(app: AppHandle) -> Value {
     )
 }
 
-/// `data.saveLyricsManagement`。
 #[tauri::command]
 pub fn data_save_lyrics_management(
     app: AppHandle,
@@ -194,7 +177,6 @@ pub fn data_save_lyrics_management(
     )
 }
 
-/// `data.loadPlaybackBookmarks`。
 #[tauri::command]
 pub fn data_load_playback_bookmarks(app: AppHandle) -> Value {
     load_or_null(
@@ -205,7 +187,6 @@ pub fn data_load_playback_bookmarks(app: AppHandle) -> Value {
     )
 }
 
-/// `data.savePlaybackBookmarks`。
 #[tauri::command]
 pub fn data_save_playback_bookmarks(
     app: AppHandle,
@@ -280,3 +261,4 @@ mod tests {
         assert!(!is_playback_bookmarks_data(&json!({ "bookmarks": [] })));
     }
 }
+

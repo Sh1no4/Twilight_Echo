@@ -35,6 +35,9 @@ audio-engine/vcpkg_installed/
 # Staged native binaries are local/release artifacts, not source
 resources/audio-engine/**
 !resources/audio-engine/.gitkeep
+# Staged Node runtime for Tauri sidecars (see scripts/stage-node-runtime.cjs)
+resources/sidecar/**
+!resources/sidecar/.gitkeep
 
 # Test and coverage output
 coverage/

@@ -1,24 +1,3 @@
-//! `miniPlayer` surface（Stage 7A）——Tauri 独立迷你播放器窗口。
-//!
-//! 迁移 Electron `src/main/integrations/miniPlayer.ts` 到 Tauri 独立窗口：
-//! - `mini_player_open`（主窗口→创建/显示 `mini-player` 窗口，返回当前设置）；
-//! - `mini_player_get_bootstrap`（迷你窗口→返回 `{ state, settings, motionPreference }`）；
-//! - `mini_player_update_settings`（迷你窗口→写回 settings.json 的 `miniPlayer`
-//!   段，应用窗口外形并广播 `settings:changed`）；
-//! - `mini_player_publish_state`（主窗口→登记最新播放快照并转发 `miniPlayer:state`）；
-//! - `mini_player_command`（迷你窗口→转发播放命令到主窗口 `miniPlayer:command`）；
-//! - `mini_player_minimize` / `mini_player_return_to_main`（窗口控制）；
-//! - `mini_player_choose_background_image`（迷你窗口→选图复制进缓存返回
-//!   `background://` 句柄）。
-//!
-//! 事件（渲染端经 `@tauri-apps/api/event` 订阅）：
-//! `miniPlayer:state` / `miniPlayer:settings` / `miniPlayer:motionPreference`
-//! （主→迷你）；`miniPlayer:command`（迷你→主）。
-//!
-//! 边界：命令按发起窗口 label 校验；输入经 shared 归一化（`normalize_mini_player_*`）；
-//! 写 settings 复用 `settings.json`（`load_settings`/`save_settings`）原子写语义。
-//! 运行时快照（state/settings/motionPreference）缓存在 `settings.json`，重启后
-//! `getBootstrap` 仍可读取，与 Electron `runtime.latestMiniPlayerState` 等价。
 
 use serde_json::{json, Value};
 use std::fs;
@@ -40,7 +19,6 @@ const MINI_PLAYER_MAX_WIDTH: f64 = 900.0;
 const MINI_PLAYER_MAX_HEIGHT: f64 = 520.0;
 const MAX_BACKGROUND_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 
-/// 运行时 miniPlayer 快照（state/settings/motionPreference），持久化在 settings.json。
 pub struct MiniPlayerState;
 
 fn mini_player_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
@@ -114,7 +92,6 @@ fn send_mini_player_command_to_main(app: &AppHandle, command: &Value) {
     }
 }
 
-/// 创建/显示迷你播放器窗口。返回当前设置（与 Electron `showMiniPlayer()` 对齐）。
 fn open_mini_player(app: &AppHandle) -> Result<Value, String> {
     let settings = current_mini_player_settings(app);
     let width = settings
@@ -196,7 +173,6 @@ fn open_mini_player(app: &AppHandle) -> Result<Value, String> {
     Ok(current_mini_player_settings(app))
 }
 
-/// 主窗口调用：打开发布窗口并返回设置。
 #[tauri::command]
 pub fn mini_player_open(window: tauri::WebviewWindow) -> Result<Value, String> {
     if window.label() != "main" {
@@ -205,7 +181,6 @@ pub fn mini_player_open(window: tauri::WebviewWindow) -> Result<Value, String> {
     open_mini_player(&window.app_handle())
 }
 
-/// 迷你窗口调用：返回启动快照。
 #[tauri::command]
 pub fn mini_player_get_bootstrap(app: AppHandle, window: tauri::WebviewWindow) -> Result<Value, String> {
     if !window_is_self(&app, &window) {
@@ -218,7 +193,6 @@ pub fn mini_player_get_bootstrap(app: AppHandle, window: tauri::WebviewWindow) -
     }))
 }
 
-/// 迷你窗口调用：更新 miniPlayer 设置段。
 #[tauri::command]
 pub fn mini_player_update_settings(
     app: AppHandle,
@@ -244,7 +218,6 @@ pub fn mini_player_update_settings(
     Ok(saved)
 }
 
-/// 迷你窗口调用：把播放命令转发到主窗口。
 #[tauri::command]
 pub fn mini_player_command(app: AppHandle, window: tauri::WebviewWindow, command: Value) -> Result<(), String> {
     if !window_is_self(&app, &window) {
@@ -256,7 +229,6 @@ pub fn mini_player_command(app: AppHandle, window: tauri::WebviewWindow, command
     Ok(())
 }
 
-/// 主窗口调用：登记最新播放快照并转发到迷你窗口。
 #[tauri::command]
 pub fn mini_player_publish_state(app: AppHandle, window: tauri::WebviewWindow, state: Value) -> Result<(), String> {
     if window.label() != "main" {
@@ -272,7 +244,6 @@ pub fn mini_player_publish_state(app: AppHandle, window: tauri::WebviewWindow, s
     Ok(())
 }
 
-/// 迷你窗口调用：最小化自身。
 #[tauri::command]
 pub fn mini_player_minimize(window: tauri::WebviewWindow) -> Result<(), String> {
     window
@@ -280,7 +251,6 @@ pub fn mini_player_minimize(window: tauri::WebviewWindow) -> Result<(), String> 
         .map_err(|error| format!("最小化迷你播放器窗口失败：{error}"))
 }
 
-/// 迷你窗口调用：返回主窗口并销毁自身。
 #[tauri::command]
 pub fn mini_player_return_to_main(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
     if !window_is_self(&app, &window) {
@@ -294,7 +264,6 @@ pub fn mini_player_return_to_main(app: AppHandle, window: tauri::WebviewWindow) 
     Ok(())
 }
 
-/// 迷你窗口调用：选择背景图片并复制到缓存目录，返回 `background://` 句柄。
 #[tauri::command]
 pub fn mini_player_choose_background_image(app: AppHandle, window: tauri::WebviewWindow) -> Result<Option<String>, String> {
     if !window_is_self(&app, &window) {
@@ -311,10 +280,6 @@ pub fn mini_player_choose_background_image(app: AppHandle, window: tauri::Webvie
     import_background_image(&app, &path).map(Some)
 }
 
-/// 把源图片复制进缓存根（`cache` 分类目录），返回 `background://<hash>.<ext>` 句柄。
-///
-/// 与 Electron `importBackgroundImageBuffer` / `miniPlayer` 的 `chooseBackgroundImage`
-/// 语义一致：扩展名白名单、20MB 上限、SHA256 前 24 hex 去重、jpeg 归一化为 jpg。
 pub(crate) fn import_background_image(app: &AppHandle, source: &Path) -> Result<String, String> {
     if !source.is_file()
         || source.metadata().map(|m| m.len()).unwrap_or(0) > MAX_BACKGROUND_IMAGE_BYTES

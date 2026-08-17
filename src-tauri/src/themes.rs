@@ -1,18 +1,3 @@
-//! `themes` surface 共享持久化（Stage 3）。
-//!
-//! 迁移 Electron `themes:getBootstrap` / `themes:list` / `themes:save` /
-//! `themes:delete` / `themes:setActive` / `themes:setWindowInheritance` /
-//! `themes:changed` 到真实 Tauri command，复用 `persistence` 的 versioned envelope
-//! + CAS，并镜像 `src/main/themes/themeLibraryRepository.ts` 的语义：
-//! - 主题库文档 `{ schemaVersion: 1, activeTheme, profiles, windowInheritance, profileHistory }`
-//!   存入 `database/themes.json`（与 Electron `getCategorizedAppPath(..., 'themes.json')`
-//!   standard 布局一致）。
-//! - 保存时归一化档案、维护 profileHistory、限制用户主题数量；
-//! - 每个变更写后广播 `themes:changed` 事件（渲染端 `onChanged` 经
-//!   `@tauri-apps/api/event` 订阅）。
-//!
-//! 导入/导出/asset（zip 边界）与插件主题解析不在本模块范围，仍由 bridge 以
-//! `RuntimeCapabilityError` 显式拒绝。
 
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -26,7 +11,6 @@ const MAX_USER_THEME_PROFILES: usize = 32;
 const MAX_THEME_PROFILE_HISTORY_ENTRIES: usize = 8;
 const MAX_THEME_PROFILE_HISTORY_BYTES: usize = 256 * 1024;
 
-/// 与 `TWILIGHT_DEFAULT_THEME_ID` 对齐。
 pub const TWILIGHT_DEFAULT_THEME_ID: &str = "builtin:twilight-echo-default";
 
 fn theme_library_path(app: &AppHandle) -> PathBuf {
@@ -56,12 +40,10 @@ fn is_theme_library_data(value: &Value) -> bool {
         && object.get("activeTheme").is_some()
 }
 
-/// 备份导入校验入口：与 `is_theme_library_data` 相同（`ThemeLibraryDocument` 形状）。
 pub(crate) fn is_theme_library_document(value: &Value) -> bool {
     is_theme_library_data(value)
 }
 
-/// 备份恢复入口：以 CAS 覆盖主题库并广播 `themes:changed`。
 pub(crate) fn replace_theme_library(
     app: &AppHandle,
     document: Value,
@@ -100,8 +82,6 @@ fn is_theme_selection(value: &Value) -> bool {
     }
 }
 
-/// 归一化主题档案（镜像 `normalizeThemeProfile` 的关键约束）：
-/// id/name 非空且裁剪、拒绝内置 id、补齐 schemaVersion/时间/overrides。
 fn normalize_theme_profile(value: &Value) -> Option<Value> {
     let object = value.as_object()?;
     let id = object
@@ -185,9 +165,6 @@ fn same_editable_state(first: &Value, second: &Value) -> bool {
     profile_editable_state(first) == profile_editable_state(second)
 }
 
-/// 归一化主题库文档（镜像 `normalizeThemeLibraryDocument`）：
-/// 过滤非法档案、裁剪 profileHistory、修复 windowInheritance，activeTheme 指向
-/// 已删除用户档案时回退默认内置主题。
 fn normalize_theme_library(value: &Value) -> Value {
     let mut out = default_theme_library();
     let Some(object) = value.as_object() else {
@@ -253,7 +230,6 @@ fn normalize_theme_library(value: &Value) -> Value {
     out
 }
 
-/// 读取主题库快照（无文件时返回默认主题库，revision 0）。
 pub fn load_library(app: &AppHandle) -> Value {
     let path = theme_library_path(app);
     match persistence::load_versioned(&path, MAX_THEME_LIBRARY_BYTES, is_theme_library_data) {
@@ -275,7 +251,6 @@ pub fn load_library(app: &AppHandle) -> Value {
     }
 }
 
-/// 以 CAS 写回主题库并广播 `themes:changed`。冲突时返回 Electron 同款冲突响应（Ok 值）。
 fn write_library(
     app: &AppHandle,
     current: Value,
@@ -301,20 +276,16 @@ fn write_library(
     Ok(next)
 }
 
-/// `themes.getBootstrap`。`defaultTheme` 渲染端不消费（`acceptBootstrap` 只取
-/// `.library`），返回 null 以保持契约形状。
 #[tauri::command]
 pub fn themes_get_bootstrap(app: AppHandle) -> Value {
     json!({ "library": load_library(&app), "defaultTheme": Value::Null })
 }
 
-/// `themes.list`。
 #[tauri::command]
 pub fn themes_list(app: AppHandle) -> Value {
     load_library(&app)
 }
 
-/// `themes.save`。
 #[tauri::command]
 pub fn themes_save(
     app: AppHandle,
@@ -401,7 +372,6 @@ pub fn themes_save(
     write_library(&app, current, library, expected_revision)
 }
 
-/// `themes.delete`。
 #[tauri::command]
 pub fn themes_delete(
     app: AppHandle,
@@ -451,7 +421,6 @@ pub fn themes_delete(
     write_library(&app, current, library, expected_revision)
 }
 
-/// `themes.setActive`。
 #[tauri::command]
 pub fn themes_set_active(
     app: AppHandle,
@@ -484,7 +453,6 @@ pub fn themes_set_active(
     write_library(&app, current, library, expected_revision)
 }
 
-/// `themes.setWindowInheritance`。
 #[tauri::command]
 pub fn themes_set_window_inheritance(
     app: AppHandle,
@@ -611,3 +579,4 @@ mod tests {
         assert!(!is_theme_selection(&json!({ "kind": "builtin", "id": "" })));
     }
 }
+

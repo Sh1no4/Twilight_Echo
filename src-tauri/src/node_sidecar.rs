@@ -1,41 +1,73 @@
-//! Node sidecar 监管器（Stage 5D）。
-//!
-//! Tauri 侧用固定版本 Node 运行插件宿主 / 网关口子进程。本模块提供两件事：
-//!
-//! 1. **进程生命周期**：`spawn_node_process` 生成无管道后台子进程（网关口），
-//!    `NodeSidecar` 生成带 stdin/stdout JSON-lines 全双工通道的宿主子进程，
-//!    两者都会登记到全局注册表；应用退出时 `terminate_all` 统一终止，避免孤儿进程。
-//! 2. **JSON-lines 客户端**：`NodeSidecar::send_json` / `recv_json` 以一行一个 JSON
-//!    对象收发消息，读线程把 stdout 行推入有界 channel，`recv_json` 按超时取回。
-//!
-//! 消息协议与 `src/main/plugins/hostCore.ts` / `hostTransport.ts` 完全一致
-//! （`activate` / `deactivate` / `event` / `provider-call` / `ui-command` /
-//! `cancel` / `api-result`），因此同一个 Rust 客户端可以驱动 Electron 与 Tauri
-//! 共用的宿主核心。
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+use tauri::{AppHandle, Manager};
 use tokio::sync::mpsc;
 
-/// 单条 sidecar 消息的最大字节数（镜像 `MAX_PLUGIN_IPC_ARGS_BYTES` 的宽松上限）。
 pub const SIDECAR_LINE_MAX_BYTES: usize = 1024 * 1024;
-/// 读线程向父进程推送的行数上限；超限时读线程阻塞，天然背压。
 const SIDECAR_CHANNEL_CAPACITY: usize = 64;
+
+// ── Node 二进制解析（Stage 8：打包后不依赖用户预装 Node）─────────────────────────
+//
+// 解析优先级：环境变量 `TWILIGHT_NODE_BINARY` 显式覆盖 → 随包分发的
+// `{resource}/sidecar/node.exe`（Windows 固定版本运行时）→ 系统 `node`
+// （仅开发/回退路径）。结果缓存到进程级 `OnceLock`，`.setup()` 时初始化。
+static NODE_BINARY: OnceLock<PathBuf> = OnceLock::new();
+
+pub(crate) fn init_node_binary(app: &AppHandle) {
+    let resolved = resolve_node_binary(app);
+    let _ = NODE_BINARY.set(resolved);
+}
+
+fn resolve_node_binary(app: &AppHandle) -> PathBuf {
+    let env_override = std::env::var("TWILIGHT_NODE_BINARY").ok();
+    let resource_dir = app.path().resource_dir().ok();
+    resolve_node_binary_paths(env_override.as_deref(), resource_dir.as_deref())
+}
+
+fn resolve_node_binary_paths(
+    env_override: Option<&str>,
+    resource_dir: Option<&Path>,
+) -> PathBuf {
+    if let Some(override_path) = env_override.map(str::trim).filter(|s| !s.is_empty()) {
+        let candidate = PathBuf::from(override_path);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    if let Some(dir) = resource_dir {
+        let exe_name = if cfg!(target_os = "windows") {
+            "node.exe"
+        } else {
+            "node"
+        };
+        let candidate = dir.join("sidecar").join(exe_name);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    // 开发/回退：依赖系统 PATH 中的 node。打包发布必须随包提供 node.exe，
+    // 由 `test:tauri-gate` 的 node-runtime 检查强制。
+    PathBuf::from("node")
+}
+
+fn node_binary() -> &'static Path {
+    NODE_BINARY
+        .get()
+        .map(PathBuf::as_path)
+        .unwrap_or_else(|| Path::new("node"))
+}
 
 // ── 后台子进程注册表（用于退出清理，防止孤儿进程）──────────────────────────────
 
 static CHILDREN: OnceLock<Mutex<Vec<Child>>> = OnceLock::new();
 
-/// 生成一个不接管 stdio 的后台 Node 子进程（如网关口），并登记到退出清理注册表。
-///
-/// `node_args` 为 `node` 的启动参数（如 `--experimental-strip-types`），
-/// `script` 为要运行的脚本路径。子进程句柄由注册表持有，应用退出时统一终止。
 #[allow(dead_code)]
 pub fn spawn_node_process(node_args: &[&str], script: &Path) -> Result<(), String> {
-    let mut command = Command::new("node");
+    let mut command = Command::new(node_binary());
     for arg in node_args {
         command.arg(arg);
     }
@@ -57,7 +89,6 @@ fn register_child(child: Child) {
     }
 }
 
-/// 终止并回收所有登记过的 Node 子进程（应用退出时调用）。
 pub fn terminate_all() {
     if let Some(guard) = CHILDREN.get() {
         if let Ok(mut children) = guard.lock() {
@@ -71,7 +102,6 @@ pub fn terminate_all() {
 
 // ── 全双工 JSON-lines sidecar 客户端 ───────────────────────────────────────────
 
-/// 一个受监管的 Node 宿主子进程：stdin 写 JSON 行，stdout 读 JSON 行。
 pub struct NodeSidecar {
     child: Child,
     stdin: Mutex<ChildStdin>,
@@ -81,21 +111,17 @@ pub struct NodeSidecar {
 
 #[allow(dead_code)]
 impl NodeSidecar {
-    /// 生成带 stdin/stdout 管道与 JSON-lines 通道的 Node 宿主子进程。
-    ///
-    /// 读线程随 stdout 关闭自动结束；子进程句柄同时登记到退出清理注册表。
     pub fn spawn(label: &str, node_args: &[&str], script: &Path) -> Result<NodeSidecar, String> {
         Self::spawn_with_env(label, node_args, script, &[])
     }
 
-    /// 同 `spawn`，额外注入子进程环境变量（如音频侧car 的 HTML 兜底开关与资源目录）。
     pub fn spawn_with_env(
         label: &str,
         node_args: &[&str],
         script: &Path,
         extra_env: &[(&str, String)],
     ) -> Result<NodeSidecar, String> {
-        let mut command = Command::new("node");
+        let mut command = Command::new(node_binary());
         for arg in node_args {
             command.arg(arg);
         }
@@ -132,7 +158,6 @@ impl NodeSidecar {
         })
     }
 
-    /// 写一条 JSON 行到子进程 stdin；超长消息被拒绝。
     pub fn send_json(&self, value: &Value) -> Result<(), String> {
         let mut line = serde_json::to_string(value)
             .map_err(|error| format!("序列化 sidecar 消息失败：{error}"))?;
@@ -149,7 +174,6 @@ impl NodeSidecar {
             .map_err(|error| format!("刷新 sidecar 失败：{error}"))
     }
 
-    /// 从子进程 stdout 读一条 JSON 行；超时返回错误。
     pub async fn recv_json(&mut self, timeout: Duration) -> Result<Value, String> {
         let recv = tokio::time::timeout(timeout, self.rx.recv());
         let line = recv
@@ -160,10 +184,6 @@ impl NodeSidecar {
         serde_json::from_str(&text).map_err(|error| format!("sidecar 响应不是合法 JSON：{error}"))
     }
 
-    /// 非阻塞尝试读一条 JSON 行（读线程已缓冲，无消息返回 `Ok(None)`）。
-    ///
-    /// 供音频运行时事件循环等持续读端使用：调用方每次短暂持有锁，消息经
-    /// 有界 channel 已缓冲，`try_recv` 不会阻塞子进程写端。
     pub fn try_recv_json(&mut self) -> Result<Option<Value>, String> {
         match self.rx.try_recv() {
             Ok(Ok(text)) => serde_json::from_str(&text)
@@ -177,21 +197,16 @@ impl NodeSidecar {
         }
     }
 
-    /// 非阻塞检查子进程是否已退出。
     pub fn try_wait(&mut self) -> Option<std::process::ExitStatus> {
         self.child.try_wait().unwrap_or(None)
     }
 
-    /// 强制终止子进程并回收。
     pub fn terminate(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
 }
 
-/// `NodeSidecar` 持有子进程句柄：无论由谁丢弃，都在退出时终止并回收子进程，
-/// 避免残留孤儿 Node 进程。无管道后台子进程（网关口）则由 `terminate_all`
-/// 在应用退出时统一清理。
 impl Drop for NodeSidecar {
     fn drop(&mut self) {
         self.terminate();
@@ -242,6 +257,48 @@ mod tests {
     }
 
     #[test]
+    fn resolve_node_binary_prefers_bundled_runtime_over_system_node() {
+        // 空 env + 空 resource dir → 回退到系统 `node`。
+        assert_eq!(
+            resolve_node_binary_paths(None, None),
+            PathBuf::from("node")
+        );
+        // 环境变量指向不存在的路径 → 忽略，继续回退。
+        assert_eq!(
+            resolve_node_binary_paths(Some("C:\\missing\\node.exe"), None),
+            PathBuf::from("node")
+        );
+    }
+
+    #[test]
+    fn resolve_node_binary_prefers_env_override_and_bundled_runtime() {
+        let temp = std::env::temp_dir().join(format!("twilight-node-resolve-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(temp.join("sidecar")).expect("create temp sidecar");
+        let bundled = temp.join("sidecar").join(if cfg!(target_os = "windows") {
+            "node.exe"
+        } else {
+            "node"
+        });
+        std::fs::write(&bundled, b"placeholder").expect("write bundled node");
+
+        // 随包运行时存在 → 优先于系统 node。
+        assert_eq!(
+            resolve_node_binary_paths(None, Some(&temp)),
+            bundled
+        );
+        // 环境变量覆盖优先于随包运行时。
+        let override_path = temp.join("override-node.exe");
+        std::fs::write(&override_path, b"placeholder").expect("write override node");
+        assert_eq!(
+            resolve_node_binary_paths(Some(override_path.to_str().unwrap()), Some(&temp)),
+            override_path
+        );
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
     fn spawn_node_process_registers_and_terminate_all_reaps() {
         // 探针脚本延迟 2s 写一个标记文件；若 terminate_all 未在 300ms 内终止它，
         // 标记会出现在磁盘上。node 不在 PATH 时优雅跳过。
@@ -282,9 +339,6 @@ mod tests {
         terminate_all();
     }
 
-    /// 端到端验证：spawn 真实 `pluginHostNode.ts` 宿主，用 JSON-lines 协议驱动
-    /// `deactivate` 并收到 `deactivated`。需要 node 与仓库源码；默认忽略，
-    /// 手动 `-- --ignored` 运行。
     #[test]
     #[ignore = "requires node + repo source"]
     fn sidecar_runs_real_plugin_host() {
@@ -307,3 +361,4 @@ mod tests {
         assert_eq!(response.get("requestId"), Some(&Value::from("t")));
     }
 }
+

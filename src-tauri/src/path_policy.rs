@@ -1,8 +1,3 @@
-//! 数据根目录与分类目录路径策略（Stage 1，Tauri 侧）。
-//!
-//! 与 `src/main/core/pathPolicy.ts` / `src/shared/pathPolicy.ts` 保持同一套语义：
-//! standard / portable / fallback 三种模式、分类目录名、检测优先级与回退原因都一致，
-//! 保证 Electron 与 Tauri 的诊断结果可比。
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -23,7 +18,6 @@ pub const DATA_ROOT_CATEGORIES: [&str; 7] = [
     "backups",
 ];
 
-/// 与 `DataRootDiagnostics` 对齐的只读诊断快照（序列化为 camelCase）。
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PathPolicy {
@@ -38,7 +32,6 @@ pub struct PathPolicy {
     pub fallback_reason: Option<&'static str>,
 }
 
-/// 启动期惰性解析并缓存一次，避免每次 settings snapshot 都重做可写性探测。
 pub struct PathPolicyState(pub Mutex<Option<PathPolicy>>);
 
 fn has_file(path: &Path) -> bool {
@@ -53,7 +46,6 @@ fn ensure_directory(dir: &Path) -> bool {
     fs::create_dir_all(dir).is_ok()
 }
 
-/// 默认可写性探测：创建目录后写入并删除一个探针文件（与 TS 侧 `defaultProbeWritable` 一致）。
 fn probe_writable(dir: &Path) -> bool {
     if !ensure_directory(dir) {
         return false;
@@ -80,8 +72,6 @@ fn probe_categories(categories: &HashMap<&'static str, String>) -> HashMap<&'sta
     writable_categories
 }
 
-/// 判定是否请求 Portable 模式及来源。优先级：启动参数 > exe 同级 `.portable` 标记
-/// 文件 > exe 同级已存在的 `data/` 目录（Tauri 侧无显式发行形态开关）。
 fn detect_portable_request(exe_dir: Option<&Path>) -> (bool, &'static str) {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == PORTABLE_LAUNCH_FLAG) {
@@ -122,7 +112,6 @@ fn standard_policy(
     }
 }
 
-/// 解析路径策略，与 TS 侧 `resolvePathPolicy` 行为一致。
 pub fn resolve_path_policy(app: &AppHandle) -> PathPolicy {
     let standard_root = app
         .path()
@@ -180,7 +169,6 @@ pub fn resolve_path_policy(app: &AppHandle) -> PathPolicy {
     )
 }
 
-/// 取已解析（必要时惰性解析并缓存）的路径策略。
 pub fn get_path_policy(app: &AppHandle) -> PathPolicy {
     let state = app.state::<PathPolicyState>();
     let mut guard = state.inner().0.lock().expect("path policy state lock");
@@ -190,8 +178,6 @@ pub fn get_path_policy(app: &AppHandle) -> PathPolicy {
     guard.clone().expect("resolved path policy")
 }
 
-/// 取分类目录下的数据文件路径（与 TS 侧 `getCategorizedDataPath` 语义一致）：
-/// portable 时位于 `data/<category>/<segments...>`，standard/fallback 时位于 `standardRoot/<segments...>`。
 pub fn categorized_data_path(policy: &PathPolicy, category: &str, segments: &[&str]) -> PathBuf {
     let root = if policy.mode == "portable" {
         policy
@@ -209,14 +195,6 @@ pub fn categorized_data_path(policy: &PathPolicy, category: &str, segments: &[&s
     path
 }
 
-/// 解析分类目录下的应用数据路径（与 TS 侧 `getCategorizedAppPath` 语义一致）：
-///
-/// - `portable`：`data/<category>/<portable_segments...>`，允许目标就是分类目录本身
-///   （`portable_segments` 为空数组，例如 plugins 目录、plugin-data 目录、logs 目录）。
-/// - `standard` / `fallback`：`{standardRoot}/{legacy_relative}`，沿用 legacy 扁平布局
-///   （例如 `standardRoot/plugins`、`standardRoot/logs/plugins`），保证旧安装路径不变。
-///
-/// 插件/Provider 只读 list 使用同一入口，保证"迁移目标"与"应用实际读取路径"一致。
 pub fn categorized_app_path(
     policy: &PathPolicy,
     category: &str,
@@ -244,3 +222,4 @@ pub fn categorized_app_path(
         path
     }
 }
+

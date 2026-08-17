@@ -28,31 +28,31 @@ mod sleep_timer;
 mod themes;
 mod tray_player;
 
-/// `miniPlayer` surface（Stage 7A）设置/快照/命令归一化辅助（见 `mini_player.rs`）。
+// Tauri 构建与发布仅覆盖 Windows（规划 Stage 8）。macOS/Linux 不纳入 Tauri
+// 支持范围，编译期直接拒绝，避免出现半成品的跨平台构建被误认为可用。
+#[cfg(not(target_os = "windows"))]
+compile_error!(
+    "Twilight Echo 的 Tauri 运行时仅支持 Windows；macOS/Linux 不纳入 Tauri 构建或发布验证。"
+);
+
 pub(crate) mod settings {
-    //! 轻量设置/迷你播放器工具：从 `lib.rs` 复用 settings 读写与快照，
-    //! 避免耦合 Electron 侧的 Electron-specific 路径。
 
     use serde_json::{json, Value};
     use std::path::Path;
 
-    /// 读取 settings.json（与 Electron `loadSettingsFile` 语义对齐）。
     pub(crate) fn load_settings(app: &tauri::AppHandle) -> Value {
         crate::load_json_file(app, "settings.json", json!({}))
     }
 
-    /// 写入 settings.json（原子写 + 错误传播）。
     pub(crate) fn save_settings(app: &tauri::AppHandle, settings: &Value) -> Result<(), String> {
         crate::save_json_file(app, "settings.json", settings)
     }
 
-    /// 生成 settings 快照（与主窗口 `settings:changed` 载荷一致）。
     pub(crate) fn settings_snapshot(app: &tauri::AppHandle) -> Value {
         let settings = load_settings(app);
         crate::settings_snapshot(app, &settings)
     }
 
-    /// 默认 miniPlayer 设置（镜像 `DEFAULT_MINI_PLAYER_SETTINGS` 的窗口部分）。
     pub(crate) fn default_mini_player_settings() -> Value {
         json!({
             "windowX": -1,
@@ -65,7 +65,6 @@ pub(crate) mod settings {
         })
     }
 
-    /// 空 miniPlayer 播放快照（镜像 `EMPTY_MINI_PLAYER_STATE` 的核心字段）。
     pub(crate) fn empty_mini_player_state() -> Value {
         json!({
             "track": null,
@@ -86,7 +85,6 @@ pub(crate) mod settings {
         })
     }
 
-    /// 合并 `miniPlayer` 设置（patch 白名单：仅接受 Electron 允许的字段）。
     pub(crate) fn merge_mini_player_settings(
         current: &Value,
         patch: &Value,
@@ -110,7 +108,6 @@ pub(crate) mod settings {
         merged
     }
 
-    /// 归一化 `miniPlayer` settings（镜像 `normalizeMiniPlayerSettings` 的字段收敛）。
     pub(crate) fn normalize_mini_player_settings(value: Value) -> Value {
         let object = value.as_object().cloned().unwrap_or_default();
         let width = number_or(object.get("windowWidth"), 480.0).clamp(420.0, 900.0);
@@ -133,7 +130,6 @@ pub(crate) mod settings {
         })
     }
 
-    /// 归一化 miniPlayer 播放快照（镜像 `normalizeMiniPlayerStateSnapshot`）。
     pub(crate) fn normalize_mini_player_state(value: Value) -> Value {
         let object = value.as_object().cloned().unwrap_or_default();
         json!({
@@ -155,7 +151,6 @@ pub(crate) mod settings {
         })
     }
 
-    /// 归一化 miniPlayer 播放命令（无效命令返回 `None`）。
     pub(crate) fn normalize_mini_player_command(command: &Value) -> Option<Value> {
         let object = command.as_object()?;
         let command_type = object.get("type")?.as_str()?;
@@ -193,7 +188,6 @@ pub(crate) mod settings {
             .unwrap_or(fallback)
     }
 
-    /// 读文件内容做 SHA-256（用于背景图去重）。
     #[allow(dead_code)]
     pub(crate) fn sha256_file(path: &Path) -> Result<String, String> {
         let bytes = std::fs::read(path).map_err(|e| format!("读取文件失败：{e}"))?;
@@ -226,8 +220,6 @@ pub(crate) fn load_json_file(app: &AppHandle, name: &str, fallback: Value) -> Va
         .unwrap_or(fallback)
 }
 
-/// 过滤 settings update patch：路径类键（`libraryFolders` / `musicCachePath` /
-/// `cachePath`）仅当新值已位于当前授权音频根集合内才允许写入；否则忽略该键，
 fn auth_patch(app: &AppHandle, settings: &Value, patch: &mut Value) {
     let Some(patch_object) = patch.as_object_mut() else {
         return;
@@ -357,7 +349,6 @@ fn data_save_music_library(app: AppHandle, data: Value) -> Result<Value, String>
 
 // ── Stage 3: settings 缓存统计 / 清理 / 快捷键状态 ──────────────────────────────────────
 
-/// 解析配置的缓存根：`musicCachePath` > `cachePath`，缺省为应用数据目录 / cache。
 fn cache_root(app: &AppHandle, settings: &Value) -> PathBuf {
     let explicit = settings
         .get("musicCachePath")
@@ -391,14 +382,12 @@ fn directory_size(dir: &Path) -> u64 {
     total
 }
 
-/// `settings.getCacheSize`：返回缓存目录总字节数。
 #[tauri::command]
 fn settings_get_cache_size(app: AppHandle) -> Result<u64, String> {
     let settings = load_json_file(&app, "settings.json", json!({}));
     Ok(directory_size(&cache_root(&app, &settings)))
 }
 
-/// `settings.clearCache`：清空缓存目录并返回新的总字节数。
 #[tauri::command]
 fn settings_clear_cache(app: AppHandle) -> Result<u64, String> {
     let settings = load_json_file(&app, "settings.json", json!({}));
@@ -410,8 +399,6 @@ fn settings_clear_cache(app: AppHandle) -> Result<u64, String> {
     Ok(directory_size(&root))
 }
 
-/// `settings.getShortcutStatuses`：Tauri 尚未接入全局快捷键后端，诚实报告
-/// 全部为未注册（与 Electron `getPlayerShortcutStatuses` 的列表形状一致）。
 #[tauri::command]
 fn settings_get_shortcut_statuses() -> Value {
     let shortcuts: [(&str, &str, &str); 8] = [
@@ -440,8 +427,6 @@ fn settings_get_shortcut_statuses() -> Value {
     )
 }
 
-/// `debug.appendNativeTrace`：把诊断消息追加到 `%TEMP%\twilight-native.log`
-/// （与 Electron `debug:appendNativeTrace` 一致）。诊断日志绝不能影响播放，出错静默。
 #[tauri::command]
 fn debug_append_native_trace(message: String) {
     if message.is_empty() || message.len() > 500 {
@@ -459,10 +444,6 @@ fn debug_append_native_trace(message: String) {
     }
 }
 
-/// 与 Electron `src/main/security/localPaths.ts` 的 `resolveAuthorizedAudioFile`
-/// 语义对齐：文件存在、扩展名受支持，且位于已配置的音乐库目录（settings.json
-/// 的 libraryFolders / musicCachePath / cachePath）或已保存音乐库的 folders 内。
-/// canonical 化后会拒绝 symlink 逃逸到授权 root 之外的路径。
 #[tauri::command]
 fn fs_is_audio_file_authorized(app: AppHandle, file_path: String) -> Result<bool, String> {
     library_scan::is_authorized_audio_file(&app, &file_path)
@@ -470,7 +451,6 @@ fn fs_is_audio_file_authorized(app: AppHandle, file_path: String) -> Result<bool
 
 // ── Stage 1: 动态 capability manifest（与 `src/shared/runtimeManifest.ts` 协议对齐）──────
 
-/// 组件健康状态（`RuntimeComponentHealth`，camelCase 字段与 TS 一致）。
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ComponentHealth {
@@ -497,8 +477,6 @@ fn component_health(
     }
 }
 
-/// 运行时探测载荷（`RuntimeManifestProbe`）：OS、架构、版本与组件健康。逐方法状态由
-/// 渲染端依据 `windowApiParity.ts` 契约推导，这里只返回运行事实 + 组件探针。
 #[tauri::command]
 fn runtime_get_manifest(app: AppHandle) -> Value {
     let checked_at = plugins::now_iso8601();
@@ -644,6 +622,8 @@ pub fn run() {
         )))
         .setup(|app| {
             library_scan::LibraryScanManager::grant_runtime_paths(app.handle());
+            // Stage 8：解析随包 Node 运行时（无用户预装 Node 依赖），缓存供 sidecar spawn。
+            node_sidecar::init_node_binary(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -823,3 +803,4 @@ pub fn run() {
             }
         });
 }
+

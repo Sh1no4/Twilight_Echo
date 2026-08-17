@@ -1,18 +1,3 @@
-//! 音频运行时 sidecar 监管（Stage 6A）。
-//!
-//! Tauri 不重写原生音频引擎：`src/main/audioEngineManager.ts` 的
-//! `AudioEngineManager`（播放控制器 / 输出路由 / DSP 编排器）是 Electron 与
-//! Tauri 共享的纯 Node 状态机。本模块把同一管理器作为 Node sidecar 运行
-//! （`src/main/audio/audioEngineNode.ts`，随包分发的 `sidecar/audioEngineNode.js`），
-//! 用 stdin/stdout JSON-lines 协议驱动 queue/load/play/pause/stop/seek/next、
-//! 音量/倍速、输出路由、DSP 场景与 playback info 事件，与插件宿主 sidecar 隔离。
-//!
-//! 当原生 addon（`twilight_audio_node.node`）未随包提供时，管理器诚实报告引擎
-//! 不可用，`play()` 返回 `{ nativeStarted: false, fallbackReason }`，渲染层据此
-//! 走 HTMLAudio 兜底 —— 不伪装原生播放成功。
-//!
-//! 协议见 `audioEngineNode.ts` 顶部注释：`init` / `call` / `deinit` →
-//! `ready` / `result` / `event` / `deinitialized` / `fatal`。
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -26,15 +11,10 @@ use tokio::sync::{mpsc, Mutex as AsyncMutex};
 
 use crate::node_sidecar::NodeSidecar;
 
-/// 单次音频调用超时（镜像 Electron `AUDIO_SERVICE_DEFAULT_REQUEST_TIMEOUT_MS` 的上限）。
 const AUDIO_CALL_TIMEOUT_MS: u64 = 10_000;
-/// 音频 sidecar 初始化（spawn + 管理器构造）握手超时。
 const AUDIO_INIT_TIMEOUT_MS: u64 = 5_000;
-/// 事件循环轮询间隔：消息已经过有界 channel 缓冲，`try_recv` 非阻塞。
 const AUDIO_EVENT_POLL_MS: u64 = 50;
-/// 音频队列上限（镜像 Electron `MAX_AUDIO_QUEUE_ITEMS`）。
 const MAX_AUDIO_QUEUE_ITEMS: usize = 5000;
-/// 音频源 / 设备 / 目录路径最大长度（镜像 Electron）。
 const MAX_AUDIO_SOURCE_LENGTH: usize = 8192;
 const MAX_AUDIO_DEVICE_LENGTH: usize = 512;
 
@@ -51,25 +31,16 @@ pub(crate) fn next_request_id() -> String {
     )
 }
 
-/// 一个运行中的音频运行时：全双工 sidecar + 在途调用注册表。
 pub(crate) struct AudioRuntimeHandle {
-    /// RPC 期间短暂持有锁（写 `call` 或 `try_recv` 非阻塞，锁竞争极小）。
     pub(crate) sidecar: AsyncMutex<NodeSidecar>,
-    /// 在途调用（requestId → oneshot）。由事件循环按 `result` 消息完成。
     pub(crate) pending: Mutex<HashMap<String, mpsc::UnboundedSender<Result<Value, String>>>>,
 }
 
-/// 音频运行时注册表（Tauri managed state）。同一时刻至多一个音频 sidecar。
 #[derive(Default)]
 pub(crate) struct AudioRuntimeRegistry {
     pub(crate) runtime: AsyncMutex<Option<Arc<AudioRuntimeHandle>>>,
 }
 
-/// 解析音频 sidecar 脚本路径，返回 `(script, node_args)`。
-///
-/// 优先级与插件宿主一致：环境变量覆盖 → 打包资源 `{resource}/sidecar/audioEngineNode.js`
-/// → `out/audio-engine/audioEngineNode.js` → `out/main/audioEngineNode.js` →
-/// 仓库源码 `audioEngineNode.ts`（`--experimental-strip-types`）。
 pub(crate) fn resolve_audio_script(app: &AppHandle) -> Result<(PathBuf, Vec<String>), String> {
     if let Ok(override_path) = std::env::var("TWILIGHT_AUDIO_SCRIPT") {
         let candidate = PathBuf::from(override_path);
@@ -99,7 +70,6 @@ pub(crate) fn resolve_audio_script(app: &AppHandle) -> Result<(PathBuf, Vec<Stri
     Err("找不到音频运行时脚本（audioEngineNode.js / audioEngineNode.ts）".to_string())
 }
 
-/// 音频 sidecar 的环境变量：HTMLAudio 兜底开关 + 原生 addon 资源目录。
 fn audio_env(app: &AppHandle) -> Vec<(String, String)> {
     let mut env: Vec<(String, String)> = vec![
         (
@@ -117,8 +87,6 @@ fn audio_env(app: &AppHandle) -> Vec<(String, String)> {
     env
 }
 
-/// 从 settings.json 读取音频引擎启动配置（镜像 Electron `engineIpc.setupAudioEngineIpc`
-/// 构造 `AudioEngineManager` 时传入的 config）。缺失字段由 JS 侧 `normalizeConfig` 填默认值。
 fn audio_config(app: &AppHandle) -> Value {
     let settings = crate::load_json_file(app, "settings.json", json!({}));
     let data_dir = app
@@ -139,7 +107,6 @@ fn audio_config(app: &AppHandle) -> Value {
     })
 }
 
-/// 镜像 Electron `src/main/security/audioSourcePolicy.ts`：区分本地路径与远程 URL。
 fn classify_audio_source(source: &str) -> Result<&'static str, String> {
     let trimmed = source.trim();
     if trimmed.is_empty() {
@@ -168,8 +135,6 @@ fn classify_audio_source(source: &str) -> Result<&'static str, String> {
     }
 }
 
-/// 授权播放源：本地路径必须位于已授权音乐库根目录内（canonical 化，拒绝 symlink 逃逸）；
-/// http(s) 远程 URL 直接放行。镜像 Electron `resolveAuthorizedPlaybackSource`。
 fn authorize_playback_source(app: &AppHandle, source: &str) -> Result<String, String> {
     if source.chars().count() > MAX_AUDIO_SOURCE_LENGTH {
         return Err("音频地址过长".to_string());
@@ -188,10 +153,6 @@ fn authorize_playback_source(app: &AppHandle, source: &str) -> Result<String, St
     }
 }
 
-/// 确保音频运行时已启动并完成 `init` 握手；返回共享句柄。
-///
-/// 持有注册表锁跨整个 spawn+init（避免并发重复 spawn）。初始化失败时句柄丢弃，
-/// `NodeSidecar::Drop` 终止子进程，错误向上传播；下一次调用惰性重新 spawn。
 pub(crate) async fn ensure_audio_runtime(
     app: &AppHandle,
 ) -> Result<Arc<AudioRuntimeHandle>, String> {
@@ -251,7 +212,6 @@ fn resolve_audio_addon_missing_reason(app: &AppHandle) -> String {
     "twilight_audio_node.node 未随包提供".to_string()
 }
 
-/// 等待 `ready` / `fatal` 完成初始化握手；期间忽略 `event` 消息（初始化瞬时完成）。
 async fn wait_for_init(
     handle: &Arc<AudioRuntimeHandle>,
     initial: &Value,
@@ -299,10 +259,6 @@ async fn wait_for_init(
     }
 }
 
-/// 发起一次音频调用并等待 `result`（requestId 匹配）。
-///
-/// 事件循环同时在读 sidecar stdout：`result` 由事件循环按 requestId 完成 oneshot，
-/// 这里只等待。调用失败（连接中断/超时）时把运行时移出注册表，下一次调用惰性重 spawn。
 pub(crate) async fn audio_call(
     app: &AppHandle,
     method: &str,
@@ -339,7 +295,6 @@ pub(crate) async fn audio_call(
     }
 }
 
-/// sidecar 连接中断后把运行时移出注册表（句柄丢弃终止子进程；下一次调用重新 spawn）。
 fn drop_audio_runtime_on_disconnect(app: &AppHandle, handle: &Arc<AudioRuntimeHandle>) {
     let registry = app.state::<AudioRuntimeRegistry>();
     let guard = registry.runtime.try_lock();
@@ -352,8 +307,6 @@ fn drop_audio_runtime_on_disconnect(app: &AppHandle, handle: &Arc<AudioRuntimeHa
     }
 }
 
-/// 事件循环：持续读 sidecar stdout，把 `event` 转发为 Tauri 事件
-/// （`audioEngine:<name>`），按 requestId 完成在途调用，`fatal`/断连时清理注册表。
 async fn audio_event_loop(handle: Arc<AudioRuntimeHandle>, app: AppHandle) {
     let mut disconnected = false;
     loop {
@@ -389,7 +342,6 @@ async fn audio_event_loop(handle: Arc<AudioRuntimeHandle>, app: AppHandle) {
     );
 }
 
-/// 处理一条 sidecar 消息。返回 `false` 表示连接已失效。
 async fn handle_runtime_message(
     app: &AppHandle,
     handle: &Arc<AudioRuntimeHandle>,
@@ -459,8 +411,6 @@ fn fail_all_pending(handle: &Arc<AudioRuntimeHandle>, reason: &str) {
     }
 }
 
-/// 把音频设置变更持久化到 settings.json 并广播 `settings:changed`
-/// （镜像 Electron `src/main/audio/state.ts` 的持久化语义）。
 fn persist_audio_settings(app: &AppHandle, patch: &Value) -> Result<(), String> {
     let mut settings = crate::load_json_file(app, "settings.json", json!({}));
     if let Value::Object(stored) = &mut settings {
@@ -476,7 +426,6 @@ fn persist_audio_settings(app: &AppHandle, patch: &Value) -> Result<(), String> 
     Ok(())
 }
 
-/// 应用退出时优雅停用并回收音频 sidecar。
 pub(crate) fn shutdown(app: &AppHandle) {
     let registry = app.state::<AudioRuntimeRegistry>();
     let guard = registry.runtime.try_lock();
@@ -505,7 +454,6 @@ fn finite_number(value: Option<f64>, min: f64, max: f64, default: f64) -> f64 {
     }
 }
 
-/// `audioEngine.loadQueue`
 #[tauri::command]
 pub async fn audio_engine_load_queue(
     app: AppHandle,
@@ -540,7 +488,6 @@ pub async fn audio_engine_load_queue(
     Ok(())
 }
 
-/// `audioEngine.play`
 #[tauri::command]
 pub async fn audio_engine_play(
     app: AppHandle,
@@ -552,20 +499,17 @@ pub async fn audio_engine_play(
     audio_call(&app, "play", json!([authorized, start_time])).await
 }
 
-/// `audioEngine.isHtmlAudioFallbackAllowed`：Tauri 始终允许 HTMLAudio 兜底通道。
 #[tauri::command]
 pub async fn audio_engine_is_html_audio_fallback_allowed() -> Result<bool, String> {
     Ok(true)
 }
 
-/// `audioEngine.togglePause`
 #[tauri::command]
 pub async fn audio_engine_toggle_pause(app: AppHandle) -> Result<(), String> {
     audio_call(&app, "togglePause", json!([])).await?;
     Ok(())
 }
 
-/// `audioEngine.seek`
 #[tauri::command]
 pub async fn audio_engine_seek(app: AppHandle, time: f64) -> Result<(), String> {
     let time = finite_number(Some(time), 0.0, i64::MAX as f64, 0.0);
@@ -573,7 +517,6 @@ pub async fn audio_engine_seek(app: AppHandle, time: f64) -> Result<(), String> 
     Ok(())
 }
 
-/// `audioEngine.setVolume`
 #[tauri::command]
 pub async fn audio_engine_set_volume(app: AppHandle, volume: f64) -> Result<(), String> {
     let volume = finite_number(Some(volume), 0.0, 1.0, 1.0);
@@ -581,7 +524,6 @@ pub async fn audio_engine_set_volume(app: AppHandle, volume: f64) -> Result<(), 
     Ok(())
 }
 
-/// `audioEngine.setPlaybackRate`
 #[tauri::command]
 pub async fn audio_engine_set_playback_rate(app: AppHandle, rate: f64) -> Result<(), String> {
     let rate = finite_number(Some(rate), 0.5, 2.0, 1.0);
@@ -589,7 +531,6 @@ pub async fn audio_engine_set_playback_rate(app: AppHandle, rate: f64) -> Result
     Ok(())
 }
 
-/// `audioEngine.setLoopRange`
 #[tauri::command]
 pub async fn audio_engine_set_loop_range(
     app: AppHandle,
@@ -612,28 +553,24 @@ pub async fn audio_engine_set_loop_range(
         .ok_or_else(|| "setLoopRange 返回类型错误".to_string())
 }
 
-/// `audioEngine.stop`
 #[tauri::command]
 pub async fn audio_engine_stop(app: AppHandle) -> Result<(), String> {
     audio_call(&app, "stop", json!([])).await?;
     Ok(())
 }
 
-/// `audioEngine.next`
 #[tauri::command]
 pub async fn audio_engine_next(app: AppHandle) -> Result<(), String> {
     audio_call(&app, "next", json!([])).await?;
     Ok(())
 }
 
-/// `audioEngine.previous`
 #[tauri::command]
 pub async fn audio_engine_previous(app: AppHandle) -> Result<(), String> {
     audio_call(&app, "previous", json!([])).await?;
     Ok(())
 }
 
-/// `audioEngine.setPlayMode`
 #[tauri::command]
 pub async fn audio_engine_set_play_mode(app: AppHandle, mode: String) -> Result<(), String> {
     let mode = match mode.as_str() {
@@ -644,19 +581,16 @@ pub async fn audio_engine_set_play_mode(app: AppHandle, mode: String) -> Result<
     Ok(())
 }
 
-/// `audioEngine.getUpcomingTrack`
 #[tauri::command]
 pub async fn audio_engine_get_upcoming_track(app: AppHandle) -> Result<Value, String> {
     audio_call(&app, "getUpcomingTrack", json!([])).await
 }
 
-/// `audioEngine.getPlaybackInfo`
 #[tauri::command]
 pub async fn audio_engine_get_playback_info(app: AppHandle) -> Result<Value, String> {
     audio_call(&app, "getPlaybackInfo", json!([])).await
 }
 
-/// `audioEngine.setExclusiveMode`
 #[tauri::command]
 pub async fn audio_engine_set_exclusive_mode(
     app: AppHandle,
@@ -667,7 +601,6 @@ pub async fn audio_engine_set_exclusive_mode(
     Ok(state)
 }
 
-/// `audioEngine.getExclusiveMode`
 #[tauri::command]
 pub async fn audio_engine_get_exclusive_mode(app: AppHandle) -> Result<bool, String> {
     let value = audio_call(&app, "getExclusiveMode", json!([])).await?;
@@ -676,7 +609,6 @@ pub async fn audio_engine_get_exclusive_mode(app: AppHandle) -> Result<bool, Str
         .ok_or_else(|| "getExclusiveMode 返回类型错误".to_string())
 }
 
-/// `audioEngine.setAudioOutput`
 #[tauri::command]
 pub async fn audio_engine_set_audio_output(
     app: AppHandle,
@@ -700,7 +632,6 @@ pub async fn audio_engine_set_audio_output(
     Ok(state)
 }
 
-/// `audioEngine.setAudioDevice`
 #[tauri::command]
 pub async fn audio_engine_set_audio_device(
     app: AppHandle,
@@ -718,7 +649,6 @@ pub async fn audio_engine_set_audio_device(
     Ok(state)
 }
 
-/// `audioEngine.setOutputConfig`
 #[tauri::command]
 pub async fn audio_engine_set_output_config(
     app: AppHandle,
@@ -732,31 +662,26 @@ pub async fn audio_engine_set_output_config(
     Ok(applied)
 }
 
-/// `audioEngine.getOutputConfigApplyStatus`
 #[tauri::command]
 pub async fn audio_engine_get_output_config_apply_status(app: AppHandle) -> Result<Value, String> {
     audio_call(&app, "getOutputConfigApplyStatus", json!([])).await
 }
 
-/// `audioEngine.getAudioOutput`
 #[tauri::command]
 pub async fn audio_engine_get_audio_output(app: AppHandle) -> Result<Value, String> {
     audio_call(&app, "getAudioOutput", json!([])).await
 }
 
-/// `audioEngine.getAudioOutputOptions`
 #[tauri::command]
 pub async fn audio_engine_get_audio_output_options(app: AppHandle) -> Result<Value, String> {
     audio_call(&app, "getAudioOutputOptions", json!([])).await
 }
 
-/// `audioEngine.getAudioOutputState`
 #[tauri::command]
 pub async fn audio_engine_get_audio_output_state(app: AppHandle) -> Result<Value, String> {
     audio_call(&app, "getAudioOutputState", json!([])).await
 }
 
-/// `audioEngine.setAudioProcessing`
 #[tauri::command]
 pub async fn audio_engine_set_audio_processing(
     app: AppHandle,
@@ -770,19 +695,16 @@ pub async fn audio_engine_set_audio_processing(
     Ok(applied)
 }
 
-/// `audioEngine.getAudioProcessing`
 #[tauri::command]
 pub async fn audio_engine_get_audio_processing(app: AppHandle) -> Result<Value, String> {
     audio_call(&app, "getAudioProcessing", json!([])).await
 }
 
-/// `audioEngine.getDspSceneState`
 #[tauri::command]
 pub async fn audio_engine_get_dsp_scene_state(app: AppHandle) -> Result<Value, String> {
     audio_call(&app, "getDspSceneState", json!([])).await
 }
 
-/// `audioEngine.setDspScenes`
 #[tauri::command]
 pub async fn audio_engine_set_dsp_scenes(
     app: AppHandle,
@@ -803,7 +725,6 @@ pub async fn audio_engine_set_dsp_scenes(
     Ok(state)
 }
 
-/// `audioEngine.setOutputStage`
 #[tauri::command]
 pub async fn audio_engine_set_output_stage(
     app: AppHandle,
@@ -825,7 +746,6 @@ pub async fn audio_engine_set_output_stage(
     Ok(state)
 }
 
-/// `audioEngine.setStereoImage`
 #[tauri::command]
 pub async fn audio_engine_set_stereo_image(
     app: AppHandle,
@@ -847,7 +767,6 @@ pub async fn audio_engine_set_stereo_image(
     Ok(state)
 }
 
-/// `audioEngine.applyDspScene`
 #[tauri::command]
 pub async fn audio_engine_apply_dsp_scene(
     app: AppHandle,
@@ -872,13 +791,11 @@ pub async fn audio_engine_apply_dsp_scene(
     Ok(state)
 }
 
-/// `audioEngine.getDspGraphStatus`
 #[tauri::command]
 pub async fn audio_engine_get_dsp_graph_status(app: AppHandle) -> Result<Value, String> {
     audio_call(&app, "getDspGraphStatus", json!([])).await
 }
 
-/// `audioEngine.setEqBands`
 #[tauri::command]
 pub async fn audio_engine_set_eq_bands(app: AppHandle, settings: Value) -> Result<Value, String> {
     if !settings.is_object() {
@@ -889,7 +806,6 @@ pub async fn audio_engine_set_eq_bands(app: AppHandle, settings: Value) -> Resul
     Ok(applied)
 }
 
-/// `audioEngine.setEqPreset`
 #[tauri::command]
 pub async fn audio_engine_set_eq_preset(app: AppHandle, preset: Value) -> Result<Value, String> {
     let applied = audio_call(&app, "setEqPreset", json!([preset])).await?;
@@ -897,7 +813,6 @@ pub async fn audio_engine_set_eq_preset(app: AppHandle, preset: Value) -> Result
     Ok(applied)
 }
 
-/// `audioEngine.setCrossfeedStrength`
 #[tauri::command]
 pub async fn audio_engine_set_crossfeed_strength(
     app: AppHandle,
@@ -909,7 +824,6 @@ pub async fn audio_engine_set_crossfeed_strength(
     Ok(applied)
 }
 
-/// `audioEngine.setReplayGainMode`
 #[tauri::command]
 pub async fn audio_engine_set_replay_gain_mode(
     app: AppHandle,
@@ -936,7 +850,6 @@ pub async fn audio_engine_set_replay_gain_mode(
     Ok(applied)
 }
 
-/// `audioEngine.loadImpulseResponse`
 #[tauri::command]
 pub async fn audio_engine_load_impulse_response(
     app: AppHandle,
@@ -958,7 +871,6 @@ pub async fn audio_engine_load_impulse_response(
     Ok(applied)
 }
 
-/// `audioEngine.unloadImpulseResponse`
 #[tauri::command]
 pub async fn audio_engine_unload_impulse_response(app: AppHandle) -> Result<Value, String> {
     let applied = audio_call(&app, "unloadImpulseResponse", json!([])).await?;
@@ -974,20 +886,17 @@ pub async fn audio_engine_unload_impulse_response(app: AppHandle) -> Result<Valu
     Ok(applied)
 }
 
-/// `audioEngine.getConvolverInfo`
 #[tauri::command]
 pub async fn audio_engine_get_convolver_info(app: AppHandle) -> Result<Value, String> {
     audio_call(&app, "getConvolverInfo", json!([])).await
 }
 
-/// `audioEngine.getMetadata`
 #[tauri::command]
 pub async fn audio_engine_get_metadata(app: AppHandle, source: String) -> Result<Value, String> {
     let authorized = authorize_playback_source(&app, &source)?;
     audio_call(&app, "getMetadata", json!([authorized])).await
 }
 
-/// `audioEngine.getSpectrumData`
 #[tauri::command]
 pub async fn audio_engine_get_spectrum_data(
     app: AppHandle,
@@ -997,7 +906,6 @@ pub async fn audio_engine_get_spectrum_data(
     audio_call(&app, "getSpectrumData", json!([points])).await
 }
 
-/// `audioEngine.getVisualizationData`
 #[tauri::command]
 pub async fn audio_engine_get_visualization_data(
     app: AppHandle,
@@ -1016,19 +924,16 @@ fn truncate(value: &str, max_chars: usize) -> String {
 
 // ── Stage 6B: VST3 catalog / DSP assets / analysis / diagnostics slice ──────
 
-/// `audioEngine.getVst3Catalog`
 #[tauri::command]
 pub async fn audio_engine_get_vst3_catalog(app: AppHandle) -> Result<Value, String> {
     audio_call(&app, "vst3GetState", json!([])).await
 }
 
-/// `audioEngine.setVst3Enabled`
 #[tauri::command]
 pub async fn audio_engine_set_vst3_enabled(app: AppHandle, enabled: bool) -> Result<Value, String> {
     audio_call(&app, "vst3SetEnabled", json!([enabled])).await
 }
 
-/// `audioEngine.setVst3SearchPaths`
 #[tauri::command]
 pub async fn audio_engine_set_vst3_search_paths(
     app: AppHandle,
@@ -1040,13 +945,11 @@ pub async fn audio_engine_set_vst3_search_paths(
     audio_call(&app, "vst3SetSearchPaths", json!([paths])).await
 }
 
-/// `audioEngine.scanVst3Plugins`
 #[tauri::command]
 pub async fn audio_engine_scan_vst3_plugins(app: AppHandle) -> Result<Value, String> {
     audio_call(&app, "vst3Scan", json!([])).await
 }
 
-/// `audioEngine.clearVst3Quarantine`
 #[tauri::command]
 pub async fn audio_engine_clear_vst3_quarantine(
     app: AppHandle,
@@ -1056,14 +959,11 @@ pub async fn audio_engine_clear_vst3_quarantine(
     audio_call(&app, "vst3ClearQuarantine", json!([id])).await
 }
 
-/// `audioEngine.getDspAssets`
 #[tauri::command]
 pub async fn audio_engine_get_dsp_assets(app: AppHandle) -> Result<Value, String> {
     audio_call(&app, "dspList", json!([])).await
 }
 
-/// `audioEngine.importDspAsset` — `kind` selects the asset category; `source_path`
-/// comes from a renderer-side plugin-dialog file picker.
 #[tauri::command]
 pub async fn audio_engine_import_dsp_asset(
     app: AppHandle,
@@ -1076,7 +976,6 @@ pub async fn audio_engine_import_dsp_asset(
     audio_call(&app, "dspImportAsset", json!([kind, source_path])).await
 }
 
-/// `audioEngine.importDspCorrectionProfile`
 #[tauri::command]
 pub async fn audio_engine_import_dsp_correction_profile(
     app: AppHandle,
@@ -1088,7 +987,6 @@ pub async fn audio_engine_import_dsp_correction_profile(
     audio_call(&app, "dspImportCorrectionProfile", json!([source_path])).await
 }
 
-/// `audioEngine.importFrequencyResponse`
 #[tauri::command]
 pub async fn audio_engine_import_frequency_response(
     app: AppHandle,
@@ -1100,7 +998,6 @@ pub async fn audio_engine_import_frequency_response(
     audio_call(&app, "dspImportFrequencyResponse", json!([source_path])).await
 }
 
-/// `audioEngine.getDspCorrectionProfile`
 #[tauri::command]
 pub async fn audio_engine_get_dsp_correction_profile(
     app: AppHandle,
@@ -1109,7 +1006,6 @@ pub async fn audio_engine_get_dsp_correction_profile(
     audio_call(&app, "dspGetCorrectionProfile", json!([asset_id])).await
 }
 
-/// `audioEngine.deleteDspAsset`
 #[tauri::command]
 pub async fn audio_engine_delete_dsp_asset(
     app: AppHandle,
@@ -1118,7 +1014,6 @@ pub async fn audio_engine_delete_dsp_asset(
     audio_call(&app, "dspDeleteAsset", json!([asset_id])).await
 }
 
-/// `audioEngine.exportDspProfile` — `output_path` from a renderer-side save dialog.
 #[tauri::command]
 pub async fn audio_engine_export_dsp_profile(
     app: AppHandle,
@@ -1131,7 +1026,6 @@ pub async fn audio_engine_export_dsp_profile(
     audio_call(&app, "dspExportProfile", json!([name, output_path])).await
 }
 
-/// `audioEngine.importDspProfile` — after import, persist the applied scene state.
 #[tauri::command]
 pub async fn audio_engine_import_dsp_profile(
     app: AppHandle,
@@ -1152,7 +1046,6 @@ pub async fn audio_engine_import_dsp_profile(
     Ok(profile)
 }
 
-/// `bpmAnalysis.request`
 #[tauri::command]
 pub async fn audio_engine_bpm_request(app: AppHandle, mut request: Value) -> Result<Value, String> {
     let file_path = request
@@ -1163,19 +1056,16 @@ pub async fn audio_engine_bpm_request(app: AppHandle, mut request: Value) -> Res
     audio_call(&app, "bpmRequest", json!([request])).await
 }
 
-/// `bpmAnalysis.getCacheSize`
 #[tauri::command]
 pub async fn audio_engine_bpm_get_cache_size(app: AppHandle) -> Result<Value, String> {
     audio_call(&app, "bpmGetCacheSize", json!([])).await
 }
 
-/// `bpmAnalysis.clearCache`
 #[tauri::command]
 pub async fn audio_engine_bpm_clear_cache(app: AppHandle) -> Result<Value, String> {
     audio_call(&app, "bpmClearCache", json!([])).await
 }
 
-/// `bpmAnalysis.cancel`
 #[tauri::command]
 pub async fn audio_engine_bpm_cancel(
     app: AppHandle,
@@ -1185,7 +1075,6 @@ pub async fn audio_engine_bpm_cancel(
     Ok(())
 }
 
-/// `loudnessAnalysis.request`
 #[tauri::command]
 pub async fn audio_engine_loudness_request(
     app: AppHandle,
@@ -1199,25 +1088,21 @@ pub async fn audio_engine_loudness_request(
     audio_call(&app, "loudnessRequest", json!([request])).await
 }
 
-/// `loudnessAnalysis.getCacheSize`
 #[tauri::command]
 pub async fn audio_engine_loudness_get_cache_size(app: AppHandle) -> Result<Value, String> {
     audio_call(&app, "loudnessGetCacheSize", json!([])).await
 }
 
-/// `loudnessAnalysis.clearCache`
 #[tauri::command]
 pub async fn audio_engine_loudness_clear_cache(app: AppHandle) -> Result<Value, String> {
     audio_call(&app, "loudnessClearCache", json!([])).await
 }
 
-/// `loudnessAnalysis.getStatus`
 #[tauri::command]
 pub async fn audio_engine_loudness_get_status(app: AppHandle) -> Result<Value, String> {
     audio_call(&app, "loudnessGetStatus", json!([])).await
 }
 
-/// `loudnessAnalysis.cancel`
 #[tauri::command]
 pub async fn audio_engine_loudness_cancel(
     app: AppHandle,
@@ -1227,7 +1112,6 @@ pub async fn audio_engine_loudness_cancel(
     Ok(())
 }
 
-/// `audioEngine.exportDiagnostics` — `file_path` from a renderer-side save dialog.
 #[tauri::command]
 pub async fn audio_engine_export_diagnostics(
     app: AppHandle,
@@ -1293,8 +1177,6 @@ mod tests {
         assert_eq!(truncate("123456", 3), "123");
     }
 
-    /// 端到端验证：spawn 真实 `audioEngineNode.ts`，init → call → event → deinit。
-    /// 需要 node 与仓库源码；默认忽略，手动 `-- --ignored` 运行。
     #[test]
     #[ignore = "requires node + repo source"]
     fn audio_runtime_runs_real_sidecar() {
@@ -1386,3 +1268,4 @@ mod tests {
         sidecar.terminate();
     }
 }
+

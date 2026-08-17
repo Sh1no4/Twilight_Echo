@@ -1,21 +1,3 @@
-//! `trayPlayer` surface（Stage 7B）——Tauri 独立托盘播放器窗口。
-//!
-//! 迁移 Electron `src/main/integrations/trayPlayer.ts` 到 Tauri 独立窗口：
-//! - `tray_player_toggle`（主窗口→显示/隐藏 `tray-player` 窗口，存在时隐藏）；
-//! - `tray_player_hide`（托盘窗口→隐藏自身）；`tray_player_is_visible`（主→查询）；
-//! - `tray_player_get_bootstrap`（托盘窗口→返回 `{ state }`）；
-//! - `tray_player_command`（托盘窗口→转发播放命令到主窗口 `miniPlayer:command`）；
-//! - `tray_player_navigate`（托盘窗口→登记导航目标并转发 `app:navigate` 到主窗口，
-//!   主渲染器在启动时经 `consumePendingNavigation` 消费）。
-//!
-//! 事件（渲染端经 `@tauri-apps/api/event` 订阅）：
-//! `trayPlayer:state`（主→托盘）；`miniPlayer:command` 与 `app:navigate`（托盘→主）。
-//!
-//! 边界：命令按发起窗口 label 校验；输入经 shared 归一化
-//! （`normalize_mini_player_command` / `normalize_tray_navigation_target`）。
-//! 播放快照复用 settings.json 的 `miniPlayerState` 段（与 miniPlayer 共享同一
-//! 播放状态源，等价 Electron `runtime.latestMiniPlayerState`）。窗口位置存
-//! `trayPlayerPosition` 段（`windowX`/`windowY`），默认贴工作区右下角。
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -27,7 +9,6 @@ const TRAY_PLAYER_VIEW_QUERY: &str = "window=tray-player";
 const TRAY_PLAYER_WIDTH: f64 = 360.0;
 const TRAY_PLAYER_HEIGHT: f64 = 176.0;
 
-/// 运行时 trayPlayer 标记（state/managed 占位，逻辑状态持久化在 settings.json）。
 pub struct TrayPlayerState;
 
 fn tray_player_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
@@ -72,7 +53,6 @@ fn send_navigation_to_main(app: &AppHandle, target: &Value) {
     }
 }
 
-/// 主窗口显示/隐藏托盘播放器。返回当前可见状态（与 Electron `toggleTrayPlayerWindow` 对齐）。
 fn toggle_tray_player(app: &AppHandle) -> Result<bool, String> {
     if let Some(existing) = tray_player_window(app) {
         let visible = existing.is_visible().unwrap_or(false);
@@ -129,12 +109,10 @@ fn toggle_tray_player(app: &AppHandle) -> Result<bool, String> {
     Ok(true)
 }
 
-/// 工作区右下角默认定位（无托盘 anchor 时的退化位置）。
 fn default_tray_position() -> (f64, f64) {
     (0.0, 0.0)
 }
 
-/// 主窗口调用：显示/隐藏托盘播放器窗口，返回当前可见状态。
 #[tauri::command]
 pub fn tray_player_toggle(app: AppHandle, window: tauri::WebviewWindow) -> Result<bool, String> {
     if window.label() != "main" {
@@ -143,7 +121,6 @@ pub fn tray_player_toggle(app: AppHandle, window: tauri::WebviewWindow) -> Resul
     toggle_tray_player(&app)
 }
 
-/// 主窗口调用：查询托盘播放器窗口是否可见。
 #[tauri::command]
 pub fn tray_player_is_visible(app: AppHandle, window: tauri::WebviewWindow) -> Result<bool, String> {
     if window.label() != "main" {
@@ -154,7 +131,6 @@ pub fn tray_player_is_visible(app: AppHandle, window: tauri::WebviewWindow) -> R
         .unwrap_or(false))
 }
 
-/// 主窗口调用：隐藏托盘播放器窗口。
 #[tauri::command]
 pub fn tray_player_hide(app: AppHandle) -> Result<(), String> {
     if let Some(window) = tray_player_window(&app) {
@@ -163,7 +139,6 @@ pub fn tray_player_hide(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 托盘窗口调用：返回启动快照。
 #[tauri::command]
 pub fn tray_player_get_bootstrap(
     app: AppHandle,
@@ -175,7 +150,6 @@ pub fn tray_player_get_bootstrap(
     Ok(json!({ "state": latest_mini_player_state(&app) }))
 }
 
-/// 托盘窗口调用：把播放命令转发到主窗口。
 #[tauri::command]
 pub fn tray_player_command(
     app: AppHandle,
@@ -191,7 +165,6 @@ pub fn tray_player_command(
     Ok(())
 }
 
-/// 托盘窗口调用：登记导航目标并转发到主窗口。
 #[tauri::command]
 pub fn tray_player_navigate(
     app: AppHandle,
@@ -214,7 +187,6 @@ pub fn tray_player_navigate(
     Ok(())
 }
 
-/// 归一化托盘导航目标（镜像 `normalizeTrayNavigationTarget`：仅 local/streaming/settings）。
 fn normalize_tray_navigation_target(value: &Value) -> Option<Value> {
     let target = value.as_str()?;
     match target {
@@ -223,7 +195,6 @@ fn normalize_tray_navigation_target(value: &Value) -> Option<Value> {
     }
 }
 
-/// 主窗口调用：消费挂起的托盘导航（`app:consumePendingNavigation`）。
 #[tauri::command]
 pub fn tray_player_consume_pending_navigation(
     app: AppHandle,
@@ -244,7 +215,6 @@ pub fn tray_player_consume_pending_navigation(
     Ok(pending)
 }
 
-/// 保存托盘播放器窗口位置（窗口移动时持久化，重启后恢复）。
 #[allow(dead_code)]
 pub fn record_tray_position(app: &AppHandle, window: &tauri::WebviewWindow) {
     if !window_is_self(app, window) {

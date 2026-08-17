@@ -1,31 +1,3 @@
-//! `desktopLyrics` surface（Stage 7C）——Tauri 独立桌面歌词窗口。
-//!
-//! 迁移 Electron `src/main/integrations/desktopLyrics.ts` 到 Tauri 独立窗口：
-//! - `desktop_lyrics_toggle` / `desktop_lyrics_show` / `desktop_lyrics_hide`（主窗口→
-//!   切换/显示/销毁 `desktop-lyrics` 窗口；toggle 返回启用状态并广播 `desktopLyrics:toggleChanged`）；
-//! - `desktop_lyrics_publish_track`（主窗口→登记最新歌词并把 `desktopLyrics:updateTrack` 转发到窗口）；
-//! - `desktop_lyrics_publish_time`（主窗口→登记最新时间并把 `desktopLyrics:updateTime` 转发到窗口）；
-//! - `desktop_lyrics_update_settings`（主窗口→收全量 `desktopLyrics` 设置，归一化后写回
-//!   settings.json 的 `desktopLyrics` 段、应用窗口外形并广播 `settings:changed`，
-//!   再把 `desktopLyrics:updateSettings` 转发到窗口）；
-//! - `desktop_lyrics_get_position` / `desktop_lyrics_move`（歌词窗口→查询/受限移动窗口，
-//!   位置持久化到 `desktopLyrics.windowX/windowY` 段）；
-//! - `desktop_lyrics_request_close`（歌词窗口→把 `enabled` 置 false，销毁窗口并广播
-//!   `desktopLyrics:toggleChanged`）。
-//!
-//! 事件（渲染端经 `@tauri-apps/api/event` 订阅）：
-//! `desktopLyrics:toggleChanged` / `desktopLyrics:initSettings` / `desktopLyrics:updateTrack` /
-//! `desktopLyrics:updateTime` / `desktopLyrics:updateSettings` / `desktopLyrics:loadFailed`。
-//!
-//! 边界：命令按发起窗口 label 校验（主窗口才能 toggle/show/hide/publish*；歌词窗口才能
-//! getPosition/move/requestClose）；设置经 `normalize_desktop_lyrics_settings`（镜像
-//! `normalizeDesktopLyrics` 的字段收敛与 clamp 范围）归一化；`move` 把窗口位置 clamp 进
-//! 当前显示器工作区；`getPosition` 通过事件通道 `desktopLyrics:position` 回传。
-//!
-//! URL：desktop lyrics 走独立静态页 `desktop-lyrics.html`（Electron 权威源同样加载
-//! `resources/desktop-lyrics.html`）；dev 用 `devUrl` + `/desktop-lyrics.html`，打包用
-//! `frontendDist` 下同名文件，两者路径名都以 `desktop-lyrics.html` 结尾（preload 的
-//! `isDesktopLyricsDocument()` 依赖路径名判定），与 mini/tray 的 `?window=` 查询参数区分。
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -38,7 +10,6 @@ const DEFAULT_WIDTH: f64 = 900.0;
 const DEFAULT_HEIGHT: f64 = 160.0;
 const MAX_TRACK_PAYLOAD_BYTES: usize = 1 * 1024 * 1024;
 
-/// 歌词窗口运行时标记（state/managed 占位，逻辑状态持久化在 settings.json）。
 pub struct DesktopLyricsState;
 
 fn desktop_lyrics_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
@@ -49,7 +20,6 @@ fn is_self(window: &tauri::WebviewWindow) -> bool {
     window.label() == DESKTOP_LYRICS_WINDOW_LABEL
 }
 
-/// 读取设置中的 `desktopLyrics` 段（缺失时返回 Electron 同步默认值）。
 fn current_settings(app: &AppHandle) -> Value {
     let stored = settings::load_settings(app);
     stored
@@ -58,7 +28,6 @@ fn current_settings(app: &AppHandle) -> Value {
         .unwrap_or_else(default_desktop_lyrics_settings)
 }
 
-/// Electron `DEFAULT_DESKTOP_LYRICS` 的镜像（与 `normalizeDesktopLyrics` 的默认值一致）。
 fn default_desktop_lyrics_settings() -> Value {
     json!({
         "enabled": false,
@@ -102,12 +71,10 @@ fn integer_or(value: Option<&Value>, fallback: i64) -> i64 {
     value.and_then(Value::as_i64).unwrap_or(fallback)
 }
 
-/// 布尔字段镜像 `normalizeDesktopLyrics` 的收敛（默认值按字段，`false` 是唯一翻转值）。
 fn bool_or(value: Option<&Value>, fallback: bool) -> bool {
     value.and_then(Value::as_bool).unwrap_or(fallback)
 }
 
-/// 归一化 desktopLyrics 设置（镜像 `normalizeDesktopLyrics` 的 clamp 范围与收敛）。
 pub(crate) fn normalize_desktop_lyrics_settings(value: Value) -> Value {
     let object = value.as_object().cloned().unwrap_or_default();
     let color_or = |key: &str, fallback: &str| -> String {
@@ -161,7 +128,6 @@ pub(crate) fn normalize_desktop_lyrics_settings(value: Value) -> Value {
     })
 }
 
-/// 校验/轻量归一化桌面歌词 track 载荷（仅接受对象，字符串字段截断到上限）。
 fn normalize_track_payload(value: Value) -> Option<Value> {
     let object = value.as_object()?;
     let serialized = serde_json::to_vec(&value).unwrap_or_default();
@@ -193,8 +159,6 @@ fn normalize_track_payload(value: Value) -> Option<Value> {
     }))
 }
 
-/// 当前主显示器工作区 `(x, y, width, height)`（用主窗口所在显示器作近似，
-/// 等价 Electron `screen.getPrimaryDisplay().workArea`；无主窗口时返回 None）。
 fn focused_or_primary_work_area(app: &AppHandle) -> Option<(f64, f64, f64, f64)> {
     let main = app.get_webview_window("main")?;
     let monitor = main.current_monitor().ok()??;
@@ -207,8 +171,6 @@ fn focused_or_primary_work_area(app: &AppHandle) -> Option<(f64, f64, f64, f64)>
     ))
 }
 
-/// 把歌词窗口位置持久化到 `desktopLyrics.windowX/windowY`（镜像 Electron
-/// `persistDesktopLyricsPosition`，重启后 `open` 恢复）。
 fn persist_position(app: &AppHandle, x: f64, y: f64) {
     let mut stored = settings::load_settings(app);
     if let Some(object) = stored.as_object_mut() {
@@ -226,13 +188,11 @@ fn persist_position(app: &AppHandle, x: f64, y: f64) {
     let _ = settings::save_settings(app, &stored);
 }
 
-/// 广播 `settings:changed`（settings 快照全量回传，与 miniPlayer 一致）。
 fn broadcast_settings(app: &AppHandle) {
     let snapshot = settings::settings_snapshot(app);
     let _ = app.emit("settings:changed", snapshot);
 }
 
-/// 应用窗口外形（尺寸/置顶/点击穿透）。`clickThrough` 经 ignore-cursor-events 实现。
 fn apply_window_style(app: &AppHandle, normalized: &Value) {
     if let Some(win) = desktop_lyrics_window(app) {
         let width = normalized.get("windowWidth").and_then(Value::as_f64);
@@ -245,7 +205,6 @@ fn apply_window_style(app: &AppHandle, normalized: &Value) {
     }
 }
 
-/// 把当前设置/最新歌词/最新时间推送到歌词窗口（`sendDesktopLyricsSnapshot` 镜像）。
 fn send_snapshot(app: &AppHandle) {
     if let Some(win) = desktop_lyrics_window(app) {
         let _ = win.emit("desktopLyrics:initSettings", current_settings(app));
@@ -259,8 +218,6 @@ fn send_snapshot(app: &AppHandle) {
     }
 }
 
-/// dev：`devUrl` 根 + `/desktop-lyrics.html`；打包：`frontendDist` 下同名文件的
-/// `WebviewUrl::App`——两者路径名都以 `desktop-lyrics.html` 结尾（preload 判定依据）。
 fn desktop_lyrics_url(app: &AppHandle, document: &str) -> WebviewUrl {
     if let Some(dev_url) = app.config().build.dev_url.clone() {
         if let Ok(joined) = dev_url.join(document) {
@@ -270,9 +227,6 @@ fn desktop_lyrics_url(app: &AppHandle, document: &str) -> WebviewUrl {
     WebviewUrl::App(document.into())
 }
 
-/// 创建/显示桌面歌词窗口（`createDesktopLyricsWindow` 镜像）。窗口已存在时直接显示
-/// 并推送最新快照（tauri.conf 声明的 `visible:false` 窗口在启动时就存在，`z=None`）。
-/// 位置优先用已保存的 `windowX/windowY`；缺省贴主显示器工作区底部中央（距底部 60px）。
 fn open_desktop_lyrics(app: &AppHandle) -> Result<(), String> {
     if let Some(win) = desktop_lyrics_window(app) {
         let _ = win.show();
@@ -330,7 +284,6 @@ fn open_desktop_lyrics(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 销毁歌词窗口（`destroyDesktopLyrics` 镜像：先持久化位置再关闭）。
 fn destroy_desktop_lyrics(app: &AppHandle) {
     if let Some(win) = desktop_lyrics_window(app) {
         if let Ok(position) = win.outer_position() {
@@ -340,7 +293,6 @@ fn destroy_desktop_lyrics(app: &AppHandle) {
     }
 }
 
-/// 主窗口调用：切换桌面歌词窗口。返回启用状态并广播 `desktopLyrics:toggleChanged`。
 #[tauri::command]
 pub fn desktop_lyrics_toggle(app: AppHandle, window: tauri::WebviewWindow) -> Result<bool, String> {
     if window.label() != "main" {
@@ -366,7 +318,6 @@ pub fn desktop_lyrics_toggle(app: AppHandle, window: tauri::WebviewWindow) -> Re
     Ok(next_enabled)
 }
 
-/// 主窗口调用：显示桌面歌词窗口（不改变 enabled 状态）。
 #[tauri::command]
 pub fn desktop_lyrics_show(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
     if window.label() != "main" {
@@ -380,7 +331,6 @@ pub fn desktop_lyrics_show(app: AppHandle, window: tauri::WebviewWindow) -> Resu
     Ok(())
 }
 
-/// 主窗口调用：隐藏/销毁桌面歌词窗口（不改变 enabled 状态）。
 #[tauri::command]
 pub fn desktop_lyrics_hide(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
     if window.label() != "main" {
@@ -390,7 +340,6 @@ pub fn desktop_lyrics_hide(app: AppHandle, window: tauri::WebviewWindow) -> Resu
     Ok(())
 }
 
-/// 主窗口调用：登记最新歌词并把 `desktopLyrics:updateTrack` 转发到歌词窗口。
 #[tauri::command]
 pub fn desktop_lyrics_publish_track(
     app: AppHandle,
@@ -409,7 +358,6 @@ pub fn desktop_lyrics_publish_track(
     Ok(())
 }
 
-/// 主窗口调用：登记最新时间并把 `desktopLyrics:updateTime` 转发到歌词窗口。
 #[tauri::command]
 pub fn desktop_lyrics_publish_time(
     app: AppHandle,
@@ -430,9 +378,6 @@ pub fn desktop_lyrics_publish_time(
     Ok(())
 }
 
-/// 主窗口调用：应用全量 desktopLyrics 设置。写回 settings.json、应用窗口外形并转发
-/// `desktopLyrics:updateSettings` 到歌词窗口。不广播 `settings:changed`（镜像 Electron
-/// `applyDesktopLyricsSettings`：写入方是主渲染器自身，广播会造成重复往返）。
 #[tauri::command]
 pub fn desktop_lyrics_update_settings(
     app: AppHandle,
@@ -455,8 +400,6 @@ pub fn desktop_lyrics_update_settings(
     Ok(())
 }
 
-/// 歌词窗口调用：把当前位置回传到 `desktopLyrics:position` 事件（对齐 Electron
-/// `getPosition` → `desktopLyrics:position` 回传通道）。
 #[tauri::command]
 pub fn desktop_lyrics_get_position(
     app: AppHandle,
@@ -473,7 +416,6 @@ pub fn desktop_lyrics_get_position(
     Ok(())
 }
 
-/// 歌词窗口调用：把窗口移动到受限位置（clamp 进当前显示器工作区，`desktopLyrics:move` 镜像）。
 #[tauri::command]
 pub fn desktop_lyrics_move(
     app: AppHandle,
@@ -508,7 +450,6 @@ pub fn desktop_lyrics_move(
     Ok(())
 }
 
-/// 歌词窗口调用：请求关闭（把 enabled 置 false、销毁窗口并广播 toggleChanged(false)）。
 #[tauri::command]
 pub fn desktop_lyrics_request_close(
     app: AppHandle,

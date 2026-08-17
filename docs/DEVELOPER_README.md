@@ -267,6 +267,15 @@ Electron/Tauri capability matrix 与「未实现 ≠ 空数据」的约定见
 host bridge 抛 `RuntimeCapabilityError`（`code: 'runtime-not-supported'`），UI 展示
 “当前运行时不支持”，不得把未实现能力渲染成业务空列表。
 
+Tauri（Windows-only）构建与发布 gate：`pnpm run test:tauri-gate` 运行静态
+release gate（`scripts/verify-tauri-release-gate.cjs`：无假 stub、CSP/asset scope 收紧、
+逐窗口最小 capability、sidecar 闭包、随包 Node 运行时、非 Windows 编译拒绝）以及
+parity/contract 测试。`src-tauri/src/lib.rs` 在非 Windows 平台 `compile_error!`。
+打包发布的 app 不依赖用户预装 Node：`pnpm run stage:node-runtime` 把固定版本
+`node.exe` 放到 `resources/sidecar/`（gitignored），并由 `bundle.resources` 随包分发；
+sidecar 解析优先级为环境变量 → 随包 `node.exe` → 系统 `node`。完整门槛见
+[docs/windows-release-gate.md](./windows-release-gate.md) 的「Tauri Release Gate (Windows)」。
+
 真实设备 smoke 不属于默认 gate。ASIO、WASAPI Exclusive、native DSD、SACD ISO、CoreAudio、ALSA `hw:` 等验证需要明确设备与曲目样本。
 
 ## 代码风格

@@ -1,16 +1,3 @@
-//! 插件市场网关实验性桥接（prototype，未提交的验证代码）。
-//!
-//! 与 `ncm_gateway` 同构：Rust 侧用 `std::process::Command` 把 Node 网关
-//! （`scripts/plugin-index-gateway.mjs`）作为独立子进程 spawn 到 `127.0.0.1:3101`，
-//! 再把远程市场操作（`plugins.refreshIndex` 拉取远端 `plugins.json`、
-//! `plugins.installFromIndex` 下载 `.tep` 包）通过本地 HTTP 代理过去，拿到真实数据。
-//! 远端 HTTPS 抓取由 Node 侧完成（离线 Rust crate 无 HTTP/TLS 客户端）。
-//!
-//! 这不是生产实现：
-//! - 子进程不做生命周期管理（退出时不 kill，端口被外部占用时复用）。
-//! - `.tep` 包以二进制原样回传（`http_get_bytes_blocking`），不经过
-//!   `String::from_utf8_lossy`，保证字节级一致。
-//! - 大小上限（索引 1MB、包 50MB）在 Node 侧强制；Rust 侧仅代理字节。
 use serde_json::Value;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
@@ -19,11 +6,9 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-/// 网关监听地址（与 `scripts/plugin-index-gateway.mjs` 对齐）。
 pub const GATEWAY_HOST: &str = "127.0.0.1";
 pub const GATEWAY_PORT: u16 = 3101;
 
-/// 网关子进程句柄；`None` = 尚未由本进程 spawn（端口可能由外部进程如 Electron dev 服务）。
 static GATEWAY_CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
 
 fn socket_addr() -> Option<SocketAddr> {
@@ -35,7 +20,6 @@ fn try_connect() -> Option<TcpStream> {
     TcpStream::connect_timeout(&addr, Duration::from_millis(500)).ok()
 }
 
-/// 端口已可连通（无论网关由谁提供）。
 pub fn port_open() -> bool {
     try_connect().is_some()
 }
@@ -57,7 +41,6 @@ fn gateway_script_path() -> Option<PathBuf> {
     }
 }
 
-/// 如端口未在服务则 spawn 网关子进程（幂等）。
 fn spawn_if_needed() -> Result<(), String> {
     if port_open() {
         return Ok(());
@@ -75,7 +58,6 @@ fn spawn_if_needed() -> Result<(), String> {
     Ok(())
 }
 
-/// 确保网关就绪（spawn + 轮询端口），最多等待 `timeout`。
 async fn ensure_gateway(timeout: Duration) -> Result<(), String> {
     spawn_if_needed()?;
     let deadline = tokio::time::Instant::now() + timeout;
@@ -88,12 +70,10 @@ async fn ensure_gateway(timeout: Duration) -> Result<(), String> {
     Err(format!("插件索引网关在 {}ms 内未就绪", timeout.as_millis()))
 }
 
-/// 在原始字节中定位 `\r\n\r\n`（响应头与响应体分界）。
 fn find_header_body_split(raw: &[u8]) -> Option<usize> {
     raw.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
-/// 解析 chunked 响应体（字节安全）。
 fn decode_chunked_bytes(mut body: &[u8]) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     loop {
@@ -120,7 +100,6 @@ fn decode_chunked_bytes(mut body: &[u8]) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// 查询串值的最小化 percent-encode（保留 unreserved 字符，其余按字节转义）。
 fn url_escape(value: &str) -> String {
     let mut out = String::new();
     for byte in value.bytes() {
@@ -134,10 +113,6 @@ fn url_escape(value: &str) -> String {
     out
 }
 
-/// 阻塞式 HTTP/1.1 GET（std `TcpStream`，读超时 = `timeout`）。返回 (status, 原始 body 字节)。
-///
-/// body 始终按字节保留（含二进制 `.tep` 包），不以 UTF-8 有损解码；长度按
-/// `Content-Length` 截取，缺失时退回 chunked 解码 / 剩余全部字节。
 fn http_get_bytes_blocking(
     path_and_query: &str,
     timeout: Duration,
@@ -191,7 +166,6 @@ fn http_get_bytes_blocking(
     Ok((status, body))
 }
 
-/// 把 Node 侧错误响应体（JSON `{error}`）解析为错误文本。
 fn gateway_error(status: u16, body: &[u8]) -> String {
     let text = String::from_utf8_lossy(body).trim().to_string();
     if text.is_empty() {
@@ -210,7 +184,6 @@ fn gateway_error(status: u16, body: &[u8]) -> String {
     }
 }
 
-/// 将一次远端索引抓取代理到本地 Node 网关并返回解析后的 JSON。
 pub async fn proxy_index_json(timeout: Duration) -> Result<Value, String> {
     ensure_gateway(Duration::from_secs(15)).await?;
     let blocking = tokio::task::spawn_blocking(move || http_get_bytes_blocking("/index", timeout));
@@ -225,7 +198,6 @@ pub async fn proxy_index_json(timeout: Duration) -> Result<Value, String> {
     serde_json::from_slice(&body).map_err(|err| format!("插件索引网关响应不是合法 JSON：{err}"))
 }
 
-/// 将一次 `.tep` 包下载代理到本地 Node 网关并返回原始字节。
 pub async fn proxy_package_bytes(source_url: &str, timeout: Duration) -> Result<Vec<u8>, String> {
     ensure_gateway(Duration::from_secs(15)).await?;
     let path = format!("/package?url={}", url_escape(source_url));
@@ -240,3 +212,4 @@ pub async fn proxy_package_bytes(source_url: &str, timeout: Duration) -> Result<
     }
     Ok(body)
 }
+

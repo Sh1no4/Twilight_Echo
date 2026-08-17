@@ -1,8 +1,3 @@
-//! `fonts` surface（Stage 3）。
-//!
-//! 在 Windows 用系统字体注册表（`reg query`）枚举字体族，去重排序后返回，
-//! 与 Electron `src/main/ipc/fontRegistry.ts` 的语义一致。失败返回结构化错误
-//! （`Err(String)`），不是空数组。macOS/Linux 不在 Tauri 支持范围，返回明确错误。
 
 use std::collections::BTreeSet;
 use std::process::Command;
@@ -11,7 +6,6 @@ const FONT_REGISTRY_KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVers
 const USER_FONT_REGISTRY_KEY: &str = r"HKCU\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts";
 const MAX_FONTS: usize = 600;
 
-/// 与 Electron `STYLE_SUFFIX` 对应的样式后缀（小写），覆盖 `\s?` 的可选空格形式。
 const STYLE_SUFFIXES: &[&str] = &[
     "thin",
     "extra light",
@@ -37,8 +31,6 @@ const STYLE_SUFFIXES: &[&str] = &[
     "oblique",
 ];
 
-/// 反复剥离名称尾部样式词（镜像 Electron 的两遍/循环 replace）。每次取最长匹配，
-/// 处理 "Semibold Italic" 这类多词组合。
 fn strip_style_suffixes(candidate: &str) -> String {
     let mut family = candidate.trim().to_string();
     loop {
@@ -65,7 +57,6 @@ fn strip_style_suffixes(candidate: &str) -> String {
     }
 }
 
-/// 解析 `reg query /s` 输出为去重字体族列表（镜像 `parseWindowsFontFamilies`）。
 pub fn parse_windows_font_families(registry_output: &str) -> Vec<String> {
     let mut families = BTreeSet::new();
     for line in registry_output.lines() {
@@ -108,7 +99,6 @@ fn query_registry(key: &str) -> String {
     }
 }
 
-/// `fonts.listInstalled`：Windows 注册表字体枚举。
 #[tauri::command]
 pub fn fonts_list_installed() -> Result<Vec<String>, String> {
     if std::env::consts::OS != "windows" {
@@ -165,3 +155,4 @@ mod tests {
         assert_eq!(strip_style_suffixes("Bold"), "Bold");
     }
 }
+

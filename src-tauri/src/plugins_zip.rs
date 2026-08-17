@@ -1,16 +1,3 @@
-//! 手写 ZIP / `.tep` 插件包读取器（Stage 5C）。
-//!
-//! 不引入 `zip` crate（crates 离线），按 ZIP 二进制格式手工解析：
-//! - EOCD 记录签名 `0x06054b50`，取**最后一次**出现；
-//! - 中央目录条目签名 `0x02014b50`，本地文件头签名 `0x04034b50`；
-//! - 压缩方法 8 = 原始 DEFLATE → `flate2::read::DeflateDecoder`（不是 ZlibDecoder），
-//!   方法 0 = stored；
-//! - CRC-32 用 `crc32fast` 校验；
-//! - symlink 检测：`(externalFileAttributes >> 16) & 0o170000 == 0o120000`。
-//!
-//! 安全边界（镜像 `src/main/plugins/packageSecurity.ts`）：包字节数、解压后总字节数、
-//! 文件数、单条目字节数、条目路径长度全部设上限；解压时拒绝路径逃逸（`..`/绝对路径），
-//! symlink 条目不写入磁盘。包校验或解压失败时清理临时目录并返回错误。
 use crc32fast::Hasher;
 use flate2::read::DeflateDecoder;
 use std::fs;
@@ -18,15 +5,10 @@ use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// 插件包字节数上限（50MB，镜像 `packageSecurity.ts` `MAX_PLUGIN_PACKAGE_BYTES`）。
 pub const MAX_PLUGIN_PACKAGE_BYTES: usize = 50 * 1024 * 1024;
-/// 插件包解压后总字节数上限（100MB）。
 pub const MAX_PLUGIN_EXTRACTED_BYTES: usize = 100 * 1024 * 1024;
-/// 插件包文件数上限（2000）。
 pub const MAX_PLUGIN_PACKAGE_FILES: usize = 2000;
-/// 单个条目解压后字节数上限（50MB）。
 pub const MAX_PLUGIN_ENTRY_BYTES: usize = 50 * 1024 * 1024;
-/// 单个条目路径长度上限（4096）。
 pub const MAX_PLUGIN_ENTRY_PATH_LENGTH: usize = 4096;
 
 const EOCD_SIGNATURE: u32 = 0x0605_4b50;
@@ -35,10 +17,8 @@ const LOCAL_HEADER_SIGNATURE: u32 = 0x0403_4b50;
 const METHOD_STORED: u16 = 0;
 const METHOD_DEFLATED: u16 = 8;
 
-/// 临时目录名序号（避免同毫秒并发冲突）。
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// 中央目录单条目（字段来自中央目录，解压位置/大小再结合本地文件头）。
 struct CentralEntry {
     file_name: String,
     method: u16,
@@ -62,7 +42,6 @@ fn read_u32(bytes: &[u8], offset: usize) -> u32 {
     ])
 }
 
-/// 定位 EOCD 记录（最后一次出现的签名）。
 fn find_eocd(bytes: &[u8]) -> Result<usize, String> {
     let mut last: Option<usize> = None;
     let mut i = 0;
@@ -79,7 +58,6 @@ fn find_eocd(bytes: &[u8]) -> Result<usize, String> {
     Ok(offset)
 }
 
-/// 解析中央目录为条目列表。
 fn parse_central_directory(
     bytes: &[u8],
     offset: usize,
@@ -133,7 +111,6 @@ fn parse_central_directory(
     Ok(entries)
 }
 
-/// 解压并写入单个条目；目录与 symlink 条目跳过。写入前做路径逃逸与大小上限检查。
 fn extract_entry(bytes: &[u8], entry: &CentralEntry, dest_root: &Path) -> Result<(), String> {
     if entry.file_name.is_empty() {
         return Ok(());
@@ -214,7 +191,6 @@ fn extract_entry(bytes: &[u8], entry: &CentralEntry, dest_root: &Path) -> Result
     fs::write(&dest, &decompressed).map_err(|error| format!("写入插件文件失败：{error}"))
 }
 
-/// 创建独立的临时解压目录（`std::env::temp_dir()` 下，进程 id + 纳秒时间戳 + 序号）。
 fn new_temp_dir() -> Result<PathBuf, String> {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -229,8 +205,6 @@ fn new_temp_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// 校验 `.tep` 包并解压到临时目录，返回临时目录路径。包不合法或超限时清理并返回错误；
-/// 调用方负责在成功后清理返回的目录。
 pub fn validate_and_extract_tep(bytes: &[u8]) -> Result<PathBuf, String> {
     if bytes.len() > MAX_PLUGIN_PACKAGE_BYTES {
         return Err("插件包超过 50MB 上限".to_string());
@@ -271,8 +245,6 @@ pub fn validate_and_extract_tep(bytes: &[u8]) -> Result<PathBuf, String> {
     Ok(temp_root)
 }
 
-/// 按 `.tep` 语义定位插件根目录：根目录下直接有 `plugin.json` 用根目录；否则在解压树中
-/// 递归查找包含 `plugin.json` 的目录，**唯一**命中时返回该目录，否则报错。
 pub fn locate_plugin_root(temp_root: &Path) -> Result<PathBuf, String> {
     if temp_root.join("plugin.json").is_file() {
         return Ok(temp_root.to_path_buf());
@@ -306,7 +278,6 @@ mod tests {
     use flate2::Compression;
     use std::io::Write;
 
-    /// 手工构造最小 ZIP（stored 条目）。返回字节。
     fn make_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut local_parts: Vec<Vec<u8>> = Vec::new();
         let mut central_parts: Vec<Vec<u8>> = Vec::new();
@@ -515,3 +486,4 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 }
+

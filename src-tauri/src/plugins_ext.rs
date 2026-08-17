@@ -1,12 +1,3 @@
-//! 扩展命令（Stage 5B）。
-//!
-//! `extensions.executeCommand` / `extensions.readThemeStylesheet` 由激活的插件宿主实现：
-//! - `executeCommand`：把命令路由到已注册该 UI command 的宿主（插件激活时经
-//!   `extensions/registerUi` 登记），未找到时返回结构化错误（镜像 Electron
-//!   `manager.executeUiCommand` 的「UI command 未注册」语义）。
-//! - `readThemeStylesheet`：从已启用插件的 manifest `contributes.themes` 声明中取
-//!   `stylesheet`，canonical 化后与请求路径比对，拒绝未注册路径与路径穿越/symlink 逃逸
-//!   （镜像 Electron `isRegisteredThemeStylesheet`）。
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -16,7 +7,6 @@ use crate::path_policy;
 use crate::plugin_host;
 use crate::plugins;
 
-/// `extensions.executeCommand`：路由到注册该命令的宿主。
 pub async fn execute_command(
     app: &AppHandle,
     command: &str,
@@ -48,8 +38,6 @@ pub async fn execute_command(
     Err(format!("UI command 未注册：{normalized}"))
 }
 
-/// `extensions.readThemeStylesheet`：仅允许读取已启用插件 `contributes.themes`
-/// 声明的 stylesheet；路径必须 canonical 化后与声明完全一致。
 pub async fn read_theme_stylesheet(
     app: &AppHandle,
     stylesheet_path: &str,
@@ -172,3 +160,4 @@ mod tests {
         assert_eq!(sliced.as_array().map(Vec::len), Some(16));
     }
 }
+

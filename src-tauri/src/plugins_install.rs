@@ -1,19 +1,3 @@
-//! 插件安装（Stage 5C）：`plugins.installFromPath` / `plugins.chooseAndInstall`。
-//!
-//! 镜像 Electron `manager.ts installFromPath` 的语义。Tauri 无插件宿主，省略
-//! 启动/回滚/事务队列等运行时副作用，保留文件落盘与持久化状态合并：
-//! - 来源必须是目录或 `.tep` 包（`插件来源不存在` / `插件来源必须是目录或 .tep 文件`）；
-//!   `.tep` 先读字节（50MB 上限）再走 `plugins_zip::validate_and_extract_tep`
-//!   校验解压到临时目录，按 `locate_plugin_root` 定位 plugin.json。
-//! - manifest 必须通过 `plugins::validate_manifest`；内置插件拒绝覆盖
-//!   （`自带插件随 Twilight Echo 分发，不能用本地包覆盖安装`）。
-//! - 信任对话框在 `spawn_blocking` 内跑（tauri-plugin-dialog 的 blocking API），
-//!   取消报 `已取消插件安装`。
-//! - 提交到 `{pluginsRoot}/{id}/{version}/`；状态合并保留 enabled/installedAt/
-//!   nativeDspParameters 等既有字段，刷新 updatedAt/source/activeVersion，
-//!   清除 lastError。
-//! - 返回 `{"plugin": descriptor, "warning": TRUST_WARNING}`（warning 固定为
-//!   信任式安装提示，与 Electron 一致）。
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,16 +8,12 @@ use crate::path_policy;
 use crate::plugins;
 use crate::plugins_zip;
 
-/// 信任式安装成功后返回的固定 warning（与 Electron `installFromPath` 一致）。
 const TRUST_WARNING: &str = "信任式安装：插件拥有与应用相同的权限，请仅安装可信来源。";
 
-/// `plugins.installFromPath`：来源为目录或 `.tep` 包，信任确认后安装。
 pub async fn install_from_path(app: AppHandle, source_path: String) -> Result<Value, String> {
     install_impl(app, source_path, None).await
 }
 
-/// 索引安装内部入口：来源强制为 `.tep` 临时包，sourceType 固定 `index`。
-/// 由 `plugins_index::install_from_index` 调用。
 pub(crate) async fn install_index_package(
     app: AppHandle,
     package_path: String,
@@ -41,11 +21,6 @@ pub(crate) async fn install_index_package(
     install_impl(app, package_path, Some("index")).await
 }
 
-/// `plugins.chooseAndInstall`：文件对话框选 `.tep` 包，取消返回 `None`。
-///
-/// tauri-plugin-dialog 只有独立 `blocking_pick_file` / `blocking_pick_folder`，
-/// 不支持 Electron 的 openFile+openDirectory 同框；Tauri 侧按文件选择实现
-/// （`.tep` + All Files 过滤），不支持直接选目录。
 pub async fn choose_and_install(app: AppHandle) -> Result<Option<Value>, String> {
     let picked = {
         let app = app.clone();
@@ -185,9 +160,6 @@ async fn install_staged(
     }))
 }
 
-/// 状态合并（镜像 manager.ts `installFromPath` 的 nextState 形状）：
-/// `{...previousState, enabled: wasEnabled, installedAt: previous?.installedAt ?? now,
-/// updatedAt: now, source, activeVersion, lastError: undefined}`。
 fn merged_install_state(previous: &Value, now: &str, source_type: &str, version: &str) -> Value {
     let mut record = previous.clone();
     if let Some(object) = record.as_object_mut() {
@@ -211,8 +183,6 @@ fn merged_install_state(previous: &Value, now: &str, source_type: &str, version:
     record
 }
 
-/// 信任对话框（spawn_blocking 内）：`OkCancelCustom("安装", "取消")`、kind Warning、
-/// 标题 `安装 Twilight Echo 插件`、消息 `安装 {name}？`；true = 确认。
 async fn confirm_trust(app: &AppHandle, name: &str) -> Result<bool, String> {
     let app = app.clone();
     let message = format!("安装 {name}？");
@@ -232,8 +202,6 @@ async fn confirm_trust(app: &AppHandle, name: &str) -> Result<bool, String> {
     Ok(confirmed)
 }
 
-/// 递归复制目录树；跳过位于插件根目录内的源路径（防止把插件目录拷进自身，
-/// 镜像 Electron `cp` 的 `!isInsidePath(path, roots.plugins)` 过滤）。
 fn copy_tree(source: &Path, target: &Path, plugins_root: &Path) -> Result<(), String> {
     let plugins_root_canonical = plugins_root.canonicalize().ok();
     copy_tree_inner(source, target, plugins_root_canonical.as_deref())
@@ -365,3 +333,4 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 }
+

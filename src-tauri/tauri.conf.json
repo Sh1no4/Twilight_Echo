@@ -4,9 +4,9 @@
   "version": "1.0.5",
   "identifier": "com.twilightecho.app",
   "build": {
-    "beforeDevCommand": "pnpm run build:plugin-host && pnpm run build:audio-engine:node",
+    "beforeDevCommand": "pnpm run build:plugin-host && pnpm run build:audio-engine:node && pnpm run stage:node-runtime",
     "devUrl": "http://127.0.0.1:5173",
-    "beforeBuildCommand": "pnpm run build:web && pnpm run build:plugin-host && pnpm run build:audio-engine:node",
+    "beforeBuildCommand": "pnpm run build:web && pnpm run build:plugin-host && pnpm run build:audio-engine:node && pnpm run stage:node-runtime",
     "frontendDist": "../out/renderer"
   },
   "app": {
@@ -89,7 +89,8 @@
       "../resources/plugins/ncm-provider": "plugins/ncm-provider",
       "../resources/plugin-index": "plugin-index",
       "../out/plugin-host/pluginHostNode.js": "sidecar/pluginHostNode.js",
-      "../out/audio-engine/audioEngineNode.js": "sidecar/audioEngineNode.js"
+      "../out/audio-engine/audioEngineNode.js": "sidecar/audioEngineNode.js",
+      "../resources/sidecar/node.exe": "sidecar/node.exe"
     }
   }
 }

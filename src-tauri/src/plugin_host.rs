@@ -1,18 +1,3 @@
-//! 插件宿主 sidecar 监管（Stage 5B）。
-//!
-//! Tauri 不重写 JavaScript 插件运行时：`src/main/plugins/hostCore.ts` 是共享宿主核心，
-//! Electron 用 utility-process transport，Tauri 用 `src/main/plugins/pluginHostNode.ts`
-//! 作为 Node sidecar（stdin/stdout JSON-lines）。本模块负责：
-//!
-//! - **生命周期**：`ensure_host` 按需 spawn 宿主子进程并完成 `activate` 握手；
-//!   `stop_host` 发 `deactivate` 并终止；应用退出由 `NodeSidecar::Drop` 统一回收。
-//! - **RPC 转发**：`host_message_loop` 读宿主 stdout，按 `requestId` 匹配终止消息
-//!   （`activated` / `provider-result` / `ui-command-result` / `deactivated`），并响应
-//!   宿主发出的 `api-call`（内部 NCM 网关代理、Provider/UI 注册登记）。
-//! - **崩溃状态**：stdout 通道关闭（进程退出）返回结构化「连接中断」错误，调用方据此
-//!   把宿主移出注册表，下一次调用重新 spawn，实现惰性崩溃恢复。
-//!
-//! 协议与 `src/main/plugins/hostCore.ts` / `hostTransport.ts` 完全一致。
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
@@ -28,16 +13,12 @@ use crate::ncm_gateway;
 use crate::node_sidecar::NodeSidecar;
 use crate::plugins::{self, ProviderCallRegistry};
 
-/// 宿主激活握手超时（镜像 Electron `PLUGIN_ACTIVATE_TIMEOUT_MS`）。
 pub(crate) const HOST_ACTIVATE_TIMEOUT_MS: u64 = 5000;
-/// 停用/关闭超时（镜像 Electron `PLUGIN_DEACTIVATE_TIMEOUT_MS`）。
 const HOST_DEACTIVATE_TIMEOUT_MS: u64 = 1500;
-/// UI command 调用超时（镜像 Electron `PLUGIN_UI_COMMAND_TIMEOUT_MS`）。
 const HOST_UI_COMMAND_TIMEOUT_MS: u64 = 5000;
 
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// 生成宿主 RPC request id（无 uuid crate 依赖：时间戳 + 单调计数器）。
 pub(crate) fn next_request_id() -> String {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -49,31 +30,19 @@ pub(crate) fn next_request_id() -> String {
     )
 }
 
-/// 一个运行中的插件宿主。
 pub(crate) struct HostHandle {
-    /// 全双工 sidecar；RPC 期间持有该锁（tokio Mutex 允许跨 await 持有）。
     pub(crate) sidecar: AsyncMutex<NodeSidecar>,
-    /// 插件注册的 Provider（provider id → registration descriptor）。
     pub(crate) providers: Mutex<HashMap<String, Value>>,
-    /// 插件注册的 UI command（小写），供 `extensions.executeCommand` 路由。
     pub(crate) ui_commands: Mutex<Vec<String>>,
-    /// 插件订阅的应用事件名。
     pub(crate) subscriptions: Mutex<Vec<String>>,
     pub(crate) log_path: PathBuf,
 }
 
-/// 插件宿主注册表（Tauri managed state）。
 #[derive(Default)]
 pub(crate) struct PluginHostRegistry {
     pub(crate) hosts: AsyncMutex<HashMap<String, Arc<HostHandle>>>,
 }
 
-/// 解析插件宿主脚本路径，返回 `(script, node_args)`。
-///
-/// 优先级：环境变量覆盖 → 打包资源 `{resource}/sidecar/pluginHostNode.js` →
-/// 插件宿主专用构建产物 `out/plugin-host/pluginHostNode.js` →
-/// Electron main 构建产物 `out/main/pluginHostNode.js` → 仓库源码 `pluginHostNode.ts`
-/// （`--experimental-strip-types`，与 sidecar 端到端测试同路径）。
 pub(crate) fn resolve_host_script(app: &AppHandle) -> Result<(PathBuf, Vec<String>), String> {
     if let Ok(override_path) = std::env::var("TWILIGHT_PLUGIN_HOST_SCRIPT") {
         let candidate = PathBuf::from(override_path);
@@ -103,7 +72,6 @@ pub(crate) fn resolve_host_script(app: &AppHandle) -> Result<(PathBuf, Vec<Strin
     Err("找不到插件宿主脚本（pluginHostNode.js / pluginHostNode.ts）".to_string())
 }
 
-/// 校验插件 `main` 入口：存在、canonical 化后在版本根目录内，拒绝路径穿越与 symlink 逃逸。
 fn resolve_plugin_file(version_root: &Path, main: &str) -> Result<PathBuf, String> {
     let candidate = version_root.join(main);
     if !candidate.is_file() {
@@ -121,10 +89,6 @@ fn resolve_plugin_file(version_root: &Path, main: &str) -> Result<PathBuf, Strin
     Ok(canonical)
 }
 
-/// 确保指定插件宿主已启动并激活；返回共享句柄。
-///
-/// 持有注册表锁跨整个 spawn+activate（避免并发重复 spawn）；激活失败时句柄丢弃，
-/// `NodeSidecar::Drop` 终止子进程，错误向上传播。
 pub(crate) async fn ensure_host(
     app: &AppHandle,
     plugin_id: &str,
@@ -228,8 +192,6 @@ pub(crate) async fn ensure_host(
     }
 }
 
-/// 停用并终止指定插件宿主（disable / uninstall 时调用）。尽力发 `deactivate`，
-/// 无论成败都移除注册表，句柄丢弃触发 `NodeSidecar::Drop` 终止子进程。
 pub(crate) async fn stop_host(app: &AppHandle, plugin_id: &str) {
     let registry = app.state::<PluginHostRegistry>();
     let handle = registry.hosts.lock().await.remove(plugin_id);
@@ -254,7 +216,6 @@ pub(crate) async fn stop_host(app: &AppHandle, plugin_id: &str) {
     }
 }
 
-/// 把宿主移出注册表并终止（宿主崩溃/连接中断后调用，下一次调用惰性重新 spawn）。
 pub(crate) async fn drop_host(app: &AppHandle, plugin_id: &str) {
     let registry = app.state::<PluginHostRegistry>();
     let handle = registry.hosts.lock().await.remove(plugin_id);
@@ -264,7 +225,6 @@ pub(crate) async fn drop_host(app: &AppHandle, plugin_id: &str) {
     }
 }
 
-/// 应用退出时统一回收宿主（由 `lib.rs` 的 `RunEvent::Exit | ExitRequested` 调用）。
 pub(crate) fn shutdown(app: &AppHandle) {
     let registry = app.state::<PluginHostRegistry>();
     let hosts = registry.hosts.try_lock();
@@ -273,11 +233,6 @@ pub(crate) fn shutdown(app: &AppHandle) {
     }
 }
 
-/// 向宿主发起一次 Provider 调用并等待 `provider-result`。
-///
-/// `cancel_registry` / `cancel_key` 用于取消检测：`providers_cancel` 从
-/// `ProviderCallRegistry` 移除 request id 后，本循环在下一次读前发现缺失即返回
-/// 「已取消」，无需打断宿主持有的 sidecar 锁。
 pub(crate) async fn provider_call(
     handle: &Arc<HostHandle>,
     request: &Value,
@@ -321,7 +276,6 @@ pub(crate) async fn provider_call(
     .await
 }
 
-/// 向宿主发起一次 UI command 调用并等待 `ui-command-result`。
 pub(crate) async fn ui_command(
     handle: &Arc<HostHandle>,
     command: &str,
@@ -369,8 +323,6 @@ pub(crate) async fn ui_command(
     .await
 }
 
-/// 宿主消息循环：可选先发一条 `initial`，然后读消息直到 `terminal` 匹配或超时。
-/// 非终止消息交给 `on_host_message`（log / api-call 等），需要回写时发送应答。
 async fn host_message_loop(
     handle: &Arc<HostHandle>,
     timeout: Duration,
@@ -417,7 +369,6 @@ async fn host_message_loop(
     }
 }
 
-/// 处理宿主发出的非终止消息。返回 `Some(reply)` 表示需要向宿主回写一条消息。
 async fn on_host_message(handle: &Arc<HostHandle>, msg: &Value) -> Result<Option<Value>, String> {
     let kind = msg.get("kind").and_then(Value::as_str).unwrap_or("");
     match kind {
@@ -456,11 +407,6 @@ async fn on_host_message(handle: &Arc<HostHandle>, msg: &Value) -> Result<Option
     }
 }
 
-/// 分派宿主 `api-call`（镜像 Electron `manager.handleApiCall` 的能力边界）：
-/// - `providers/register`：登记 Provider 注册并回写成功；
-/// - `extensions/registerUi`：登记 UI command；
-/// - `internal/ncmRequest`：把请求代理到本地 NCM 网关（cookie 与幂等键随消息传入）；
-/// - 其余内部 API / 播放器 API 在 Tauri 尚未提供，回写结构化错误（不伪装成功）。
 async fn dispatch_host_api_call(
     handle: &Arc<HostHandle>,
     request_id: &str,
@@ -569,7 +515,6 @@ async fn dispatch_host_api_call(
     Ok(api_result)
 }
 
-/// 把宿主日志行追加到插件日志文件（与 Electron `appendLog` 语义一致）。
 fn append_host_log(log_path: &Path, level: &str, message: &str) {
     if let Some(parent) = log_path.parent() {
         let _ = fs::create_dir_all(parent);
@@ -623,9 +568,6 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
-    /// 端到端验证：spawn 真实 `pluginHostNode.ts`，激活一个临时测试插件
-    /// （register provider → provider-call → provider-result）。需要 node 与仓库源码；
-    /// 默认忽略，手动 `-- --ignored` 运行。
     #[test]
     #[ignore = "requires node + repo source"]
     fn host_runs_provider_call_end_to_end() {
@@ -755,3 +697,4 @@ export function deactivate() {}
         let _ = fs::remove_dir_all(&temp);
     }
 }
+

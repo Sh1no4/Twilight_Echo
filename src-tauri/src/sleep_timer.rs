@@ -1,24 +1,12 @@
-//! `sleepTimer` surface（Stage 7D）。
-//!
-//! 镜像 Electron `SleepTimerService`（`src/main/sleepTimerCore.ts` + 共享
-//! `src/shared/sleepTimer.ts`）：
-//! - 主进程持有权威状态；`configure` / `cancel` / `boundary` 更新状态并向渲染层广播
-//!   `sleepTimer:status` / `sleepTimer:trigger` 事件；
-//! - `minutes` 模式使用后台 tokio 任务在 `endsAt` 到达时触发；`trackEnd` /
-//!   `queueEnd` 由播放结束边界经 `sleep_timer_boundary` 上报时判定。
-//!
-//! 与 Electron 一致：状态是进程内（不落盘），渲染层把活动计时器随播放会话持久化。
 
 use serde_json::{json, Value};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 
-/// 与 `SleepTimerState`（`src/shared/sleepTimer.ts`）字段一致。
 #[derive(Clone, Debug, PartialEq)]
 struct SleepTimerState {
     mode: String,
-    /// 毫秒时间戳；非 `minutes` 模式为 `None`。
     ends_at: Option<i64>,
     fade_seconds: i64,
     active: bool,
@@ -42,7 +30,6 @@ pub struct SleepTimerRuntime {
     state: Option<SleepTimerState>,
 }
 
-/// Tauri managed state：权威睡眠定时器状态。
 pub struct SleepTimerStateInner(pub Mutex<SleepTimerRuntime>);
 
 fn now_ms() -> i64 {
@@ -52,7 +39,6 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// 镜像 `isSleepTimerState`：字段类型 / 取值域 / `active !== triggered` 不变量。
 fn parse_state(value: &Value) -> Option<SleepTimerState> {
     let object = value.as_object()?;
     let mode = object.get("mode").and_then(Value::as_str)?.to_string();
@@ -90,7 +76,6 @@ fn parse_state(value: &Value) -> Option<SleepTimerState> {
     })
 }
 
-/// 镜像 `isActiveSleepTimerState`：已武装（active 且未触发，minutes 未过期）。
 fn is_active_state(state: &SleepTimerState, now: i64) -> bool {
     if !state.active || state.triggered {
         return false;
@@ -101,7 +86,6 @@ fn is_active_state(state: &SleepTimerState, now: i64) -> bool {
     true
 }
 
-/// 镜像 `shouldTriggerSleepTimer`。
 fn should_trigger(state: &SleepTimerState, now: i64, event: &str) -> bool {
     if !state.active || state.triggered {
         return false;
@@ -131,7 +115,6 @@ fn emit_status(app: &AppHandle) {
     let _ = app.emit("sleepTimer:status", state_or_null(&guard));
 }
 
-/// 触发判定：仅当当前状态仍对应当前事件时置为已触发并广播。
 fn trigger_if_due(app: &AppHandle, event: &str) {
     let runtime = app.state::<SleepTimerStateInner>();
     let mut guard = runtime.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -152,7 +135,6 @@ fn trigger_if_due(app: &AppHandle, event: &str) {
     emit_status(app);
 }
 
-/// minutes 模式后台任务：等 `ends_at` 到达后触发。
 fn spawn_minutes_tick(app: AppHandle, ends_at: i64, _fade_seconds: i64) {
     tokio::spawn(async move {
         let now = now_ms();
@@ -164,7 +146,6 @@ fn spawn_minutes_tick(app: AppHandle, ends_at: i64, _fade_seconds: i64) {
     });
 }
 
-/// `sleepTimer.configure`。
 #[tauri::command]
 pub fn sleep_timer_configure(app: AppHandle, state: Value) -> Result<Value, String> {
     let parsed = parse_state(&state).ok_or_else(|| "Invalid sleep timer state".to_string())?;
@@ -187,7 +168,6 @@ pub fn sleep_timer_configure(app: AppHandle, state: Value) -> Result<Value, Stri
     Ok(parsed.as_value())
 }
 
-/// `sleepTimer.cancel`。
 #[tauri::command]
 pub fn sleep_timer_cancel(app: AppHandle) -> Value {
     let runtime = app.state::<SleepTimerStateInner>();
@@ -201,7 +181,6 @@ pub fn sleep_timer_cancel(app: AppHandle) -> Value {
     Value::Null
 }
 
-/// `sleepTimer.getState`。
 #[tauri::command]
 pub fn sleep_timer_get_state(app: AppHandle) -> Value {
     let runtime = app.state::<SleepTimerStateInner>();
@@ -212,7 +191,6 @@ pub fn sleep_timer_get_state(app: AppHandle) -> Value {
     state_or_null(&guard)
 }
 
-/// `sleepTimer.boundary`（trackEnd / queueEnd）。
 #[tauri::command]
 pub fn sleep_timer_boundary(app: AppHandle, boundary: String) -> Result<Value, String> {
     if boundary != "trackEnd" && boundary != "queueEnd" {
@@ -286,3 +264,4 @@ mod tests {
         assert!(!should_trigger(&fired, now_ms(), "trackEnd"));
     }
 }
+

@@ -1,14 +1,3 @@
-//! NCM 网关实验性桥接（prototype，未提交的验证代码）。
-//!
-//! 验证"Path 2"：Rust 侧把 Node 网关
-//! （`@neteasecloudmusicapienhanced/api`，同 Electron `setupNcmApi()`）作为独立子进程
-//! spawn 到 `127.0.0.1:3100`，再把 `providers_call` 的 NCM 调用通过本地 HTTP 代理过去，
-//! 拿到真实网易云 JSON 响应。
-//!
-//! 这不是生产实现：
-//! - 只有零鉴权方法（`getQrKey`）的 方法→网关路径 映射（provider 逻辑在 Node 侧）。
-//! - 阻塞式 HTTP 走 `spawn_blocking`，以 `tokio::time::timeout` 覆盖超时分层。
-//! - 子进程经 `crate::node_sidecar::spawn_node_process` 登记，应用退出时统一终止。
 
 use serde_json::Value;
 use std::io::{Read, Write};
@@ -16,7 +5,6 @@ use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
 use std::time::Duration;
 
-/// 网关监听地址（与 `src/main/ncm/api.ts` 的 `NCM_API_HOST` / `NCM_API_PORT` 对齐）。
 pub const GATEWAY_HOST: &str = "127.0.0.1";
 pub const GATEWAY_PORT: u16 = 3100;
 
@@ -29,7 +17,6 @@ fn try_connect() -> Option<TcpStream> {
     TcpStream::connect_timeout(&addr, Duration::from_millis(500)).ok()
 }
 
-/// 端口已可连通（无论网关由谁提供）。
 pub fn port_open() -> bool {
     try_connect().is_some()
 }
@@ -50,8 +37,6 @@ fn gateway_script_path() -> Option<PathBuf> {
     }
 }
 
-/// 如端口未在服务则 spawn 网关子进程（幂等）。子进程经由 `node_sidecar` 登记，
-/// 应用退出时统一终止，不再残留孤儿进程。
 fn spawn_if_needed() -> Result<(), String> {
     if port_open() {
         return Ok(());
@@ -62,7 +47,6 @@ fn spawn_if_needed() -> Result<(), String> {
         .map_err(|error| format!("启动 NCM 网关失败（需要 Node.js）：{error}"))
 }
 
-/// 确保网关就绪（spawn + 轮询端口），最多等待 `timeout`。
 async fn ensure_gateway(timeout: Duration) -> Result<(), String> {
     spawn_if_needed()?;
     let deadline = tokio::time::Instant::now() + timeout;
@@ -75,7 +59,6 @@ async fn ensure_gateway(timeout: Duration) -> Result<(), String> {
     Err(format!("NCM 网关在 {}ms 内未就绪", timeout.as_millis()))
 }
 
-/// 解析 chunked 响应体。
 fn decode_chunked(mut body: &str) -> Result<String, String> {
     let mut out = String::new();
     loop {
@@ -98,7 +81,6 @@ fn decode_chunked(mut body: &str) -> Result<String, String> {
     Ok(out)
 }
 
-/// 阻塞式 HTTP/1.1 GET（std `TcpStream`，读超时 = `timeout`）。返回 (status, body)。
 fn http_get_blocking(
     path_and_query: &str,
     headers: &[(String, String)],
@@ -153,10 +135,6 @@ fn http_get_blocking(
     Ok((status, body))
 }
 
-/// 将一次 NCM 网关调用代理到本地 Node 网关并返回 JSON。
-///
-/// `path` 为网关路径（含查询串），`headers` 为额外请求头（如 Cookie / 幂等键），
-/// `timeout` 覆盖超时分层（读超时 + 整体超时）。
 pub async fn proxy_json_call(
     path: &str,
     headers: Vec<(String, String)>,
@@ -181,8 +159,6 @@ pub async fn proxy_json_call(
 mod tests {
     use super::*;
 
-    /// 端到端验证：spawn Node 网关 → Rust 代理 → 真实网易云 `/login/qr/key`。
-    /// 需要 `node` 在 PATH 且本机可访问网易云接口；默认忽略，手动 `-- --ignored` 运行。
     #[test]
     #[ignore = "requires node + network"]
     fn proxy_reaches_real_ncm_endpoint() {
@@ -208,3 +184,4 @@ mod tests {
         );
     }
 }
+

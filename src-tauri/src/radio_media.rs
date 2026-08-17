@@ -1,14 +1,3 @@
-//! `radio` / `podcast` 共享持久化（Stage 7D）。
-//!
-//! 迁移 Electron `radio:loadStations` / `saveStations` /
-//! `podcast:loadSubscriptions` / `saveSubscriptions` 到真实 Tauri command，
-//! 复用 `persistence` 的 versioned envelope + CAS 语义，与 Electron 的
-//! `VersionedDataStore`（`radio-stations.json` / `podcast-subscriptions.json`）一致：
-//! 写冲突返回 `{ code: 'ERR_PERSISTENCE_REVISION_CONFLICT', ... }`，读缺失返回
-//! 默认空文档信封。
-//!
-//! 校验器镜像 `src/shared/radioStations.ts` / `podcastSubscriptions.ts` 的关键不变量
-//! （schemaVersion、数组上限、必填字符串字段、http(s) URL），拒绝结构无效的写入。
 
 use serde_json::Value;
 use std::path::PathBuf;
@@ -33,7 +22,6 @@ fn data_file(app: &AppHandle, name: &str) -> PathBuf {
     path_policy::categorized_data_path(&policy, "database", &[name])
 }
 
-/// 镜像 `isHttpOrHttpsUrl`：非空、长度受限、无 NUL/CRLF、http(s) 且无内嵌凭据。
 fn is_http_or_https_url(value: &Value, max_length: usize) -> bool {
     let Some(raw) = value.as_str() else {
         return false;
@@ -224,7 +212,6 @@ fn is_podcast_subscriptions_document(value: &Value) -> bool {
     subscriptions.len() <= MAX_PODCAST_SUBSCRIPTIONS && subscriptions.iter().all(is_podcast_subscription)
 }
 
-/// 读取版本化信封；缺失 / 损坏时返回默认空文档信封（与 Electron `loadXxx ?? default` 一致）。
 fn load_or_default(app: &AppHandle, name: &str, max_bytes: u64, is_data: fn(&Value) -> bool, default: Value) -> Value {
     persistence::load_versioned(&data_file(app, name), max_bytes, is_data)
         .ok()
@@ -239,7 +226,6 @@ fn load_or_default(app: &AppHandle, name: &str, max_bytes: u64, is_data: fn(&Val
         })
 }
 
-/// `radio.loadStations`。
 #[tauri::command]
 pub fn radio_load_stations(app: AppHandle) -> Value {
     load_or_default(
@@ -251,7 +237,6 @@ pub fn radio_load_stations(app: AppHandle) -> Value {
     )
 }
 
-/// `radio.saveStations`。
 #[tauri::command]
 pub fn radio_save_stations(
     app: AppHandle,
@@ -267,7 +252,6 @@ pub fn radio_save_stations(
     )
 }
 
-/// `podcast.loadSubscriptions`。
 #[tauri::command]
 pub fn podcast_load_subscriptions(app: AppHandle) -> Value {
     load_or_default(
@@ -279,7 +263,6 @@ pub fn podcast_load_subscriptions(app: AppHandle) -> Value {
     )
 }
 
-/// `podcast.saveSubscriptions`。
 #[tauri::command]
 pub fn podcast_save_subscriptions(
     app: AppHandle,
@@ -379,3 +362,4 @@ mod tests {
         assert!(!is_podcast_subscription(&bad_duration));
     }
 }
+

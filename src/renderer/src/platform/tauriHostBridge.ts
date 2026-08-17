@@ -102,6 +102,7 @@ function dspAssetFilters(kind: string): Array<{ name: string; extensions: string
     case 'vst3State':
       return [{ name: 'VST3 State', extensions: ['vststate', 'bin'] }]
     default:
+      // Unrecognized DSP kind: no filter set (callers treat this as no constraint).
       return []
   }
 }

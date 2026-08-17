@@ -1,17 +1,3 @@
-//! 插件市场索引（Stage 5C）：`plugins.listIndex` / `refreshIndex` / `getIndexStatus` /
-//! `installFromIndex` / `setNativeDspParameters`。
-//!
-//! 镜像 Electron `indexService.ts` + `ipc/plugins.ts` 的语义：
-//! - `listIndex` / `refreshIndex` 返回索引条目，叠加 `installState`（built-in-blocked →
-//!   incompatible → not-installed → update-available → installed）与 `installedVersion`。
-//! - 索引来源：打包资源 `plugin-index/plugins.json`（`app.path().resource_dir()`）；
-//!   `refreshIndex` 先经 `plugin_index_gateway::proxy_index_json` 拉远端，失败时回退
-//!   打包索引并在状态里记录 stale/error。
-//! - `getIndexStatus` 返回完整 `TwilightPluginIndexStatus`（14 字段）形态。
-//! - `installFromIndex`：normalize id → 找条目 → 自带/兼容性检查 →
-//!   `proxy_package_bytes` 下载 → SHA-256 校验 → 写临时 `package.tep` →
-//!   以 sourceType='index' 调 `plugins_install` 的公共安装逻辑。
-//! - `setNativeDspParameters`：仅 DSP 插件可设置，值必须是有限数字。
 use serde_json::{json, Map, Value};
 use std::fs;
 use std::path::PathBuf;
@@ -25,10 +11,8 @@ use crate::plugin_index_gateway;
 use crate::plugins;
 use crate::plugins_install;
 
-/// 插件 id 上限（Electron `MAX_PLUGIN_ID_LENGTH`）。
 const MAX_PLUGIN_ID_LENGTH: usize = 128;
 
-/// 最近一次远端索引加载结果（`refreshIndex` 写入，`getIndexStatus` 读取以反映 stale）。
 static LAST_INDEX_ERROR: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
 fn set_last_index_error(error: Option<String>) {
@@ -45,13 +29,11 @@ fn last_index_error() -> Option<String> {
         .and_then(|slot| slot.clone())
 }
 
-/// `plugins.listIndex`：读打包索引，叠加安装状态。
 pub fn list_index(app: AppHandle) -> Result<Vec<Value>, String> {
     let entries = read_index_entries(&app)?;
     Ok(listing_from_entries(&app, entries))
 }
 
-/// `plugins.refreshIndex`：先经网关拉远端索引，失败回退打包索引（stale=true）。
 pub async fn refresh_index(app: AppHandle) -> Result<Vec<Value>, String> {
     let fetched = plugin_index_gateway::proxy_index_json(Duration::from_secs(60)).await;
     match fetched {
@@ -77,7 +59,6 @@ pub async fn refresh_index(app: AppHandle) -> Result<Vec<Value>, String> {
     }
 }
 
-/// `plugins.getIndexStatus`：返回完整 `TwilightPluginIndexStatus`（14 字段）。
 pub fn get_index_status(app: AppHandle) -> Result<Value, String> {
     let source_url = index_file_url(&app);
     let error = last_index_error();
@@ -100,7 +81,6 @@ pub fn get_index_status(app: AppHandle) -> Result<Value, String> {
     }))
 }
 
-/// `plugins.installFromIndex`：normalize id → 找条目 → 校验 → 下载 + checksum → 安装。
 pub async fn install_from_index(app: AppHandle, id: String) -> Result<Value, String> {
     let id = normalize_plugin_id(&id)?;
     let entries = read_index_entries(&app)?;
@@ -156,7 +136,6 @@ pub async fn install_from_index(app: AppHandle, id: String) -> Result<Value, Str
     result
 }
 
-/// `plugins.setNativeDspParameters`：校验 + 持久化 DSP 原生参数。
 pub fn set_native_dsp_parameters(
     app: AppHandle,
     id: String,
@@ -206,7 +185,6 @@ pub fn set_native_dsp_parameters(
 
 // ── 索引读取与条目合成 ────────────────────────────────────────────────
 
-/// 打包索引文件：`{resource_dir}/plugin-index/plugins.json`，开发模式回退到仓库资源。
 fn bundled_index_path(app: &AppHandle) -> PathBuf {
     if let Ok(resource_dir) = app.path().resource_dir() {
         let candidate = resource_dir.join("plugin-index").join("plugins.json");
@@ -226,14 +204,12 @@ fn bundled_index_path(app: &AppHandle) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../resources/plugin-index/plugins.json")
 }
 
-/// 索引文件 `file://` URL（`getIndexStatus.sourceUrl` 使用）。
 fn index_file_url(app: &AppHandle) -> String {
     Url::from_file_path(bundled_index_path(app))
         .map(|url| url.to_string())
         .unwrap_or_else(|_| "file:///".to_string())
 }
 
-/// 读取并解析打包索引，返回 `{schemaVersion, plugins}` 对象。
 fn read_index_entries(app: &AppHandle) -> Result<Value, String> {
     let path = bundled_index_path(app);
     let raw = fs::read_to_string(&path).map_err(|error| format!("读取插件索引失败：{error}"))?;
@@ -248,13 +224,11 @@ fn read_index_entries(app: &AppHandle) -> Result<Value, String> {
         .unwrap_or(Value::Array(vec![])))
 }
 
-/// 最小索引结构校验（镜像 Electron `isPluginIndexRaw`）。
 fn is_valid_index(index: &Value) -> bool {
     index.get("schemaVersion").and_then(Value::as_u64) == Some(1)
         && index.get("plugins").and_then(Value::as_array).is_some()
 }
 
-/// 条目 → 列表项：叠加 `installState` 与 `installedVersion`（镜像 `ipc/plugins.ts`）。
 fn listing_from_entries(app: &AppHandle, entries: Value) -> Vec<Value> {
     let installed = plugins::plugins_list(app.clone());
     let installed_array = installed.as_array().cloned().unwrap_or_default();
@@ -285,8 +259,6 @@ fn listing_from_entries(app: &AppHandle, entries: Value) -> Vec<Value> {
         .collect()
 }
 
-/// 安装状态判定顺序：built-in-blocked → incompatible → not-installed →
-/// update-available → installed（镜像 `indexService.describeInstallState`）。
 fn describe_install_state(entry: &Value, installed: &[Value]) -> &'static str {
     let id = entry.get("id").and_then(Value::as_str).unwrap_or("");
     if id == plugins::BUNDLED_PLUGIN_ID {
@@ -319,7 +291,6 @@ fn describe_install_state(entry: &Value, installed: &[Value]) -> &'static str {
     "installed"
 }
 
-/// 三字段数字比较（镜像 `indexService.compareSemver`）：a > b → 正数，a < b → 负数。
 fn compare_semver(a: &str, b: &str) -> i32 {
     let a = plugins::parse_version(a).unwrap_or((0, 0, 0));
     let b = plugins::parse_version(b).unwrap_or((0, 0, 0));
@@ -335,8 +306,6 @@ fn compare_semver(a: &str, b: &str) -> i32 {
     0
 }
 
-/// normalize plugin id（镜像 `ipc/plugins.ts normalizePluginId`：
-/// `[a-z0-9]+(?:[.-][a-z0-9]+)+`，长度 ≤ 128）。
 fn normalize_plugin_id(id: &str) -> Result<String, String> {
     let normalized = id.trim().to_lowercase();
     if !is_valid_plugin_id(&normalized) {
@@ -383,7 +352,6 @@ fn is_valid_plugin_id(id: &str) -> bool {
     groups >= 1
 }
 
-/// SHA-256 十六进制小写（与 `entry.checksumSha256` 比较）。
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let digest = Sha256::digest(bytes);
@@ -486,3 +454,4 @@ mod tests {
         );
     }
 }
+
