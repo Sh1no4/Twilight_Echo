@@ -788,6 +788,18 @@ pub fn run() {
             let window = webview.window();
             let _ = window.set_title("Twilight Echo");
         })
+        .on_window_event(|window, event| {
+            // 关闭主窗口即退出整个应用（走 `RunEvent::Exit` 统一清理 sidecar），
+            // 否则隐藏的辅助窗口（mini/tray/desktop-lyrics 均 `visible:false`）仍存活，
+            // Tauri「所有窗口关闭才退出」不会触发，WebView 进程随之残留。
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let handle = window.app_handle().clone();
+                    std::thread::spawn(move || handle.exit(0));
+                }
+            }
+        })
         .build(tauri::generate_context!())
         .expect("failed to build Twilight Echo")
         .run(|app, event| {
