@@ -117,9 +117,11 @@ test('Rust providers_list gates the static NCM registration on manifest and pers
     /Ok\(manifest\) if manifest\.get\("id"\)\.and_then\(Value::as_str\) == Some\(BUNDLED_PLUGIN_ID\)/
   )
   // A disabled bundled plugin hides the provider; a missing state record defaults to enabled.
+  // `[\s\S]*?` spans line endings and interleaved blank lines/comments so the
+  // assertion is independent of LF/CRLF checkouts.
   assert.match(
     pluginsSource,
-    /let enabled = state\n\s*\.get\(BUNDLED_PLUGIN_ID\)\n\s*\.and_then\(\|record\| record\.get\("enabled"\)\)\n\s*\.and_then\(Value::as_bool\)\n\s*\.unwrap_or\(true\);/
+    /let enabled = state[\s\S]*?\.get\(BUNDLED_PLUGIN_ID\)[\s\S]*?\.and_then\(\|record\| record\.get\("enabled"\)\)[\s\S]*?\.and_then\(Value::as_bool\)[\s\S]*?\.unwrap_or\(true\);/
   )
   assert.match(pluginsSource, /if !enabled \{\s*return Value::Array\(vec!\[\]\);/)
 })
