@@ -1,6 +1,21 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import type { TwilightMediaProviderRegistration } from '../../../packages/plugin-api/src/index.ts'
+import type { TwilightMediaProviderMethod } from './types.ts'
+
+type ProviderRegistrationMethodKeys = Exclude<
+  keyof TwilightMediaProviderRegistration,
+  'id' | 'name' | 'capabilities' | 'health'
+>
+type MethodsMissingFromRegistration = Exclude<
+  TwilightMediaProviderMethod,
+  ProviderRegistrationMethodKeys
+>
+type MethodsMissingFromUnion = Exclude<ProviderRegistrationMethodKeys, TwilightMediaProviderMethod>
+type AssertNever<T> = [T] extends [never] ? true : never
+const registrationCoversUnion: AssertNever<MethodsMissingFromRegistration> = true
+const unionCoversRegistration: AssertNever<MethodsMissingFromUnion> = true
 
 const managerSource = readFileSync(new URL('./manager.ts', import.meta.url), 'utf8')
 const statePersistenceSource = readFileSync(
@@ -53,6 +68,11 @@ const pluginExtensionPageSource = readFileSync(
   new URL('../../renderer/src/components/PluginExtensionPage.vue', import.meta.url),
   'utf8'
 )
+
+test('provider method union and plugin-api registration typings stay in sync', () => {
+  assert.equal(registrationCoversUnion, true)
+  assert.equal(unionCoversRegistration, true)
+})
 
 test('plugin manager keeps UI command failures isolated to the owning plugin', () => {
   assert.match(managerSource, /const PLUGIN_UI_COMMAND_TIMEOUT_MS = 5000/)

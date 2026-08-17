@@ -40,6 +40,7 @@ import type {
   Vst3CatalogState
 } from '../shared/dspGraph.ts'
 import type { ImportedFrequencyResponse } from '../shared/frequencyResponse.ts'
+import type { AppStartupSnapshot } from '../shared/appStartup.ts'
 import type {
   ThemeAssetReference,
   ThemeAssetType,
@@ -877,6 +878,7 @@ interface WindowAPI {
   }
   opra: OpraAPI
   app: {
+    getStartupSnapshot: () => Promise<AppStartupSnapshot>
     consumePendingNavigation: () => Promise<TrayNavigationTarget | null>
     relaunch: () => Promise<void>
     checkForUpdates: () => Promise<import('../shared/appUpdate').AppUpdateCheckResult>

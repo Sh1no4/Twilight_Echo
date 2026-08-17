@@ -87,7 +87,7 @@ test('playbar lyrics manager panel manages provider tracks and projects into Pla
       /--lyric-word-progress|--lyric-depth-scale/,
       'the retired scroll-driven progress and depth variables should be gone'
     )
-    await writeFile(htmlPath, runtimeHtml(bundleName), 'utf8')
+    await writeFile(htmlPath, runtimeHtml(bundleName, styleName), 'utf8')
     await writeFile(runnerPath, electronRunnerSource(), 'utf8')
 
     const electronPath = require('electron') as string
@@ -196,8 +196,8 @@ window.runPlayingLyricWordsRuntime = async () => {
       offsetSeconds: 0,
       clock,
       words: [
-        { time: 1, endTime: 2, text: 'Null. ' },
-        { time: 2, endTime: 3, text: 'No light' }
+        { time: 1, endTime: 2.2, text: 'Null. ' },
+        { time: 2.2, endTime: 3, text: 'No light' }
       ]
     })
   }).mount('#app')
@@ -351,8 +351,8 @@ window.runPlayingLyricWordsRuntime = async () => {
       offsetSeconds: 0,
       clock,
       words: [
-        { time: 1, endTime: 2, text: 'Null. ' },
-        { time: 2, endTime: 3, text: 'No light' }
+        { time: 1, endTime: 2.2, text: 'Null. ' },
+        { time: 2.2, endTime: 3, text: 'No light' }
       ]
     })
   }).mount(disabledRoot)
@@ -367,6 +367,34 @@ window.runPlayingLyricWordsRuntime = async () => {
   expect(
     !maskAnimation(disabledWord),
     'disabled karaoke still animated a mask position'
+  )
+
+  const reducedRoot = document.createElement('div')
+  document.body.appendChild(reducedRoot)
+  createApp({
+    render: () => h(PlayingLyricWords, {
+      active: true,
+      karaokeEnabled: true,
+      motionMode: 'reduced',
+      offsetSeconds: 0,
+      clock,
+      words: [
+        { time: 1, endTime: 2.2, text: 'Reduced ' },
+        { time: 2.2, endTime: 3, text: 'motion' }
+      ]
+    })
+  }).mount(reducedRoot)
+  await nextTick()
+  await new Promise((resolve) => requestAnimationFrame(resolve))
+  const reducedWords = [...reducedRoot.querySelectorAll('.lyric-word')]
+  expect(reducedWords.length > 0, 'reduced motion lyrics were not rendered')
+  expect(
+    reducedWords.every((word) => word.getAnimations().length === 0),
+    'reduced motion still created WAAPI animations'
+  )
+  expect(
+    reducedWords.every((word) => word.style.getPropertyValue('mask-image') === ''),
+    'reduced motion still installed a karaoke mask'
   )
   console.log('PLAYING_LYRIC_WORDS_RUNTIME_OK')
 }
@@ -406,7 +434,12 @@ function runtimeEntrySource(): string {
     workspaceRoot,
     'src/renderer/src/stores/usePlayerStore.ts'
   ).replaceAll('\\', '/')
-  return `import { createApp, h, nextTick } from 'vue'
+  const mainStylePath = join(
+    workspaceRoot,
+    'src/renderer/src/assets/main.css'
+  ).replaceAll('\\', '/')
+  return `import ${JSON.stringify(mainStylePath)}
+import { createApp, h, nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import PlayingMusic from ${JSON.stringify(componentPath)}
 import LyricsManagerPanel from ${JSON.stringify(panelPath)}
@@ -897,13 +930,81 @@ window.runPlayingMusicLyricsRuntime = async () => {
     'switching back left the later active line at the top of the stage; tops=' +
       restoredRows.map(rowTop).join(',')
   )
+
+  const duetTrack = {
+    ...track,
+    id: 'fixture-provider:duet',
+    title: 'Explicit duet',
+    lyrics: [
+      '[00:01.00][te:voice role=lead lane=start speaker=Alice group=chorus]First voice',
+      '[00:01.00][te:voice role=lead lane=end speaker=Bob group=chorus]Second voice',
+      '[00:01.20][te:voice role=harmony lane=end speaker=Bob group=chorus]Soft harmony',
+      '[00:04.00]Ordinary line'
+    ].join('\\n'),
+    translatedLyrics: '[00:01.00]组合翻译',
+    lyricsSource: 'embedded'
+  }
+  player.currentTrack.value = structuredClone(duetTrack)
+  player.queue.value = [structuredClone(duetTrack)]
+  player.currentTime.value = 1.5
+  player.seek(1.5)
+  await tick()
+  installStageGeometry()
+  await new Promise((resolve) => setTimeout(resolve, 120))
+
+  const duetRows = [...document.querySelectorAll('.lyric-row')]
+  expect(duetRows.length === 2, 'explicit group did not collapse to one seek row; rows=' + duetRows.length)
+  const duetRow = duetRows[0]
+  expect(duetRow.querySelectorAll('.lyric-lane--start .lyric-voice--lead').length === 1, 'start lead lane missing')
+  expect(duetRow.querySelectorAll('.lyric-lane--end .lyric-voice--lead').length === 1, 'end lead lane missing')
+  expect(duetRow.querySelectorAll('.lyric-voice--harmony').length === 1, 'harmony layer missing')
+  expect(duetRow.querySelectorAll('.lyric-translation').length === 1, 'translation was duplicated across duet lanes')
+  expect(duetRow.getAttribute('aria-label').includes('First voice；Second voice；Soft harmony'), 'duet aria label omitted a voice')
+  expect(duetRow.classList.contains('is-singing'), 'hot duet row did not receive singing state')
+  expect(duetRow.getAttribute('aria-current') === 'true', 'duet anchor was not exposed separately')
+  expect(!duetRow.textContent.includes('[te:voice'), 'internal voice marker leaked into the playing page')
+
+  document.documentElement.dataset.teMotion = 'reduced'
+  await tick()
+  await new Promise((resolve) => setTimeout(resolve, 160))
+  const reducedRows = [...document.querySelectorAll('.lyric-row')]
+    .map((row) => row.getBoundingClientRect())
+    .sort((left, right) => left.top - right.top)
+  expect(reducedRows.length === 2, 'reduced-motion duet did not retain both lyric rows')
+  expect(
+    reducedRows[1].top >= reducedRows[0].bottom - 0.5,
+    'reduced motion collapsed absolute lyric rows at top zero'
+  )
+
+  document.documentElement.dataset.teMotion = 'full'
+  await tick()
+  const remountRoot = document.createElement('div')
+  document.body.appendChild(remountRoot)
+  const remountedApp = createApp({ render: () => h(PlayingMusic) }).use(pinia)
+  remountedApp.mount(remountRoot)
+  await tick()
+  await new Promise((resolve) => setTimeout(resolve, 160))
+  const remountedRows = [...remountRoot.querySelectorAll('.lyric-row')]
+  expect(remountedRows.length === 2, 'an already-active track did not render lyrics on page mount')
+  expect(
+    remountedRows.every((row) => row.style.getPropertyValue('--lyric-line-ready') === '1'),
+    'mount activation cleared lyric row registrations before their first layout'
+  )
+  expect(
+    remountedRows[0].style.getPropertyValue('--lyric-line-top') !==
+      remountedRows[1].style.getPropertyValue('--lyric-line-top'),
+    'freshly mounted lyric rows were left stacked at one position'
+  )
+  remountedApp.unmount()
+  remountRoot.remove()
   console.log('PLAYING_MUSIC_LYRICS_RUNTIME_OK')
 }
 `
 }
 
-function runtimeHtml(bundleName: string): string {
-  return `<!doctype html><html><body><div id="app"></div>
+function runtimeHtml(bundleName: string, styleName?: string): string {
+  const stylesheet = styleName ? `<link rel="stylesheet" href="bundle/${styleName}">` : ''
+  return `<!doctype html><html><head><meta charset="utf-8">${stylesheet}</head><body><div id="app"></div>
 <script>
 window.process = { env: {} }
 window.__lyricsFixture = {
@@ -1018,15 +1119,137 @@ window.api = {
 }
 
 function electronRunnerSource(): string {
+  const readySource = `(() => {
+    const row = document.querySelector('.lyric-row.is-singing')
+    const cover = document.querySelector('.cover-frame')
+    const metadata = document.querySelector('.cover-meta')
+    if (!row || !cover || !metadata || row.style.getPropertyValue('--lyric-line-ready') !== '1') {
+      return false
+    }
+    const rowRect = row.getBoundingClientRect()
+    const coverRect = cover.getBoundingClientRect()
+    const metadataRect = metadata.getBoundingClientRect()
+    return (
+      rowRect.bottom > 0 &&
+      rowRect.top < innerHeight &&
+      coverRect.width > 0 &&
+      coverRect.bottom > 0 &&
+      metadataRect.width > 0 &&
+      Number.parseFloat(getComputedStyle(cover).opacity) > 0.99 &&
+      Number.parseFloat(getComputedStyle(metadata).opacity) > 0.99
+    )
+  })()`
+  const resetFixtureGeometrySource = `(() => {
+    const stage = document.querySelector('.lyrics-scroll')
+    if (stage) {
+      delete stage.clientHeight
+      delete stage.clientWidth
+    }
+    document.querySelectorAll('.lyric-row').forEach((row) => {
+      delete row.offsetHeight
+    })
+    window.dispatchEvent(new Event('resize'))
+  })()`
+  const _diagnosticsSource = `(() => {
+    const page = document.querySelector('.playing-music')
+    const stage = document.querySelector('.lyrics-scroll')
+    const cover = document.querySelector('.cover-frame')
+    const metadata = document.querySelector('.cover-meta')
+    const row = document.querySelector('.lyric-row.is-singing')
+    const start = row?.querySelector('.lyric-lane--start')
+    const end = row?.querySelector('.lyric-lane--end')
+    const pageRect = page?.getBoundingClientRect()
+    const rowRect = row?.getBoundingClientRect()
+    const startRect = start?.getBoundingClientRect()
+    const endRect = end?.getBoundingClientRect()
+    const rowElements = [...document.querySelectorAll('.lyric-row')]
+    const rowMetrics = rowElements.map((entry) => {
+      const rect = entry.getBoundingClientRect()
+      return {
+        top: rect.top,
+        bottom: rect.bottom,
+        height: rect.height,
+        offsetHeight: entry.offsetHeight,
+        scrollHeight: entry.scrollHeight,
+        lineTop: entry.style.getPropertyValue('--lyric-line-top'),
+        scale: entry.style.getPropertyValue('--lyric-line-scale')
+      }
+    })
+    const rows = rowElements
+      .map((entry) => entry.getBoundingClientRect())
+      .filter((rect) => rect.bottom > 0 && rect.top < innerHeight)
+      .sort((left, right) => left.top - right.top)
+    return {
+      viewport: [innerWidth, innerHeight],
+      page: pageRect ? [pageRect.left, pageRect.right, pageRect.top, pageRect.bottom] : null,
+      row: rowRect ? [rowRect.left, rowRect.right, rowRect.top, rowRect.bottom] : null,
+      fixtureGeometryVisible: Boolean(
+        stage &&
+        (Object.hasOwn(stage, 'clientHeight') || Object.hasOwn(stage, 'clientWidth'))
+      ) || rowElements.some((entry) => Object.hasOwn(entry, 'offsetHeight')),
+      coverVisible: Boolean(
+        cover &&
+        metadata &&
+        cover.getBoundingClientRect().width > 0 &&
+        metadata.getBoundingClientRect().width > 0 &&
+        Number.parseFloat(getComputedStyle(cover).opacity) > 0.99 &&
+        Number.parseFloat(getComputedStyle(metadata).opacity) > 0.99
+      ),
+      lanesOverlap: Boolean(startRect && endRect && startRect.right > endRect.left && startRect.bottom > endRect.top && startRect.top < endRect.bottom),
+      rowMetrics,
+      rowsOverlap: rows.some((rect, index) => index > 0 && rect.top < rows[index - 1].bottom - 0.5),
+      horizontalOverflow: document.documentElement.scrollWidth > innerWidth || document.body.scrollWidth > innerWidth,
+      markerVisible: document.body.innerText.includes('[te:voice')
+    }
+  })()`
   return `const { app, BrowserWindow } = require('electron')
+const { mkdir, writeFile } = require('node:fs/promises')
 const path = require('node:path')
 const target = process.argv.at(-1)
+const visualDir = process.env.TWILIGHT_LYRIC_VISUAL_DIR || ''
+const userDataDir = process.env.TWILIGHT_ELECTRON_USER_DATA_DIR || ''
+if (userDataDir) {
+  app.setPath('userData', userDataDir)
+  app.commandLine.appendSwitch('disk-cache-dir', path.join(userDataDir, 'cache'))
+}
 app.whenReady().then(async () => {
-  const window = new BrowserWindow({ show: false, webPreferences: { contextIsolation: false, nodeIntegration: false } })
+  const window = new BrowserWindow({ show: false, width: 1440, height: 900, webPreferences: { contextIsolation: false, nodeIntegration: false } })
   window.webContents.on('console-message', (_event, _level, message, line, sourceId) => console.error('RENDERER', sourceId + ':' + line, message))
   try {
     await window.loadFile(path.resolve(target))
     await window.webContents.executeJavaScript('window.runPlayingMusicLyricsRuntime()')
+    if (visualDir) {
+      await mkdir(visualDir, { recursive: true })
+      await window.webContents.executeJavaScript(${JSON.stringify(resetFixtureGeometrySource)})
+      const viewports = [[1440, 900], [1024, 768], [760, 900], [390, 844]]
+      for (const [width, height] of viewports) {
+        window.setContentSize(width, height)
+        await window.webContents.executeJavaScript('window.dispatchEvent(new Event("resize"))')
+        const readyDeadline = Date.now() + 2400
+        while (Date.now() < readyDeadline) {
+          const ready = await window.webContents.executeJavaScript(${JSON.stringify(readySource)})
+          if (ready) break
+          await new Promise((resolve) => setTimeout(resolve, 80))
+        }
+        await new Promise((resolve) => setTimeout(resolve, 520))
+        const diagnostics = await window.webContents.executeJavaScript(${JSON.stringify(_diagnosticsSource)})
+        if (
+          diagnostics.fixtureGeometryVisible ||
+          !diagnostics.coverVisible ||
+          diagnostics.horizontalOverflow ||
+          diagnostics.markerVisible ||
+          diagnostics.rowsOverlap
+        ) {
+          throw new Error('visual diagnostics failed at ' + width + 'x' + height + ': ' + JSON.stringify(diagnostics))
+        }
+        if (width >= 620 && diagnostics.lanesOverlap) {
+          throw new Error('duet lanes overlap at ' + width + 'x' + height + ': ' + JSON.stringify(diagnostics))
+        }
+        const image = await window.webContents.capturePage()
+        await writeFile(path.join(visualDir, 'playing-lyrics-' + width + 'x' + height + '.png'), image.toPNG())
+        console.error('LYRIC_VISUAL', width + 'x' + height, JSON.stringify(diagnostics))
+      }
+    }
     app.exit(0)
   } catch (error) {
     console.error('PLAYING_MUSIC_LYRICS_RUNTIME_FAILED', error && error.stack ? error.stack : error)

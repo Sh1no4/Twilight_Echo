@@ -2,7 +2,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Track } from '../types/music'
 
-const { createUnifiedRecentTrackResolver, resolveUnifiedRecentTracks } = (await import(
+const {
+  createUnifiedRecentTrackResolver,
+  getUnifiedRecentResolverRebuildCount,
+  resetUnifiedRecentResolverCacheForTests,
+  resolveUnifiedRecentTracks
+} = (await import(
   new URL('./unifiedRecentTracks.ts', import.meta.url).href
 )) as typeof import('./unifiedRecentTracks')
 const {
@@ -329,8 +334,14 @@ test('local removal policy clears an unavailable active track and every queue re
   assert.equal(result.activeTrackRemoved, true)
   assert.equal(result.currentTrack, null)
   assert.equal(result.queueIndex, -1)
-  assert.deepEqual(result.queue.map((track) => track.id), ['local:other'])
-  assert.deepEqual(result.originalQueue.map((track) => track.id), ['local:other'])
+  assert.deepEqual(
+    result.queue.map((track) => track.id),
+    ['local:other']
+  )
+  assert.deepEqual(
+    result.originalQueue.map((track) => track.id),
+    ['local:other']
+  )
 })
 
 test('a pruned non-current queue remains pruned after session serialization and restart', () => {
@@ -360,14 +371,20 @@ test('a pruned non-current queue remains pruned after session serialization and 
   ) as { track: Track; queue: Track[]; queueIndex: number }
 
   assert.equal(restartedSession.track.id, localTrack.id)
-  assert.deepEqual(restartedSession.queue.map((track) => track.id), [localTrack.id])
+  assert.deepEqual(
+    restartedSession.queue.map((track) => track.id),
+    [localTrack.id]
+  )
   assert.equal(restartedSession.queueIndex, 0)
 })
 
 test('mixed provider and local selections only feed local files to library actions', () => {
   const selected = selectLocalLibraryActionTracks([localTrack, providerTrack])
 
-  assert.deepEqual(selected.map((track) => track.id), ['local:moon'])
+  assert.deepEqual(
+    selected.map((track) => track.id),
+    ['local:moon']
+  )
 })
 
 test('successful store removals can publish one queue-cleanup event for every entry point', () => {
@@ -384,4 +401,34 @@ test('successful store removals can publish one queue-cleanup event for every en
   assert.deepEqual(events, [
     { trackIds: ['local:moon'], filePaths: ['D:\\Music\\Moon River.flac'] }
   ])
+})
+
+test('recent resolver indexes are rebuilt once per tracks array identity', () => {
+  resetUnifiedRecentResolverCacheForTests()
+  const localTracks = [localTrack, providerTrack]
+  const stat = {
+    id: 'ncm:moon',
+    seconds: 60,
+    plays: 1,
+    skips: 0,
+    completions: 0,
+    lastPlayed: 2_000,
+    title: 'Moon River',
+    artist: 'Audrey',
+    cover: providerTrack.cover,
+    sourceIds: [{ source: 'ncm', trackId: providerTrack.id }],
+    track: providerTrack
+  }
+
+  const first = createUnifiedRecentTrackResolver(localTracks)
+  const second = createUnifiedRecentTrackResolver(localTracks)
+
+  assert.equal(first(stat)?.id, 'local:moon')
+  assert.equal(second(stat)?.id, 'local:moon')
+  assert.equal(getUnifiedRecentResolverRebuildCount(), 1)
+
+  createUnifiedRecentTrackResolver([...localTracks])
+  assert.equal(getUnifiedRecentResolverRebuildCount(), 2)
+
+  resetUnifiedRecentResolverCacheForTests()
 })

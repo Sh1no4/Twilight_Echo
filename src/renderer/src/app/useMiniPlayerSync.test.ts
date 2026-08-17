@@ -86,6 +86,21 @@ test('mini player snapshot carries timed lyric lines for the multi-line view', (
   ])
 })
 
+test('mini player projects explicit duet markers to readable text without leaking metadata', () => {
+  const duet = makeTrack({
+    lyrics: [
+      '[00:01.00][te:voice role=lead lane=start group=duet]First',
+      '[00:01.00][te:voice role=lead lane=end group=duet]Second',
+      '[00:01.20][te:voice role=harmony lane=end group=duet]Harmony'
+    ].join('\n'),
+    translatedLyrics: '[00:01.00]组合翻译'
+  })
+  const snapshot = buildMiniPlayerStateSnapshot(makeSource(duet, 1.5))
+  assert.equal(snapshot.lyrics[0]?.original, 'First · Second')
+  assert.equal(snapshot.lyrics[0]?.translation, '组合翻译')
+  assert.ok(!snapshot.lyrics[0]?.original.includes('[te:voice'))
+})
+
 test('mini player lyric lines ignore plain untimed lyrics', () => {
   const plain = makeTrack({ lyrics: 'Just a plain lyric line', translatedLyrics: '' })
   const snapshot = buildMiniPlayerStateSnapshot(makeSource(plain, 10))

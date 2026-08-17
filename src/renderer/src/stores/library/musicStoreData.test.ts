@@ -260,3 +260,21 @@ test('local library track guards require complete local track fields', () => {
   assert.equal(isLocalLibraryTrack(null), false)
   assert.equal(isLocalLibraryTrack([]), false)
 })
+
+test('playlistDataEqual treats undefined-valued keys as absent with JSON semantics', () => {
+  assert.ok(playlistDataEqual({ id: 'a', cover: undefined }, { id: 'a' }))
+  assert.ok(!playlistDataEqual({ id: 'a' }, { id: 'a', cover: 'x' }))
+  assert.ok(playlistDataEqual(['a', 'b'], ['a', 'b']))
+  assert.ok(!playlistDataEqual(['a', 'b'], ['b', 'a']))
+  assert.ok(
+    playlistDataEqual({ nested: { list: [1, { x: 'y' }] } }, { nested: { list: [1, { x: 'y' }] } })
+  )
+})
+
+test('clonePlaylist produces independent plain copies of nested data', () => {
+  const source = { name: 'p', trackIds: ['a'], trackSnapshots: { a: { id: 'a', title: 't' } } }
+  const copy = clonePlaylist(source)
+  assert.deepEqual(copy, source)
+  assert.notEqual(copy, source)
+  assert.notEqual(copy.trackSnapshots, source.trackSnapshots)
+})

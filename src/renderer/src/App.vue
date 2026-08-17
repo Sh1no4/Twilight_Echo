@@ -10,7 +10,7 @@ import {
 } from 'vue'
 import TitleBar from './components/TitleBar.vue'
 import SideMenu from './components/SideMenu.vue'
-import PlayerBar from './components/PlayerBar.vue'
+const PlayerBar = defineAsyncComponent(() => import('./components/PlayerBar.vue'))
 const LocalDashboard = defineAsyncComponent(() => import('./components/LocalDashboard.vue'))
 const SongList = defineAsyncComponent(() => import('./components/SongList.vue'))
 const PlayingMusic = defineAsyncComponent(() => import('./components/PlayingMusic.vue'))
@@ -35,8 +35,8 @@ import { useNcmStore } from './stores/useNcmStore'
 import { setupListeningStatsTracking } from './stores/useListeningStatsStore'
 import { usePlayerStore } from './stores/usePlayerStore'
 import { useSettingsStore } from './stores/useSettingsStore'
-import { useThemeStore } from './stores/useThemeStore'
-import { setupPluginThemeRuntime } from './extensions/themeRuntime'
+import { useThemeStore, applyActiveTheme, bootstrapThemeRuntime } from './stores/useThemeStore'
+import { getStartupSnapshot } from './app/startupSnapshot'
 import { useExtensionRegistry } from './extensions/registry'
 import { syncPluginProviders, useMediaProviders } from './providers'
 import { useAppNavigation } from './app/useAppNavigation'
@@ -48,6 +48,7 @@ import { useMotionPreference } from './app/useMotionPreference'
 import { useLiquidGlassEnvironment } from './composables/useLiquidGlassEnvironment'
 import { useAppNoticeStore } from './stores/useAppNoticeStore'
 import { getTrackSource } from './utils/logicalTrackModel'
+import { scheduleIdleTask, type IdleTaskHandle } from './app/scheduleIdleTask'
 import {
   getPrimaryStreamingArtistName,
   type StreamingArtistNavigationRequest
@@ -59,6 +60,7 @@ import type { AppBackgroundPage } from './types/settings'
 
 type TitleSurface = 'default' | 'settings' | 'streaming'
 type StreamingInitialTab = 'home' | 'library' | 'recent'
+let idleLoginCheck: IdleTaskHandle | null = null
 
 const navigation = useAppNavigation()
 const {
@@ -353,7 +355,7 @@ useMiniPlayerSync({
   setPlayMode,
   toggleFavorite
 })
-const { loadSettings, settings, updateSettings } = useSettingsStore()
+const { loadSettings, hydrateStartupSnapshot, settings, updateSettings } = useSettingsStore()
 useMotionPreference(computed(() => settings.value.motionPreference))
 const { uiContributions, syncExtensions } = useExtensionRegistry()
 const STREAMING_ACCOUNT_PAGE_KEYS = new Set(['com.twilightecho.provider.ytmusic:ytmusic-account'])
@@ -481,14 +483,18 @@ function flushPendingPersistenceForExit(): void {
 }
 
 onMounted(async () => {
-  setupPluginThemeRuntime()
   setupListeningStatsTracking({ currentTrack, isPlaying, currentTime, duration })
-  const loadedSettings = await loadSettings()
+  const startupSnapshot = await getStartupSnapshot()
+  await bootstrapThemeRuntime(startupSnapshot ?? undefined)
+  const loadedSettings = startupSnapshot
+    ? hydrateStartupSnapshot(startupSnapshot)
+    : await loadSettings()
   removeAppNavigationListener = window.api.app.onNavigate((target) => {
     applyExternalNavigation(target)
     void window.api.app.consumePendingNavigation()
   })
-  const pendingNavigation = await window.api.app.consumePendingNavigation()
+  const pendingNavigation =
+    startupSnapshot?.pendingNavigation ?? (await window.api.app.consumePendingNavigation())
   if (pendingNavigation) applyExternalNavigation(pendingNavigation)
 
   // First-run welcome wizard. The empty-library guard keeps existing users
@@ -534,7 +540,10 @@ onMounted(async () => {
   )
   const extensionsPromise = syncExtensions()
   if (loadedSettings.autoCheckLogin) {
-    void checkLogin()
+    idleLoginCheck = scheduleIdleTask(() => {
+      idleLoginCheck = null
+      void checkLogin()
+    })
   }
 
   // The session restore starts alongside the library load so the home surface
@@ -571,6 +580,7 @@ onMounted(async () => {
 
   // Ensure extensions are loaded before wiring listeners that depend on them.
   await extensionsPromise
+  await applyActiveTheme(false)
   await playlistsPromise
 
   removeCoversMissingListener = window.api.library.onCoversMissing((info) => {
@@ -655,6 +665,8 @@ watch(
 watch(sidebarPages, (pages) => closeMissingPluginPage(pages))
 
 onBeforeUnmount(() => {
+  idleLoginCheck?.cancel()
+  idleLoginCheck = null
   playbackSessionPersistence.stop()
   removePlaybackSessionSaveListener?.()
   removePlaybackSessionSaveListener = null

@@ -736,16 +736,35 @@ export class TwilightPluginManager extends EventEmitter {
       const descriptor = descriptors.find((candidate) => candidate.id === id)
       this.markFailed(id, error, descriptor)
     }
+    // `ordered` is a dependency topological order; activation waits up to 5s
+    // per plugin, so start each dependency level concurrently instead of paying
+    // the sum of every plugin's activation time.
+    const startupDepthById = new Map<string, number>()
+    const wavesByDepth = new Map<number, TwilightPluginDescriptor[]>()
     for (const descriptor of startupPlan.ordered) {
-      if (descriptor.main) {
-        await this.startPlugin(descriptor).catch((error) => {
-          this.markFailed(
-            descriptor.id,
-            error instanceof Error ? error.message : String(error),
-            descriptor
-          )
-        })
+      let depth = 0
+      for (const dependencyId of Object.keys(descriptor.dependencies ?? {})) {
+        depth = Math.max(depth, (startupDepthById.get(dependencyId) ?? -1) + 1)
       }
+      startupDepthById.set(descriptor.id, depth)
+      if (!descriptor.main) continue
+      const wave = wavesByDepth.get(depth) ?? []
+      wave.push(descriptor)
+      wavesByDepth.set(depth, wave)
+    }
+    for (const depth of [...wavesByDepth.keys()].sort((left, right) => left - right)) {
+      const wave = wavesByDepth.get(depth) ?? []
+      await Promise.all(
+        wave.map(async (descriptor) => {
+          await this.startPlugin(descriptor).catch((error) => {
+            this.markFailed(
+              descriptor.id,
+              error instanceof Error ? error.message : String(error),
+              descriptor
+            )
+          })
+        })
+      )
     }
   }
 

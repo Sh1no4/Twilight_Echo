@@ -9,6 +9,7 @@ import type {
   NcmCloudUploadResult,
   TrayNavigationTarget
 } from '../types'
+import type { AppStartupSnapshot } from '../../shared/appStartup.ts'
 import type {
   AppUpdateCheckResult,
   AppUpdateDownloadResult,
@@ -68,6 +69,8 @@ export const systemApi = {
     clearActivity: (): Promise<void> => ipcRenderer.invoke('discord:clearActivity')
   },
   app: {
+    getStartupSnapshot: (): Promise<AppStartupSnapshot> =>
+      ipcRenderer.invoke('app:getStartupSnapshot'),
     consumePendingNavigation: (): Promise<TrayNavigationTarget | null> =>
       ipcRenderer.invoke('app:consumePendingNavigation'),
     relaunch: (): Promise<void> => ipcRenderer.invoke('app:relaunch'),

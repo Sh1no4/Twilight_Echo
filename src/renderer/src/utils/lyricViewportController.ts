@@ -6,7 +6,6 @@ import {
   computeLyricLayout,
   isLyricLineInSight,
   LYRIC_ALIGN_POSITION,
-  LYRIC_SCALE_ACTIVE,
   type LyricAlignAnchor,
   type LyricLayoutLine
 } from './lyricLineLayout.ts'
@@ -37,6 +36,7 @@ export const LYRIC_MANUAL_BROWSE_RESET_MS = 5000
 
 export interface LyricRowElement {
   offsetHeight: number
+  scrollHeight?: number
   style: {
     setProperty(property: string, value: string): void
     removeProperty(property: string): void
@@ -54,6 +54,8 @@ export interface LyricViewportControllerOptions {
   afterLayout: () => Promise<void>
   onManualBrowseChange: (active: boolean) => void
   getActiveIndex?: () => number
+  /** Lines whose concrete vocal span contains the playhead. */
+  getHotIndices?: () => ReadonlySet<number>
   /** Presented (hot plus held) lines. Falls back to the active index. */
   getBufferedIndices?: () => ReadonlySet<number>
   alignPosition?: number
@@ -68,6 +70,8 @@ export interface LyricViewportControllerOptions {
    * which must not count as visible lyric area.
    */
   getBottomReservedPx?: () => number
+  /** Visual breathing room between absolute rows. */
+  getRowGapPx?: () => number
   /** Motion preference. `false` snaps and skips blur, for reduced motion. */
   isSpringEnabled?: () => boolean
   isBlurEnabled?: () => boolean
@@ -167,10 +171,14 @@ export function createLyricViewportController(options: LyricViewportControllerOp
       // containment. `offsetHeight` then collapses to padding, and feeding that
       // back in packs later lines on top of each other after a downward browse.
       if (row.inSight) {
-        const measured = row.element.offsetHeight
+        const measured = Math.max(row.element.offsetHeight, row.element.scrollHeight ?? 0)
         if (measured > 0) row.height = measured
       }
-      return { index, height: row.height, isBackground: row.isBackground }
+      return {
+        index,
+        height: row.height + Math.max(0, options.getRowGapPx?.() ?? 0),
+        isBackground: row.isBackground
+      }
     })
   }
 
@@ -187,6 +195,7 @@ export function createLyricViewportController(options: LyricViewportControllerOp
     const result = computeLyricLayout({
       lines: layoutLines(),
       scrollToIndex,
+      hot: options.getHotIndices?.() ?? bufferedIndices(),
       buffered: bufferedIndices(),
       viewportHeight: stage.clientHeight,
       viewportWidth: stage.clientWidth,
@@ -367,10 +376,14 @@ export function createLyricViewportController(options: LyricViewportControllerOp
       element,
       posY: new LyricSpring(existing?.posY.getCurrentPosition() ?? 0, LYRIC_POS_Y_SPRING),
       scale: new LyricSpring(
-        existing?.scale.getCurrentPosition() ?? LYRIC_SCALE_ACTIVE,
+          existing?.scale.getCurrentPosition() ?? 100,
         isBackground ? LYRIC_BG_SCALE_SPRING : LYRIC_SCALE_SPRING
       ),
-      height: element.offsetHeight || existing?.height || 0,
+      height: Math.max(
+        element.offsetHeight,
+        element.scrollHeight ?? 0,
+        existing?.height ?? 0
+      ),
       isBackground,
       lastTop: null,
       lastScale: null,
@@ -450,12 +463,15 @@ export function createLyricViewportController(options: LyricViewportControllerOp
     void recenter()
   }
 
-  function onResize(): void {
+  function onResize(mode: 'spring' | 'snap' = 'spring'): void {
     if (manualBrowse || cancelResize) return
+    cancelFollow()
     cancelResize = requestAnimationFrameWithFallback(
       () => {
         cancelResize = null
-        if (!manualBrowse) void recenter()
+        if (!manualBrowse && activeTrackId && stage) {
+          applyLayout(mode === 'snap', true)
+        }
       },
       FRAME_FALLBACK_MS,
       scheduler

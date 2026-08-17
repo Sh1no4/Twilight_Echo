@@ -1,4 +1,4 @@
-import { ref, shallowRef, type Ref } from 'vue'
+import { ref, shallowRef, toRaw, type Ref } from 'vue'
 import type { Track } from '../types/music'
 import type {
   LocalLibraryExclusion,
@@ -1157,9 +1157,16 @@ export function useMusicStore(): {
   }
 
   function clonePlaylistSnapshot(source: Playlist[] = playlists.value): Playlist[] {
-    // Playlist records are plain IPC data. JSON cloning both freezes the queued
-    // transaction and strips Vue proxies before it reaches the persistence queue.
-    return JSON.parse(JSON.stringify(source)) as Playlist[]
+    // Freeze the queued transaction and strip Vue proxies before it reaches the
+    // persistence queue. toRaw unwraps the reactive root (nested storage stays
+    // raw); the JSON fallback covers a reactive proxy ever nested in the tree,
+    // which Chromium's structuredClone serializer rejects outright.
+    const raw = toRaw(source)
+    try {
+      return structuredClone(raw)
+    } catch {
+      return JSON.parse(JSON.stringify(raw)) as Playlist[]
+    }
   }
 
   function getPlaylistPersistence(): PlaylistPersistence<Playlist[]> {
@@ -1170,7 +1177,10 @@ export function useMusicStore(): {
         playlistPersistenceStatus.value = status
       },
       flushDelayMs: 250,
-      retryDelayMs: 1_000
+      retryDelayMs: 1_000,
+      // queuePlaylistPersistence only ever enqueues clonePlaylistSnapshot()
+      // results (frozen plain data), so the queue does not need to re-clone.
+      cloneSnapshot: (snapshot) => snapshot
     })
     return playlistPersistence
   }
