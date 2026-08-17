@@ -49,7 +49,9 @@ jobs:
               - '!scripts/configure-audio-engine-mingw.cjs'
               - '!scripts/run-audio-engine-mingw.cjs'
               - '!scripts/stage-audio-engine.cjs'
-              - '!.github/workflows/build-tauri.yml'
+              - '!.github/workflows/**'
+              - '!.github/**'
+              - '!docs/**'
               - '!docs/rust-comments/**'
             audio:
               - 'audio-engine/**'
