@@ -162,7 +162,7 @@ function handleImportClick(): void {
           title="网络源"
           @click="emit('enterNetworkSources')"
         >
-          <i class="item-icon pi pi-server"></i>
+          <i class="item-icon ph ph-network"></i>
           <span class="item-label">网络源</span>
         </button>
         <button

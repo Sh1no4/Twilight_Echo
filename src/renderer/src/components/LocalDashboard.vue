@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useMusicStore } from '../stores/useMusicStore'
 import {
@@ -44,6 +44,12 @@ const { playTrack, togglePlay, next, prev, seek, formatTime, setPlayMode } = pla
 
 const now = ref(new Date())
 
+const DSP_POLL_IDLE_INTERVAL_MS = 10_000
+const DSP_POLL_LIVE_INTERVAL_MS = 1_000
+let dspPollIntervalMs = DSP_POLL_IDLE_INTERVAL_MS
+/* 首页 DSP 卡片默认折叠为状态条，仅保留状态摘要；展开时才渲染路径条与脚注。 */
+const dspRouteExpanded = ref(false)
+
 onMounted(() => {
   window.addEventListener('keydown', onDspRouteDialogKeydown)
   void refreshDspRouteState(true)
@@ -52,7 +58,7 @@ onMounted(() => {
     dspRoutePollTick += 1
     void refreshDspGraphStatus()
     if (dspRoutePollTick % 5 === 0) void refreshDspSceneState()
-  }, 1000)
+  }, dspPollIntervalMs)
 })
 
 onBeforeUnmount(() => {
@@ -380,6 +386,34 @@ const dspRouteError = ref('')
 let dspRoutePoll: number | null = null
 let dspRoutePollTick = 0
 let dspRouteRefreshInFlight = false
+
+/* DSP 轮询档位：折叠态是低频数据，10s 兜底；home 卡片展开或 DSP 弹窗打开时切回 1s
+   实时；页面不可见时完全暂停。此 block 必须位于 dspRouteDialogOpen 声明之后。 */
+const dspPollMode = ref<'idle' | 'live'>('idle')
+
+function applyDspPollMode(): void {
+  const end = dspPollMode.value === 'live'
+  const next = end ? DSP_POLL_LIVE_INTERVAL_MS : DSP_POLL_IDLE_INTERVAL_MS
+  if (next === dspPollIntervalMs || dspRoutePoll === null) return
+  dspPollIntervalMs = next
+  window.clearInterval(dspRoutePoll)
+  dspRoutePoll = window.setInterval(() => {
+    if (document.visibilityState === 'hidden') return
+    dspRoutePollTick += 1
+    void refreshDspGraphStatus()
+    if (dspRoutePollTick % 5 === 0) void refreshDspSceneState()
+  }, dspPollIntervalMs)
+}
+
+watch(
+  [dspPollMode, dspRouteDialogOpen, dspRouteExpanded],
+  () => {
+    dspPollMode.value =
+      dspRouteDialogOpen.value || dspRouteExpanded.value ? 'live' : 'idle'
+    applyDspPollMode()
+  },
+  { immediate: true }
+)
 
 const embeddedDspGraphStatus = computed(
   () =>
@@ -794,6 +828,15 @@ function closeDspRouteDialog(): void {
   dspRouteDialogOpen.value = false
 }
 
+function toggleDspRouteCard(): void {
+  if (dspRouteExpanded.value) {
+    openDspRouteDialog()
+    return
+  }
+  dspRouteExpanded.value = true
+  void refreshDspRouteState(true)
+}
+
 function onDspRouteDialogKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape' && dspRouteDialogOpen.value) closeDspRouteDialog()
 }
@@ -992,12 +1035,14 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
         <!-- ── Live signal path ────────────────────────────────────────── -->
         <section
           class="signal-card"
+          :class="{ 'is-expanded': dspRouteExpanded }"
           role="button"
           tabindex="0"
-          aria-label="打开实时 DSP 输出线路"
-          @click="openDspRouteDialog"
-          @keydown.enter.prevent="openDspRouteDialog"
-          @keydown.space.prevent="openDspRouteDialog"
+          :aria-expanded="dspRouteExpanded"
+          aria-label="实时 DSP 输出线路"
+          @click="toggleDspRouteCard"
+          @keydown.enter.prevent="toggleDspRouteCard"
+          @keydown.space.prevent="toggleDspRouteCard"
         >
           <div class="signal-head">
             <div class="signal-title">
@@ -1018,7 +1063,7 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
             </div>
           </div>
 
-          <div class="dsp-route-strip is-compact">
+          <div v-if="dspRouteExpanded" class="dsp-route-strip is-compact">
             <div class="route-stage route-endpoint-stage" title="播放源">
               <span class="route-stage-icon"><i class="ph ph-music-notes"></i></span>
               <div class="route-stage-copy">
@@ -1060,7 +1105,7 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
             </div>
           </div>
 
-          <div class="signal-foot">
+          <div v-if="dspRouteExpanded" class="signal-foot">
             <span>{{ dspOutputDeviceDetail }}</span>
             <strong>{{ activeDspCount }}/{{ dspRouteStages.length }} LIVE</strong>
           </div>

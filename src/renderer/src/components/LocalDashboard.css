@@ -14,9 +14,9 @@
   --home-accent: var(--te-primary-500);
   --home-tint: color-mix(in srgb, var(--te-primary-500) 12%, transparent);
   --home-cyan-tint: color-mix(in srgb, var(--te-accent-cyan) 12%, transparent);
-  --home-radius-lg: 22px;
-  --home-radius-md: 14px;
-  --home-shadow-color: rgba(15, 23, 42, 0.09);
+  /* 圆角语义：surface（大卡片）16px、control（按钮/图表/节点）10px。 */
+  --home-radius-lg: 16px;
+  --home-radius-md: 10px;
   --home-shadow-strong: rgba(15, 23, 42, 0.16);
   --home-shadow: 0 18px 44px var(--home-shadow-color);
   --home-shadow-lift: 0 24px 56px var(--home-shadow-strong);
@@ -25,7 +25,10 @@
   position: relative;
   isolation: isolate;
   width: 100%;
-  height: 100vh;
+  /* 外层 app shell（custom grid）负责窗口高度，首页只承诺自身最小高度并自行滚动。
+     不再写死 100vh，避免在 125%/150% DPI 与 mini 播放栏叠加时产生双重滚动条。 */
+  min-height: 100%;
+  height: auto;
   overflow-x: hidden;
   overflow-y: auto;
   box-sizing: border-box;
@@ -50,7 +53,7 @@
 
 :global(html[data-window-transparent='on'] .home) {
   min-height: 100vh !important;
-  height: 100vh !important;
+  height: auto !important;
   background: transparent !important;
 }
 
@@ -79,7 +82,8 @@
 .blob {
   position: absolute;
   border-radius: 999px;
-  filter: blur(84px);
+  /* 84px 模糊在 520px 级元素上是首屏最高成本项；收敛到 56px 仍保留氛围光晕，明显降低栅格化开销。 */
+  filter: blur(56px);
   opacity: 0.3;
   will-change: transform;
 }
@@ -311,6 +315,26 @@
   pointer-events: none;
 }
 
+/* ── 低性能档（effects-mode='reduced' / te-no-blur / 透明窗口）────────── *
+   关闭纯装饰的动态氛围与二次模糊，保留正文可读性所需的表面。 */
+html[data-te-effects-mode='reduced'] .home .blob,
+body.te-no-blur .home .blob,
+html[data-window-transparent='on'] .home .empty-orb {
+  animation: none;
+  opacity: 0.14;
+}
+
+html[data-te-effects-mode='reduced'] .home .feature-backdrop img,
+body.te-no-blur .home .feature-backdrop img {
+  filter: none;
+  opacity: 0;
+}
+
+html[data-te-effects-mode='reduced'] .home .empty-orb,
+body.te-no-blur .home .empty-orb {
+  animation: none;
+}
+
 .empty-orb-a {
   width: 340px;
   height: 340px;
@@ -356,7 +380,7 @@
   place-items: center;
   width: 74px;
   height: 74px;
-  border-radius: 22px;
+  border-radius: var(--home-radius-lg);
   font-size: 30px;
   color: var(--home-accent);
   background: linear-gradient(135deg, var(--home-tint), var(--home-cyan-tint));
@@ -490,6 +514,7 @@
      blurred backdrop, a 0.5 cover wash turns the hero into mud. */
   opacity: var(--home-hero-art-alpha, 0.5);
   transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 :global(html[data-theme='dark'] .home .feature-backdrop img) {
@@ -755,7 +780,7 @@
 .hero-art-echo {
   position: absolute;
   inset: 0;
-  border-radius: 20px;
+  border-radius: var(--home-radius-lg);
   background: linear-gradient(135deg, var(--home-tint), var(--home-cyan-tint));
   transform: rotate(6deg) translate(10px, 6px);
   transition: transform 0.4s var(--te-ease-soft);
@@ -765,7 +790,7 @@
   position: absolute;
   inset: 0;
   display: block;
-  border-radius: 20px;
+  border-radius: var(--home-radius-lg);
   overflow: hidden;
   box-shadow:
     0 26px 54px color-mix(in srgb, var(--te-neutral-900) 26%, transparent),
@@ -810,32 +835,32 @@
   letter-spacing: 0.08em;
   color: var(--te-neutral-900);
   background: color-mix(in srgb, #ffffff 90%, transparent);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
 }
 
 /* ── Figures row ────────────────────────────────────────────────────── */
 
 .figures {
   display: flex;
-  align-items: stretch;
-  gap: clamp(14px, 2vw, 28px);
-  padding: 8px clamp(6px, 1vw, 14px);
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 2px 0;
 }
 
 .figure {
   position: relative;
-  flex: 1 1 0;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 4px;
-  padding: 14px 16px;
+  gap: 2px;
+  padding: 10px 16px 10px 2px;
   border: none;
   border-radius: var(--home-radius-md);
   background: transparent;
   text-align: left;
   cursor: pointer;
+  min-width: 0;
   transition: background var(--te-motion-hover);
 }
 
@@ -849,7 +874,7 @@
 
 .figure strong {
   font-family: var(--home-display);
-  font-size: clamp(26px, 2.6vw, 36px);
+  font-size: clamp(20px, 2vw, 26px);
   line-height: 1;
   font-weight: 900;
   letter-spacing: -0.02em;
@@ -858,16 +883,17 @@
 }
 
 .figure span {
-  font-size: 12.5px;
+  font-size: 11.5px;
   font-weight: 600;
   color: var(--home-muted);
+  white-space: nowrap;
 }
 
 .figure i {
   position: absolute;
-  right: 14px;
-  top: 14px;
-  font-size: 13px;
+  right: 10px;
+  top: 10px;
+  font-size: 12px;
   color: var(--home-muted);
   opacity: 0;
   transition:
@@ -883,15 +909,16 @@
 .figure-sep {
   width: 1px;
   align-self: center;
-  height: 44px;
+  height: 32px;
   background: linear-gradient(180deg, transparent, var(--home-line), transparent);
+  flex: 0 0 auto;
 }
 
 /* ── Signal path card ───────────────────────────────────────────────── */
 
 .signal-card {
   position: relative;
-  padding: 22px clamp(20px, 2.4vw, 30px) 18px;
+  padding: 20px clamp(20px, 2.4vw, 30px);
   border: 1px solid var(--home-line);
   border-radius: var(--home-radius-lg);
   background: var(--home-card);
@@ -901,6 +928,10 @@
     transform var(--te-motion-hover) var(--te-ease-soft),
     border-color var(--te-motion-hover),
     box-shadow var(--te-motion-hover);
+}
+
+.signal-card.is-expanded {
+  padding-bottom: 16px;
 }
 
 .signal-card:hover {
@@ -1024,9 +1055,23 @@
   transition: transform var(--te-motion-hover) var(--te-ease-soft);
 }
 
-.signal-card:hover .signal-caret {
+.signal-caret {
+  font-size: 15px;
+  color: var(--home-muted);
+  transition: transform var(--te-motion-hover) var(--te-ease-soft);
+}
+
+/* 折叠态指向“展开”的旋转提示；展开态恢复为“进入详情”的方向提示。 */
+.signal-card:not(.is-expanded) .signal-caret {
+  transform: rotate(90deg);
+}
+
+.signal-card:not(.is-expanded):hover .signal-caret {
+  transform: rotate(90deg) translateX(2px);
+}
+
+.signal-card.is-expanded:hover .signal-caret {
   transform: translateX(3px);
-  color: var(--home-ink);
 }
 
 .signal-foot {
@@ -1035,7 +1080,7 @@
   justify-content: space-between;
   gap: 14px;
   margin-top: 14px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--home-muted);
 }
@@ -1065,6 +1110,9 @@
 .dsp-route-strip.is-compact {
   margin-top: 18px;
   padding: 2px;
+  /* 只在卡片展开、真实动画在跑时建立合成层，避免首页常驻过多图层。
+     双块定义保持 kept：第一块负责间距，此块显式复位 will-change。 */
+  will-change: auto;
 }
 
 .route-stage {
@@ -1101,7 +1149,8 @@
 }
 
 .route-stage-copy small {
-  font-size: 9.5px;
+  /* 装饰性 kicker 保留小号，但仍不低于 10px。 */
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.14em;
   color: var(--home-muted);
@@ -1110,6 +1159,7 @@
 
 .route-stage-copy strong {
   max-width: 150px;
+  /* 关键状态信息不降到 11px 以下，避免与 shorth 标签混淆。 */
   font-size: 12px;
   font-weight: 700;
   color: var(--home-ink);
@@ -2140,7 +2190,7 @@
   gap: 12px;
   padding: 10px 12px;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: var(--home-radius-md);
   background: var(--home-card);
 }
 
@@ -2244,7 +2294,7 @@
 
 .dialog-metric-grid div {
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: var(--home-radius-md);
   background: var(--home-card);
 }
 
@@ -2359,7 +2409,7 @@
 
   .figures {
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 8px 10px;
   }
 
   .figure {
@@ -2453,11 +2503,11 @@
   }
 
   .figure strong {
-    font-size: clamp(22px, 5vw, 26px);
+    font-size: clamp(19px, 4.5vw, 24px);
   }
 
   .figure span {
-    font-size: 11.5px;
+    font-size: 11px;
   }
 
   .signal-title h2 {

@@ -81,7 +81,7 @@ function close(): void {
         </svg>
       </button>
       <button class="settings-btn" title="设置" @click="$emit('settings')">
-        <i class="pi pi-cog"></i>
+        <i class="ph ph-gear-six"></i>
       </button>
       <button class="plugins-btn" title="扩展中心" @click="$emit('plugins')">
         <PuzzleIcon />
@@ -99,7 +99,7 @@ function close(): void {
           alt=""
           @error="avatarLoadFailed = true"
         />
-        <i v-else class="pi pi-user"></i>
+        <i v-else class="ph ph-user-circle"></i>
       </button>
     </div>
     <div class="title-bar-controls no-drag" @pointerdown="setPressOrigin">
@@ -114,7 +114,7 @@ function close(): void {
         </svg>
       </button>
       <button class="control-btn close" title="关闭窗口" aria-label="关闭窗口" @click="close">
-        <i class="pi pi-times" aria-hidden="true" />
+        <i class="ph ph-x" aria-hidden="true" />
       </button>
     </div>
   </div>

@@ -33,6 +33,17 @@
   cursor: default;
 }
 
+.te-spin {
+  display: inline-block;
+  animation: te-spin 0.9s linear infinite;
+}
+
+@keyframes te-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* ===== Upward Drawer Transition ===== */
 .drawer-up-enter-active {
   transition:

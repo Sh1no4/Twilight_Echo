@@ -1395,7 +1395,7 @@ onBeforeUnmount(() => {
               :disabled="queue.length === 0"
               @click="scrollQueueToCurrent"
             >
-              <i class="pi pi-map-marker" aria-hidden="true"></i>
+              <i class="ph ph-crosshair" aria-hidden="true"></i>
               <span>定位</span>
             </button>
             <button
@@ -1406,14 +1406,14 @@ onBeforeUnmount(() => {
               :disabled="queue.length === 0"
               @click="clearPlaybackQueue"
             >
-              <i class="pi pi-trash" aria-hidden="true"></i>
+              <i class="ph ph-trash" aria-hidden="true"></i>
               <span>清空</span>
             </button>
           </div>
         </div>
         <div v-if="queue.length === 0" class="playlist-empty">
           <span class="playlist-empty-icon" aria-hidden="true">
-            <i class="pi pi-inbox"></i>
+            <i class="ph ph-tray"></i>
           </span>
           <span class="playlist-empty-title">队列还是空的</span>
           <span class="playlist-empty-hint">播放任意歌曲后，会在这里排队等候</span>
@@ -1454,7 +1454,7 @@ onBeforeUnmount(() => {
                   title="拖动排序"
                   @click.stop
                 >
-                  <i class="pi pi-bars" aria-hidden="true"></i>
+                  <i class="ph ph-list-dashes" aria-hidden="true"></i>
                 </button>
                 <span class="playlist-index">
                   <span
@@ -1475,7 +1475,7 @@ onBeforeUnmount(() => {
                   alt=""
                 />
                 <div v-else class="playlist-cover-placeholder">
-                  <i class="pi pi-wave-pulse" aria-hidden="true"></i>
+                  <i class="ph ph-waveform" aria-hidden="true"></i>
                 </div>
                 <div class="playlist-info">
                   <div class="playlist-title">{{ item.title }}</div>
@@ -1488,7 +1488,7 @@ onBeforeUnmount(() => {
                     :aria-label="`将 ${item.title} 设为下一首`"
                     @click="playQueueEntryNext(item.queueEntryId)"
                   >
-                    <i class="pi pi-step-forward" aria-hidden="true"></i>
+                    <i class="ph ph-skip-forward" aria-hidden="true"></i>
                   </button>
                   <button
                     type="button"
@@ -1496,7 +1496,7 @@ onBeforeUnmount(() => {
                     :aria-label="`将 ${item.title} 添加到队尾`"
                     @click="addQueueEntryToTail(item.queueEntryId)"
                   >
-                    <i class="pi pi-plus" aria-hidden="true"></i>
+                    <i class="ph ph-plus" aria-hidden="true"></i>
                   </button>
                   <button
                     type="button"
@@ -1505,7 +1505,7 @@ onBeforeUnmount(() => {
                     :aria-label="`从队列移除 ${item.title}`"
                     @click="removeQueueEntry(item.queueEntryId)"
                   >
-                    <i class="pi pi-times" aria-hidden="true"></i>
+                    <i class="ph ph-x" aria-hidden="true"></i>
                   </button>
                 </div>
               </div>
@@ -1577,7 +1577,7 @@ onBeforeUnmount(() => {
             alt=""
           />
           <div v-else class="player-cover-placeholder">
-            <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
+            <i class="ph ph-waveform" style="font-size: 18px; color: #bbb"></i>
           </div>
         </div>
         <div class="player-track-info">
@@ -1693,10 +1693,10 @@ onBeforeUnmount(() => {
           <i
             :class="
               favoriteButtonLoading
-                ? 'pi pi-spin pi-spinner'
+                ? 'ph ph-spinner-gap te-spin'
                 : favoriteButtonLiked
-                  ? 'pi pi-heart-fill'
-                  : 'pi pi-heart'
+                  ? 'ph ph-heart-fill'
+                  : 'ph ph-heart'
             "
           ></i>
         </button>
@@ -1755,7 +1755,7 @@ onBeforeUnmount(() => {
             :aria-expanded="volumeOpen"
             @click="toggleVolume"
           >
-            <i :class="volume <= 0.001 ? 'pi pi-volume-off' : 'pi pi-volume-up'"></i>
+            <i :class="volume <= 0.001 ? 'ph ph-speaker-x' : 'ph ph-speaker-high'"></i>
           </button>
         </div>
 
@@ -1766,7 +1766,7 @@ onBeforeUnmount(() => {
           aria-label="播放列表"
           @click="togglePlaylist"
         >
-          <i class="pi pi-list"></i>
+          <i class="ph ph-list-bullets"></i>
         </button>
 
         <button
@@ -1790,7 +1790,7 @@ onBeforeUnmount(() => {
           :disabled="miniPlayerOpening"
           @click="openMiniPlayer"
         >
-          <i :class="miniPlayerOpening ? 'pi pi-spin pi-spinner' : 'ph ph-picture-in-picture'"></i>
+          <i :class="miniPlayerOpening ? 'ph ph-spinner-gap te-spin' : 'ph ph-picture-in-picture'"></i>
         </button>
 
         <button
