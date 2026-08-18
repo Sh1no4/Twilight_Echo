@@ -129,9 +129,15 @@ const emit = defineEmits<{
 
 const {
   visibleItems: visibleTracks,
-  hasMoreToRender,
-  sentinelRef
+  visibleStart,
+  paddingTop,
+  totalHeight,
+  listRef
 } = useProgressiveList(() => props.tracks)
+
+function trackIndex(offset: number): number {
+  return visibleStart.value + offset
+}
 
 const kindLabel = computed(() => {
   switch (props.kind) {
@@ -448,7 +454,7 @@ function onContextMenu(track: Track, index: number, event: MouseEvent): void {
           <span class="col-time">时长</span>
         </div>
 
-        <ul class="stage-rows" role="list">
+        <ul :ref="listRef" class="stage-rows" role="list" :style="{ height: `${totalHeight}px` }">
           <li
             v-for="(track, index) in visibleTracks"
             :key="track.id"
@@ -458,10 +464,11 @@ function onContextMenu(track: Track, index: number, event: MouseEvent): void {
               playing: currentTrackId === track.id,
               selected: isSelected(track.id)
             }"
+            :style="index === 0 ? { marginTop: `${paddingTop}px` } : undefined"
             role="listitem"
-            @click="onRowActivate(track, index, $event)"
-            @dblclick="onRowDblClick(track, index, $event)"
-            @contextmenu="onContextMenu(track, index, $event)"
+            @click="onRowActivate(track, trackIndex(index), $event)"
+            @dblclick="onRowDblClick(track, trackIndex(index), $event)"
+            @contextmenu="onContextMenu(track, trackIndex(index), $event)"
           >
             <div class="col-index">
               <button
@@ -469,7 +476,7 @@ function onContextMenu(track: Track, index: number, event: MouseEvent): void {
                 type="button"
                 class="row-play-btn playing"
                 title="正在播放"
-                @click="onPlayRow(track, index, $event)"
+                @click="onPlayRow(track, trackIndex(index), $event)"
               >
                 <span class="eq-bars" aria-hidden="true"> <i></i><i></i><i></i> </span>
               </button>
@@ -478,9 +485,9 @@ function onContextMenu(track: Track, index: number, event: MouseEvent): void {
                 type="button"
                 class="row-play-btn"
                 :aria-label="`播放 ${track.title}`"
-                @click="onPlayRow(track, index, $event)"
+                @click="onPlayRow(track, trackIndex(index), $event)"
               >
-                <span class="row-index-num">{{ String(index + 1).padStart(2, '0') }}</span>
+                <span class="row-index-num">{{ String(trackIndex(index) + 1).padStart(2, '0') }}</span>
                 <i class="pi pi-play row-play-icon"></i>
               </button>
             </div>
@@ -530,13 +537,6 @@ function onContextMenu(track: Track, index: number, event: MouseEvent): void {
               {{ formatTime(track.duration) }}
             </div>
           </li>
-          <li
-            v-if="hasMoreToRender"
-            :ref="sentinelRef"
-            class="stage-rows-sentinel"
-            role="presentation"
-            aria-hidden="true"
-          ></li>
         </ul>
       </div>
     </div>
