@@ -98,6 +98,11 @@ export function buildLyricTimeline(lines: readonly LyricLine[]): LyricTimelineEn
         const words = layer?.length ? resolveLyricWordTimings(layer, nextTime) : []
         for (const word of words) wordEnd = Math.max(wordEnd, word.endTime)
       }
+      for (const voice of line.voices ?? []) {
+        if (voice.endTime != null && Number.isFinite(voice.endTime)) {
+          wordEnd = Math.max(wordEnd, voice.endTime)
+        }
+      }
 
       // Deliberately not clamped to the next line's start. A held tail that runs
       // past its successor is what produces Apple's hand-off, where the finishing

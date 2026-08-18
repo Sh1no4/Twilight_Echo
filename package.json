@@ -84,6 +84,7 @@
     "build:linux": "pnpm run build && electron-builder --linux"
   },
   "dependencies": {
+    "@xmldom/xmldom": "^0.9.11",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@neteasecloudmusicapienhanced/api": "^4.35.1",

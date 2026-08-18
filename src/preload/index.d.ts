@@ -971,6 +971,7 @@ interface WindowAPI {
     getCover: (handle: string) => Promise<string | null>
     grantRemoteCover: (source: string) => Promise<string>
     getLyrics: (dir: string, fileName: string, filePath?: string) => Promise<string | null>
+    getAmlTtml: (songId: number) => Promise<string | null>
     importLyrics: () => Promise<string | null>
     saveLyrics: (contents: string) => Promise<string | null>
     searchOnlineLyrics: (query: {
@@ -1198,8 +1199,15 @@ interface WindowAPI {
     updateTrack: (data: {
       lyrics: string | null
       translatedLyrics?: string | null
-      lyricsSource?: 'embedded' | 'local' | 'provider' | 'manual' | 'online' | null
-      translatedLyricsSource?: 'embedded' | 'local' | 'provider' | 'manual' | 'online' | null
+      lyricsSource?: 'embedded' | 'local' | 'provider' | 'amll' | 'manual' | 'online' | null
+      translatedLyricsSource?:
+        | 'embedded'
+        | 'local'
+        | 'provider'
+        | 'amll'
+        | 'manual'
+        | 'online'
+        | null
       title?: string
       artist?: string
     }) => void
@@ -1211,8 +1219,8 @@ interface WindowAPI {
       cb: (data: {
         lyrics: string | null
         translatedLyrics?: string | null
-        lyricsSource?: 'embedded' | 'local' | 'provider' | 'manual' | null
-        translatedLyricsSource?: 'embedded' | 'local' | 'provider' | 'manual' | null
+        lyricsSource?: 'embedded' | 'local' | 'provider' | 'amll' | 'manual' | null
+        translatedLyricsSource?: 'embedded' | 'local' | 'provider' | 'amll' | 'manual' | null
         title?: string
         artist?: string
       }) => void

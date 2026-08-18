@@ -208,7 +208,9 @@ function buildAnimations(): void {
   )
     return
 
-  const words = resolvedWords.value
+  const words = renderChunks.value.flatMap((chunk) =>
+    chunk.kind === 'word' ? chunk.syllables.map((syllable) => syllable.word) : []
+  )
   const measurements = measureWords()
   const lineStart = lineStartSeconds.value
   const lineEnd = lineEndSeconds.value
@@ -384,7 +386,7 @@ onBeforeUnmount(() => {
     :data-voice-role="voiceRole"
   >
     <template v-for="chunk in renderChunks" :key="chunk.key">
-      <span v-if="chunk.kind === 'space'" class="lyric-space">{{ chunk.text }}</span>
+      <template v-if="chunk.kind === 'space'">{{ chunk.text }}</template>
       <span
         v-else
         class="lyric-word-group"

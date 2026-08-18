@@ -2,9 +2,9 @@
  * Renderer-owned lyric choices live outside the library index so scanning a
  * folder can never discard a user's timing correction or hand-edited text.
  */
-export type LyricSourcePreference = 'auto' | 'local' | 'provider' | 'manual'
-export type LyricLayerSourceSelection = 'automatic' | 'local' | 'provider' | 'manual'
-export type LyricSource = 'embedded' | 'local' | 'provider' | 'manual' | 'online'
+export type LyricSourcePreference = 'auto' | 'local' | 'provider' | 'amll' | 'manual'
+export type LyricLayerSourceSelection = 'automatic' | 'local' | 'provider' | 'amll' | 'manual'
+export type LyricSource = 'embedded' | 'local' | 'provider' | 'amll' | 'manual' | 'online'
 
 export interface DesktopLyricsTrackPayload {
   lyrics: string | null
@@ -140,6 +140,7 @@ function layerSelection(
     selection === 'automatic' ||
     selection === 'local' ||
     selection === 'provider' ||
+    selection === 'amll' ||
     selection === 'manual'
   ) {
     return selection
@@ -147,18 +148,33 @@ function layerSelection(
   return override.source === 'manual' ? 'manual' : 'automatic'
 }
 
-export function projectLyricDisplay(
-  line: LyricDisplayContent,
+interface LyricDisplayVoice {
+  text: string
+  translation?: unknown | null
+  romanization?: unknown | null
+}
+
+export function projectLyricDisplay<T extends LyricDisplayContent>(
+  line: T,
   preferences: Pick<
     LyricsManagementDocument,
     'showOriginal' | 'showTranslation' | 'showRomanization'
   >
-): LyricDisplayContent {
+): T {
+  const voiceCarrier = line as T & { voices?: readonly LyricDisplayVoice[] }
+  const voices = voiceCarrier.voices?.map((voice) => ({
+    ...voice,
+    text: preferences.showOriginal ? voice.text : '',
+    translation: preferences.showTranslation ? (voice.translation ?? null) : null,
+    romanization: preferences.showRomanization ? (voice.romanization ?? null) : null
+  }))
   return {
+    ...line,
     text: preferences.showOriginal ? line.text : '',
     translation: preferences.showTranslation ? line.translation : null,
-    romanization: preferences.showRomanization ? line.romanization : null
-  }
+    romanization: preferences.showRomanization ? line.romanization : null,
+    ...(voices ? { voices } : {})
+  } as T
 }
 
 export function clampLyricOffset(value: unknown): number {
@@ -216,7 +232,13 @@ function isLyricTrackOverride(id: string, value: unknown): value is LyricTrackOv
 }
 
 function isLyricSourcePreference(value: unknown): value is LyricSourcePreference {
-  return value === 'auto' || value === 'local' || value === 'provider' || value === 'manual'
+  return (
+    value === 'auto' ||
+    value === 'local' ||
+    value === 'provider' ||
+    value === 'amll' ||
+    value === 'manual'
+  )
 }
 
 function isOptionalLyricLayerSourceSelection(
@@ -227,6 +249,7 @@ function isOptionalLyricLayerSourceSelection(
     value === 'automatic' ||
     value === 'local' ||
     value === 'provider' ||
+    value === 'amll' ||
     value === 'manual'
   )
 }

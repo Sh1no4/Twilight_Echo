@@ -41,9 +41,9 @@ export const LYRIC_BLUR_MAX = 4
 export const LYRIC_NARROW_VIEWPORT_PX = 1024
 export const LYRIC_NARROW_BLUR_SCALE = 0.8
 
-export const LYRIC_CASCADE_BASE_DELAY = 0.032
+export const LYRIC_CASCADE_BASE_DELAY = 0.08
 export const LYRIC_CASCADE_DECAY = 1.05
-export const LYRIC_CASCADE_MAX_DELAY = 0.096
+export const LYRIC_CASCADE_MAX_DELAY = 0.4
 
 /** Range the built-in scale amount spans: 100 (idle) up to 104 (singing). */
 export const LYRIC_SCALE_RANGE = LYRIC_SCALE_ACTIVE - LYRIC_SCALE_INACTIVE
@@ -280,13 +280,14 @@ export function computeLyricLayout(options: LyricLayoutOptions): LyricLayoutResu
 
     if ((!line.isBackground || focused || !isPlaying) && !focusHidden) curPos += line.height
 
-    // Only lines that have reached the visible area consume delay, and the step
-    // tightens below the anchor.
-    if (curPos >= 0 && !isSeeking) {
+    // The anchor is the first line in the wave: it moves immediately, then the
+    // lines below it are released one by one to fill the space it leaves. Lines
+    // above the anchor are already departing and must not delay the active line.
+    if (curPos >= 0 && !isSeeking && position >= anchorPosition) {
       if (!line.isBackground && !focusHidden) {
         delay = Math.min(LYRIC_CASCADE_MAX_DELAY, delay + baseDelay)
       }
-      if (lineIndex >= scrollToIndex) baseDelay /= LYRIC_CASCADE_DECAY
+      baseDelay /= LYRIC_CASCADE_DECAY
     }
   }
 

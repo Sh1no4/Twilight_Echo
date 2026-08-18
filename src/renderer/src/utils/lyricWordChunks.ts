@@ -92,29 +92,29 @@ function spacer(text: string): ResolvedLyricWord {
 function presplitInternalSpaces(words: readonly ResolvedLyricWord[]): ResolvedLyricWord[] {
   const result: ResolvedLyricWord[] = []
   for (const word of words) {
-    const pieces = word.text.split(' ').filter((piece) => piece.trim().length > 0)
-    if (pieces.length <= 1) {
+    const segments = word.text.split(/(\s+)/u).filter(Boolean)
+    if (segments.length === 1) {
       result.push({ ...word })
       continue
     }
 
     const realLength = word.text.replace(/\s/g, '').length
     const span = word.endTime - word.time
-    if (word.text.startsWith(' ')) result.push(spacer(' '))
-
     let charPos = 0
-    for (const piece of pieces) {
+    for (const segment of segments) {
+      if (WHITESPACE_ONLY.test(segment)) {
+        result.push(spacer(segment))
+        continue
+      }
       const ratioStart = realLength > 0 ? charPos / realLength : 0
-      const ratioEnd = realLength > 0 ? (charPos + piece.length) / realLength : 1
+      const ratioEnd = realLength > 0 ? (charPos + segment.length) / realLength : 1
       result.push({
-        text: piece,
+        text: segment,
         time: word.time + ratioStart * span,
         endTime: word.time + ratioEnd * span
       })
-      result.push(spacer(' '))
-      charPos += piece.length
+      charPos += segment.length
     }
-    if (!word.text.endsWith(' ')) result.pop()
   }
   return result
 }

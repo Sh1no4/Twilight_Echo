@@ -470,7 +470,10 @@ export function createLyricViewportController(options: LyricViewportControllerOp
       () => {
         cancelResize = null
         if (!manualBrowse && activeTrackId && stage) {
-          applyLayout(mode === 'snap', true)
+          // A spring resize is a geometry remeasure, not a seek. Preserve the
+          // per-line cascade so ResizeObserver cannot turn a staggered push into
+          // a rigid block; only an explicit snap should suppress delays.
+          applyLayout(mode === 'snap', mode === 'snap')
         }
       },
       FRAME_FALLBACK_MS,

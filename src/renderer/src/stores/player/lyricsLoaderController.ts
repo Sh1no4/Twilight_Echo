@@ -5,12 +5,15 @@ import { hasLyricContent } from '../../utils/lyrics.ts'
 import { LYRICS_RETRY_DELAYS_MS } from '../../utils/playerConstants.ts'
 import { getTrackSource } from '../../utils/playerTrackUtils.ts'
 import {
+  eligibleForAml,
   resolveLyricsWithSources,
+  shouldLoadAutomaticOriginal,
   type LyricResolverSource
 } from '../../utils/lyricSourceResolution.ts'
 import { resolverLyricsInput } from '../../utils/managedLyricsSource.ts'
 import { useLyricsManagement } from '../lyricsManagement.ts'
 import { syncPluginProviders, useMediaProviders } from '../../providers'
+import { getNcmSongId } from '../../providers/ncmTrack.ts'
 
 export interface LyricsLoadState {
   trackId: string
@@ -31,6 +34,12 @@ const lyricsLoadGenerationByTrackId = new Map<string, number>()
 const lyricsRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const lyricsRetryAttemptsByTrackId = new Map<string, number>()
 let lyricsTrackActivation = 0
+
+function getAmlSongId(track: Track): number {
+  const direct = getNcmSongId(track)
+  if (direct != null && (track.source === 'ncm' || track.id.startsWith('ncm:'))) return direct
+  return Number(track.metadataMatch?.trackId)
+}
 
 export interface LyricsLoaderOptions {
   currentTrack: Ref<Track | null>
@@ -148,7 +157,13 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
       if (selection === 'local' || selection === 'provider' || selection === 'manual') {
         return selection
       }
-      if (requestedSource === 'local' || requestedSource === 'provider') return requestedSource
+      if (selection === 'amll') return 'amll'
+      if (
+        requestedSource === 'local' ||
+        requestedSource === 'amll' ||
+        requestedSource === 'provider'
+      )
+        return requestedSource
       return 'automatic'
     }
     const originalLayerSource = layerSource('originalSelection')
@@ -219,8 +234,10 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
       if (
         (requestedSource !== 'auto' ||
           originalLayerSource === 'local' ||
+          originalLayerSource === 'amll' ||
           originalLayerSource === 'provider' ||
           translationLayerSource === 'local' ||
+          translationLayerSource === 'amll' ||
           translationLayerSource === 'provider') &&
         !automaticLyricsBaselines.has(triggerTrack.id)
       ) {
@@ -238,16 +255,24 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
       const canLoadLocalLyrics =
         source === 'local' &&
         (resolverOriginalSource === 'local' ||
-          (resolverOriginalSource === 'automatic' && !hasOriginal)) &&
+          (resolverOriginalSource === 'automatic' &&
+            shouldLoadAutomaticOriginal(resolverTrack, 'local'))) &&
         !!resolverTrack.dir &&
         !!resolverTrack.fileName
       const canLoadProviderLyrics =
         allowProviderLookup &&
         (resolverOriginalSource === 'provider' ||
           resolverTranslationSource === 'provider' ||
-          (resolverOriginalSource === 'automatic' && !hasOriginal) ||
+          (resolverOriginalSource === 'automatic' &&
+            shouldLoadAutomaticOriginal(resolverTrack, 'provider')) ||
           (resolverTranslationSource === 'automatic' &&
             !hasLyricContent(resolverTrack.translatedLyrics)))
+      const canLoadAmlLyrics =
+        eligibleForAml(resolverTrack) &&
+        (resolverOriginalSource === 'amll' ||
+          resolverTranslationSource === 'amll' ||
+          (resolverOriginalSource === 'automatic' &&
+            shouldLoadAutomaticOriginal(resolverTrack, 'amll')))
       const canLoadOnlineLyrics =
         resolverOriginalSource === 'automatic' &&
         options.getAppSettings().value?.onlineLyricsFallback === true &&
@@ -255,7 +280,12 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
         !!resolverTrack.artist?.trim() &&
         !hasOriginal
 
-      if (!canLoadLocalLyrics && !canLoadProviderLyrics && !canLoadOnlineLyrics) {
+      if (
+        !canLoadLocalLyrics &&
+        !canLoadAmlLyrics &&
+        !canLoadProviderLyrics &&
+        !canLoadOnlineLyrics
+      ) {
         commitResolvedLyrics(triggerTrack, resolverTrack, {
           lyrics: hasOriginal ? resolverTrack.lyrics! : '',
           translatedLyrics: resolverTrack.translatedLyrics ?? null,
@@ -287,6 +317,9 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
                   signal: request.controller.signal
                 })
               }
+            : undefined,
+          loadAmlTtml: canLoadAmlLyrics
+            ? () => window.api.data.getAmlTtml(getAmlSongId(resolverTrack))
             : undefined,
           loadOnlineLyrics: canLoadOnlineLyrics
             ? async () => {
@@ -327,10 +360,19 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
         key: 'originalSelection' | 'translationSelection'
       ): LyricResolverSource | 'manual' => {
         const selection = currentOverride?.[key]
-        if (selection === 'local' || selection === 'provider' || selection === 'manual') {
+        if (
+          selection === 'local' ||
+          selection === 'amll' ||
+          selection === 'provider' ||
+          selection === 'manual'
+        ) {
           return selection
         }
-        if (currentRequestedSource === 'local' || currentRequestedSource === 'provider') {
+        if (
+          currentRequestedSource === 'local' ||
+          currentRequestedSource === 'amll' ||
+          currentRequestedSource === 'provider'
+        ) {
           return currentRequestedSource
         }
         return 'automatic'

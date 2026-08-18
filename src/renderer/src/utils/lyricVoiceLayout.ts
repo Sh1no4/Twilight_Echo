@@ -1,9 +1,4 @@
-import type {
-  LyricLine,
-  LyricVoiceLane,
-  LyricVoiceLayer,
-  LyricVoiceRole
-} from './lyrics.ts'
+import type { LyricLine, LyricVoiceLane, LyricVoiceLayer, LyricVoiceRole } from './lyrics.ts'
 
 export type LyricTextDirection = 'ltr' | 'rtl'
 
@@ -34,10 +29,10 @@ function fallbackVoice(line: LyricLine): LyricVoiceLayer {
 }
 
 function compareVoices(left: LyricVoiceLayer, right: LyricVoiceLayer): number {
-  const time = (left.time ?? Number.POSITIVE_INFINITY) - (right.time ?? Number.POSITIVE_INFINITY)
-  if (time !== 0) return time
   const role = ROLE_ORDER[left.role] - ROLE_ORDER[right.role]
   if (role !== 0) return role
+  const time = (left.time ?? Number.POSITIVE_INFINITY) - (right.time ?? Number.POSITIVE_INFINITY)
+  if (time !== 0) return time
   return left.voiceKey.localeCompare(right.voiceKey)
 }
 
@@ -70,12 +65,19 @@ export function resolveLyricVoiceLayout(
     source.filter((voice) => voice.lane === lane).sort(compareVoices)
   )
   const spoken = ordered.map((voice) => voice.text.trim()).filter(Boolean)
+  const auxiliary = ordered.flatMap((voice) =>
+    [voice.translation?.text, voice.romanization?.text].filter((text): text is string =>
+      Boolean(text?.trim())
+    )
+  )
   return {
     center,
     start,
     end,
     ordered,
-    ariaText: [spoken.join('；'), line.translation, line.romanization].filter(Boolean).join('。'),
+    ariaText: [spoken.join('；'), ...auxiliary, line.translation, line.romanization]
+      .filter(Boolean)
+      .join('。'),
     hasDuet:
       start.some((voice) => voice.role === 'lead') && end.some((voice) => voice.role === 'lead')
   }

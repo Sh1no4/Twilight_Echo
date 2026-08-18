@@ -23,7 +23,6 @@ import { useMediaProviders } from '../providers'
 import { normalizeAccentColor } from '../utils/colorExtractor'
 import { useSmoothedValue } from '../utils/useSmoothedValue'
 import { HIFI_STATUS_COPY } from '../../../shared/audioProcessingOptions.ts'
-import { cloneLyricsAppearance } from '../../../shared/lyricsAppearance.ts'
 import type { LyricLayerSourceSelection } from '../../../shared/lyricsManagement.ts'
 import CoverImg from './CoverImg.vue'
 import HiFiSidebar from './player-bar/HiFiSidebar.vue'
@@ -182,7 +181,7 @@ const { uiContributions, syncExtensions } = useExtensionRegistry()
 const playerBarButtons = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'playerBarButton')
 )
-const { settings, updateSettings } = useSettingsStore()
+const { settings } = useSettingsStore()
 const liquidGlassActive = computed(
   () =>
     settings.value.surfaceMaterial === 'liquidGlass' || settings.value.liquidGlass.playbarEnabled
@@ -196,9 +195,6 @@ const managedLyricOverride = computed(() => lyricsManagement.entryFor(currentTra
 const originalLayerSelection = computed(() => lyricLayerSelection('originalSelection'))
 const translationLayerSelection = computed(() => lyricLayerSelection('translationSelection'))
 const showTranslation = computed(() => lyricsManagement.document.value.showTranslation)
-const lyricHighlightOn = computed(
-  () => settings.value.lyricsAppearance.styles.active.highlightEffect === 'glow'
-)
 
 async function toggleDesktopLyrics(): Promise<void> {
   const enabled = await window.api.desktopLyrics.toggle()
@@ -1035,7 +1031,7 @@ function onRefreshDevices(): void {
   void refreshAudioOutputState()
 }
 
-async function onReloadLyrics(prefer: 'auto' | 'local' | 'provider'): Promise<void> {
+async function onReloadLyrics(prefer: 'auto' | 'local' | 'amll' | 'provider'): Promise<void> {
   const track = currentTrack.value
   if (!track || lyricsReloading.value) return
   lyricsReloading.value = true
@@ -1057,13 +1053,16 @@ function lyricLayerSelection(
   if (
     selection === 'automatic' ||
     selection === 'local' ||
+    selection === 'amll' ||
     selection === 'provider' ||
     selection === 'manual'
   ) {
     return selection
   }
   const source = managedLyricOverride.value?.source
-  return source === 'local' || source === 'provider' || source === 'manual' ? source : 'automatic'
+  return source === 'local' || source === 'amll' || source === 'provider' || source === 'manual'
+    ? source
+    : 'automatic'
 }
 
 async function setLyricLayerSelection(
@@ -1093,18 +1092,6 @@ async function toggleTranslationVisibility(): Promise<void> {
   lyricControlsPending.value = true
   try {
     await lyricsManagement.updateVisibility({ showTranslation: !showTranslation.value })
-  } finally {
-    lyricControlsPending.value = false
-  }
-}
-
-async function toggleLyricHighlight(): Promise<void> {
-  if (lyricControlsPending.value) return
-  lyricControlsPending.value = true
-  try {
-    const lyricsAppearance = cloneLyricsAppearance(settings.value.lyricsAppearance)
-    lyricsAppearance.styles.active.highlightEffect = lyricHighlightOn.value ? 'none' : 'glow'
-    await updateSettings({ lyricsAppearance })
   } finally {
     lyricControlsPending.value = false
   }
@@ -1214,8 +1201,7 @@ function writeGlassPressVariables(scale: number): void {
 
 function tickGlassPress(now: number): void {
   glassPressFrame = null
-  const step =
-    glassPressLastTime > 0 ? Math.min(0.05, (now - glassPressLastTime) / 1000) : 1 / 60
+  const step = glassPressLastTime > 0 ? Math.min(0.05, (now - glassPressLastTime) / 1000) : 1 / 60
   glassPressLastTime = now
   const state = glassPress.update(step)
   writeGlassPressVariables(state.scale)
@@ -1852,7 +1838,6 @@ onBeforeUnmount(() => {
           :original-layer-selection="originalLayerSelection"
           :translation-layer-selection="translationLayerSelection"
           :show-translation="showTranslation"
-          :lyric-highlight-on="lyricHighlightOn"
           :lyric-controls-pending="lyricsReloading || lyricControlsPending"
           :player-bar-buttons="playerBarButtons"
           :is-live-stream="isLiveStream"
@@ -1904,7 +1889,6 @@ onBeforeUnmount(() => {
           @reload-lyrics="onReloadLyrics"
           @set-lyric-layer-selection="setLyricLayerSelection"
           @toggle-translation-visibility="toggleTranslationVisibility"
-          @toggle-lyric-highlight="toggleLyricHighlight"
           @run-extension="runPlayerBarExtension"
           @cycle-playback-rate="cyclePlaybackRate"
           @toggle-ab-loop="toggleAbLoopAtCurrentTime"

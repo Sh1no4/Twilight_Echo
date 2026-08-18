@@ -15,12 +15,32 @@ import {
 const THEME_COLOR_FALLBACKS: Record<LyricsStyleTarget, string> = {
   normal: 'var(--te-playback-lyric-text, rgba(255, 255, 255, 0.42))',
   active: 'var(--te-playback-lyric-active-text, #fff)',
+  harmony: 'var(--te-playback-lyric-harmony, rgba(255, 255, 255, 0.48))',
   translation: 'var(--te-playback-lyric-translation, rgba(255, 255, 255, 0.58))',
   romanization: 'var(--te-playback-lyric-romanization, rgba(255, 255, 255, 0.46))'
 }
 
+const THEME_ACTIVE_COLOR_FALLBACKS: Record<LyricsStyleTarget, string> = {
+  normal: 'var(--te-playback-lyric-active-text, #fff)',
+  active: 'var(--te-playback-lyric-active-text, #fff)',
+  harmony: 'var(--te-playback-lyric-harmony-active, rgba(255, 255, 255, 0.62))',
+  translation: 'var(--te-playback-lyric-translation-active, rgba(255, 255, 255, 0.82))',
+  romanization: 'var(--te-playback-lyric-romanization-active, rgba(255, 255, 255, 0.72))'
+}
+
 export function resolveLyricsColor(style: LyricsTextStyle, target: LyricsStyleTarget): string {
   return style.colorMode === 'custom' ? style.color : THEME_COLOR_FALLBACKS[target]
+}
+
+export function constrainLyricsAlignment(
+  align: LyricsTextStyle['align'],
+  isTtml: boolean
+): LyricsTextStyle['align'] {
+  return isTtml && align === 'right' ? 'center' : align
+}
+
+function resolveLyricsActiveColor(style: LyricsTextStyle, target: LyricsStyleTarget): string {
+  return style.colorMode === 'custom' ? style.color : THEME_ACTIVE_COLOR_FALLBACKS[target]
 }
 
 export function resolveLyricsBackground(style: LyricsTextStyle, target: LyricsStyleTarget): string {
@@ -79,6 +99,7 @@ export function lyricsStyleVars(
     '--lyric-style-letter-spacing': `${style.letterSpacing}em`,
     '--lyric-style-align': style.align,
     '--lyric-style-color': resolveLyricsColor(style, target),
+    '--lyric-style-active-color': resolveLyricsActiveColor(style, target),
     '--lyric-style-opacity': String(style.opacity / 100),
     '--lyric-style-background': resolveLyricsBackground(style, target),
     '--lyric-style-background-image': resolveLyricsBackgroundImage(style),

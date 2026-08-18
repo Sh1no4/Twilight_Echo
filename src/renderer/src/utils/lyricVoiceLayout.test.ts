@@ -30,6 +30,19 @@ test('unmarked lyrics fall back to one centered lead voice', () => {
   assert.equal(layout.hasDuet, false)
 })
 
+test('centered supporting voices stay below the lead even when they start earlier', () => {
+  const layout = resolveLyricVoiceLayout(
+    line([
+      voice({ voiceKey: 'background', text: '(Ah Ah)', role: 'background', time: 0.5 }),
+      voice({ voiceKey: 'lead', text: 'Main lyric', role: 'lead', time: 1 })
+    ])
+  )
+  assert.deepEqual(
+    layout.center.map((entry) => entry.text),
+    ['Main lyric', '(Ah Ah)']
+  )
+})
+
 test('explicit start and end leads form a duet without inferring other lines', () => {
   const layout = resolveLyricVoiceLayout(
     line([

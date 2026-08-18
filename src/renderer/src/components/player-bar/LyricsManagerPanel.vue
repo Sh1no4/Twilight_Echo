@@ -2,7 +2,6 @@
 import { computed, ref, watch } from 'vue'
 import { usePlayerStore } from '../../stores/usePlayerStore'
 import { useLyricsManagement } from '../../stores/lyricsManagement'
-import { useSettingsStore } from '../../stores/useSettingsStore'
 import type {
   LyricLayerSourceSelection,
   LyricSourcePreference,
@@ -10,17 +9,13 @@ import type {
 } from '../../../../shared/lyricsManagement.ts'
 import type { LyricSource } from '../../types/music'
 import {
-  LYRICS_RANGES,
-  type LyricsAppearanceSettings
-} from '../../../../shared/lyricsAppearance.ts'
-import { useLyricsAppearanceEditor } from '../../composables/useLyricsAppearanceEditor.ts'
-import {
   parseLyricVoiceDraftRows,
   rewriteLyricVoiceDraftRows,
   type LyricVoiceDraftRow,
   type LyricVoiceLane,
   type LyricVoiceRole
 } from '../../utils/lyrics.ts'
+import { isAmlTtml, parseAmlTtml } from '../../utils/amllTtml.ts'
 
 type LayerKey = 'original' | 'translation' | 'romanization'
 type LayerSelectionKey = 'originalSelection' | 'translationSelection' | 'romanizationSelection'
@@ -58,15 +53,6 @@ const playbackStore = usePlayerStore()
 const { currentTrack, lyricsLoadState } = playbackStore
 const { refreshCurrentLyrics } = playbackStore
 const lyricsManagement = useLyricsManagement()
-const { settings } = useSettingsStore()
-const lyricsEditor = useLyricsAppearanceEditor()
-const lyricsRanges = LYRICS_RANGES
-const lyricFocusLineCounts = [
-  { value: 'all', label: '全部' },
-  { value: 1, label: '1 行' },
-  { value: 3, label: '3 行' },
-  { value: 5, label: '5 行' }
-] as const
 
 const lyricSaving = ref(false)
 const lyricImporting = ref(false)
@@ -92,6 +78,10 @@ const voiceRole = ref<LyricVoiceRole>('lead')
 const voiceSpeaker = ref('')
 const selectedVoiceRowIndexes = ref<number[]>([])
 const voiceArrangementUndo = ref<VoiceArrangementUndo | null>(null)
+const isRawAmlTtml = computed(() => isAmlTtml(draftOriginal.value))
+const manualOriginalRequiresAmlConversion = computed(
+  () => isRawAmlTtml.value && draftOriginalSelection.value === 'manual'
+)
 
 const lyricVisibility = computed(() => lyricsManagement.document.value)
 const activeTrackId = computed(() => currentTrack.value?.id ?? '')
@@ -260,6 +250,7 @@ function lyricSourceLabel(source: LyricSource | null | undefined): string {
   if (source === 'embedded') return '内嵌'
   if (source === 'local') return '本地 LRC'
   if (source === 'provider') return 'Provider'
+  if (source === 'amll') return 'AMLL TTML'
   if (source === 'online') return '在线匹配'
   if (source === 'manual') return '手写'
   return '未加载'
@@ -270,7 +261,13 @@ function layerSelection(
   key: LayerSelectionKey
 ): LyricLayerSourceSelection {
   const value = override?.[key]
-  if (value === 'automatic' || value === 'local' || value === 'provider' || value === 'manual') {
+  if (
+    value === 'automatic' ||
+    value === 'local' ||
+    value === 'amll' ||
+    value === 'provider' ||
+    value === 'manual'
+  ) {
     return value
   }
   return override?.source === 'manual' ? 'manual' : 'automatic'
@@ -348,9 +345,42 @@ function useManualLayer(layer: LayerKey): void {
 
 function automaticLayerLabel(selection: LyricLayerSourceSelection, source: string): string {
   if (selection === 'local') return '本地 LRC'
+  if (selection === 'amll') return 'AMLL TTML'
   if (selection === 'provider') return 'Provider'
   if (selection === 'manual') return '手写内容'
   return `自动 · ${source}`
+}
+
+function formatLrcTimestamp(seconds: number): string {
+  const totalCentiseconds = Math.max(0, Math.round(seconds * 100))
+  const minutes = Math.floor(totalCentiseconds / 6000)
+  const remainder = totalCentiseconds % 6000
+  return `[${String(minutes).padStart(2, '0')}:${(remainder / 100).toFixed(2).padStart(5, '0')}]`
+}
+
+function convertAmlDraftToLrc(): void {
+  const parsed = parseAmlTtml(draftOriginal.value)
+  if (!parsed.length) {
+    lyricManagerError.value = 'AMLL TTML 无法转换为可编辑 LRC'
+    return
+  }
+  draftOriginal.value = parsed
+    .filter((line) => line.time != null && line.text.trim())
+    .map((line) => `${formatLrcTimestamp(line.time!)}${line.text.trim()}`)
+    .join('\n')
+  draftOriginalSelection.value = 'manual'
+  draftSource.value = 'manual'
+  voiceArrangementUndo.value = null
+  lyricManagerNotice.value = '已转换为可编辑 LRC 草稿，声部布局将以合并文本导出'
+}
+
+function startManualOriginalDraft(): void {
+  draftOriginal.value = ''
+  draftOriginalSelection.value = 'manual'
+  draftSource.value = 'manual'
+  voiceArrangementUndo.value = null
+  lyricManagerError.value = ''
+  lyricManagerNotice.value = '已新建空白手写 LRC 草稿'
 }
 
 function persistedSource(): LyricSourcePreference {
@@ -367,6 +397,10 @@ function persistedSource(): LyricSourcePreference {
 async function saveLyricManager(): Promise<void> {
   const track = currentTrack.value
   if (!track || lyricSaving.value) return
+  if (manualOriginalRequiresAmlConversion.value) {
+    lyricManagerError.value = '请先转换 AMLL TTML，或新建手写 LRC 后再保存原文'
+    return
+  }
   if (draftTrackMismatch.value) {
     lyricManagerError.value = `草稿来自「${seededTrackTitle.value}」，当前曲目已切换。请撤销草稿，或切回原曲目后再保存。`
     return
@@ -455,6 +489,10 @@ async function importLyricsIntoDraft(): Promise<void> {
 
 async function saveDraftAsLrc(): Promise<void> {
   if (!activeTrackId.value || lyricWriting.value) return
+  if (isRawAmlTtml.value) {
+    lyricManagerNotice.value = '请先将 AMLL TTML 转换为可编辑 LRC'
+    return
+  }
   lyricWriting.value = true
   lyricManagerError.value = ''
   lyricManagerNotice.value = ''
@@ -548,15 +586,6 @@ async function toggleLyricVisibility(
     lyricManagerError.value = error instanceof Error ? error.message : String(error)
   }
 }
-
-function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
-  key: K,
-  value: LyricsAppearanceSettings[K]
-): void {
-  // The shared editor owns the legacy fan-out and the published bounds, so these
-  // quick controls cannot drift from the full editor in the drawer.
-  lyricsEditor.setGlobal(key, value)
-}
 </script>
 
 <template>
@@ -581,142 +610,6 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
       </span>
     </header>
 
-    <section class="lyric-style-controls" aria-label="歌词样式">
-      <div class="lyric-style-heading">
-        <strong>歌词样式</strong>
-        <span>主播放页快捷设置</span>
-      </div>
-      <div class="lyric-style-grid">
-        <label class="lyric-range-field">
-          <span
-            >字号 <strong>{{ settings.lyricsAppearance.fontSize }}px</strong></span
-          >
-          <input
-            type="range"
-            :min="lyricsRanges.fontSize.min"
-            :max="lyricsRanges.fontSize.max"
-            :step="lyricsRanges.fontSize.step"
-            :value="settings.lyricsAppearance.fontSize"
-            @change="
-              updateLyricsAppearance('fontSize', Number(($event.target as HTMLInputElement).value))
-            "
-          />
-        </label>
-        <label class="lyric-range-field">
-          <span
-            >行距 <strong>{{ settings.lyricsAppearance.lineHeight.toFixed(2) }}</strong></span
-          >
-          <input
-            type="range"
-            :min="lyricsRanges.lineHeight.min"
-            :max="lyricsRanges.lineHeight.max"
-            :step="lyricsRanges.lineHeight.step"
-            :value="settings.lyricsAppearance.lineHeight"
-            @change="
-              updateLyricsAppearance(
-                'lineHeight',
-                Number(($event.target as HTMLInputElement).value)
-              )
-            "
-          />
-        </label>
-        <label class="lyric-range-field">
-          <span
-            >未播放暗度 <strong>{{ settings.lyricsAppearance.inactiveOpacity }}%</strong></span
-          >
-          <input
-            type="range"
-            :min="lyricsRanges.inactiveOpacity.min"
-            :max="lyricsRanges.inactiveOpacity.max"
-            :step="lyricsRanges.inactiveOpacity.step"
-            :value="settings.lyricsAppearance.inactiveOpacity"
-            @change="
-              updateLyricsAppearance(
-                'inactiveOpacity',
-                Number(($event.target as HTMLInputElement).value)
-              )
-            "
-          />
-        </label>
-        <label class="lyric-field lyric-weight-field">
-          <span>字重</span>
-          <select
-            :value="settings.lyricsAppearance.fontWeight"
-            aria-label="歌词字重"
-            @change="
-              updateLyricsAppearance(
-                'fontWeight',
-                Number(($event.target as HTMLSelectElement).value)
-              )
-            "
-          >
-            <option :value="400">标准</option>
-            <option :value="500">中等</option>
-            <option :value="600">半粗</option>
-            <option :value="700">粗体</option>
-          </select>
-        </label>
-        <div class="lyric-style-choice">
-          <span>对齐</span>
-          <div class="lyric-segment-control" role="group" aria-label="歌词对齐">
-            <button
-              type="button"
-              :aria-pressed="settings.lyricsAppearance.align === 'left'"
-              @click="updateLyricsAppearance('align', 'left')"
-            >
-              左对齐
-            </button>
-            <button
-              type="button"
-              :aria-pressed="settings.lyricsAppearance.align === 'center'"
-              @click="updateLyricsAppearance('align', 'center')"
-            >
-              居中
-            </button>
-            <button
-              type="button"
-              :aria-pressed="settings.lyricsAppearance.align === 'right'"
-              @click="updateLyricsAppearance('align', 'right')"
-            >
-              右对齐
-            </button>
-          </div>
-        </div>
-        <div class="lyric-style-choice">
-          <span>聚焦行数</span>
-          <div class="lyric-segment-control" role="group" aria-label="歌词聚焦行数">
-            <button
-              v-for="option in lyricFocusLineCounts"
-              :key="option.value"
-              type="button"
-              :aria-pressed="settings.lyricsAppearance.focusLineCount === option.value"
-              @click="updateLyricsAppearance('focusLineCount', option.value)"
-            >
-              {{ option.label }}
-            </button>
-          </div>
-        </div>
-        <button
-          type="button"
-          class="lyric-karaoke-toggle"
-          :aria-pressed="settings.lyricsAppearance.karaokeEnabled"
-          @click="
-            updateLyricsAppearance('karaokeEnabled', !settings.lyricsAppearance.karaokeEnabled)
-          "
-        >
-          <i
-            :class="
-              settings.lyricsAppearance.karaokeEnabled
-                ? 'ph ph-highlighter-circle'
-                : 'ph ph-highlighter-circle-slash'
-            "
-            aria-hidden="true"
-          ></i>
-          逐字高亮
-        </button>
-      </div>
-    </section>
-
     <details class="lyric-editor-disclosure">
       <summary>
         <span class="lyric-disclosure-title">
@@ -736,6 +629,7 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
             <select v-model="draftSource" :disabled="!currentTrack">
               <option value="auto">自动</option>
               <option value="local">本地 LRC</option>
+              <option value="amll">AMLL TTML（只读）</option>
               <option value="provider">Provider</option>
               <option value="manual">仅手写</option>
             </select>
@@ -773,6 +667,7 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
                 {{ automaticLayerLabel('automatic', originalAutomaticSource) }}
               </option>
               <option value="local">本地 LRC</option>
+              <option value="amll">AMLL TTML（只读）</option>
               <option value="provider">Provider</option>
               <option value="manual">手写内容</option>
             </select>
@@ -784,6 +679,7 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
                 {{ automaticLayerLabel('automatic', translationAutomaticSource) }}
               </option>
               <option value="local">本地</option>
+              <option value="amll">AMLL TTML</option>
               <option value="provider">Provider</option>
               <option value="manual">手写内容</option>
             </select>
@@ -795,6 +691,7 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
                 {{ automaticLayerLabel('automatic', romanizationAutomaticSource) }}
               </option>
               <option value="local">本地</option>
+              <option value="amll">AMLL TTML</option>
               <option value="provider">Provider</option>
               <option value="manual">手写内容</option>
             </select>
@@ -866,11 +763,29 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
 
         <label class="lyric-editor-label">
           <span>原文手写内容</span>
+          <button
+            v-if="isRawAmlTtml"
+            type="button"
+            :disabled="!currentTrack"
+            @click="convertAmlDraftToLrc"
+          >
+            <i class="ph ph-arrows-clockwise" aria-hidden="true"></i>
+            转换 AMLL TTML 为可编辑 LRC
+          </button>
+          <button
+            v-if="isRawAmlTtml"
+            type="button"
+            :disabled="!currentTrack"
+            @click="startManualOriginalDraft"
+          >
+            <i class="ph ph-file-plus" aria-hidden="true"></i>
+            新建手写 LRC
+          </button>
           <textarea
             v-model="draftOriginal"
             rows="4"
             spellcheck="false"
-            :disabled="!currentTrack"
+            :disabled="!currentTrack || isRawAmlTtml"
             @input="useManualLayer('original')"
           ></textarea>
         </label>
@@ -958,7 +873,7 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
                 v-model="selectedVoiceRowIndexes"
                 type="checkbox"
                 :value="row.sourceIndex"
-                :disabled="!currentTrack || !row.text"
+                :disabled="!currentTrack || isRawAmlTtml || !row.text"
                 :aria-label="`选择第 ${row.sourceIndex + 1} 行歌词`"
               />
               <span class="lyric-voice-line-number">{{ row.sourceIndex + 1 }}</span>
@@ -975,7 +890,7 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
           <div class="lyric-voice-actions">
             <button
               type="button"
-              :disabled="!currentTrack || selectedVoiceRows.length === 0"
+              :disabled="!currentTrack || isRawAmlTtml || selectedVoiceRows.length === 0"
               @click="applyVoiceArrangement"
             >
               <i class="ph ph-check" aria-hidden="true"></i>
@@ -983,7 +898,7 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
             </button>
             <button
               type="button"
-              :disabled="!currentTrack || selectedVoiceRows.length === 0"
+              :disabled="!currentTrack || isRawAmlTtml || selectedVoiceRows.length === 0"
               @click="groupSelectedVoiceRows"
             >
               <i class="ph ph-link" aria-hidden="true"></i>
@@ -991,7 +906,12 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
             </button>
             <button
               type="button"
-              :disabled="!currentTrack || selectedVoiceRows.length === 0 || !hasSelectedVoiceGroup"
+              :disabled="
+                !currentTrack ||
+                isRawAmlTtml ||
+                selectedVoiceRows.length === 0 ||
+                !hasSelectedVoiceGroup
+              "
               @click="ungroupSelectedVoiceRows"
             >
               <i class="ph ph-link-break" aria-hidden="true"></i>
@@ -1029,7 +949,11 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
         <p v-if="lyricManagerError" class="lyric-manager-error">{{ lyricManagerError }}</p>
         <p v-if="lyricManagerNotice" class="lyric-manager-notice">{{ lyricManagerNotice }}</p>
         <div class="lyric-manager-actions">
-          <button type="button" :disabled="!currentTrack || lyricWriting" @click="saveDraftAsLrc">
+          <button
+            type="button"
+            :disabled="!currentTrack || lyricWriting || isRawAmlTtml"
+            @click="saveDraftAsLrc"
+          >
             <i class="ph ph-download-simple" aria-hidden="true"></i
             >{{ lyricWriting ? '导出中…' : '导出 LRC' }}
           </button>
@@ -1046,7 +970,13 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
           <button
             type="button"
             class="lyric-save-button"
-            :disabled="!currentTrack || lyricSaving || !draftDirty || draftTrackMismatch"
+            :disabled="
+              !currentTrack ||
+              lyricSaving ||
+              !draftDirty ||
+              draftTrackMismatch ||
+              manualOriginalRequiresAmlConversion
+            "
             @click="saveLyricManager"
           >
             <i
@@ -1072,7 +1002,6 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
 .lyric-manager-heading,
 .lyric-manager-actions,
 .lyric-manager-toggles,
-.lyric-style-controls,
 .lyric-layer-grid,
 .lyric-source-grid {
   display: flex;
@@ -1132,8 +1061,7 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
 
 .lyric-field,
 .lyric-layer-source,
-.lyric-editor-label,
-.lyric-range-field {
+.lyric-editor-label {
   display: grid;
   gap: 5px;
   min-width: 0;
@@ -1201,14 +1129,12 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
 
 .lyric-manager-toggles button,
 .lyric-manager-actions button,
-.lyric-segment-control button,
-.lyric-karaoke-toggle {
+.lyric-segment-control button {
   padding: 5px 8px;
 }
 
 .lyric-manager-toggles button[aria-pressed='true'],
-.lyric-segment-control button[aria-pressed='true'],
-.lyric-karaoke-toggle[aria-pressed='true'] {
+.lyric-segment-control button[aria-pressed='true'] {
   border-color: var(--d-accent-line, rgba(129, 140, 248, 0.5));
   background: var(--d-accent-soft, rgba(129, 140, 248, 0.12));
   color: var(--d-accent, #a5b4fc);
@@ -1245,67 +1171,6 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
   white-space: nowrap;
 }
 
-.lyric-style-controls {
-  display: grid;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--d-line);
-  border-radius: 6px;
-  background: var(--d-well);
-}
-
-.lyric-style-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--d-muted);
-  font-size: 11px;
-}
-
-.lyric-style-heading strong {
-  color: var(--d-ink);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.lyric-style-heading span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.lyric-style-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 10px;
-  align-items: end;
-}
-
-.lyric-range-field span {
-  display: flex;
-  justify-content: space-between;
-  gap: 6px;
-}
-
-.lyric-range-field strong {
-  color: var(--d-ink);
-  font-weight: 550;
-}
-
-.lyric-range-field input {
-  width: 100%;
-  accent-color: var(--d-accent);
-}
-
-.lyric-style-choice {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-  color: var(--d-muted);
-  font-size: 11px;
-}
-
 .lyric-segment-control {
   display: flex;
   min-width: 0;
@@ -1326,11 +1191,6 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
 .lyric-segment-control button:first-child {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
-}
-
-.lyric-karaoke-toggle {
-  align-self: end;
-  white-space: nowrap;
 }
 
 .lyric-editor-disclosure {
@@ -1558,16 +1418,6 @@ function updateLyricsAppearance<K extends keyof LyricsAppearanceSettings>(
   .lyric-voice-metadata {
     grid-column: 4;
     text-align: left;
-  }
-
-  .lyric-style-heading {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .lyric-style-grid {
-    grid-template-columns: 1fr;
   }
 }
 </style>

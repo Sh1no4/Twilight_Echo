@@ -15,7 +15,7 @@ overrides:
 
 patchedDependencies:
   '@neteasecloudmusicapienhanced/api@4.35.1': 656fbb26c80cd8fce02181032bac95656a93ff1e6f1726e8d4cba566fb1cca5b
-  '@phosphor-icons/web@2.1.2': 3f031b98b410dfa6a3a0c7bf67edc3d9668aef38847f4c3cf67be84d5f5671e1
+  '@phosphor-icons/web@2.1.2': d72ddd19ae5364cf585c9f7c63b19372deb741a3e80cdad3ab6bdc74cf0bbaeb
 
 importers:
 
@@ -32,10 +32,13 @@ importers:
         version: 4.35.1(patch_hash=656fbb26c80cd8fce02181032bac95656a93ff1e6f1726e8d4cba566fb1cca5b)
       '@phosphor-icons/web':
         specifier: ^2.1.2
-        version: 2.1.2(patch_hash=3f031b98b410dfa6a3a0c7bf67edc3d9668aef38847f4c3cf67be84d5f5671e1)
+        version: 2.1.2(patch_hash=d72ddd19ae5364cf585c9f7c63b19372deb741a3e80cdad3ab6bdc74cf0bbaeb)
       '@tokenizer/inflate':
         specifier: 0.4.1
         version: 0.4.1
+      '@xmldom/xmldom':
+        specifier: ^0.9.11
+        version: 0.9.11
       ansi-regex:
         specifier: 5.0.1
         version: 5.0.1
@@ -1179,6 +1182,10 @@ packages:
     resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
     engines: {node: '>=14.6'}
     deprecated: this version has critical issues, please update to the latest version
+
+  '@xmldom/xmldom@0.9.11':
+    resolution: {integrity: sha512-tW8bcK3hsG0/uqSnNz6TK4BkcuZSezoU7DlnYssILmZDktPnSHHuDJJFM0AJv+13gz2r0iGdrj6qqKeUnxXEDg==}
+    engines: {node: '>=14.6'}
 
   abbrev@4.0.0:
     resolution: {integrity: sha512-a1wflyaL0tHtJSmLSOVybYhy22vRih4eduhhrkcjgrWGnRfrZtovJ2FRjxuTtkkj47O/baf0R86QU5OuYpz8fA==}
@@ -3865,7 +3872,7 @@ snapshots:
       - debug
       - supports-color
 
-  '@phosphor-icons/web@2.1.2(patch_hash=3f031b98b410dfa6a3a0c7bf67edc3d9668aef38847f4c3cf67be84d5f5671e1)': {}
+  '@phosphor-icons/web@2.1.2(patch_hash=d72ddd19ae5364cf585c9f7c63b19372deb741a3e80cdad3ab6bdc74cf0bbaeb)': {}
 
   '@pkgr/core@0.2.9': {}
 
@@ -4222,6 +4229,8 @@ snapshots:
   '@xmldom/xmldom@0.8.13': {}
 
   '@xmldom/xmldom@0.9.10': {}
+
+  '@xmldom/xmldom@0.9.11': {}
 
   abbrev@4.0.0: {}
 

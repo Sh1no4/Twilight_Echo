@@ -45,6 +45,8 @@ export const dataApi = {
     ipcRenderer.invoke('cover:grantRemote', source),
   getLyrics: (dir: string, fileName: string, filePath?: string): Promise<string | null> =>
     ipcRenderer.invoke('lyrics:get', dir, fileName, filePath),
+  getAmlTtml: (songId: number): Promise<string | null> =>
+    ipcRenderer.invoke('lyrics:getAmlTtml', songId),
   importLyrics: (): Promise<string | null> => ipcRenderer.invoke('lyrics:import'),
   saveLyrics: (contents: string): Promise<string | null> =>
     ipcRenderer.invoke('lyrics:save', contents),

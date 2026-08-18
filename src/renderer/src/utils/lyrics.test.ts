@@ -37,6 +37,29 @@ test('buildLyricLines falls back to plain lyrics when no timed lines exist', () 
   ])
 })
 
+test('external TTML translation and romanization replace embedded voice layers', () => {
+  const ttml = `<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata"><body><p begin="00:01.00" end="00:02.00"><span begin="00:01.00" end="00:02.00">Original</span><span ttm:role="x-translation">Embedded translation</span><span ttm:role="x-roman">Embedded romanization</span></p></body></tt>`
+  const lines = buildLyricLines(
+    ttml,
+    '[00:01.00]Manual translation',
+    '[00:01.00]Manual romanization'
+  )
+
+  assert.equal(lines[0].translation, 'Manual translation')
+  assert.equal(lines[0].romanization, 'Manual romanization')
+  assert.equal(lines[0].voices?.[0].translation, null)
+  assert.equal(lines[0].voices?.[0].romanization, null)
+
+  const hidden = buildLyricLines(ttml, null, null, {
+    replaceTtmlTranslation: true,
+    replaceTtmlRomanization: true
+  })
+  assert.equal(hidden[0].translation, null)
+  assert.equal(hidden[0].romanization, null)
+  assert.equal(hidden[0].voices?.[0].translation, null)
+  assert.equal(hidden[0].voices?.[0].romanization, null)
+})
+
 test('findActiveLyricIndex uses timed lyric boundaries', () => {
   const lines = buildLyricLines('[00:01.00]First\n[00:03.00]Second\n[00:03.00]Echo', null)
 
@@ -290,10 +313,7 @@ test('voice tag serialization percent-encodes speaker identity and draft rewrite
     '[00:01.00][te:voice role=lead lane=start speaker=Alice]<00:01.00>Hello [te:unknown value=x]\nplain'
   )
   assert.equal(parseLyricVoiceDraftRows(rewritten)[0].metadata?.speaker, 'Alice')
-  assert.equal(
-    rewriteLyricVoiceDraftRows(rewritten, [{ sourceIndex: 0, metadata: null }]),
-    source
-  )
+  assert.equal(rewriteLyricVoiceDraftRows(rewritten, [{ sourceIndex: 0, metadata: null }]), source)
 })
 
 test('desktop compatibility projection strips valid tags and preserves malformed tags', () => {

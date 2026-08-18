@@ -225,7 +225,7 @@ test('lines depart in sequence rather than as one block, which is the cascade', 
   )
 })
 
-test('line movement reaches its target without bouncing back', async () => {
+test('an underdamped line overshoots its target and settles back', async () => {
   const { controller, manual, activeIndex } = harness(10)
   activeIndex.value = 8
   await controller.follow(8, { mode: 'snap' })
@@ -234,14 +234,14 @@ test('line movement reaches its target without bouncing back', async () => {
   await controller.follow(0)
 
   const target = controller.getRowTargetTop(0) as number
-  let bouncedBack = false
+  let overshot = false
   for (let frame = 0; frame < 200; frame += 1) {
     manual.runFrame()
     const top = controller.getRowTop(0) as number
-    if (top > target + 0.01) bouncedBack = true
+    if (top > target + 0.5) overshot = true
   }
 
-  assert.ok(!bouncedBack, 'a lyric line must not reverse past its target')
+  assert.ok(overshot, 'scrollTop could never do this; a per-line spring can')
   assert.ok(Math.abs((controller.getRowTop(0) as number) - target) < 1, 'it still settles')
 })
 
@@ -486,6 +486,30 @@ test('content resize recentres once per frame without snapping away lyric motion
   manual.runFrames(400)
   // 0.5 of 400 = 200, minus half a row = 164.
   assert.ok(Math.abs((controller.getRowTop(5) as number) - 164) < 1.5)
+})
+
+test('a spring resize preserves the queued push from the anchor into lower lines', async () => {
+  const { controller, manual, activeIndex } = harness(10)
+  activeIndex.value = 0
+  await controller.follow(0, { mode: 'snap' })
+  const restingLowerTarget = controller.getRowTargetTop(7) as number
+
+  activeIndex.value = 5
+  await controller.follow(5)
+  manual.runFrames(2)
+  assert.equal(
+    controller.getRowTargetTop(7),
+    restingLowerTarget,
+    'a lower line should still be waiting for its cascade turn'
+  )
+
+  controller.onResize('spring')
+  manual.runFrame()
+  assert.equal(
+    controller.getRowTargetTop(7),
+    restingLowerTarget,
+    'a spring resize must not release the lower line together with the anchor'
+  )
 })
 
 test('resize is ignored while the user is browsing', async () => {

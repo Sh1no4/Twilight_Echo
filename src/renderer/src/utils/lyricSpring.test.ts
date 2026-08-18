@@ -19,12 +19,15 @@ function advance(spring: LyricSpring, frames: number): number[] {
   return positions
 }
 
-test('the vertical spring reaches its destination without bouncing back', () => {
+test('the vertical spring is underdamped so lines overshoot and settle back', () => {
   const spring = new LyricSpring(0, LYRIC_POS_Y_SPRING)
   spring.setTargetPosition(100)
   const positions = advance(spring, 240)
 
-  assert.ok(Math.max(...positions) <= 100 + 1e-9, 'a lyric line must not pass its target')
+  assert.ok(
+    Math.max(...positions) > 102,
+    'an underdamped line must still pass its target slightly'
+  )
   assert.ok(
     Math.abs(spring.getCurrentPosition() - 100) < 0.01,
     'the line must still settle exactly on target'
@@ -86,6 +89,20 @@ test('a delayed retarget holds position until the delay elapses', () => {
   advance(spring, 60)
   assert.ok(spring.getCurrentPosition() > 50, 'the line must move once the delay expires')
   assert.ok(!spring.hasQueuedWork())
+})
+
+test('reissuing a delayed target does not restart its departure timer', () => {
+  const spring = new LyricSpring(0, LYRIC_POS_Y_SPRING)
+
+  for (let frame = 0; frame < 24; frame += 1) {
+    spring.setTargetPosition(100, 0.2)
+    spring.update(FRAME)
+  }
+
+  assert.ok(
+    spring.getCurrentPosition() > 10,
+    'repeated layout writes must not keep a lower lyric parked forever'
+  )
 })
 
 test('staggered delays make later lines trail earlier ones', () => {

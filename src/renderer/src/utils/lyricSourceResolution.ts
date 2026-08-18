@@ -1,7 +1,19 @@
 import type { LyricSource, Track } from '../types/music'
 import type { MediaProviderLyrics } from '../providers/mediaProvider'
+import { getNcmSongId } from '../providers/ncmTrack.ts'
 
-export type LyricResolverSource = 'automatic' | 'local' | 'provider'
+export type LyricResolverSource = 'automatic' | 'local' | 'amll' | 'provider'
+
+type AutomaticOriginalCandidate = 'local' | 'amll' | 'provider'
+
+const AUTOMATIC_ORIGINAL_PRIORITY: Record<LyricSource, number> = {
+  manual: 5,
+  embedded: 4,
+  local: 4,
+  amll: 3,
+  provider: 2,
+  online: 1
+}
 
 export interface ResolvedLyricsWithSources {
   lyrics: string | null
@@ -13,13 +25,14 @@ export interface ResolvedLyricsWithSources {
    * distinct from a successful request that found no lyrics, so callers can
    * keep the track eligible for retry instead of permanently caching emptiness.
    */
-  failure?: 'local' | 'provider' | 'online'
+  failure?: 'local' | 'amll' | 'provider' | 'online'
 }
 
 export interface ResolveLyricsWithSourcesOptions {
   track: Track
   loadLocalLyrics?: () => Promise<string | null>
   loadProviderLyrics?: () => Promise<MediaProviderLyrics>
+  loadAmlTtml?: () => Promise<string | null>
   originalSource?: LyricResolverSource
   translationSource?: LyricResolverSource
   /** Final fallback when embedded/local/provider all miss. */
@@ -32,6 +45,29 @@ export interface ResolveLyricsWithSourcesOptions {
   loadOnlineTranslation?: () => Promise<string | null>
 }
 
+function defaultExistingLyricSource(track: Track): LyricSource {
+  return track.source === 'ncm' || track.id.startsWith('ncm:') ? 'provider' : 'embedded'
+}
+
+function automaticCandidateCanReplace(
+  currentSource: LyricSource | null,
+  candidate: AutomaticOriginalCandidate
+): boolean {
+  return (
+    currentSource == null ||
+    AUTOMATIC_ORIGINAL_PRIORITY[candidate] > AUTOMATIC_ORIGINAL_PRIORITY[currentSource]
+  )
+}
+
+export function shouldLoadAutomaticOriginal(
+  track: Track,
+  candidate: AutomaticOriginalCandidate
+): boolean {
+  const lyrics = normalizeLyricValue(track.lyrics)
+  const source = lyrics ? (track.lyricsSource ?? defaultExistingLyricSource(track)) : null
+  return automaticCandidateCanReplace(source, candidate)
+}
+
 export async function resolveLyricsWithSources(
   options: ResolveLyricsWithSourcesOptions
 ): Promise<ResolvedLyricsWithSources> {
@@ -40,56 +76,95 @@ export async function resolveLyricsWithSources(
   const translationSource = options.translationSource ?? 'automatic'
   let lyrics = normalizeLyricValue(track.lyrics)
   let translatedLyrics = normalizeLyricValue(track.translatedLyrics)
-  let lyricsSource = lyrics ? (track.lyricsSource ?? 'embedded') : null
+  let lyricsSource = lyrics ? (track.lyricsSource ?? defaultExistingLyricSource(track)) : null
   let translatedLyricsSource = translatedLyrics
-    ? (track.translatedLyricsSource ?? 'embedded')
+    ? (track.translatedLyricsSource ?? defaultExistingLyricSource(track))
     : null
 
-  const shouldLoadLocal = originalSource === 'local' || (originalSource === 'automatic' && !lyrics)
-  const shouldLoadProvider =
-    originalSource === 'provider' ||
-    translationSource === 'provider' ||
-    (originalSource === 'automatic' && !lyrics) ||
-    (translationSource === 'automatic' && !translatedLyrics)
+  const shouldLoadLocal =
+    originalSource === 'local' ||
+    (originalSource === 'automatic' && automaticCandidateCanReplace(lyricsSource, 'local'))
   const localResult =
     shouldLoadLocal && options.loadLocalLyrics
       ? await loadOptionalLyrics(options.loadLocalLyrics)
       : { value: null, failed: false }
+  const localLyrics = normalizeLyricValue(localResult.value)
+
+  if (originalSource === 'local') {
+    lyrics = localLyrics
+    lyricsSource = localLyrics ? 'local' : null
+  } else if (
+    originalSource === 'automatic' &&
+    localLyrics &&
+    automaticCandidateCanReplace(lyricsSource, 'local')
+  ) {
+    lyrics = localLyrics
+    lyricsSource = 'local'
+  }
+
+  const shouldLoadAml =
+    eligibleForAml(track) &&
+    options.loadAmlTtml &&
+    (originalSource === 'amll' ||
+      translationSource === 'amll' ||
+      (originalSource === 'automatic' && automaticCandidateCanReplace(lyricsSource, 'amll')))
+  const amlResult = shouldLoadAml
+    ? await loadOptionalLyrics(options.loadAmlTtml!)
+    : { value: null, failed: false }
+  const amlLyrics = normalizeLyricValue(amlResult.value)
+  const applyAmlLyrics = (): void => {
+    lyrics = amlLyrics
+    lyricsSource = 'amll'
+    if (
+      translationSource === 'amll' ||
+      (translationSource === 'automatic' &&
+        (translatedLyricsSource === 'provider' || translatedLyricsSource === 'online'))
+    ) {
+      translatedLyrics = null
+      translatedLyricsSource = null
+    }
+  }
+  if ((originalSource === 'amll' || translationSource === 'amll') && amlLyrics) {
+    applyAmlLyrics()
+  } else if (originalSource === 'amll') {
+    lyrics = null
+    lyricsSource = null
+  } else if (
+    originalSource === 'automatic' &&
+    amlLyrics &&
+    automaticCandidateCanReplace(lyricsSource, 'amll')
+  ) {
+    applyAmlLyrics()
+  }
+
+  const shouldLoadProvider =
+    originalSource === 'provider' ||
+    translationSource === 'provider' ||
+    (originalSource === 'automatic' && automaticCandidateCanReplace(lyricsSource, 'provider')) ||
+    (translationSource === 'automatic' && !translatedLyrics && lyricsSource !== 'amll')
   const providerResult =
     shouldLoadProvider && options.loadProviderLyrics
       ? await loadOptionalProviderLyrics(options.loadProviderLyrics)
       : { value: null, failed: false }
-  const localLyrics = normalizeLyricValue(localResult.value)
   const providerLyrics = providerResult.value
   const providerOriginal = normalizeLyricValue(providerLyrics?.lyrics)
   const providerWordLyrics = normalizeLyricValue(providerLyrics?.wordLyrics)
   const providerTranslation = normalizeLyricValue(providerLyrics?.translatedLyrics)
 
-  if (originalSource === 'local') {
-    lyrics = localLyrics
-    lyricsSource = localLyrics ? 'local' : null
-  } else if (originalSource === 'provider') {
+  if (originalSource === 'provider') {
     lyrics = providerWordLyrics ?? providerOriginal
     lyricsSource = lyrics ? 'provider' : null
-  } else if (!lyrics && localLyrics) {
-    lyrics = localLyrics
-    lyricsSource = 'local'
   }
 
-  if (originalSource === 'automatic' && providerLyrics) {
-    if (!lyrics) {
-      if (providerOriginal) {
-        lyrics = providerOriginal
-        lyricsSource = 'provider'
-      }
-    }
-    // Prefer word-level timings when they come from the provider path only —
-    // never overwrite local/embedded lyrics with provider word lyrics.
-    if (!lyrics && providerWordLyrics) {
-      lyrics = providerWordLyrics
+  if (
+    originalSource === 'automatic' &&
+    providerLyrics &&
+    automaticCandidateCanReplace(lyricsSource, 'provider')
+  ) {
+    const providerBest = providerWordLyrics ?? providerOriginal
+    if (providerBest) {
+      lyrics = providerBest
       lyricsSource = 'provider'
-    } else if (lyricsSource === 'provider' && providerWordLyrics) {
-      lyrics = providerWordLyrics
     }
   }
 
@@ -140,9 +215,23 @@ export async function resolveLyricsWithSources(
     translatedLyricsSource
   }
   if (lyrics || translatedLyrics) return resolved
+  if (amlResult.failed) return { ...resolved, failure: 'amll' as const }
   if (providerResult.failed) return { ...resolved, failure: 'provider' as const }
   if (localResult.failed) return { ...resolved, failure: 'local' as const }
   return resolved
+}
+
+export function eligibleForAml(track: Track): boolean {
+  const source = track.source ?? (track.id.startsWith('ncm:') ? 'ncm' : 'local')
+  if (source === 'ncm') {
+    const id = getNcmSongId(track)
+    return id != null && Number.isSafeInteger(id) && id > 0
+  }
+  if (source !== 'local') return false
+  const match = track.metadataMatch
+  if (!match || match.providerId !== 'ncm' || match.confidence !== 'high') return false
+  const id = Number(match.trackId)
+  return Number.isSafeInteger(id) && id > 0
 }
 
 function normalizeLyricValue(value: string | null | undefined): string | null {

@@ -145,6 +145,7 @@ test('track activation hydrates cover and lyrics stripped by queue snapshots', (
   assert.match(source, /function hydratePlaybackTrack/)
   assert.match(source, /Queue rows intentionally strip lyrics/)
   assert.match(source, /hydratePlaybackTrack\(/)
+  assert.match(source, /getTrackSource\(track\) === 'ncm' \? 'provider' : 'embedded'/)
   // Native gapless switch must not inherit previous track lyrics.
   assert.match(source, /lyrics: null,\s*translatedLyrics: null,\s*romanizedLyrics: null/)
   assert.match(source, /function activateCurrentTrack/)

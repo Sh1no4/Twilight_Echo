@@ -69,11 +69,18 @@ test('a long backlog above the viewport does not spend the delay budget', () => 
 
   assert.equal(result.lines[0].delay, 0)
   assert.equal(result.lines[20].delay, 0, 'far off-screen lines must contribute nothing')
-  assert.ok(result.lines[30].delay > 0, 'the visible approach still receives a cascade')
+  assert.equal(result.lines[30].delay, 0, 'the anchor starts the cascade immediately')
   assert.ok(
-    result.lines[31].delay >= result.lines[30].delay,
+    result.lines[31].delay > result.lines[30].delay,
     'the wave cannot reverse after reaching its cap'
   )
+})
+
+test('the anchor moves first and lower lines fill from below', () => {
+  const result = layout(8, 3, [3])
+  assert.equal(result.lines[3].delay, 0)
+  assert.ok(result.lines[4].delay > result.lines[3].delay)
+  assert.ok(result.lines[5].delay > result.lines[4].delay)
 })
 
 test('seeking suppresses the cascade so a scrub lands at once', () => {
