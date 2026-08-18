@@ -780,6 +780,28 @@ window.runPlayingMusicLyricsRuntime = async () => {
     getComputedStyle(document.querySelector('.lyric-lane--center')).alignItems === 'flex-start',
     'left alignment did not move the centered compatibility lane to a stable left edge'
   )
+  player.currentTime.value = 1.5
+  player.seek(1.5)
+  await waitFor(
+    () => document.querySelector('.lyric-row.active .lyric-row-content') != null,
+    'the AMLL fixture did not expose an active row for alignment inspection'
+  )
+  expect(
+    document
+      .querySelector('.lyric-row.active .lyric-row-content')
+      ?.classList.contains('lyric-row-content--align-left'),
+    'the highlighted TTML row drifted away from the normal lyric alignment'
+  )
+  const activeAlignedContent = document.querySelector(
+    '.lyric-row.active .lyric-row-content'
+  ) as HTMLElement | null
+  expect(
+    activeAlignedContent && getComputedStyle(activeAlignedContent).transformOrigin.startsWith('0px'),
+    'the highlighted left-aligned row still scaled around its centre'
+  )
+  player.currentTime.value = 3.1
+  player.seek(3.1)
+  await tick()
 
   const styledAppearance = JSON.parse(JSON.stringify(originalAppearance))
   Object.assign(styledAppearance.styles.translation, {

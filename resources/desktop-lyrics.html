@@ -120,8 +120,6 @@
   }
 
   // ── State ──
-  var parsedLines = [];
-  var translatedLines = [];
   var mergedLines = [];
   var currentTime = 0;
   var activeIndex = -1;
@@ -591,6 +589,20 @@
     contentEl.style.lineHeight = String(settings.lineSpacing);
   }
 
+  // YRC word ticks do not change the visible line set. Toggle the existing
+  // spans in place instead of clearing and rebuilding every row at up to 5Hz.
+  function updateActiveWordClasses() {
+    for (var i = 0; i < displayLines.length; i++) {
+      var row = displayLines[i];
+      if (row.index !== activeIndex || row.el.classList.contains('translation')) continue;
+      var words = row.el.querySelectorAll('.lyric-word');
+      for (var wi = 0; wi < words.length; wi++) {
+        words[wi].classList.toggle('active', wi === activeWordIndex);
+      }
+      return;
+    }
+  }
+
   function updateActiveIndex() {
     var newActive = -1;
     for (var i = 0; i < mergedLines.length; i++) {
@@ -609,18 +621,19 @@
         else break;
       }
     }
-    if (newActive !== activeIndex || newWord !== activeWordIndex) {
+    if (newActive !== activeIndex) {
       activeIndex = newActive;
       activeWordIndex = newWord;
       renderLines();
+    } else if (newWord !== activeWordIndex) {
+      activeWordIndex = newWord;
+      updateActiveWordClasses();
     }
   }
 
   // ── IPC via window.api ──
   api.onInitSettings(function (s) { applySettings(s); });
   api.onTrackUpdate(function (data) {
-    parsedLines = looksLikeYrc(data.lyrics) ? parseYrc(data.lyrics) : parseLrc(data.lyrics);
-    translatedLines = parseLrc(data.translatedLyrics);
     mergedLines = buildMergedLyrics(data.lyrics, data.translatedLyrics);
     activeIndex = -1;
     activeWordIndex = -1;

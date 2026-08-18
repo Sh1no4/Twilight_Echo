@@ -175,12 +175,8 @@ function handleCoverClick(rect: { x: number; y: number; w: number; h: number }):
   }
 }
 
-function handleToggleLyricsPage(rect: { x: number; y: number; w: number; h: number }): void {
-  if (showPlayingPage.value) {
-    closePlayingPage()
-  } else {
-    openPlayingPage(rect)
-  }
+function handleExitPlayingPage(): void {
+  closePlayingPage()
 }
 
 function enterStreamingLogin(): void {
@@ -858,8 +854,7 @@ useLiquidGlassEnvironment({
         :mode="playerBarPresentation.mode"
         :auto-hide="playerBarPresentation.autoHide"
         :hidden-bar="playerBarPresentation.hidden"
-        :playing-page-open="showPlayingPage"
-        @toggle-lyrics-page="handleToggleLyricsPage"
+        @exit-playing-page="handleExitPlayingPage"
         @click-cover="handleCoverClick"
         @open-settings="openPlaybackSettings"
         @open-dsp="openDspSettings"

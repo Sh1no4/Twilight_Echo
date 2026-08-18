@@ -55,7 +55,7 @@ const supportingPosition = computed<number | null>(() => {
   if (!props.singing) return null
   // Depend on the shared clock revision only for the currently singing row;
   // distant lyric rows remain isolated from playback ticks.
-  props.clock.snapshot.value.revision
+  void props.clock.snapshot.value.revision
   return props.clock.positionAt() + props.offsetSeconds
 })
 
@@ -327,6 +327,20 @@ function voiceMotionRole(voice: LyricVoiceLayer): 'lead' | 'background' | 'harmo
   transform: scale(var(--lyric-line-scale, 1));
   transform-origin: center;
   will-change: transform;
+}
+
+/* Keep the reading edge fixed while the active row grows.  A centered scale
+ * makes a left-aligned line spill into the previous column on both sides. */
+.lyric-row-content--align-left {
+  transform-origin: left center;
+}
+
+.lyric-row-content--align-right {
+  transform-origin: right center;
+}
+
+.lyric-row-content--align-center {
+  transform-origin: center center;
 }
 
 .lyric-lane,

@@ -1270,6 +1270,21 @@
   animation: border-gradient-flow 3.4s linear infinite;
 }
 
+/* The animated border is decorative. Pause it whenever the row is not the
+   visible surface or motion has been reduced, so playback-page transitions and
+   hidden documents do not keep a paint-driven animation alive. */
+:global(.main-content.playing-open .track-playing::after),
+:global(html[data-te-motion='reduced'] .track-playing::after),
+:global(html[data-te-motion='off'] .track-playing::after) {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .track-playing::after {
+    animation-play-state: paused;
+  }
+}
+
 .track-playing::before {
   border-color: rgba(124, 77, 255, 0.18);
   background: linear-gradient(

@@ -129,7 +129,7 @@ test('App.vue resolves the shape through the shared policy rather than inline lo
   assert.match(app, /:hidden-bar="playerBarPresentation\.hidden"/)
 })
 
-test('the mini shape drops the cover, the inline progress row and the time labels', () => {
+test('the mini shape drops cover and the standard inline progress row', () => {
   for (const marker of [
     /v-if="!isMini"[\s\S]{0,120}class="player-cover-slot player-artwork-slot"/,
     /v-if="!isMini"[\s\S]{0,200}class="progress-area"/,
@@ -137,49 +137,40 @@ test('the mini shape drops the cover, the inline progress row and the time label
   ]) {
     assert.match(playerBar, marker)
   }
-  // Time labels live inside .progress-area, so gating that block removes them too.
+  // Standard time labels live inside .progress-area, so gating that block removes them too.
   const progressBlock = playerBar.slice(playerBar.indexOf('class="progress-area"'))
   assert.match(progressBlock.slice(0, 600), /class="time-label"/)
+  // Metadata is omitted from the mini DOM rather than merely hidden with CSS.
+  assert.match(playerBar, /<div v-if="!isMini" :key="playerLeftKey" class="player-left">/)
 })
 
-test('the mini shape keeps transport, favourite, mode, volume, queue and the HiFi console', () => {
-  for (const marker of ['btn-play', 'player-controls', 'player-right', 'hifi']) {
-    assert.ok(
-      playerBar.toLowerCase().includes(marker.toLowerCase()),
-      `${marker} must survive in the mini shape`
-    )
-  }
-  // The mini-player window button only makes sense on a wide bar and stays
-  // reachable from the HiFi panel; desktop lyrics stays on the bar in both shapes.
+test('the mini shape keeps compact play/pause, utility controls and an exit', () => {
+  assert.match(playerBar, /<div v-if="!isMini" class="player-center">/)
+  assert.match(playerBar, /v-if="isMini"[\s\S]{0,100}class="mini-play-button"/)
+  assert.match(playerBar, /@click="togglePlay"/)
+  assert.match(
+    playerBar,
+    /class="player-right"[\s\S]{0,1400}class="ctrl-btn mode-btn-right player-misc-icon"/
+  )
+  assert.match(playerBar, /class="icon-btn track-menu-button"/)
+  assert.match(playerBar, /class="volume-anchor player-misc-icon"/)
+  assert.match(playerBar, /class="icon-btn player-misc-icon hifi-toggle-button"/)
+  assert.match(
+    playerBar,
+    /v-if="isMini && glass"[\s\S]{0,120}class="icon-btn playing-page-exit-button"/
+  )
+  assert.match(playerBar, /@click="emit\('exitPlayingPage'\)"/)
+  assert.match(app, /@exit-playing-page="handleExitPlayingPage"/)
+  assert.match(app, /function handleExitPlayingPage\(\): void \{[\s\S]{0,80}closePlayingPage\(\)/)
+  // These controls stay available in the standard bar, but are absent from mini.
+  assert.match(playerBar, /v-if="!isMini && favoriteButtonVisible"/)
   assert.match(playerBar, /v-if="!isMini"[\s\S]{0,200}class="icon-btn mini-player-btn/)
-  assert.match(playerBar, /class="icon-btn desktop-lyrics-btn player-misc-icon"/)
+  assert.match(playerBar, /v-if="!isMini"[\s\S]{0,200}class="icon-btn desktop-lyrics-btn/)
+  assert.doesNotMatch(playerBar, /mini-lyrics-btn/)
 })
 
-test('the mini shape gets a dedicated lyrics-page toggle wired to App', () => {
-  // The button is mini-only and reflects the open lyrics page.
-  assert.match(
-    playerBar,
-    /v-if="isMini"[\s\S]{0,160}class="icon-btn mini-lyrics-btn player-misc-icon"/
-  )
-  assert.match(playerBar, /:class="{ active: playingPageOpen }"/)
-  assert.match(playerBar, /:title="playingPageOpen \? '退出歌词页' : '进入歌词页'"/)
-  assert.match(playerBar, /@click="onToggleLyricsPage"/)
-  // Distinct from the desktop-lyrics 词 glyph: the page toggle uses ph-text-aa.
-  assert.match(
-    playerBar,
-    /class="icon-btn mini-lyrics-btn player-misc-icon"[\s\S]{0,400}ph ph-text-aa/
-  )
-  assert.match(
-    playerBar,
-    /emit\('toggleLyricsPage', \{ x: r\.left, y: r\.top, w: r\.width, h: r\.height \}\)/
-  )
-  // App owns the open/close decision and tells the bar which state to show.
-  assert.match(app, /:playing-page-open="showPlayingPage"/)
-  assert.match(app, /@toggle-lyrics-page="handleToggleLyricsPage"/)
-})
-
-test('the border rail carries seeking and is skipped for unseekable streams', () => {
-  assert.match(playerBar, /v-if="isMini && !isLiveStream"[\s\S]{0,40}class="mini-progress-rail"/)
+test('the mini progress rail is always present and disables seeking for live streams', () => {
+  assert.match(playerBar, /v-if="isMini"[\s\S]{0,80}class="mini-progress-rail"/)
   assert.match(playerBar, /class="mini-progress-slider"[\s\S]{0,320}@input="onMiniRailInput"/)
   // The rail speaks in 0..1, so its pixel width never has to match the timeline.
   assert.match(playerBar, /min="0"[\s\S]{0,60}max="1"/)
@@ -187,8 +178,9 @@ test('the border rail carries seeking and is skipped for unseekable streams', ()
     playerBar,
     /resolveSeekTargetSeconds\(Number\(target\.value\), effectiveDuration\.value\)/
   )
-  assert.match(playerBar, /:disabled="effectiveDuration <= 0"/)
+  assert.match(playerBar, /:disabled="isLiveStream \|\| effectiveDuration <= 0"/)
   assert.match(playerBar, /aria-label="播放进度"/)
+  assert.match(playerBar, /class="mini-progress-time"/)
 })
 
 test('mini geometry out-specifies the preset theme layouts without !important', () => {
@@ -202,10 +194,11 @@ test('mini geometry out-specifies the preset theme layouts without !important', 
   for (const property of ['height', 'max-width', 'padding', 'grid-template-columns']) {
     assert.match(rule, new RegExp(`\\b${property}\\s*:`), `mini geometry must set ${property}`)
   }
-  // The mini pill is intentionally longer than the old compact 560px width.
-  assert.match(rule, /max-width:\s*min\(960px, 100%\)/)
-  // Equal side columns put the transport dead-centre in the mini pill.
-  assert.match(rule, /grid-template-columns:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\)/)
+  // The mini pill is intentionally long enough for an edge-to-edge progress rail.
+  assert.match(rule, /max-width:\s*min\(1120px, 100%\)/)
+  assert.match(rule, /height:\s*40px/)
+  // Play/pause stays left, the rail stretches in the middle, tools stay right.
+  assert.match(rule, /grid-template-columns:\s*auto minmax\(0, 1fr\) auto/)
 })
 
 test('no preset theme layout can out-specify a mini rule on a property mini sets', () => {
@@ -285,21 +278,35 @@ test('fully hidden works on either shape and leaves the tab order', () => {
   )
 })
 
-test('the mini rail is hidden by default but keeps its liquid-glass override', () => {
-  // `.player-bar-liquid > *:not(.player-bar-warp)` forces position: relative, which
-  // would knock an absolutely positioned rail off the bottom border if a future
-  // option re-enables it.
+test('the mini rail stays visible as a flat, long seeking target', () => {
+  // The rail is a real grid item so it can occupy the long middle of the pill.
   assert.match(playerBarCss, /\.player-bar\.player-bar-mini\s*>\s*\.mini-progress-rail\s*\{/)
   const rail = playerBarCss.match(
     /\.player-bar\.player-bar-mini\s*>\s*\.mini-progress-rail\s*\{[^}]*\}/
   )
   assert.ok(rail)
-  // The mini style is progress-free: the rail is hidden entirely.
-  assert.match(rail[0], /display:\s*none/)
-  // The geometry stays behind, so re-enabling is a one-line CSS flip.
-  assert.match(rail[0], /position:\s*absolute/)
+  assert.match(rail[0], /display:\s*flex/)
+  assert.match(rail[0], /position:\s*relative/)
   assert.match(rail[0], /pointer-events:\s*auto/)
-  assert.match(rail[0], /height:\s*14px/)
+  assert.match(rail[0], /height:\s*100%/)
+  assert.match(rail[0], /width:\s*100%/)
+  assert.match(playerBarCss, /\.mini-progress-track\s*\{[^}]*height:\s*2px/)
+  assert.match(playerBarCss, /\.mini-progress-fill\s*\{[^}]*background:\s*var\(--accent-color/)
+  assert.match(playerBarCss, />\s*\.mini-play-button\s*\{[^}]*width:\s*26px/)
+})
+
+test('the playing-page mini bar stays dark even under the light app theme', () => {
+  const darkGlassRule = playerBarCss.match(
+    /\.player-bar-shell\[data-te-playbar-mode='mini'\][\s\S]{0,120}\.player-bar\.player-bar-glass\.player-bar-mini\.player-bar-mini\.player-bar-mini\s*\{[^}]*\}/
+  )
+  assert.ok(darkGlassRule, 'playing-page mini override must exist')
+  assert.match(darkGlassRule[0], /background:\s*#141722/)
+  assert.match(darkGlassRule[0], /background-image:\s*none/)
+  assert.match(darkGlassRule[0], /border-color:\s*rgba\(255, 255, 255, 0\.14\)/)
+  assert.match(
+    playerBarCss,
+    /\.player-bar\.player-bar-glass\.player-bar-mini\.player-bar-mini\.player-bar-mini\s*\.player-right \.icon-btn[\s\S]{0,180}color:\s*rgba\(255, 255, 255, 0\.78\)/
+  )
 })
 
 /**

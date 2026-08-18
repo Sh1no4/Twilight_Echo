@@ -363,7 +363,7 @@ test('player bar smooths progress between player store ticks and snaps large jum
   assert.match(source, /useSmoothedValue\(progressPercent, \{\s*tau: 160,\s*snapThreshold: 2\.5/)
   assert.match(
     source,
-    /width: `\$\{Math\.min\(100, Math\.max\(0, smoothedProgressPercent\.value\)\)\}%`/
+    /transform: `scaleX\(\$\{Math\.min\(100, Math\.max\(0, smoothedProgressPercent\.value\)\) \/ 100\}\)`/
   )
 })
 

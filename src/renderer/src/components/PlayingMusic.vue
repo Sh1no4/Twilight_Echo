@@ -254,7 +254,14 @@ const managedLyrics = computed(() =>
 )
 const isTtmlLyrics = computed(() => isAmlTtml(managedLyrics.value.original))
 function lyricLineAlign(singing: boolean): 'left' | 'center' | 'right' {
-  const target = singing ? 'active' : 'normal'
+  /*
+   * TTML rows can contain several voices and auxiliary layers.  Letting the
+   * active target carry a separate alignment makes the highlighted row move
+   * sideways when it grows, leaving its neighbouring rows on a different
+   * edge.  The normal lyric alignment is the stable column anchor for the
+   * whole TTML page; active styling still controls weight, colour and effects.
+   */
+  const target = isTtmlLyrics.value ? 'normal' : singing ? 'active' : 'normal'
   return constrainLyricsAlignment(lyricTextStyle.value[target].align, isTtmlLyrics.value)
 }
 function usesManualManagedLayer(key: 'translationSelection' | 'romanizationSelection'): boolean {
@@ -930,12 +937,21 @@ onBeforeUnmount(() => {
 .backdrop-fluid {
   position: absolute;
   inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.backdrop-fluid::before {
+  content: '';
+  position: absolute;
+  inset: -50%;
   background: var(
     --te-playback-fluid-bg,
     linear-gradient(135deg, #0f172a, #1e3a5f, #312e81, #1e3a5f, #0f172a)
   );
   background-size: 400% 400%;
-  animation: fluid-drift 18s ease-in-out infinite;
+  will-change: transform;
+  animation: fluid-drift-transform 18s ease-in-out infinite;
 }
 
 .backdrop-solid {
@@ -948,20 +964,25 @@ onBeforeUnmount(() => {
   background-repeat: no-repeat;
 }
 
-@keyframes fluid-drift {
+@keyframes fluid-drift-transform {
   0%,
   100% {
-    background-position: 0% 50%;
+    transform: translate3d(0, 0, 0);
   }
   25% {
-    background-position: 100% 50%;
+    transform: translate3d(-12%, 0, 0);
   }
   50% {
-    background-position: 100% 100%;
+    transform: translate3d(-12%, -12%, 0);
   }
   75% {
-    background-position: 0% 100%;
+    transform: translate3d(0, -12%, 0);
   }
+}
+
+:global(html[data-te-motion='reduced']) .backdrop-fluid::before,
+:global(html[data-te-motion='off']) .backdrop-fluid::before {
+  animation-play-state: paused;
 }
 
 .stage {

@@ -55,7 +55,7 @@ const props = withDefaults(
     glass?: boolean
     menuOpen?: boolean
     preview?: boolean
-    /** Standard = full bar; mini is a longer pill with cover, inline progress and the border rail hidden. */
+    /** Standard = full bar; mini is a long flat progress strip with utility tools. */
     mode?: PlayerBarMode
     /** Hide until the pointer approaches the bottom edge. Mini shape only. */
     autoHide?: boolean
@@ -66,15 +66,12 @@ const props = withDefaults(
      * geometry consumers query.
      */
     hiddenBar?: boolean
-    /** Lyrics page (now-playing) is open; the mini lyrics toggle reflects it. */
-    playingPageOpen?: boolean
   }>(),
   {
     preview: false,
     mode: 'standard',
     autoHide: false,
-    hiddenBar: false,
-    playingPageOpen: false
+    hiddenBar: false
   }
 )
 
@@ -174,7 +171,6 @@ const {
 const mediaProviders = useMediaProviders()
 
 const coverRef = ref<HTMLElement | null>(null)
-const lyricsToggleRef = ref<HTMLElement | null>(null)
 const playerBarShellRef = ref<HTMLElement | null>(null)
 const playButtonColor = computed(() => normalizeAccentColor(dominantColor.value))
 const { uiContributions, syncExtensions } = useExtensionRegistry()
@@ -225,7 +221,7 @@ if (!props.preview) {
 
 const emit = defineEmits<{
   clickCover: [rect: { x: number; y: number; w: number; h: number }]
-  toggleLyricsPage: [rect: { x: number; y: number; w: number; h: number }]
+  exitPlayingPage: []
   openSettings: []
   openDsp: []
   openEqualizer: []
@@ -244,16 +240,6 @@ function onCoverClick(): void {
     emit('clickCover', { x: r.left, y: r.top, w: r.width, h: r.height })
   } else {
     emit('clickCover', { x: 24, y: window.innerHeight - 60, w: 48, h: 48 })
-  }
-}
-
-function onToggleLyricsPage(): void {
-  const el = lyricsToggleRef.value
-  if (el) {
-    const r = el.getBoundingClientRect()
-    emit('toggleLyricsPage', { x: r.left, y: r.top, w: r.width, h: r.height })
-  } else {
-    emit('toggleLyricsPage', { x: 24, y: window.innerHeight - 60, w: 48, h: 48 })
   }
 }
 
@@ -319,7 +305,7 @@ const smoothedProgressPercent = useSmoothedValue(progressPercent, {
 })
 
 const progressFillStyle = computed(() => ({
-  width: `${Math.min(100, Math.max(0, smoothedProgressPercent.value))}%`
+  transform: `scaleX(${Math.min(100, Math.max(0, smoothedProgressPercent.value)) / 100})`
 }))
 
 const abLoopTitle = computed(() => {
@@ -1525,27 +1511,42 @@ onBeforeUnmount(() => {
            content so controls and text are never displaced by the filter. -->
       <span v-if="liquidGlassActive" class="player-bar-warp" aria-hidden="true"></span>
 
-      <!-- 迷你模式：底边进度轨默认隐藏，保持更长更简洁的胶囊形态 -->
-      <div v-if="isMini && !isLiveStream" class="mini-progress-rail">
+      <button
+        v-if="isMini"
+        type="button"
+        class="mini-play-button"
+        :class="{ 'is-playing': isPlaying }"
+        :title="isPlaying ? '暂停' : '播放'"
+        :aria-label="isPlaying ? '暂停' : '播放'"
+        @click="togglePlay"
+      >
+        <i :class="isPlaying ? 'pi pi-pause' : 'pi pi-play'" aria-hidden="true"></i>
+      </button>
+
+      <!-- 迷你模式：用扁平长进度轨替代标准内联进度区。 -->
+      <div v-if="isMini" class="mini-progress-rail">
         <div class="mini-progress-track" aria-hidden="true">
           <div class="mini-progress-fill" :style="progressFillStyle"></div>
         </div>
+        <span class="mini-progress-time" aria-hidden="true">
+          {{ isLiveStream ? 'LIVE' : `${formatTime(currentTime)} / ${formatTime(effectiveDuration)}` }}
+        </span>
         <input
           type="range"
           class="mini-progress-slider"
+          @input="onMiniRailInput"
           min="0"
           max="1"
           step="0.0005"
           :value="effectiveDuration > 0 ? currentTime / effectiveDuration : 0"
-          :disabled="effectiveDuration <= 0"
+          :disabled="isLiveStream || effectiveDuration <= 0"
           aria-label="播放进度"
-          :aria-valuetext="`${formatTime(currentTime)} / ${formatTime(effectiveDuration)}`"
-          @input="onMiniRailInput"
+          :aria-valuetext="isLiveStream ? 'LIVE' : `${formatTime(currentTime)} / ${formatTime(effectiveDuration)}`"
         />
       </div>
 
-      <!-- 左侧：整块按曲目 identity remount，避免 cover:// 解码粘住上一首 -->
-      <div :key="playerLeftKey" class="player-left">
+      <!-- 标准模式才需要左侧曲目信息；迷你模式不渲染曲目元数据。 -->
+      <div v-if="!isMini" :key="playerLeftKey" class="player-left">
         <div
           v-if="!isMini"
           ref="coverRef"
@@ -1597,8 +1598,8 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <!-- 中间 -->
-      <div class="player-center">
+      <!-- 标准模式的播放控制与内联进度；迷你模式不渲染这组 transport。 -->
+      <div v-if="!isMini" class="player-center">
         <div class="player-controls">
           <button class="ctrl-btn previous-button" aria-label="上一首" @click="prev">
             <img :src="previousTrackIcon" alt="上一首" />
@@ -1667,7 +1668,7 @@ onBeforeUnmount(() => {
       <!-- 右侧 -->
       <div class="player-right">
         <button
-          v-if="favoriteButtonVisible"
+          v-if="!isMini && favoriteButtonVisible"
           class="icon-btn favorite-btn player-misc-icon"
           :class="{ active: favoriteButtonLiked }"
           :title="favoriteButtonTitle"
@@ -1756,19 +1757,6 @@ onBeforeUnmount(() => {
         </button>
 
         <button
-          v-if="isMini"
-          ref="lyricsToggleRef"
-          class="icon-btn mini-lyrics-btn player-misc-icon"
-          :class="{ active: playingPageOpen }"
-          :title="playingPageOpen ? '退出歌词页' : '进入歌词页'"
-          :aria-label="playingPageOpen ? '退出歌词页' : '进入歌词页'"
-          :aria-pressed="playingPageOpen"
-          @click="onToggleLyricsPage"
-        >
-          <i class="ph ph-text-aa" aria-hidden="true"></i>
-        </button>
-
-        <button
           v-if="!isMini"
           class="icon-btn mini-player-btn player-misc-icon"
           title="切换到迷你播放器"
@@ -1780,6 +1768,7 @@ onBeforeUnmount(() => {
         </button>
 
         <button
+          v-if="!isMini"
           class="icon-btn desktop-lyrics-btn player-misc-icon"
           :class="{ active: desktopLyricsOn }"
           title="桌面歌词"
@@ -1792,13 +1781,24 @@ onBeforeUnmount(() => {
 
         <!-- HiFi 控制台入口 -->
         <button
-          class="icon-btn player-misc-icon"
+          class="icon-btn player-misc-icon hifi-toggle-button"
           :class="{ active: moreOpen }"
           title="HiFi 控制台"
           aria-label="HiFi 控制台"
           @click="toggleMore"
         >
           <i class="ph ph-faders"></i>
+        </button>
+
+        <button
+          v-if="isMini && glass"
+          type="button"
+          class="icon-btn playing-page-exit-button"
+          title="退出播放页"
+          aria-label="退出播放页"
+          @click="emit('exitPlayingPage')"
+        >
+          <i class="ph ph-arrows-out-simple" aria-hidden="true"></i>
         </button>
       </div>
     </div>

@@ -104,7 +104,7 @@ function pageVisibilityOptionDisabled(value: PlayerBarPageVisibility): boolean {
     <div class="setting-item">
       <div class="setting-copy">
         <strong>播放条形态</strong>
-        <span>迷你形态不显示封面、内联进度条与底边框进度，只保留歌曲信息与播放控制。</span>
+        <span>迷你形态使用紧凑扁平布局：左侧播放，中间长进度轨，右侧保留播放顺序、播放列表、HiFi、音量；播放页另有退出按钮。</span>
       </div>
       <div class="segmented-control">
         <button
