@@ -104,6 +104,12 @@ function lyricStyleVars(target: LyricsStyleTarget): Record<string, string> {
   return styles
 }
 
+const lyricRowStyleActive = computed(() => lyricStyleVars('active'))
+const lyricRowStyleNormal = computed(() => lyricStyleVars('normal'))
+const lyricTranslationStyle = computed(() => lyricStyleVars('translation'))
+const lyricRomanizationStyle = computed(() => lyricStyleVars('romanization'))
+const lyricHarmonyStyle = computed(() => lyricStyleVars('harmony'))
+
 const isBlurBackground = computed(() => nowPlayingBackground.value === 'blur')
 const isFluidBackground = computed(() => nowPlayingBackground.value === 'fluid')
 const isSolidBackground = computed(() => nowPlayingBackground.value === 'solid')
@@ -706,6 +712,13 @@ onBeforeUnmount(() => {
               <button
                 v-for="item in renderedLyricLines"
                 :key="item.line.rowKey ?? `${item.line.time}-${item.index}`"
+                v-memo="[
+                  item.index === highlightedLyricIndex,
+                  item.singing,
+                  item.presented,
+                  item.line,
+                  lyricsAppearance
+                ]"
                 :ref="(el) => setLyricLineRef(item.index, el)"
                 type="button"
                 class="lyric-row"
@@ -722,7 +735,7 @@ onBeforeUnmount(() => {
                 ]"
                 :aria-current="item.index === highlightedLyricIndex ? 'true' : undefined"
                 :aria-label="item.ariaLabel"
-                :style="lyricStyleVars(item.singing ? 'active' : 'normal')"
+                :style="item.singing ? lyricRowStyleActive : lyricRowStyleNormal"
                 :disabled="!item.line.timed"
                 @pointerdown.stop
                 @click="jumpToLyric(item.line.time)"
@@ -735,9 +748,9 @@ onBeforeUnmount(() => {
                   :karaoke-enabled="lyricsAppearance.karaokeEnabled"
                   :motion-mode="lyricMotionLevel"
                   :align="lyricLineAlign(item.singing)"
-                  :translation-style="lyricStyleVars('translation')"
-                  :romanization-style="lyricStyleVars('romanization')"
-                  :harmony-style="lyricStyleVars('harmony')"
+                  :translation-style="lyricTranslationStyle"
+                  :romanization-style="lyricRomanizationStyle"
+                  :harmony-style="lyricHarmonyStyle"
                 />
               </button>
             </div>
