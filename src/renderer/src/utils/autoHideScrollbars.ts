@@ -2,6 +2,7 @@ const AUTO_SCROLLBAR_CLASS = 'te-auto-scrollbar'
 const NEAR_SCROLLBAR_CLASS = 'is-scrollbar-near'
 const ACTIVE_SCROLLBAR_CLASS = 'is-scrollbar-active'
 const SCROLLBAR_PROXIMITY_PX = 28
+const SCROLLBAR_FAR_SKIP_PX = SCROLLBAR_PROXIMITY_PX + 16
 const SCROLLBAR_HIDE_DELAY_MS = 900
 
 interface ScrollbarAxes {
@@ -9,10 +10,21 @@ interface ScrollbarAxes {
   vertical: boolean
 }
 
+interface CachedAncestor {
+  generation: number
+  element: HTMLElement | null
+}
+
 let activeScroller: HTMLElement | null = null
 let hideTimer: number | null = null
 let pointerFrame: number | null = null
 let pendingPointerEvent: PointerEvent | null = null
+let cacheGeneration = 0
+const ancestorCache = new WeakMap<Element, CachedAncestor>()
+
+export function invalidateAutoHideScrollbarCache(): void {
+  cacheGeneration += 1
+}
 
 function getScrollbarAxes(element: HTMLElement): ScrollbarAxes {
   const style = window.getComputedStyle(element)
@@ -25,13 +37,27 @@ function getScrollbarAxes(element: HTMLElement): ScrollbarAxes {
 }
 
 function findScrollableAncestor(start: Element | null): HTMLElement | null {
-  let current = start instanceof HTMLElement ? start : (start?.parentElement ?? null)
+  if (!start) {
+    return document.scrollingElement instanceof HTMLElement ? document.scrollingElement : null
+  }
+  const cached = ancestorCache.get(start)
+  if (cached && cached.generation === cacheGeneration) return cached.element
+
+  let current = start instanceof HTMLElement ? start : (start.parentElement ?? null)
+  let result: HTMLElement | null = null
   while (current) {
     const axes = getScrollbarAxes(current)
-    if (axes.vertical || axes.horizontal) return current
+    if (axes.vertical || axes.horizontal) {
+      result = current
+      break
+    }
     current = current.parentElement
   }
-  return document.scrollingElement instanceof HTMLElement ? document.scrollingElement : null
+  if (!result) {
+    result = document.scrollingElement instanceof HTMLElement ? document.scrollingElement : null
+  }
+  ancestorCache.set(start, { generation: cacheGeneration, element: result })
+  return result
 }
 
 function clearHideTimer(): void {
@@ -72,8 +98,20 @@ function updatePointerProximity(event: PointerEvent): void {
     return
   }
 
-  const axes = getScrollbarAxes(element)
   const rect = element.getBoundingClientRect()
+  const farFromVertical = rect.right - event.clientX > SCROLLBAR_FAR_SKIP_PX
+  const farFromHorizontal = rect.bottom - event.clientY > SCROLLBAR_FAR_SKIP_PX
+  if (farFromVertical && farFromHorizontal) {
+    if (activeScroller && activeScroller !== element) clearScroller(activeScroller, false)
+    element.classList.add(AUTO_SCROLLBAR_CLASS)
+    element.classList.remove(NEAR_SCROLLBAR_CLASS)
+    if (!element.classList.contains(ACTIVE_SCROLLBAR_CLASS) && activeScroller === element) {
+      activeScroller = null
+    }
+    return
+  }
+
+  const axes = getScrollbarAxes(element)
   const nearVertical =
     axes.vertical &&
     event.clientY >= rect.top &&
@@ -121,17 +159,25 @@ function onScroll(event: Event): void {
   if (element) revealWhileScrolling(element)
 }
 
+function onViewportChange(): void {
+  invalidateAutoHideScrollbarCache()
+}
+
 export function installAutoHideScrollbars(): () => void {
   document.documentElement.classList.add(AUTO_SCROLLBAR_CLASS)
   document.body.classList.add(AUTO_SCROLLBAR_CLASS)
   document.addEventListener('pointermove', onPointerMove, { passive: true })
   document.addEventListener('pointerleave', onPointerLeaveDocument, { passive: true })
   document.addEventListener('scroll', onScroll, { capture: true, passive: true })
+  window.addEventListener('resize', onViewportChange)
+  window.addEventListener('orientationchange', onViewportChange)
 
   return () => {
     document.removeEventListener('pointermove', onPointerMove)
     document.removeEventListener('pointerleave', onPointerLeaveDocument)
     document.removeEventListener('scroll', onScroll, true)
+    window.removeEventListener('resize', onViewportChange)
+    window.removeEventListener('orientationchange', onViewportChange)
     clearHideTimer()
     if (pointerFrame !== null) window.cancelAnimationFrame(pointerFrame)
     pointerFrame = null
