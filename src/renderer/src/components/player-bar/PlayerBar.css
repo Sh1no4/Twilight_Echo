@@ -10,6 +10,12 @@
   transition: left 0.32s var(--te-ease-soft);
 }
 
+.player-bar-shell.is-geometry-animating .player-bar,
+.player-bar-shell.is-geometry-animating .player-bar-liquid .player-bar-warp {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
 .player-bar-shell.menu-open {
   left: calc(var(--te-menu-width) + 18px);
   right: 18px;

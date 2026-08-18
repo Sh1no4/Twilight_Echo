@@ -1329,12 +1329,28 @@ watch(
   () => flashReveal()
 )
 
+const geometryAnimating = ref(false)
+let geometryAnimTimer: number | null = null
+watch(
+  () => props.menuOpen,
+  () => {
+    geometryAnimating.value = true
+    if (geometryAnimTimer !== null) window.clearTimeout(geometryAnimTimer)
+    geometryAnimTimer = window.setTimeout(() => {
+      geometryAnimating.value = false
+      geometryAnimTimer = null
+    }, 340)
+  }
+)
+
 onMounted(() => {
   if (!props.preview) void syncExtensions()
   syncGlassPointer()
 })
 
 onBeforeUnmount(() => {
+  if (geometryAnimTimer !== null) window.clearTimeout(geometryAnimTimer)
+  geometryAnimTimer = null
   glassPointerEnabled = false
   resetGlassPointer()
   window.removeEventListener('pointerup', onGlassPressReleaseEvent)
@@ -1349,7 +1365,7 @@ onBeforeUnmount(() => {
     v-if="currentTrack"
     ref="playerBarShellRef"
     class="player-bar-shell"
-    :class="{ 'menu-open': menuOpen }"
+    :class="{ 'menu-open': menuOpen, 'is-geometry-animating': geometryAnimating }"
     v-bind="shellDataAttrs"
   >
     <!-- 播放列表面板（向上抽屉） -->
