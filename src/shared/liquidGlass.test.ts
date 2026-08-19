@@ -14,9 +14,11 @@ import {
   normalizeLiquidGlassCoverage,
   normalizeLiquidGlassTheme,
   normalizeSurfaceMaterial,
+  LIQUID_GLASS_SPECULAR_MAP_CEILING,
   resolveAberrationBlur,
   resolveChannelScales,
   resolveExpandedLiquidGlassTheme,
+  resolveSpecularMapStrength,
   SURFACE_MATERIALS
 } from './liquidGlass.ts'
 
@@ -284,4 +286,45 @@ test('adaptive tone defaults on and only an explicit false disables it', () => {
   assert.equal(normalizeLiquidGlass({ adaptiveTone: true }).adaptiveTone, true)
   assert.equal(normalizeLiquidGlass({ adaptiveTone: false }).adaptiveTone, false)
   assert.equal(normalizeLiquidGlass({ adaptiveTone: 0 }).adaptiveTone, true)
+})
+
+test('specular map strength scales the setting by the ceiling', () => {
+  assert.equal(resolveSpecularMapStrength(0), 0)
+  assert.equal(resolveSpecularMapStrength(100), LIQUID_GLASS_SPECULAR_MAP_CEILING)
+  assert.equal(resolveSpecularMapStrength(50), LIQUID_GLASS_SPECULAR_MAP_CEILING * 0.5)
+})
+
+test('specular map strength stays well under full white', () => {
+  // The baked highlight stacks with the CSS rim and sheen layers, which read the
+  // same setting. A ceiling at or near 1 blows the rim out to plain white.
+  assert.ok(LIQUID_GLASS_SPECULAR_MAP_CEILING > 0, 'the highlight must be visible')
+  assert.ok(LIQUID_GLASS_SPECULAR_MAP_CEILING < 1, 'the highlight must leave headroom')
+  for (let opacity = 0; opacity <= 100; opacity += 5) {
+    const strength = resolveSpecularMapStrength(opacity)
+    assert.ok(strength >= 0 && strength < 1, `out of range at ${opacity}: ${strength}`)
+  }
+})
+
+test('specular map strength clamps out-of-range and non-finite input', () => {
+  assert.equal(resolveSpecularMapStrength(-20), 0)
+  assert.equal(resolveSpecularMapStrength(500), LIQUID_GLASS_SPECULAR_MAP_CEILING)
+  assert.equal(resolveSpecularMapStrength(Number.NaN), 0)
+  assert.equal(resolveSpecularMapStrength(Number.POSITIVE_INFINITY), LIQUID_GLASS_SPECULAR_MAP_CEILING)
+})
+
+test('specular map strength rises monotonically with the setting', () => {
+  let previous = -1
+  for (let opacity = 0; opacity <= 100; opacity += 5) {
+    const strength = resolveSpecularMapStrength(opacity)
+    assert.ok(strength > previous, `not monotonic at ${opacity}`)
+    previous = strength
+  }
+})
+
+test('the default profiles produce a visible but restrained baked highlight', () => {
+  for (const theme of [DEFAULT_LIQUID_GLASS_LIGHT, DEFAULT_LIQUID_GLASS_DARK]) {
+    const strength = resolveSpecularMapStrength(theme.specularOpacity)
+    assert.ok(strength > 0.2, `default highlight too faint: ${strength}`)
+    assert.ok(strength < 0.5, `default highlight too strong: ${strength}`)
+  }
 })

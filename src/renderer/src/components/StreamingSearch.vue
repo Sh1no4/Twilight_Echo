@@ -5,6 +5,7 @@ import type {
   MediaProviderArtistSummary
 } from '../providers/mediaProvider'
 import type { SearchType } from './streaming-page/useStreamingSearch'
+import CoverImg from './CoverImg.vue'
 
 interface PageState {
   first: number
@@ -215,7 +216,13 @@ function emitPage(first: number): void {
             data-te-interactive
             @click="emit('openPlaylist', playlist)"
           >
-            <img v-if="playlist.cover" :src="playlist.cover" class="playlist-grid-cover" alt="" />
+            <CoverImg
+              v-if="playlist.cover || playlist.coverSmall"
+              :cover="playlist.coverSmall || playlist.cover"
+              :cover-source="playlist.coverSmallSource || playlist.coverSource"
+              class="playlist-grid-cover"
+              alt=""
+            />
             <div v-else class="playlist-grid-cover-placeholder">
               <i class="pi pi-list" style="font-size: 28px; color: #bbb"></i>
             </div>
@@ -255,9 +262,10 @@ function emitPage(first: number): void {
             data-te-interactive
             @click="emit('openArtist', artist)"
           >
-            <img
+            <CoverImg
               v-if="artist.picUrl"
-              :src="artist.picUrl"
+              :cover="artist.picUrl"
+              :cover-source="artist.picUrlSource"
               class="playlist-grid-cover artist-cover"
               alt=""
             />

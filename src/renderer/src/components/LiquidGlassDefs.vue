@@ -27,13 +27,15 @@ import {
   LIQUID_GLASS_PLAYBAR_FILTER_ID,
   LIQUID_GLASS_TUNING_CHANGED_EVENT,
   resolveAberrationBlur,
-  resolveChannelScales
+  resolveChannelScales,
+  resolveSpecularMapStrength
 } from '../../../shared/liquidGlass.ts'
 import {
   CARD_DISPLACEMENT_BUCKET,
   getDisplacementMapUrl,
   PLAYBAR_DISPLACEMENT_BUCKET
 } from '../utils/liquidGlassDisplacement.ts'
+import { getSpecularMapUrl } from '../utils/liquidGlassSpecular.ts'
 import {
   createFrameCoalescer,
   LIQUID_GLASS_POINTER_FRAME_INTERVAL_MS,
@@ -61,6 +63,11 @@ const props = defineProps<{
 
 const cardMapUrl = ref('')
 const playbarMapUrl = ref('')
+const cardSpecularUrl = ref('')
+const playbarSpecularUrl = ref('')
+const specularOpacity = ref(DEFAULT_LIQUID_GLASS_LIGHT.specularOpacity)
+const homeSpecularOpacity = ref(DEFAULT_LIQUID_GLASS_HOME_CARDS.light.specularOpacity)
+const expandedSpecularOpacity = ref(36)
 const displacementScale = ref(DEFAULT_LIQUID_GLASS_LIGHT.displacementScale)
 const aberrationIntensity = ref(DEFAULT_LIQUID_GLASS_LIGHT.aberrationIntensity)
 const homeDisplacementScale = ref(DEFAULT_LIQUID_GLASS_HOME_CARDS.light.displacementScale)
@@ -83,6 +90,17 @@ const expandedAberrationBlur = computed(() =>
   resolveAberrationBlur(expandedAberrationIntensity.value)
 )
 /**
+ * Alpha multiplier for the baked specular map. The raster is baked at full
+ * intensity so tuning never invalidates it; strength is applied here instead. At
+ * zero the primitives are dropped from the chain entirely rather than compositing
+ * a transparent layer.
+ */
+const specularStrength = computed(() => resolveSpecularMapStrength(specularOpacity.value))
+const homeSpecularStrength = computed(() => resolveSpecularMapStrength(homeSpecularOpacity.value))
+const expandedSpecularStrength = computed(() =>
+  resolveSpecularMapStrength(expandedSpecularOpacity.value)
+)
+/**
  * Alpha ramp for the edge mask, reshaping the map's continuous rim magnitude
  * (carried in its alpha channel) into the aberration band. The middle stop scales
  * with aberration so a higher setting lets more of the refracted band through at
@@ -103,6 +121,16 @@ function readNumericVariable(name: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
+/**
+ * The specular variables are emitted as 0-1 ratios for direct use in colour
+ * functions, while the tuning model and `resolveSpecularMapStrength` work in
+ * percent. Convert on read so the filter and the CSS layers stay in step.
+ */
+function readSpecularPercent(name: string, fallbackPercent: number): number {
+  const ratio = readNumericVariable(name, fallbackPercent / 100)
+  return ratio * 100
+}
+
 /** Re-reads the theme-written tuning variables into bound attribute values. */
 function syncFilterInputs(): void {
   if (!props.active) return
@@ -114,6 +142,10 @@ function syncFilterInputs(): void {
     '--te-lg-aberration',
     DEFAULT_LIQUID_GLASS_LIGHT.aberrationIntensity
   )
+  specularOpacity.value = readSpecularPercent(
+    '--te-lg-specular',
+    DEFAULT_LIQUID_GLASS_LIGHT.specularOpacity
+  )
   if (props.homeCardsActive) {
     homeDisplacementScale.value = readNumericVariable(
       '--te-home-lg-displacement',
@@ -123,10 +155,15 @@ function syncFilterInputs(): void {
       '--te-home-lg-aberration',
       DEFAULT_LIQUID_GLASS_HOME_CARDS.light.aberrationIntensity
     )
+    homeSpecularOpacity.value = readSpecularPercent(
+      '--te-home-lg-specular',
+      DEFAULT_LIQUID_GLASS_HOME_CARDS.light.specularOpacity
+    )
   }
   if (props.expandedActive) {
     expandedDisplacementScale.value = readNumericVariable('--te-lg-expanded-displacement', 24)
     expandedAberrationIntensity.value = readNumericVariable('--te-lg-expanded-aberration', 0.8)
+    expandedSpecularOpacity.value = readSpecularPercent('--te-lg-expanded-specular', 36)
   }
   pointerElasticity = readNumericVariable('--te-lg-elasticity', 0)
 }
@@ -140,6 +177,12 @@ function ensureMaps(): void {
   if (!cardMapUrl.value) cardMapUrl.value = getDisplacementMapUrl(CARD_DISPLACEMENT_BUCKET)
   if (!playbarMapUrl.value) {
     playbarMapUrl.value = getDisplacementMapUrl(PLAYBAR_DISPLACEMENT_BUCKET)
+  }
+  // Baked from the same buckets and rounded-rect geometry as the displacement
+  // maps, so the highlight lands on exactly the rim the refraction bends.
+  if (!cardSpecularUrl.value) cardSpecularUrl.value = getSpecularMapUrl(CARD_DISPLACEMENT_BUCKET)
+  if (!playbarSpecularUrl.value) {
+    playbarSpecularUrl.value = getSpecularMapUrl(PLAYBAR_DISPLACEMENT_BUCKET)
   }
 }
 
@@ -733,7 +776,34 @@ watch(
           <feFuncA type="table" tableValues="1 0" />
         </feComponentTransfer>
         <feComposite in="SourceGraphic" in2="INVERTED_MASK" operator="in" result="CENTER_CLEAN" />
-        <feComposite in="EDGE_ABERRATION_CLIPPED" in2="CENTER_CLEAN" operator="over" />
+        <feComposite
+          in="EDGE_ABERRATION_CLIPPED"
+          in2="CENTER_CLEAN"
+          operator="over"
+          result="REFRACTED"
+        />
+
+        <!-- Shape-following specular. The map's alpha carries per-pixel incidence
+             between the surface normal and the light, which is why the bright band
+             bends around each corner instead of running along one axis the way a
+             CSS gradient must. Screen over premultiplied white lerps toward white
+             by exactly that alpha. -->
+        <feImage
+          x="0"
+          y="0"
+          width="100%"
+          height="100%"
+          result="SPECULAR_RAW"
+          preserveAspectRatio="xMidYMid slice"
+          :href="cardSpecularUrl"
+        />
+        <feComponentTransfer in="SPECULAR_RAW" result="SPECULAR">
+          <feFuncA type="linear" :slope="specularStrength" intercept="0" />
+        </feComponentTransfer>
+        <!-- The map is a full rectangle; clip it to the surface's own rounded alpha
+             so the highlight never paints outside the corners. -->
+        <feComposite in="SPECULAR" in2="SourceGraphic" operator="in" result="SPECULAR_CLIPPED" />
+        <feBlend in="REFRACTED" in2="SPECULAR_CLIPPED" mode="screen" />
       </filter>
 
       <filter
@@ -840,7 +910,30 @@ watch(
           <feFuncA type="table" tableValues="1 0" />
         </feComponentTransfer>
         <feComposite in="SourceGraphic" in2="INVERTED_MASK" operator="in" result="CENTER_CLEAN" />
-        <feComposite in="EDGE_ABERRATION_CLIPPED" in2="CENTER_CLEAN" operator="over" />
+        <feComposite
+          in="EDGE_ABERRATION_CLIPPED"
+          in2="CENTER_CLEAN"
+          operator="over"
+          result="REFRACTED"
+        />
+
+        <!-- Same shape-following highlight as the card filter, at the restrained
+             expanded strength: broad content panes turn to white plastic long
+             before compact chrome does. -->
+        <feImage
+          x="0"
+          y="0"
+          width="100%"
+          height="100%"
+          result="SPECULAR_RAW"
+          preserveAspectRatio="xMidYMid slice"
+          :href="cardSpecularUrl"
+        />
+        <feComponentTransfer in="SPECULAR_RAW" result="SPECULAR">
+          <feFuncA type="linear" :slope="expandedSpecularStrength" intercept="0" />
+        </feComponentTransfer>
+        <feComposite in="SPECULAR" in2="SourceGraphic" operator="in" result="SPECULAR_CLIPPED" />
+        <feBlend in="REFRACTED" in2="SPECULAR_CLIPPED" mode="screen" />
       </filter>
 
       <filter
@@ -947,7 +1040,28 @@ watch(
           <feFuncA type="table" tableValues="1 0" />
         </feComponentTransfer>
         <feComposite in="SourceGraphic" in2="INVERTED_MASK" operator="in" result="CENTER_CLEAN" />
-        <feComposite in="EDGE_ABERRATION_CLIPPED" in2="CENTER_CLEAN" operator="over" />
+        <feComposite
+          in="EDGE_ABERRATION_CLIPPED"
+          in2="CENTER_CLEAN"
+          operator="over"
+          result="REFRACTED"
+        />
+
+        <!-- Shape-following specular, on the dashboard's independent profile. -->
+        <feImage
+          x="0"
+          y="0"
+          width="100%"
+          height="100%"
+          result="SPECULAR_RAW"
+          preserveAspectRatio="xMidYMid slice"
+          :href="cardSpecularUrl"
+        />
+        <feComponentTransfer in="SPECULAR_RAW" result="SPECULAR">
+          <feFuncA type="linear" :slope="homeSpecularStrength" intercept="0" />
+        </feComponentTransfer>
+        <feComposite in="SPECULAR" in2="SourceGraphic" operator="in" result="SPECULAR_CLIPPED" />
+        <feBlend in="REFRACTED" in2="SPECULAR_CLIPPED" mode="screen" />
       </filter>
 
       <!-- Same chain against the wide-strip map, so the playbar's short axis keeps a
@@ -1057,7 +1171,29 @@ watch(
           <feFuncA type="table" tableValues="1 0" />
         </feComponentTransfer>
         <feComposite in="SourceGraphic" in2="INVERTED_MASK" operator="in" result="CENTER_CLEAN" />
-        <feComposite in="EDGE_ABERRATION_CLIPPED" in2="CENTER_CLEAN" operator="over" />
+        <feComposite
+          in="EDGE_ABERRATION_CLIPPED"
+          in2="CENTER_CLEAN"
+          operator="over"
+          result="REFRACTED"
+        />
+
+        <!-- Wide-strip highlight, so the playbar's rim light keeps the same
+             physical thickness on its short axis as the cards do. -->
+        <feImage
+          x="0"
+          y="0"
+          width="100%"
+          height="100%"
+          result="SPECULAR_RAW"
+          preserveAspectRatio="xMidYMid slice"
+          :href="playbarSpecularUrl"
+        />
+        <feComponentTransfer in="SPECULAR_RAW" result="SPECULAR">
+          <feFuncA type="linear" :slope="specularStrength" intercept="0" />
+        </feComponentTransfer>
+        <feComposite in="SPECULAR" in2="SourceGraphic" operator="in" result="SPECULAR_CLIPPED" />
+        <feBlend in="REFRACTED" in2="SPECULAR_CLIPPED" mode="screen" />
       </filter>
     </defs>
   </svg>

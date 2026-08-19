@@ -16,6 +16,7 @@ export type SocialPerson = {
   id: string | number
   name: string
   picUrl?: string | null
+  picUrlSource?: string | null
 }
 
 export type SocialCollection = {
@@ -23,6 +24,8 @@ export type SocialCollection = {
   name: string
   cover?: string | null
   coverSource?: string | null
+  coverSmall?: string | null
+  coverSmallSource?: string | null
   trackCount?: number
   meta?: string
 }
@@ -358,6 +361,7 @@ function onContextMenu(track: Track, index: number, event: MouseEvent): void {
           <CoverImg
             v-if="person.picUrl"
             :cover="person.picUrl"
+            :cover-source="person.picUrlSource"
             class="stage-person-avatar"
             alt=""
           />
@@ -385,9 +389,9 @@ function onContextMenu(track: Track, index: number, event: MouseEvent): void {
           @click="emit('collectionClick', item)"
         >
           <CoverImg
-            v-if="item.cover"
-            :cover="item.cover"
-            :cover-source="item.coverSource"
+            v-if="item.coverSmall || item.cover"
+            :cover="item.coverSmall || item.cover"
+            :cover-source="item.coverSmallSource || item.coverSource"
             class="stage-collection-cover"
             alt=""
           />

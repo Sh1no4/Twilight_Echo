@@ -23,6 +23,7 @@ const {
   isActiveLibraryPathExcluded,
   isLibraryPathMutationInProgress,
   loadMusicLibraryDocument,
+  migrateMusicLibraryCovers,
   normalizeLibraryFilePath,
   persistMusicLibraryDocument,
   replaceActiveLibraryExclusions,
@@ -30,6 +31,35 @@ const {
 } = (await import(
   new URL('./libraryRepository.ts', import.meta.url).href
 )) as typeof import('./libraryRepository.ts')
+
+test('legacy embedded covers migrate through the main-process cache adapter', () => {
+  const document: LocalMusicLibraryDocument = {
+    version: 2,
+    revision: 4,
+    tracks: [
+      {
+        id: 'legacy',
+        title: 'Legacy',
+        artist: 'Artist',
+        album: 'Album',
+        filePath: 'C:\\music\\legacy.mp3',
+        fileName: 'legacy.mp3',
+        duration: 1,
+        size: 1,
+        cover: 'data:image/jpeg;base64,ZmFrZQ==',
+        lyrics: null
+      }
+    ],
+    folders: [],
+    exclusions: []
+  }
+  const changed = migrateMusicLibraryCovers(document, (dataUrl) => {
+    assert.match(dataUrl, /^data:image\/jpeg;base64,/)
+    return 'cover://migrated.jpg'
+  })
+  assert.equal(changed, true)
+  assert.equal((document.tracks[0] as { cover: string }).cover, 'cover://migrated.jpg')
+})
 const {
   commitLocalLibraryRemoval,
   createLocalLibraryRemovalJournal,

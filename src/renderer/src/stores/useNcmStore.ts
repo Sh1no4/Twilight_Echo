@@ -9,6 +9,7 @@ export interface NcmProfile {
   userId: number
   nickname: string
   avatarUrl: string
+  avatarUrlSource?: string | null
   signature: string
   follows: number
   followeds: number
@@ -20,6 +21,8 @@ export interface NcmPlaylistSummary {
   cover: string | null
   /** Durable remote origin when `cover` is a session-scoped twilight-media grant. */
   coverSource?: string | null
+  coverSmall?: string | null
+  coverSmallSource?: string | null
   trackCount: number
   creatorName?: string
   /** True when the signed-in user owns (created) the playlist. */
@@ -64,6 +67,8 @@ export interface NcmAlbumSummary {
   name: string
   cover: string | null
   coverSource?: string | null
+  coverSmall?: string | null
+  coverSmallSource?: string | null
   trackCount: number
   publishTime?: number
 }
@@ -72,6 +77,9 @@ export interface NcmArtistSummary {
   id: number
   name: string
   picUrl: string | null
+  picUrlSource?: string | null
+  picUrlSmall?: string | null
+  picUrlSmallSource?: string | null
   albumSize: number
   musicSize: number
 }
@@ -80,6 +88,9 @@ export interface NcmUserSummary {
   id: number
   name: string
   picUrl: string | null
+  picUrlSource?: string | null
+  picUrlSmall?: string | null
+  picUrlSmallSource?: string | null
   musicSize: number
   userType: number
   artistId?: number
@@ -142,6 +153,7 @@ export interface NcmStore {
     userId: number
     nickname: string
     avatarUrl: string
+    avatarUrlSource?: string | null
     signature?: string
     follows?: number
     followeds?: number
@@ -391,6 +403,7 @@ export function useNcmStore(): NcmStore {
     userId: number
     nickname: string
     avatarUrl: string
+    avatarUrlSource?: string | null
     signature?: string
     follows?: number
     followeds?: number
@@ -399,6 +412,7 @@ export function useNcmStore(): NcmStore {
       userId: prof.userId,
       nickname: prof.nickname,
       avatarUrl: prof.avatarUrl,
+      avatarUrlSource: prof.avatarUrlSource ?? null,
       signature: prof.signature ?? '',
       follows: prof.follows ?? 0,
       followeds: prof.followeds ?? 0
@@ -784,6 +798,8 @@ export function useNcmStore(): NcmStore {
       name: playlist.name || name,
       cover: playlist.cover ?? null,
       coverSource: playlist.coverSource ?? null,
+      coverSmall: playlist.coverSmall ?? null,
+      coverSmallSource: playlist.coverSmallSource ?? null,
       trackCount: typeof playlist.trackCount === 'number' ? playlist.trackCount : 0,
       creatorName: playlist.creatorName,
       owned: playlist.owned !== false

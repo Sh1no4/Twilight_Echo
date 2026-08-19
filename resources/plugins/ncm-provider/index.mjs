@@ -478,17 +478,23 @@ function normalizeRemoteAssetUrl(value) {
 }
 
 const NCM_COVER_PARAM = 'param=600y600'
+const NCM_COVER_SMALL_PARAM = 'param=140y140'
 
-function normalizePlaylistCoverUrl(value) {
+function normalizeNcmCoverSize(value, size) {
   const url = normalizeRemoteAssetUrl(value)
   if (!url) return null
+  if (!/^https?:\/\//i.test(url) || !/music\.126\.net/i.test(url)) return url
+  const param = size === 140 ? NCM_COVER_SMALL_PARAM : NCM_COVER_PARAM
+  if (/[?&]param=/i.test(url)) {
+    return url.replace(/([?&])param=[^&#]*/i, `$1${param}`)
+  }
+  return `${url}${url.includes('?') ? '&' : '?'}${param}`
+}
+
+function normalizePlaylistCoverUrl(value) {
   // NetEase serves resized thumbnails via ?param=WxH; request a larger square
   // so playlist-list covers stay sharp when displayed bigger.
-  if (!/^https?:\/\//i.test(url) || !/music\.126\.net/i.test(url)) return url
-  if (/[?&]param=/i.test(url)) {
-    return url.replace(/([?&])param=[^&#]*/i, `$1${NCM_COVER_PARAM}`)
-  }
-  return `${url}${url.includes('?') ? '&' : '?'}${NCM_COVER_PARAM}`
+  return normalizeNcmCoverSize(value, 600)
 }
 
 function getSongAudioMeta(song) {
@@ -533,9 +539,9 @@ function normalizeTrack(song) {
     '未知艺术家'
   const title = song.name || song.title || '未知歌曲'
   const album = song.al?.name || song.album?.name || '未知专辑'
-  const cover = normalizeRemoteAssetUrl(
-    song.al?.picUrl || song.album?.picUrl || song.picUrl || song.coverImgUrl || null
-  )
+  const rawCover = song.al?.picUrl || song.album?.picUrl || song.picUrl || song.coverImgUrl || null
+  const cover = normalizeRemoteAssetUrl(rawCover)
+  const coverSmall = normalizeNcmCoverSize(rawCover, 140)
   const audioMeta = getSongAudioMeta(song)
   const bpm = normalizeBpm(song.bpm ?? song.tempo ?? song.mainSong?.bpm)
 
@@ -549,6 +555,7 @@ function normalizeTrack(song) {
     duration: formatDuration(song.dt ?? song.duration),
     size: audioMeta.size ?? 0,
     cover,
+    coverSmall,
     lyrics: null,
     translatedLyrics: null,
     source: 'ncm',
@@ -590,10 +597,12 @@ function normalizePlaylist(playlist, ownerUid) {
   const ownerId = Number(ownerUid)
   const owned =
     Number.isFinite(ownerId) && Number.isFinite(creatorId) ? creatorId === ownerId : undefined
+  const rawCover = playlist.coverImgUrl || playlist.picUrl || null
   return {
     id: Number(playlist.id),
     name: playlist.name || '未命名歌单',
-    cover: normalizePlaylistCoverUrl(playlist.coverImgUrl || playlist.picUrl || null),
+    cover: normalizePlaylistCoverUrl(rawCover),
+    coverSmall: normalizeNcmCoverSize(rawCover, 140),
     trackCount: typeof playlist.trackCount === 'number' ? playlist.trackCount : 0,
     creatorName:
       typeof playlist.creator?.nickname === 'string'
@@ -606,10 +615,12 @@ function normalizePlaylist(playlist, ownerUid) {
 }
 
 function normalizeAlbum(album) {
+  const rawCover = album.picUrl || album.blurPicUrl || null
   return {
     id: Number(album.id),
     name: album.name || '未命名专辑',
-    cover: normalizeRemoteAssetUrl(album.picUrl || album.blurPicUrl || null),
+    cover: normalizeRemoteAssetUrl(rawCover),
+    coverSmall: normalizeNcmCoverSize(rawCover, 140),
     trackCount: typeof album.size === 'number' ? album.size : (album.songCount ?? 0),
     publishTime:
       typeof album.publishTime === 'number'
@@ -621,10 +632,12 @@ function normalizeAlbum(album) {
 }
 
 function normalizeArtist(item) {
+  const rawPicUrl = item.picUrl || item.img1v1Url || item.avatarUrl || null
   return {
     id: Number(item.id),
     name: item.name || item.artistName || '未知歌手',
-    picUrl: normalizeRemoteAssetUrl(item.picUrl || item.img1v1Url || item.avatarUrl || null),
+    picUrl: normalizeRemoteAssetUrl(rawPicUrl),
+    picUrlSmall: normalizeNcmCoverSize(rawPicUrl, 140),
     albumSize: item.albumSize || 0,
     musicSize: item.musicSize || 0
   }
@@ -1664,6 +1677,7 @@ async function fetchRecommendPlaylists() {
       id: Number(item.id),
       name: item.name || '未命名歌单',
       cover: normalizePlaylistCoverUrl(item.picUrl || item.coverImgUrl || null),
+      coverSmall: normalizeNcmCoverSize(item.picUrl || item.coverImgUrl || null, 140),
       trackCount: item.trackCount || 0
     }))
   } catch {
@@ -2010,6 +2024,7 @@ async function fetchUserFollows(uid, limit = 30, offset = 0) {
       id: artist.id,
       name: artist.name,
       picUrl: artist.picUrl,
+      picUrlSmall: artist.picUrlSmall,
       musicSize: artist.musicSize,
       userType: 2,
       artistId: artist.id,
@@ -2022,6 +2037,8 @@ async function fetchUserFolloweds(uid, limit = 30, offset = 0) {
   const data = await requestAuthed(`/user/followeds?uid=${uid}&limit=${limit}&offset=${offset}`)
   const followeds = Array.isArray(data.followeds) ? data.followeds : []
   return followeds.map((item) => ({
+    // Keep the grid thumbnail bounded while retaining the full URL for detail views.
+    picUrlSmall: normalizeNcmCoverSize(item.avatarUrl || null, 140),
     id: Number(item.userId),
     name: item.nickname || '未知用户',
     picUrl: normalizeRemoteAssetUrl(item.avatarUrl || null),

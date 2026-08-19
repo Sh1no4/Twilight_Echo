@@ -105,6 +105,27 @@ export function migrateMusicLibraryFile(value: PersistedMusicLibraryFile): {
   }
 }
 
+/**
+ * Convert legacy embedded cover data without coupling the repository module to
+ * Electron/nativeImage. The main-process IPC layer supplies the cache writer.
+ */
+export function migrateMusicLibraryCovers(
+  document: LocalMusicLibraryDocument,
+  migrateCover: (dataUrl: string) => string | null
+): boolean {
+  let changed = false
+  document.tracks = document.tracks.map((track) => {
+    if (!track || typeof track !== 'object' || Array.isArray(track)) return track
+    const record = track as Record<string, unknown>
+    if (typeof record.cover !== 'string' || !/^data:image\//i.test(record.cover)) return track
+    const handle = migrateCover(record.cover)
+    if (!handle) return track
+    changed = true
+    return { ...record, cover: handle }
+  })
+  return changed
+}
+
 export function createMusicLibraryDocument(
   library: LocalLibrarySnapshotInput,
   exclusions: LocalLibraryExclusion[]

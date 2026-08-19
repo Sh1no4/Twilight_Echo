@@ -45,6 +45,8 @@ export interface MediaProviderPlaylistSummary {
   cover: string | null
   /** Durable remote origin when `cover` is a session-scoped twilight-media grant. */
   coverSource?: string | null
+  coverSmall?: string | null
+  coverSmallSource?: string | null
   trackCount: number
   creatorName?: string
   /** True when the signed-in user owns (created) the playlist. */
@@ -56,6 +58,8 @@ export interface MediaProviderAlbumSummary {
   name: string
   cover: string | null
   coverSource?: string | null
+  coverSmall?: string | null
+  coverSmallSource?: string | null
   trackCount: number
   publishTime?: number
 }
@@ -64,6 +68,10 @@ export interface MediaProviderArtistSummary {
   id: number | string
   name: string
   picUrl: string | null
+  /** Durable origin paired with a session-scoped image grant. */
+  picUrlSource?: string | null
+  picUrlSmall?: string | null
+  picUrlSmallSource?: string | null
   albumSize?: number
   musicSize?: number
 }
@@ -72,6 +80,7 @@ export interface MediaProviderProfile {
   userId: number | string
   nickname: string
   avatarUrl: string
+  avatarUrlSource?: string | null
   signature?: string
   follows?: number
   followeds?: number
@@ -111,6 +120,9 @@ export interface MediaProviderUserSummary {
   id: number | string
   name: string
   picUrl: string | null
+  picUrlSource?: string | null
+  picUrlSmall?: string | null
+  picUrlSmallSource?: string | null
   musicSize?: number
   userType?: number
   artistId?: number | string

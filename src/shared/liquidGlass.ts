@@ -270,6 +270,33 @@ export function resolveAberrationBlur(aberrationIntensity: number): number {
   return Math.max(0.1, 0.5 - Math.max(0, aberrationIntensity) * 0.1)
 }
 
+/**
+ * Ceiling on the baked highlight's contribution, as a fraction of the specular
+ * setting. The map is baked at full intensity so user tuning never invalidates the
+ * raster; the filter scales it here instead.
+ *
+ * Held well below 1 because the highlight stacks with the CSS rim/sheen layers that
+ * already read `--te-lg-specular`. At full strength the two together blow the rim
+ * out to plain white, which is the exact "frosted plastic" look the material is
+ * tuned to avoid.
+ */
+export const LIQUID_GLASS_SPECULAR_MAP_CEILING = 0.55
+
+/**
+ * Alpha multiplier applied to the baked specular map. Returns 0 when the user turns
+ * the highlight off, letting the renderer drop the primitive from the chain rather
+ * than compositing a fully transparent layer.
+ */
+export function resolveSpecularMapStrength(specularOpacity: number): number {
+  // Math.min/max propagate NaN, and a NaN here would be bound straight onto an SVG
+  // attribute. Treat unusable input as "no highlight" instead.
+  if (!Number.isFinite(specularOpacity)) {
+    return specularOpacity === Number.POSITIVE_INFINITY ? LIQUID_GLASS_SPECULAR_MAP_CEILING : 0
+  }
+  const normalized = Math.min(100, Math.max(0, specularOpacity)) / 100
+  return normalized * LIQUID_GLASS_SPECULAR_MAP_CEILING
+}
+
 export function liquidGlassCssVariables(theme: LiquidGlassTheme): Record<string, string> {
   return liquidGlassCssVariablesWithPrefix(theme, '--te-lg')
 }

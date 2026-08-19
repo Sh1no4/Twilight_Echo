@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs
 import { join, extname, dirname, resolve } from 'path'
 import { createHash } from 'crypto'
 import { parseFile } from 'music-metadata'
-import { getMusicCacheRoot } from '../cache/ncmCache'
+import { getMusicCacheRoot } from '../cache/ncmCache.ts'
 import { readCachedProtocolFile, type ProtocolAssetBytes } from '../cache/protocolAssetCache'
 
 export const COVER_NAMES = [
@@ -211,6 +211,24 @@ export function migrateBase64Cover(dataUrl: string): string | null {
 }
 
 export const coverCache = new Map<string, string | null>()
+export const MAX_COVER_CACHE_ENTRIES = 2048
+
+function rememberCoverCacheEntry(dir: string, handle: string | null): void {
+  // Directory discovery is only a convenience cache; the durable handle is
+  // stored on the track. Keep it bounded so scans of large libraries cannot
+  // retain every directory forever.
+  coverCache.delete(dir)
+  coverCache.set(dir, handle)
+  while (coverCache.size > MAX_COVER_CACHE_ENTRIES) {
+    const oldest = coverCache.keys().next().value
+    if (oldest === undefined) break
+    coverCache.delete(oldest)
+  }
+}
+
+export function clearCoverDirectoryCache(): void {
+  coverCache.clear()
+}
 
 export function findCoverInDir(dir: string): string | null {
   if (coverCache.has(dir)) return coverCache.get(dir) ?? null
@@ -219,12 +237,12 @@ export function findCoverInDir(dir: string): string | null {
     if (existsSync(fullPath)) {
       const handle = cacheCoverFromFile(fullPath)
       if (handle) {
-        coverCache.set(dir, handle)
+        rememberCoverCacheEntry(dir, handle)
         return handle
       }
     }
   }
-  coverCache.set(dir, null)
+  rememberCoverCacheEntry(dir, null)
   return null
 }
 

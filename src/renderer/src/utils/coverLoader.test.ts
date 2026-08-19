@@ -34,6 +34,85 @@ test('resolveCover materializes cover:// handles via getCover IPC', async () => 
   }
 })
 
+test('resolveCover converts Uint8Array IPC responses without base64 IPC payloads', async () => {
+  clearCoverCache()
+  const globalRecord = globalThis as Record<string, unknown>
+  const previousWindow = globalRecord.window
+  const previousFileReader = globalRecord.FileReader
+  class FakeFileReader {
+    result: string | null = null
+    onload: (() => void) | null = null
+    onerror: (() => void) | null = null
+    readAsDataURL(blob: Blob): void {
+      void blob.arrayBuffer().then((bytes) => {
+        this.result = `data:image/jpeg;base64,${new Uint8Array(bytes).join('-')}`
+        this.onload?.()
+      }, () => this.onerror?.())
+    }
+  }
+  globalRecord.FileReader = FakeFileReader
+  globalRecord.window = {
+    api: { data: { getCover: async () => new Uint8Array([1, 2, 3]) } }
+  }
+  try {
+    assert.equal(await resolveCover('cover://bytes.jpg'), 'data:image/jpeg;base64,1-2-3')
+  } finally {
+    globalRecord.window = previousWindow
+    globalRecord.FileReader = previousFileReader
+    clearCoverCache()
+  }
+})
+
+test('resolveCover caps protocol-fetch fallback cache at 128 entries', async () => {
+  clearCoverCache()
+  const globalRecord = globalThis as Record<string, unknown>
+  const previousWindow = globalRecord.window
+  const previousFetch = globalRecord.fetch
+  const previousFileReader = globalRecord.FileReader
+  let fetchCount = 0
+
+  // The fallback converts a Blob through FileReader; provide the tiny browser
+  // surface needed by this renderer utility when running under node:test.
+  class FakeFileReader {
+    result: string | null = null
+    onload: (() => void) | null = null
+    onerror: (() => void) | null = null
+    readAsDataURL(blob: Blob): void {
+      void blob.arrayBuffer().then(() => {
+        this.result = `data:image/jpeg;base64,${blob.size}`
+        this.onload?.()
+      }, () => this.onerror?.())
+    }
+  }
+
+  globalRecord.window = { api: { data: {} } }
+  globalRecord.FileReader = FakeFileReader
+  globalRecord.fetch = async () => {
+    fetchCount += 1
+    return new Response(new Uint8Array([1, 2, 3]), {
+      headers: { 'content-type': 'image/jpeg' }
+    })
+  }
+
+  try {
+    for (let i = 0; i < 129; i += 1) {
+      assert.match(
+        (await resolveCover(`cover://fallback-${i}.jpg`)) ?? '',
+        /^data:image\/jpeg;base64,/
+      )
+    }
+    assert.equal(fetchCount, 129)
+    // FIFO eviction means the first entry is fetched again after 129 inserts.
+    await resolveCover('cover://fallback-0.jpg')
+    assert.equal(fetchCount, 130)
+  } finally {
+    globalRecord.window = previousWindow
+    globalRecord.fetch = previousFetch
+    globalRecord.FileReader = previousFileReader
+    clearCoverCache()
+  }
+})
+
 test('resolveCover prefers local cover:// over durable coverSource', async () => {
   clearCoverCache()
   const grants: string[] = []

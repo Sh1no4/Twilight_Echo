@@ -968,7 +968,8 @@ interface WindowAPI {
   data: {
     saveMusicLibrary: (data: LocalLibrarySnapshotInput) => Promise<LocalMusicLibraryDocument>
     loadMusicLibrary: () => Promise<LocalMusicLibraryDocument | unknown[]>
-    getCover: (handle: string) => Promise<string | null>
+    getCover: (handle: string) => Promise<Uint8Array | string | null>
+    cacheCover: (data: ArrayBuffer | Uint8Array) => Promise<string | null>
     grantRemoteCover: (source: string) => Promise<string>
     getLyrics: (dir: string, fileName: string, filePath?: string) => Promise<string | null>
     getAmlTtml: (songId: number) => Promise<string | null>

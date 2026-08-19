@@ -2109,9 +2109,9 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                         </span>
                       </label>
                       <CoverImg
-                        v-if="track.cover"
-                        :cover="track.cover"
-                        :cover-source="track.coverSource"
+                        v-if="track.coverSmall || track.cover"
+                        :cover="track.coverSmall || track.cover"
+                        :cover-source="track.coverSmallSource || track.coverSource"
                         :identity="track.id"
                         class="cover-img"
                         alt="cover"
