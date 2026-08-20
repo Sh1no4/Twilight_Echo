@@ -36,6 +36,7 @@ function createManualScheduler(): {
   scheduler: AnimationFrameFallbackScheduler
   runFrame: () => void
   runFrames: (count: number) => void
+  runFrameBatch: () => void
   pendingFrames: () => number
   runTimeouts: () => void
 } {
@@ -75,6 +76,18 @@ function createManualScheduler(): {
         now += 1000 / 60
         next[1](now)
       }
+    },
+    /**
+     * One browser frame: every callback already queued runs against the same
+     * timestamp, and callbacks they queue in turn wait for the next frame. A
+     * ResizeObserver notification is delivered after this, at the end of the
+     * frame, which is what `onResize` models in these tests.
+     */
+    runFrameBatch: () => {
+      const batch = [...frames.entries()]
+      frames.clear()
+      now += 1000 / 60
+      for (const [, callback] of batch) callback(now)
     },
     pendingFrames: () => frames.size,
     runTimeouts: () => {
@@ -509,6 +522,45 @@ test('a spring resize preserves the queued push from the anchor into lower lines
     controller.getRowTargetTop(7),
     restingLowerTarget,
     'a spring resize must not release the lower line together with the anchor'
+  )
+})
+
+test('a row resizing every frame must not freeze the cascade it overlaps', async () => {
+  // A background voice that ends with its line collapses its box over the whole
+  // hand-off, so ResizeObserver reports the row on every frame of the very
+  // cascade the line change just started. Each notification used to cancel the
+  // in-flight frame loop and re-schedule it from inside a rAF callback, where
+  // the next notification cancelled it again before it ever ran: the lyrics
+  // stood still for the length of the collapse and then jumped.
+  const { controller, rows, manual, activeIndex } = harness(10)
+  activeIndex.value = 0
+  await controller.follow(0, { mode: 'snap' })
+
+  activeIndex.value = 5
+  await controller.follow(5)
+
+  const tops: number[] = []
+  for (let frame = 0; frame < 20; frame += 1) {
+    manual.runFrameBatch()
+    tops.push(controller.getRowTop(5) as number)
+    // The collapsing row sits just above the anchor, where a line that has only
+    // now finished singing is.
+    rows[4].offsetHeight = Math.max(24, rows[4].offsetHeight - 3)
+    rows[4].scrollHeight = rows[4].offsetHeight
+    controller.onResize('spring')
+  }
+
+  const advanced = tops.filter(
+    (top, index) => index > 0 && Math.abs(top - tops[index - 1]) > 0.01
+  ).length
+  assert.equal(
+    advanced,
+    tops.length - 1,
+    `the anchor must keep travelling through the resize storm; it moved on ${advanced} of ${tops.length - 1} frames`
+  )
+  assert.ok(
+    Math.abs((controller.getRowTop(5) as number) - 54) < Math.abs(tops[0] - 54),
+    'the anchor must be closer to the align position after the storm than before it'
   )
 })
 

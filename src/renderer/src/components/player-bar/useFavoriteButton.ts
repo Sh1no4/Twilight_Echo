@@ -1,9 +1,9 @@
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { Track } from '../../types/music.ts'
-import { getNcmSongId, syncPluginProviders } from '../../providers/index.ts'
+import { syncPluginProviders } from '../../providers/index.ts'
 import {
-  getProviderLocalId,
   getTrackProviderId,
+  resolveProviderTrackId,
   type MediaProviderRegistry
 } from '../../providers/mediaProvider.ts'
 
@@ -33,12 +33,6 @@ function isLocalTrack(track: Pick<Track, 'id' | 'source'>): boolean {
   return providerId == null || providerId === 'local'
 }
 
-function getProviderTrackId(track: Track, providerId: string): string | number | null {
-  if (providerId === 'ncm') return getNcmSongId(track)
-  const localId = getProviderLocalId(track.id, providerId)?.trim()
-  return localId || null
-}
-
 export function useFavoriteButton({
   currentTrack,
   playlists,
@@ -64,10 +58,11 @@ export function useFavoriteButton({
   const providerFavoriteTrackId = ref<string | null>(null)
   let providerFavoriteRequestId = 0
 
-  const defaultFavoritePlaylist = computed(() =>
-    playlists.value.find((playlist) => playlist.isDefault) ??
-    playlists.value.find((playlist) => playlist.name === DEFAULT_FAVORITE_PLAYLIST_NAME) ??
-    null
+  const defaultFavoritePlaylist = computed(
+    () =>
+      playlists.value.find((playlist) => playlist.isDefault) ??
+      playlists.value.find((playlist) => playlist.name === DEFAULT_FAVORITE_PLAYLIST_NAME) ??
+      null
   )
 
   const localFavoriteLiked = computed(() => {
@@ -112,7 +107,7 @@ export function useFavoriteButton({
 
     const providerId = getTrackProviderId(track)
     if (!providerId) return
-    const providerTrackId = getProviderTrackId(track, providerId)
+    const providerTrackId = resolveProviderTrackId(track, providerId)
     if (providerTrackId == null) return
 
     if (typeof window !== 'undefined' && window.api?.providers) {
@@ -163,7 +158,7 @@ export function useFavoriteButton({
     if (providerFavoriteLoading.value) return
     const providerId = getTrackProviderId(track)
     if (!providerId) return
-    const providerTrackId = getProviderTrackId(track, providerId)
+    const providerTrackId = resolveProviderTrackId(track, providerId)
     if (providerTrackId == null) return
 
     const trackId = track.id
@@ -202,7 +197,8 @@ export function useFavoriteButton({
   }
 
   watch(
-    () => [currentTrack.value?.id, currentTrack.value?.source, currentTrack.value?.ncmSongId] as const,
+    () =>
+      [currentTrack.value?.id, currentTrack.value?.source, currentTrack.value?.ncmSongId] as const,
     () => {
       void refreshProviderFavoriteState(currentTrack.value)
     },

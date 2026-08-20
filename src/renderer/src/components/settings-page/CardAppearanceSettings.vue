@@ -78,7 +78,7 @@ function setBgEffectField<K extends keyof typeof settings.value.cardAppearance.b
 <template>
   <button
     type="button"
-    class="settings-accordion-trigger"
+    class="settings-accordion-trigger setting-item"
     :class="{ open: cardAppearanceOpen }"
     :aria-expanded="cardAppearanceOpen"
     @click="cardAppearanceOpen = !cardAppearanceOpen"

@@ -1177,14 +1177,14 @@ html[data-te-motion='full'] .toggle-switch.active::after {
   left: 25px;
 }
 
+/* 折叠触发器与普通设置项共用 `.setting-item` 的盒模型（内边距、行高、圆角、悬停），
+   触发器自身只做 button 复位和右侧箭头 —— 否则折叠行的文字会比上方普通行多出一段
+   左缩进、箭头也会越过控件的右边界。 */
 .settings-accordion-trigger {
   display: flex;
   width: 100%;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
-  margin-top: 16px; /* 与上方分割线拉开间距 */
-  padding: 0;
   border: 0;
   background: transparent;
   color: inherit;
@@ -1228,6 +1228,12 @@ html[data-te-motion='full'] .toggle-switch.active::after {
 
 .settings-accordion-trigger:focus-visible i {
   box-shadow: 0 0 0 3px rgba(var(--te-primary-rgb), 0.16);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-accordion-trigger i {
+    transition-duration: 0.01ms;
+  }
 }
 
 .settings-accordion-body {
@@ -2440,32 +2446,6 @@ html[data-te-motion='full'] .swatch.active {
     translate var(--te-motion-hover) var(--te-ease-soft);
 }
 
-/* 歌词显示样式：控件独占整行，滑块组自动拉伸/换行，避免标签与数值挤在一起 */
-.lyric-style-item {
-  align-items: flex-start;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.lyric-style-item .inline-controls {
-  width: 100%;
-  justify-content: flex-start;
-  flex-wrap: wrap;
-  row-gap: 10px;
-  column-gap: 14px;
-}
-
-.lyric-style-item .range-pill {
-  flex: 1 1 240px;
-  justify-content: space-between;
-  min-width: 0;
-}
-
-.lyric-style-item .range-pill .range-input {
-  flex: 1 1 90px;
-  min-width: 70px;
-}
-
 .range-pill:focus-within {
   border-color: var(--brand-300);
   background: var(--te-card-bg);
@@ -3509,6 +3489,12 @@ html[data-theme='dark'] .sponsor-dialog .sponsor-dialog-notice {
   .about-hero {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  /* 折叠触发器共用 .setting-item，但标题和箭头必须继续同排。 */
+  .settings-accordion-trigger {
+    align-items: center;
+    flex-direction: row;
   }
 
   .folder-list,

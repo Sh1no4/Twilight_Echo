@@ -105,6 +105,24 @@ test('reissuing a delayed target does not restart its departure timer', () => {
   )
 })
 
+test('a delayed target that drifts every frame still departs on time', () => {
+  const spring = new LyricSpring(0, LYRIC_POS_Y_SPRING)
+
+  // A background voice animating its height rewrites the pending target every
+  // frame, not just re-issues it. The departure was already scheduled, so only
+  // the destination may move; restarting the countdown parks the line for as
+  // long as the row above it keeps resizing.
+  for (let frame = 0; frame < 24; frame += 1) {
+    spring.setTargetPosition(100 + frame, 0.2)
+    spring.update(FRAME)
+  }
+
+  assert.ok(
+    spring.getCurrentPosition() > 10,
+    'a drifting layout above must not hold a lower lyric at its old position'
+  )
+})
+
 test('staggered delays make later lines trail earlier ones', () => {
   // This is the cascade in miniature: identical springs, delays only.
   const lines = [0, 0.05, 0.1].map((delay) => {

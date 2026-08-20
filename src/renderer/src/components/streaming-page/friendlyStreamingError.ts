@@ -2,9 +2,23 @@
 // ("fetch failed", "net::ERR_..."), unusable inside the Chinese-language UI.
 // Map known failure classes to friendly copy; messages our own code produced
 // already read as user-facing Chinese and pass through untouched.
+
+/**
+ * Electron rebuilds a rejected `ipcRenderer.invoke` as
+ * `Error invoking remote method 'channel': Error: <original>`. The wrapper is
+ * plumbing, so it is peeled off before the message is classified or shown —
+ * otherwise a provider's own Chinese copy reaches the UI with English noise
+ * bolted to its front.
+ */
+function unwrapRemoteInvokeMessage(message: string): string {
+  const unwrapped = message.replace(/^Error invoking remote method\s+'[^']*':\s*/, '')
+  if (unwrapped === message) return message
+  return unwrapped.replace(/^(?:\w*Error:\s*)+/, '').trim() || message
+}
+
 export function friendlyStreamingError(error: unknown, fallback: string): string {
   const raw = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
-  const message = raw.trim()
+  const message = unwrapRemoteInvokeMessage(raw.trim())
   if (!message) return fallback
   if (/[一-鿿]/.test(message)) return message
   if (

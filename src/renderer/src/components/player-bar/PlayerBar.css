@@ -3781,8 +3781,11 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
   grid-template-columns: auto minmax(0, 1fr) auto;
   column-gap: 10px;
   padding: 0 10px;
-  border: 1px solid var(--te-card-border, rgba(15, 23, 42, 0.14));
-  border-radius: 9px;
+  /* No hairline on any side. On a 40px strip a 1px light border reads as an
+     outline drawn around the bar rather than as its edge — the surface and its
+     rounding carry the shape instead. */
+  border: 0;
+  border-radius: 16px;
   background: var(--te-card-bg, #fff);
   background-image: none;
   box-shadow: none;
@@ -3797,12 +3800,14 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
     opacity var(--te-motion-panel) ease;
 }
 
-/* A mini bar is deliberately a solid control strip. Keep liquid glass from
-   adding a second refracting layer over the flat surface. */
-.player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar.player-bar-mini.player-bar-mini.player-bar-mini
-  .player-bar-warp {
-  display: none;
+/* Forced colors replaces the flat surface with a system colour, so the strip
+   needs an outline back or it dissolves into the page. This is the one mode
+   where an edge is wanted: the palette is the user's, not ours. */
+@media (forced-colors: active) {
+  .player-bar-shell[data-te-playbar-mode='mini']
+    .player-bar.player-bar-mini.player-bar-mini.player-bar-mini {
+    border: 1px solid CanvasText;
+  }
 }
 
 /* Auto-hide tucks the bar below the viewport. Layout height is unchanged by a
@@ -4053,20 +4058,25 @@ html[data-theme='dark'] .player-bar-mini .mini-progress-track {
   background: rgba(255, 255, 255, 0.9);
 }
 
+/* Dark themes park the card colour a step or two from the page background —
+   #181818 on #17181a in the built-in preset — so the hairline used to be the
+   only thing separating the strip. With it gone the fill has to do that job:
+   lift it just enough to read as a surface, roughly the same distance the
+   playing-page rule below sits from its own backdrop. */
 html[data-theme='dark']
   .player-bar-shell[data-te-playbar-mode='mini']
-  .player-bar.player-bar-mini.player-bar-mini.player-bar-mini {
-  border-color: rgba(255, 255, 255, 0.13);
+  .player-bar.player-bar-mini.player-bar-mini.player-bar-mini:not(.player-bar-glass) {
+  background: color-mix(in srgb, var(--te-card-bg, #181818) 95%, #fff 5%);
 }
 
 /* PlayingMusic supplies `glass=true` even when the app theme is light. Mini
    still needs the playing-page dark surface; otherwise the flat mini rule's
-   card token wins and turns the bar white. */
+   card token wins and turns the bar white. No border here either: the fill is
+   what separates the strip from the page. */
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini {
   background: #141722;
   background-image: none;
-  border-color: rgba(255, 255, 255, 0.14);
   color: rgba(255, 255, 255, 0.86);
 }
 

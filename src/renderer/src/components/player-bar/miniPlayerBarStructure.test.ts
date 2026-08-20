@@ -197,8 +197,33 @@ test('mini geometry out-specifies the preset theme layouts without !important', 
   // The mini pill is intentionally long enough for an edge-to-edge progress rail.
   assert.match(rule, /max-width:\s*min\(1120px, 100%\)/)
   assert.match(rule, /height:\s*40px/)
+  // No hairline on any side: on a 40px strip it reads as an outline drawn around
+  // the bar rather than as its edge. The rounding carries the shape instead.
+  assert.match(rule, /border:\s*0/)
+  assert.match(rule, /border-radius:\s*16px/)
   // Play/pause stays left, the rail stretches in the middle, tools stay right.
   assert.match(rule, /grid-template-columns:\s*auto minmax\(0, 1fr\) auto/)
+})
+
+test('mini keeps a visible outline only where the system palette takes over', () => {
+  // Forced colors replaces the fill, so the strip would otherwise dissolve.
+  assert.match(
+    playerBarCss,
+    /@media \(forced-colors: active\) \{\s*\.player-bar-shell\[data-te-playbar-mode='mini'\][\s\S]{0,180}border:\s*1px solid CanvasText/
+  )
+})
+
+test('the mini shape opts out of the liquid glass material at the source', () => {
+  // `.player-bar-liquid` claims background, border-color and the rim box-shadow
+  // with `!important`, so a mini bar that kept the class could not win its own
+  // surface back: it rendered as a transparent pane ringed by the rim highlight.
+  assert.match(
+    playerBar,
+    /liquidGlassActive = computed\(\s*\(\)\s*=>\s*!isMini\.value\s*&&[\s\S]{0,160}liquidGlass\.playbarEnabled/
+  )
+  // Which also means mini mounts no refracting layer and runs no pointer writes.
+  assert.match(playerBar, /v-if="liquidGlassActive" class="player-bar-warp"/)
+  assert.match(playerBar, /shouldTrack =\s*\n?\s*liquidGlassActive\.value/)
 })
 
 test('no preset theme layout can out-specify a mini rule on a property mini sets', () => {
@@ -295,6 +320,15 @@ test('the mini rail stays visible as a flat, long seeking target', () => {
   assert.match(playerBarCss, />\s*\.mini-play-button\s*\{[^}]*width:\s*26px/)
 })
 
+test('the dark main-window mini strip carries a fill it can be seen by', () => {
+  // Without the hairline, a card colour that sits a step from the page
+  // background (#181818 on #17181a) would leave the strip with no visible edge.
+  assert.match(
+    playerBarCss,
+    /html\[data-theme='dark'\][\s\S]{0,240}\.player-bar-mini\.player-bar-mini\.player-bar-mini:not\(\.player-bar-glass\)\s*\{[^}]*background:\s*color-mix\([^)]*var\(--te-card-bg/
+  )
+})
+
 test('the playing-page mini bar stays dark even under the light app theme', () => {
   const darkGlassRule = playerBarCss.match(
     /\.player-bar-shell\[data-te-playbar-mode='mini'\][\s\S]{0,120}\.player-bar\.player-bar-glass\.player-bar-mini\.player-bar-mini\.player-bar-mini\s*\{[^}]*\}/
@@ -302,7 +336,8 @@ test('the playing-page mini bar stays dark even under the light app theme', () =
   assert.ok(darkGlassRule, 'playing-page mini override must exist')
   assert.match(darkGlassRule[0], /background:\s*#141722/)
   assert.match(darkGlassRule[0], /background-image:\s*none/)
-  assert.match(darkGlassRule[0], /border-color:\s*rgba\(255, 255, 255, 0\.14\)/)
+  // The fill is the whole separation from the page — no border of any kind.
+  assert.doesNotMatch(darkGlassRule[0], /border/)
   assert.match(
     playerBarCss,
     /\.player-bar\.player-bar-glass\.player-bar-mini\.player-bar-mini\.player-bar-mini\s*\.player-right \.icon-btn[\s\S]{0,180}color:\s*rgba\(255, 255, 255, 0\.78\)/

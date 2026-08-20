@@ -169,7 +169,7 @@ function toggleAdaptiveTone(): void {
 <template>
   <button
     type="button"
-    class="settings-accordion-trigger"
+    class="settings-accordion-trigger setting-item"
     :class="{ open: liquidGlassOpen }"
     :aria-expanded="liquidGlassOpen"
     @click="liquidGlassOpen = !liquidGlassOpen"
