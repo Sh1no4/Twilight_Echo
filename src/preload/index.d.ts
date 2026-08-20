@@ -968,9 +968,11 @@ interface WindowAPI {
   data: {
     saveMusicLibrary: (data: LocalLibrarySnapshotInput) => Promise<LocalMusicLibraryDocument>
     loadMusicLibrary: () => Promise<LocalMusicLibraryDocument | unknown[]>
-    getCover: (handle: string) => Promise<string | null>
+    getCover: (handle: string) => Promise<Uint8Array | string | null>
+    cacheCover: (data: ArrayBuffer | Uint8Array) => Promise<string | null>
     grantRemoteCover: (source: string) => Promise<string>
     getLyrics: (dir: string, fileName: string, filePath?: string) => Promise<string | null>
+    getAmlTtml: (songId: number) => Promise<string | null>
     importLyrics: () => Promise<string | null>
     saveLyrics: (contents: string) => Promise<string | null>
     searchOnlineLyrics: (query: {
@@ -1115,6 +1117,7 @@ interface WindowAPI {
     get: () => Promise<SettingsSnapshot>
     update: (patch: Partial<AppSettings>) => Promise<SettingsSnapshot>
     chooseCacheFolder: () => Promise<string | null>
+    chooseDownloadFolder: () => Promise<string | null>
     chooseBackgroundImage: () => Promise<string | null>
     importBackgroundImage: (fileName: string, data: ArrayBuffer) => Promise<string | null>
     exportBackup: () => Promise<string>
@@ -1153,7 +1156,9 @@ interface WindowAPI {
   plugins: {
     list: () => Promise<TwilightPluginDescriptor[]>
     installFromPath: (path: string) => Promise<TwilightPluginInstallResult>
-    chooseAndInstall: () => Promise<TwilightPluginInstallResult | null>
+    chooseAndInstall: (
+      kind?: 'package' | 'directory'
+    ) => Promise<TwilightPluginInstallResult | null>
     enable: (id: string) => Promise<TwilightPluginDescriptor>
     disable: (id: string) => Promise<TwilightPluginDescriptor>
     uninstall: (id: string, options?: { removeData?: boolean }) => Promise<void>
@@ -1198,8 +1203,15 @@ interface WindowAPI {
     updateTrack: (data: {
       lyrics: string | null
       translatedLyrics?: string | null
-      lyricsSource?: 'embedded' | 'local' | 'provider' | 'manual' | 'online' | null
-      translatedLyricsSource?: 'embedded' | 'local' | 'provider' | 'manual' | 'online' | null
+      lyricsSource?: 'embedded' | 'local' | 'provider' | 'amll' | 'manual' | 'online' | null
+      translatedLyricsSource?:
+        | 'embedded'
+        | 'local'
+        | 'provider'
+        | 'amll'
+        | 'manual'
+        | 'online'
+        | null
       title?: string
       artist?: string
     }) => void
@@ -1211,8 +1223,8 @@ interface WindowAPI {
       cb: (data: {
         lyrics: string | null
         translatedLyrics?: string | null
-        lyricsSource?: 'embedded' | 'local' | 'provider' | 'manual' | null
-        translatedLyricsSource?: 'embedded' | 'local' | 'provider' | 'manual' | null
+        lyricsSource?: 'embedded' | 'local' | 'provider' | 'amll' | 'manual' | null
+        translatedLyricsSource?: 'embedded' | 'local' | 'provider' | 'amll' | 'manual' | null
         title?: string
         artist?: string
       }) => void

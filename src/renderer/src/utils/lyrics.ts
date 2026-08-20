@@ -1,3 +1,5 @@
+import { isAmlTtml, parseAmlTtml } from './amllTtml.ts'
+
 export interface LyricWord {
   time: number
   endTime: number | null
@@ -14,11 +16,21 @@ export interface LyricVoiceMetadata {
   group?: string
 }
 
-export interface LyricVoiceLayer extends LyricVoiceMetadata {
-  voiceKey: string
+export interface LyricAuxiliaryLayer {
   time: number | null
   text: string
   words?: LyricWord[]
+}
+
+export interface LyricVoiceLayer extends LyricVoiceMetadata {
+  voiceKey: string
+  time: number | null
+  /** Explicit voice end from TTML, when the source provides one. */
+  endTime?: number | null
+  text: string
+  words?: LyricWord[]
+  translation?: LyricAuxiliaryLayer | null
+  romanization?: LyricAuxiliaryLayer | null
 }
 
 export interface ParsedTimedLyricLine {
@@ -37,6 +49,11 @@ export interface LyricLine {
   words?: LyricWord[]
   rowKey?: string
   voices?: LyricVoiceLayer[]
+}
+
+export interface BuildLyricLinesOptions {
+  replaceTtmlTranslation?: boolean
+  replaceTtmlRomanization?: boolean
 }
 
 const LINE_TIMESTAMP_RE = /\[(\d{1,3}):(\d{2})(?:[.:](\d{2,3}))?\]/g
@@ -95,8 +112,9 @@ export function parseLyricVoiceTag(raw: string): LyricVoiceMetadata | null {
 }
 
 function encodeVoiceValue(value: string): string {
-  return encodeURIComponent(value).replace(/[!'()*]/g, (character) =>
-    `%${character.charCodeAt(0).toString(16).toUpperCase()}`
+  return encodeURIComponent(value).replace(
+    /[!'()*]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`
   )
 }
 
@@ -507,6 +525,38 @@ function matchTimedLayer(
   return result
 }
 
+function replaceTtmlAuxiliaryLayer(
+  lines: readonly LyricLine[],
+  layerLyrics: string | null | undefined,
+  layer: 'translation' | 'romanization'
+): LyricLine[] {
+  const timedLayer = parseTimedLrc(layerLyrics)
+  const timedOriginals = lines.flatMap((line) =>
+    line.time == null ? [] : [{ time: line.time, text: line.text }]
+  )
+  const timedMatches = matchTimedLayer(timedOriginals, timedLayer)
+  const plainLayer = timedLayer.length > 0 ? [] : parsePlainLyrics(layerLyrics)
+
+  return lines.map((line, index) => {
+    const replacement =
+      line.time == null
+        ? (plainLayer[index] ?? null)
+        : (timedMatches.get(Math.round(line.time * 1000)) ?? null)
+    return {
+      ...line,
+      [layer]: replacement,
+      ...(line.voices
+        ? {
+            voices: line.voices.map((voice) => ({
+              ...voice,
+              [layer]: null
+            }))
+          }
+        : {})
+    }
+  })
+}
+
 function voiceKey(metadata: LyricVoiceMetadata, sourceIndex: number, time: number | null): string {
   const identity = [
     metadata.role,
@@ -599,8 +649,21 @@ function groupTimedLyricLines(lines: readonly ParsedTimedLyricLine[]): Array<{
 export function buildLyricLines(
   lyrics: string | null | undefined,
   translatedLyrics: string | null | undefined,
-  romanizedLyrics?: string | null | undefined
+  romanizedLyrics?: string | null | undefined,
+  options: BuildLyricLinesOptions = {}
 ): LyricLine[] {
+  if (isAmlTtml(lyrics)) {
+    let parsed = parseAmlTtml(lyrics!)
+    if (parsed.length > 0) {
+      if (options.replaceTtmlTranslation || translatedLyrics != null) {
+        parsed = replaceTtmlAuxiliaryLayer(parsed, translatedLyrics, 'translation')
+      }
+      if (options.replaceTtmlRomanization || romanizedLyrics != null) {
+        parsed = replaceTtmlAuxiliaryLayer(parsed, romanizedLyrics, 'romanization')
+      }
+      return parsed
+    }
+  }
   const parsedOriginalLines = parseTimedLrc(lyrics)
   const originalLines = groupTimedLyricLines(parsedOriginalLines)
   const translatedLines = parseTimedLrc(translatedLyrics)

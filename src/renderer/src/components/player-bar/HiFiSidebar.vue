@@ -76,7 +76,6 @@ const props = defineProps<{
   originalLayerSelection: LyricLayerSourceSelection
   translationLayerSelection: LyricLayerSourceSelection
   showTranslation: boolean
-  lyricHighlightOn: boolean
   lyricControlsPending?: boolean
   playerBarButtons: Array<{
     id: string
@@ -133,13 +132,12 @@ const emit = defineEmits<{
   refreshDevices: []
   selectImpulseResponse: []
   clearImpulseResponse: []
-  reloadLyrics: [prefer: 'auto' | 'local' | 'provider']
+  reloadLyrics: [prefer: 'auto' | 'local' | 'amll' | 'provider']
   setLyricLayerSelection: [
     key: 'originalSelection' | 'translationSelection',
     selection: LyricLayerSourceSelection
   ]
   toggleTranslationVisibility: []
-  toggleLyricHighlight: []
   runExtension: [command?: string]
   cyclePlaybackRate: []
   toggleAbLoop: []
@@ -270,6 +268,7 @@ function onLyricLayerSelectionChange(
   if (
     selection !== 'automatic' &&
     selection !== 'local' &&
+    selection !== 'amll' &&
     selection !== 'provider' &&
     selection !== 'manual'
   ) {
@@ -408,6 +407,7 @@ function lyricSourceText(source: LyricSource | null | undefined): string {
   if (source === 'embedded') return '内嵌'
   if (source === 'local') return '本地 LRC'
   if (source === 'provider') return '在线 Provider'
+  if (source === 'amll') return 'AMLL TTML'
   return '未加载'
 }
 
@@ -1568,6 +1568,7 @@ const deckAccentVars = computed(() => {
                   >
                     <option value="automatic">自动</option>
                     <option value="local">本地</option>
+                    <option value="amll">AMLL TTML</option>
                     <option value="provider">Provider</option>
                     <option value="manual">手写</option>
                   </select>
@@ -1582,6 +1583,7 @@ const deckAccentVars = computed(() => {
                   >
                     <option value="automatic">自动</option>
                     <option value="local">本地</option>
+                    <option value="amll">AMLL TTML</option>
                     <option value="provider">Provider</option>
                     <option value="manual">手写</option>
                   </select>
@@ -1639,24 +1641,6 @@ const deckAccentVars = computed(() => {
             </section>
 
             <section class="deck-card">
-              <div class="deck-module-row">
-                <div class="deck-module-copy">
-                  <strong>当前歌词高光</strong>
-                  <span>{{ lyricHighlightOn ? '紧贴字形的柔和高光' : '当前关闭' }}</span>
-                </div>
-                <button
-                  type="button"
-                  class="deck-switch"
-                  :class="{ active: lyricHighlightOn }"
-                  role="switch"
-                  :aria-checked="lyricHighlightOn"
-                  aria-label="当前歌词高光"
-                  :disabled="lyricControlsPending"
-                  @click="emit('toggleLyricHighlight')"
-                >
-                  <span class="deck-switch-knob"></span>
-                </button>
-              </div>
               <div class="deck-module-row">
                 <div class="deck-module-copy">
                   <strong>桌面歌词</strong>

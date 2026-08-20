@@ -117,6 +117,7 @@ const fallbackSettings: AppSettings = {
   autoAnalyzeBpm: true,
   closeToTray: false,
   onboardingCompleted: false,
+  developerMode: false,
   startupHomePage: 'local',
   trackActivationMode: 'singleClick',
   theme: 'system',
@@ -136,6 +137,7 @@ const fallbackSettings: AppSettings = {
   lyricsAppearance: cloneLyricsAppearance(DEFAULT_LYRICS_APPEARANCE),
   lyricsPresets: cloneLyricsPresetConfig(DEFAULT_LYRICS_PRESET_CONFIG),
   libraryFolders: [],
+  downloadFolder: '',
   genreSeparators: DEFAULT_GENRE_SEPARATORS,
   watchLibrary: true,
   onlineLyricsFallback: false,
@@ -491,6 +493,8 @@ export function useSettingsStore(): {
   hydrateStartupSnapshot: (snapshot: AppStartupSnapshot) => AppSettings
   updateSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>
   chooseCacheFolder: () => Promise<void>
+  chooseDownloadFolder: () => Promise<void>
+  resetDownloadFolder: () => Promise<void>
   chooseBackgroundImage: () => Promise<string | null>
   importBackgroundImage: (file: File) => Promise<string | null>
   exportSettingsBackup: () => Promise<string>
@@ -640,6 +644,19 @@ export function useSettingsStore(): {
     }
   }
 
+  async function chooseDownloadFolder(): Promise<void> {
+    const folder = await window.api.settings.chooseDownloadFolder()
+    if (folder) {
+      await updateSettings({ downloadFolder: folder })
+    }
+  }
+
+  /** Clearing the download directory hands downloads back to the first music library folder. */
+  async function resetDownloadFolder(): Promise<void> {
+    if (!settings.value.downloadFolder) return
+    await updateSettings({ downloadFolder: '' })
+  }
+
   async function chooseBackgroundImage(): Promise<string | null> {
     return await window.api.settings.chooseBackgroundImage()
   }
@@ -761,6 +778,8 @@ export function useSettingsStore(): {
     hydrateStartupSnapshot,
     updateSettings,
     chooseCacheFolder,
+    chooseDownloadFolder,
+    resetDownloadFolder,
     chooseBackgroundImage,
     importBackgroundImage,
     exportSettingsBackup,

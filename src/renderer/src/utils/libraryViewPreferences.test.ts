@@ -145,6 +145,26 @@ test('trackNumber sort falls back to natural fileName when tags are absent', () 
   )
 })
 
+test('sorting keeps Chinese collation and natural numeric filename order', () => {
+  const titleState = createDefaultLibraryViewState()
+  const titleOrdered = applyLibraryView(
+    [track('cn-2', { title: '中文' }), track('cn-1', { title: '阿波' }), track('cn-3', { title: '英文' })],
+    titleState
+  )
+  assert.deepEqual(titleOrdered.map((item) => item.id), ['cn-1', 'cn-3', 'cn-2'])
+
+  const albumState = createDefaultLibraryViewState('albums')
+  const fileOrdered = applyLibraryView(
+    [
+      track('file-10', { fileName: '10.flac', trackNumber: undefined }),
+      track('file-2', { fileName: '2.flac', trackNumber: undefined }),
+      track('file-1', { fileName: '1.flac', trackNumber: undefined })
+    ],
+    albumState
+  )
+  assert.deepEqual(fileOrdered.map((item) => item.id), ['file-1', 'file-2', 'file-10'])
+})
+
 test('persists independent state for every category and detail filter', () => {
   const storage = memoryStorage()
   const preferences = new LibraryViewPreferences(storage)

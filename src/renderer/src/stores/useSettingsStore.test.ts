@@ -660,3 +660,82 @@ test('playbar settings UI exposes shape and visibility as independent dimensions
   assert.doesNotMatch(source, /togglePlayerBarAutoHide/)
   assert.doesNotMatch(source, /autoHideOnPlayingPage/)
 })
+
+test('the download directory setting stays authorized from the picker to the download manager', () => {
+  const sharedSettings = readFileSync(
+    new URL('../../../shared/appSettings.ts', import.meta.url),
+    'utf8'
+  )
+  const mainSettings = readFileSync(
+    new URL('../../../main/core/settings.ts', import.meta.url),
+    'utf8'
+  )
+  const localPaths = readFileSync(
+    new URL('../../../main/security/localPaths.ts', import.meta.url),
+    'utf8'
+  )
+  const settingsIpc = readFileSync(
+    new URL('../../../main/ipc/settingsIpc.ts', import.meta.url),
+    'utf8'
+  )
+  const pluginIpc = readFileSync(new URL('../../../main/ipc/plugins.ts', import.meta.url), 'utf8')
+  const downloadManager = readFileSync(
+    new URL('../../../main/plugins/providerDownloadManager.ts', import.meta.url),
+    'utf8'
+  )
+  const preload = readFileSync(
+    new URL('../../../preload/domains/settingsApi.ts', import.meta.url),
+    'utf8'
+  )
+  const store = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
+  const generalSection = readFileSync(
+    new URL('../components/settings-page/GeneralSettingsSection.vue', import.meta.url),
+    'utf8'
+  )
+
+  // An empty value keeps the historical behaviour: downloads land in the library.
+  assert.match(sharedSettings, /downloadFolder: string/)
+  assert.match(mainSettings, /downloadFolder: '',/)
+  assert.match(
+    mainSettings,
+    /downloadFolder:\s*\r?\n\s*typeof settings\.downloadFolder === 'string'/
+  )
+
+  // Only a directory the user picked through the dialog may be persisted, and the
+  // renderer's persisted copy is re-checked instead of trusted.
+  assert.match(localPaths, /export async function grantUserSelectedDownloadRoot/)
+  assert.match(localPaths, /downloadRootGrants\.grantRoot\(folder\)/)
+  assert.match(localPaths, /throw new Error\('下载目录未经用户授权'\)/)
+  assert.match(localPaths, /downloadRootGrants\.isCanonicalWithinRoots\(canonicalPath\)/)
+  assert.match(settingsIpc, /hasOwnProperty\.call\(patch, 'downloadFolder'\)/)
+  assert.match(settingsIpc, /resolveAuthorizedDownloadRootSetting\(/)
+  assert.match(settingsIpc, /ipcMain\.handle\('settings:chooseDownloadFolder'/)
+  assert.match(settingsIpc, /grantUserSelectedDownloadRoot\(result\.filePaths\[0\]\)/)
+
+  // The download manager takes the configured directory first, then the library.
+  assert.match(
+    pluginIpc,
+    /resolveDownloadRoot: \(\) =>\s*\r?\n?\s*resolveConfiguredDownloadRoot\(runtime\.appSettings\.downloadFolder\)/
+  )
+  assert.match(downloadManager, /selectDownloadTargetRoot\(requested, orderDownloadRoots\(/)
+  // Files that land outside the library must not be pushed into the library index.
+  assert.match(downloadManager, /if \(await this\.isInsideAuthorizedLibrary\(targetPath\)\)/)
+
+  // Persisting tolerates a directory that is momentarily offline so a settings
+  // restore cannot fail on it, while writing files demands a live grant.
+  assert.match(
+    localPaths,
+    /resolveAuthorizedDownloadRootSetting[\s\S]*?resolveDeclaredExactPath\(declaredDownloadRoots, folder\)/
+  )
+  assert.match(
+    localPaths,
+    /export async function resolveConfiguredDownloadRoot[\s\S]*?return await resolveGrantedDownloadRoot\(folder\)/
+  )
+
+  assert.match(preload, /chooseDownloadFolder: \(\): Promise<string \| null> =>/)
+  assert.match(store, /async function chooseDownloadFolder\(\)/)
+  assert.match(store, /async function resetDownloadFolder\(\)/)
+  assert.match(store, /updateSettings\(\{ downloadFolder: '' \}\)/)
+  assert.match(generalSection, /chooseDownloadFolder: \(\) => void/)
+  assert.match(generalSection, /settings\.downloadFolder \|\| '跟随扫描文件夹'/)
+})

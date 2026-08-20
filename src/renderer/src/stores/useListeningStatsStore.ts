@@ -375,6 +375,18 @@ function getListeningStatKey(track: Track): string {
   return getLogicalTrackKey(track)
 }
 
+/** Build the lookup used by the library's optional last-played sort. */
+export function buildLastPlayedByTrackId(
+  stats: Pick<ListeningStats, 'tracks'>
+): ReadonlyMap<string, number> {
+  const result = new Map<string, number>()
+  for (const stat of Object.values(stats.tracks)) {
+    if (stat.track?.id) result.set(stat.track.id, stat.lastPlayed)
+    for (const sourceId of stat.sourceIds ?? []) result.set(sourceId.trackId, stat.lastPlayed)
+  }
+  return result
+}
+
 function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
   if (track.source) return track.source
   const separatorIndex = track.id.indexOf(':')

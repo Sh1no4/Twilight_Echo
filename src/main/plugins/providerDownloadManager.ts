@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
-import { access, mkdir, open, rename, rm } from 'node:fs/promises'
+import { access, mkdir, rename, rm } from 'node:fs/promises'
 import { basename, extname, join, parse } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { Readable, Transform } from 'node:stream'
 import type { TwilightPluginManager } from '../plugins/manager.ts'
 import { filterAuthorizedLibraryRoots } from '../security/localPaths.ts'
-import { isCanonicalPathInside, lexicalPathKey } from '../security/pathGrants.ts'
+import { isCanonicalPathInside } from '../security/pathGrants.ts'
+import { flushFileToDisk, orderDownloadRoots, selectDownloadTargetRoot } from './downloadTargets.ts'
 import type { LocalLibraryIndexCoordinator } from '../library/libraryIndexCoordinator.ts'
 import type {
   ProviderDownloadCreateInput,
@@ -63,6 +64,11 @@ interface RemoteDownloadFile {
 interface ProviderDownloadManagerOptions {
   pluginManager: TwilightPluginManager
   getLibraryFolders: () => string[]
+  /**
+   * Resolves the user-selected download directory, or null when none is configured.
+   * Downloads then fall back to the first authorized music library root.
+   */
+  resolveDownloadRoot?: () => Promise<string | null>
   libraryIndexCoordinator: () => LocalLibraryIndexCoordinator | null
   onChanged: (tasks: ProviderDownloadTaskSnapshot[]) => void
   fetch?: typeof globalThis.fetch
@@ -90,9 +96,7 @@ export class ProviderDownloadManager {
     const providerId = normalizeProviderId(input.providerId)
     const track = normalizeTrack(input.track)
     const quality = normalizeQuality(input.quality)
-    const roots = await filterAuthorizedLibraryRoots(this.options.getLibraryFolders())
-    if (roots.length === 0) throw new Error('请先在设置中添加并授权本地音乐库目录')
-    const targetRoot = selectTargetRoot(input.targetRoot, roots)
+    const targetRoot = await this.resolveTargetRoot(input.targetRoot)
     const remote = normalizeRemoteTask(
       await this.options.pluginManager.callProvider(
         providerId,
@@ -254,16 +258,13 @@ export class ProviderDownloadManager {
       if (expectedSize != null && received !== expectedSize) {
         throw new Error(`下载文件大小不匹配：预期 ${expectedSize} 字节，实际 ${received} 字节`)
       }
-      const handle = await open(partPath, 'r')
-      try {
-        await handle.sync()
-      } finally {
-        await handle.close()
-      }
+      await flushFileToDisk(partPath)
       await rename(partPath, targetPath)
-      this.options
-        .libraryIndexCoordinator()
-        ?.enqueueWatcherChanges([{ kind: 'add', path: targetPath }])
+      if (await this.isInsideAuthorizedLibrary(targetPath)) {
+        this.options
+          .libraryIndexCoordinator()
+          ?.enqueueWatcherChanges([{ kind: 'add', path: targetPath }])
+      }
       this.patch(taskId, {
         status: 'completed',
         progress: 1,
@@ -281,6 +282,33 @@ export class ProviderDownloadManager {
     const task = this.tasks.get(taskId)
     if (!task) throw new Error('下载任务不存在')
     return task
+  }
+
+  /**
+   * The configured download directory wins over the music library, but every
+   * candidate still has to survive its own authorization check: renderer-persisted
+   * paths are never an authority source.
+   */
+  private async resolveTargetRoot(requested: unknown): Promise<string> {
+    const [downloadRoot, libraryRoots] = await Promise.all([
+      this.resolveConfiguredDownloadRoot(),
+      filterAuthorizedLibraryRoots(this.options.getLibraryFolders())
+    ])
+    return selectDownloadTargetRoot(requested, orderDownloadRoots(downloadRoot, libraryRoots))
+  }
+
+  private async resolveConfiguredDownloadRoot(): Promise<string | null> {
+    try {
+      return (await this.options.resolveDownloadRoot?.()) ?? null
+    } catch {
+      // A removed or unauthorized download directory falls back to the music library.
+      return null
+    }
+  }
+
+  private async isInsideAuthorizedLibrary(targetPath: string): Promise<boolean> {
+    const libraryRoots = await filterAuthorizedLibraryRoots(this.options.getLibraryFolders())
+    return libraryRoots.some((root) => isCanonicalPathInside(root, targetPath))
   }
 
   private patch(taskId: string, patch: Partial<ProviderDownloadTaskSnapshot>): void {
@@ -376,14 +404,6 @@ function normalizeOptionalSize(value: unknown): number | null {
 
 function clampProgress(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0
-}
-
-function selectTargetRoot(requested: unknown, roots: string[]): string {
-  if (typeof requested !== 'string' || !requested.trim()) return roots[0]
-  const targetKey = lexicalPathKey(requested)
-  const match = roots.find((root) => lexicalPathKey(root) === targetKey)
-  if (!match) throw new Error('下载目录必须是已授权的本地音乐库根目录')
-  return match
 }
 
 async function availableTargetPath(

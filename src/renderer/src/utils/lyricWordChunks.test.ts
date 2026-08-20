@@ -45,7 +45,7 @@ test('CJK characters never merge, so a Chinese line cannot emphasize as one unit
   assert.deepEqual(texts(chunks), ['我', '爱', '你'])
 })
 
-test('a leading space starts a new visual word', () => {
+test('boundary spaces become collapsible chunks outside visual words', () => {
   const words = resolveLyricWordTimings([
     { text: 'is', time: 0, endTime: 1 },
     { text: ' a', time: 1, endTime: 2 },
@@ -54,7 +54,7 @@ test('a leading space starts a new visual word', () => {
   ])
   const chunks = chunkAndSplitLyricWords(words)
 
-  assert.deepEqual(texts(chunks), ['is', ' a', '[ su|gar]'])
+  assert.deepEqual(texts(chunks), ['is', '_ _', 'a', '_ _', '[su|gar]'])
 })
 
 test('whitespace-only entries become their own chunks', () => {

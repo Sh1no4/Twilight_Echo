@@ -1731,6 +1731,7 @@ test('follow list uses artist sublist and returns artist identities', async () =
         id: 101,
         name: 'aiss',
         picUrl: 'https://img.test/aiss.jpg',
+        picUrlSmall: 'https://img.test/aiss.jpg',
         musicSize: 12,
         userType: 2,
         artistId: 101,
@@ -1740,6 +1741,7 @@ test('follow list uses artist sublist and returns artist identities', async () =
         id: 202,
         name: '7FIV6',
         picUrl: 'https://img.test/7fiv6.jpg',
+        picUrlSmall: 'https://img.test/7fiv6.jpg',
         musicSize: 8,
         userType: 2,
         artistId: 202,
@@ -1864,6 +1866,7 @@ test('discovery playlists pass tag paging params and normalize playlists with pl
         id: 900,
         name: '欧美新歌',
         cover: 'https://img.test/900.jpg',
+        coverSmall: 'https://img.test/900.jpg',
         trackCount: 42,
         creatorName: 'curator',
         owned: undefined,
@@ -1901,7 +1904,9 @@ test('playlist covers request higher-resolution NetEase thumbnails', async () =>
   try {
     const page = await provider.fetchDiscoveryPlaylists('all', 'hot', 30, 0)
     assert.equal(page.items[0].cover, 'https://p1.music.126.net/abc/cover.jpg?param=600y600')
+    assert.equal(page.items[0].coverSmall, 'https://p1.music.126.net/abc/cover.jpg?param=140y140')
     assert.equal(page.items[1].cover, 'https://p2.music.126.net/abc/original.jpg?param=600y600')
+    assert.equal(page.items[1].coverSmall, 'https://p2.music.126.net/abc/original.jpg?param=140y140')
   } finally {
     ncmProvider.deactivate()
   }

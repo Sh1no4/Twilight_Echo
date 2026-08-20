@@ -46,6 +46,9 @@ export interface Track {
   duration: number
   size: number
   cover: string | null
+  /** Optional bounded thumbnail URL for list/grid rendering. */
+  coverSmall?: string | null
+  coverSmallSource?: string | null
   /**
    * Durable remote cover origin (http/https). When `cover` is a twilight-media
    * grant that dies after process restart, display code re-grants from this.

@@ -6,9 +6,11 @@ import {
   type LyricsStyleTarget,
   type LyricsTextStyle
 } from '../../../shared/lyricsAppearance.ts'
-import { lyricsPreviewStyle } from '../utils/lyricsStyleVars'
+import { constrainLyricsAlignment, lyricsPreviewStyle } from '../utils/lyricsStyleVars'
 import { useLyricsAppearanceEditor } from '../composables/useLyricsAppearanceEditor'
 import { useLyricsFontPicker, type LyricsFontOption } from '../composables/useLyricsFontPicker'
+import { useCurrentLyricsFormat } from '../composables/useCurrentLyricsFormat.ts'
+import { useLyricsManagement } from '../stores/lyricsManagement.ts'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -34,12 +36,16 @@ const {
 } = useLyricsAppearanceEditor()
 
 const fontPicker = useLyricsFontPicker()
+const { isCurrentTtml } = useCurrentLyricsFormat()
+const lyricsManagement = useLyricsManagement()
 const fontMenuOpen = ref(false)
 const presetName = ref('')
+const showRomanization = computed(() => lyricsManagement.document.value.showRomanization)
 
 const targetOptions: Array<{ value: LyricsStyleTarget; label: string; hint: string }> = [
   { value: 'normal', label: '普通歌词', hint: '未播放与非当前行' },
   { value: 'active', label: '当前歌词', hint: '正在播放的主歌词' },
+  { value: 'harmony', label: '附属歌词', hint: '和声与背景人声，仅在播放时显示' },
   { value: 'translation', label: '翻译歌词', hint: '译文行' },
   { value: 'romanization', label: '罗马音', hint: '音译行，需在歌词管理中开启' }
 ]
@@ -55,6 +61,19 @@ const highlightOptions = [
   { value: 'glow', label: '柔光' },
   { value: 'outline', label: '描边' }
 ] as const
+const allAlignmentOptions = [
+  { value: 'left', label: '左' },
+  { value: 'center', label: '中' },
+  { value: 'right', label: '右' }
+] as const
+const alignmentOptions = computed(() =>
+  isCurrentTtml.value
+    ? allAlignmentOptions.filter((option) => option.value !== 'right')
+    : allAlignmentOptions
+)
+const effectiveStyleAlign = computed(() =>
+  constrainLyricsAlignment(style.value.align, isCurrentTtml.value)
+)
 
 const ranges = LYRICS_RANGES
 
@@ -95,7 +114,14 @@ async function toggleFontMenu(): Promise<void> {
 }
 
 function previewStyle(target: LyricsStyleTarget): Record<string, string> {
-  return lyricsPreviewStyle(draft.value.styles[target], target)
+  const targetStyle = draft.value.styles[target]
+  return lyricsPreviewStyle(
+    {
+      ...targetStyle,
+      align: constrainLyricsAlignment(targetStyle.align, isCurrentTtml.value)
+    },
+    target
+  )
 }
 
 function commitPreset(): void {
@@ -103,10 +129,20 @@ function commitPreset(): void {
   presetName.value = ''
 }
 
+async function toggleRomanization(): Promise<void> {
+  try {
+    await lyricsManagement.updateVisibility({ showRomanization: !showRomanization.value })
+  } catch {
+    // The lyrics manager remains the authoritative source; a failed persistence
+    // attempt must not interrupt editing the appearance profile.
+  }
+}
+
 watch(
   () => props.open,
   (open) => {
     if (open) {
+      void lyricsManagement.ensureLoaded()
       reloadFromSettings()
       fontMenuOpen.value = false
       fontPicker.query.value = ''
@@ -141,7 +177,7 @@ watch(
           <div>
             <span class="customizer-kicker">PlayingMusic</span>
             <h2>歌词个性化</h2>
-            <p>分别调整普通、当前、翻译与罗马音歌词，所有更改实时应用并自动保存。</p>
+            <p>分别调整普通、当前、附属、翻译与罗马音歌词，所有更改实时应用并自动保存。</p>
           </div>
           <button
             type="button"
@@ -175,14 +211,22 @@ watch(
         <section class="live-preview" aria-label="歌词样式实时预览">
           <span class="preview-label">实时预览</span>
           <div class="preview-lines">
-            <p :style="previewStyle('normal')">在暮色里听见回声</p>
-            <p class="is-active" :style="previewStyle('active')">此刻旋律正穿过夜色</p>
-            <p class="is-translation" :style="previewStyle('translation')">
-              The melody is crossing the night
-            </p>
-            <p class="is-romanization" :style="previewStyle('romanization')">
-              cǐ kè xuán lǜ zhèng chuān guò yè sè
-            </p>
+            <div class="preview-sample">
+              <p :style="previewStyle('normal')">在暮色里听见回声</p>
+              <p class="is-translation" :style="previewStyle('translation')">
+                I hear an echo in the twilight
+              </p>
+            </div>
+            <div class="preview-sample">
+              <p class="is-active" :style="previewStyle('active')">此刻旋律正穿过夜色</p>
+              <p class="is-translation" :style="previewStyle('translation')">
+                The melody is crossing the night
+              </p>
+              <p class="is-harmony" :style="previewStyle('harmony')">I'll see you again</p>
+              <p class="is-romanization" :style="previewStyle('romanization')">
+                cǐ kè xuán lǜ zhèng chuān guò yè sè
+              </p>
+            </div>
           </div>
         </section>
 
@@ -387,14 +431,10 @@ watch(
               <span>对齐方式</span>
               <div class="segment-control">
                 <button
-                  v-for="option in [
-                    { value: 'left', label: '左' },
-                    { value: 'center', label: '中' },
-                    { value: 'right', label: '右' }
-                  ]"
+                  v-for="option in alignmentOptions"
                   :key="option.value"
                   type="button"
-                  :aria-pressed="style.align === option.value"
+                  :aria-pressed="effectiveStyleAlign === option.value"
                   @click="patchStyle('align', option.value as LyricsTextStyle['align'])"
                 >
                   {{ option.label }}
@@ -571,6 +611,15 @@ watch(
             >
               <span><strong>隐藏已唱歌词</strong><small>播放时淡出当前行之前的内容</small></span
               ><i :class="draft.hidePassedLines ? 'pi pi-check-circle' : 'pi pi-circle'"></i>
+            </button>
+            <button
+              type="button"
+              class="switch-row"
+              :aria-pressed="showRomanization"
+              @click="toggleRomanization"
+            >
+              <span><strong>显示罗马音</strong><small>独立显示或隐藏歌词中的音译层</small></span>
+              <i :class="showRomanization ? 'pi pi-check-circle' : 'pi pi-circle'"></i>
             </button>
           </section>
 
@@ -811,7 +860,7 @@ watch(
 }
 .style-tabs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(116px, 1fr));
   gap: 8px;
   padding: 16px 24px;
 }
@@ -869,6 +918,10 @@ watch(
   gap: 7px;
   margin-top: 12px;
 }
+.preview-sample {
+  display: grid;
+  gap: 2px;
+}
 .preview-lines p {
   margin: 0;
   padding: 5px 9px;
@@ -879,10 +932,13 @@ watch(
   transform: scale(1.02);
 }
 .preview-lines .is-translation {
-  margin-top: -4px;
+  margin-top: 0;
 }
 .preview-lines .is-romanization {
-  margin-top: -6px;
+  margin-top: 0;
+}
+.preview-lines .is-harmony {
+  margin-top: 2px;
 }
 .customizer-scroll {
   min-height: 0;

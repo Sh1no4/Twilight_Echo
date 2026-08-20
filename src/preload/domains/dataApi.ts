@@ -40,11 +40,16 @@ export const dataApi = {
     ipcRenderer.invoke('data:saveMusicLibrary', data),
   loadMusicLibrary: (): Promise<LocalMusicLibraryDocument | unknown[]> =>
     ipcRenderer.invoke('data:loadMusicLibrary'),
-  getCover: (handle: string): Promise<string | null> => ipcRenderer.invoke('cover:get', handle),
+  getCover: (handle: string): Promise<Uint8Array | string | null> =>
+    ipcRenderer.invoke('cover:get', handle),
+  cacheCover: (data: ArrayBuffer | Uint8Array): Promise<string | null> =>
+    ipcRenderer.invoke('cover:cache', data),
   grantRemoteCover: (source: string): Promise<string> =>
     ipcRenderer.invoke('cover:grantRemote', source),
   getLyrics: (dir: string, fileName: string, filePath?: string): Promise<string | null> =>
     ipcRenderer.invoke('lyrics:get', dir, fileName, filePath),
+  getAmlTtml: (songId: number): Promise<string | null> =>
+    ipcRenderer.invoke('lyrics:getAmlTtml', songId),
   importLyrics: (): Promise<string | null> => ipcRenderer.invoke('lyrics:import'),
   saveLyrics: (contents: string): Promise<string | null> =>
     ipcRenderer.invoke('lyrics:save', contents),
@@ -111,7 +116,10 @@ export const dataApi = {
 }
 
 export const miniPlayerCoverDataApi = {
-  getCover: (handle: string): Promise<string | null> => ipcRenderer.invoke('cover:get', handle),
+  getCover: (handle: string): Promise<Uint8Array | string | null> =>
+    ipcRenderer.invoke('cover:get', handle),
+  cacheCover: (data: ArrayBuffer | Uint8Array): Promise<string | null> =>
+    ipcRenderer.invoke('cover:cache', data),
   grantRemoteCover: (source: string): Promise<string> =>
     ipcRenderer.invoke('cover:grantRemote', source)
 }

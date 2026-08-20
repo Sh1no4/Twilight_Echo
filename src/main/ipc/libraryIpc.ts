@@ -21,6 +21,7 @@ import {
   collectLibraryTrackPathKeys,
   createMusicLibraryDocument,
   loadMusicLibraryDocument,
+  migrateMusicLibraryCovers,
   normalizeLibraryFilePath,
   persistMusicLibraryDocument,
   replaceActiveLibraryExclusions,
@@ -49,7 +50,7 @@ import type {
   LocalLibraryWorkerScanRequest
 } from '../../shared/localLibraryScan.ts'
 import { runtime } from '../core/runtime'
-import { getCoverCacheDir } from '../library/coverCache'
+import { getCoverCacheDir, migrateBase64Cover } from '../library/coverCache'
 import { redactSensitiveText } from '../security/secureStorage.ts'
 import { normalizeLocalPath, stringifyJsonForIpcStorage } from '../security/ipcValidation.ts'
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
@@ -419,6 +420,9 @@ async function ensureLibraryExclusionsLoaded(): Promise<string[]> {
           reportLocalLibraryRemovalRecovery(filePath, removalRecovery.removedFilePaths)
         }
         const initialLibrary = loadMusicLibraryDocument(filePath)
+        if (migrateMusicLibraryCovers(initialLibrary.document, migrateBase64Cover)) {
+          initialLibrary.migrated = true
+        }
         warmedMusicLibrary = { filePath, loaded: initialLibrary }
         activeLibraryExclusionPaths = initialLibrary.document.exclusions.map(
           (exclusion) => exclusion.filePath
@@ -541,6 +545,9 @@ function loadMusicLibraryForTransaction(
   let loaded: LoadedMusicLibraryDocument
   try {
     loaded = loadMusicLibraryDocument(filePath)
+    if (migrateMusicLibraryCovers(loaded.document, migrateBase64Cover)) {
+      loaded.migrated = true
+    }
   } catch (error) {
     reportPersistentDataFailure('音乐库', filePath, error)
   }

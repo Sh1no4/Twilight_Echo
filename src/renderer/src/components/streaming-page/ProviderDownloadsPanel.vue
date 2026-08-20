@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ProviderDownloadTaskSnapshot } from '../../../../shared/providerDownloads.ts'
-import { downloadStatusLabel, filterActiveDownloadTasks } from './streamingDownloads.ts'
+import {
+  downloadStatusLabel,
+  filterActiveDownloadTasks,
+  formatDownloadProgress
+} from './streamingDownloads.ts'
 
 const props = defineProps<{
   show: boolean
@@ -16,6 +20,14 @@ const emit = defineEmits<{
 }>()
 
 const activeDownloadTasks = computed(() => filterActiveDownloadTasks(props.tasks))
+
+function isRunning(task: ProviderDownloadTaskSnapshot): boolean {
+  return task.status === 'queued' || task.status === 'preparing' || task.status === 'downloading'
+}
+
+function formatFileSize(bytes: number): string {
+  return `${(bytes / 1048576).toFixed(1)} MB`
+}
 </script>
 
 <template>
@@ -25,7 +37,12 @@ const activeDownloadTasks = computed(() => filterActiveDownloadTasks(props.tasks
         <div class="provider-download-panel" role="dialog" aria-modal="true" aria-label="下载管理">
           <div class="provider-download-panel-header">
             <h3>下载管理</h3>
-            <button type="button" class="soft-button" @click="emit('close')">
+            <button
+              type="button"
+              class="provider-download-icon-button"
+              aria-label="关闭下载管理"
+              @click="emit('close')"
+            >
               <i class="pi pi-times"></i>
             </button>
           </div>
@@ -37,23 +54,43 @@ const activeDownloadTasks = computed(() => filterActiveDownloadTasks(props.tasks
               v-for="task in tasks"
               :key="task.id"
               class="provider-download-item"
-              :class="{
-                completed: task.status === 'completed',
-                failed: task.status === 'failed'
-              }"
+              :data-status="task.status"
             >
               <div class="provider-download-item-info">
-                <strong>{{ task.track.title }}</strong>
-                <span>{{ task.track.artist }}</span>
-                <small :class="{ error: task.status === 'failed' }">
-                  {{ downloadStatusLabel(task) }}
-                  <template v-if="task.actualQuality"> · {{ task.actualQuality }}</template>
-                  <template v-if="task.fileSize">
-                    · {{ (task.fileSize / 1048576).toFixed(1) }} MB</template
-                  >
-                </small>
-                <small v-if="task.error" class="error">{{ task.error }}</small>
-                <small v-if="task.targetPath && task.status === 'completed'" class="path">
+                <strong class="provider-download-title" :title="task.track.title">
+                  {{ task.track.title }}
+                </strong>
+                <span class="provider-download-artist">{{ task.track.artist }}</span>
+                <div class="provider-download-meta">
+                  <span class="provider-download-badge" :data-status="task.status">
+                    {{ downloadStatusLabel(task) }}
+                  </span>
+                  <small v-if="task.actualQuality" class="provider-download-tag">
+                    {{ task.actualQuality }}
+                  </small>
+                  <small v-if="task.fileSize" class="provider-download-tag">
+                    {{ formatFileSize(task.fileSize) }}
+                  </small>
+                </div>
+                <div
+                  v-if="isRunning(task)"
+                  class="provider-download-progress"
+                  role="progressbar"
+                  :aria-valuenow="Math.round(task.progress * 100)"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                >
+                  <div
+                    class="provider-download-progress-fill"
+                    :style="{ width: formatDownloadProgress(task.progress) }"
+                  ></div>
+                </div>
+                <small v-if="task.error" class="provider-download-error">{{ task.error }}</small>
+                <small
+                  v-if="task.targetPath && task.status === 'completed'"
+                  class="provider-download-path"
+                  :title="task.targetPath"
+                >
                   {{ task.targetPath }}
                 </small>
               </div>
@@ -61,7 +98,7 @@ const activeDownloadTasks = computed(() => filterActiveDownloadTasks(props.tasks
                 <button
                   v-if="task.status === 'failed' || task.status === 'cancelled'"
                   type="button"
-                  class="soft-button"
+                  class="provider-download-button"
                   @click="emit('retry', task.id)"
                 >
                   重试
@@ -69,7 +106,7 @@ const activeDownloadTasks = computed(() => filterActiveDownloadTasks(props.tasks
                 <button
                   v-if="task.status !== 'completed' && task.status !== 'cancelled'"
                   type="button"
-                  class="muted-button"
+                  class="provider-download-button subtle"
                   @click="emit('cancel', task.id)"
                 >
                   取消
@@ -86,6 +123,7 @@ const activeDownloadTasks = computed(() => filterActiveDownloadTasks(props.tasks
     v-if="activeDownloadTasks.length > 0 && !show"
     type="button"
     class="provider-download-fab"
+    aria-label="打开下载管理"
     @click="emit('open')"
   >
     <i class="pi pi-download"></i>
@@ -94,6 +132,10 @@ const activeDownloadTasks = computed(() => filterActiveDownloadTasks(props.tasks
 </template>
 
 <style scoped>
+/* Every surface colour resolves from the shared theme tokens, so the panel
+   follows the active light or dark palette instead of pinning a dark card that
+   inherits the page text colour. The scrim is the one intentional literal:
+   modal dimming stays dark in both palettes. */
 .provider-download-panel-overlay {
   position: fixed;
   inset: 0;
@@ -101,7 +143,8 @@ const activeDownloadTasks = computed(() => filterActiveDownloadTasks(props.tasks
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.4);
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.45);
 }
 
 .provider-download-panel {
@@ -109,75 +152,163 @@ const activeDownloadTasks = computed(() => filterActiveDownloadTasks(props.tasks
   max-height: 70vh;
   display: flex;
   flex-direction: column;
-  background: var(--te-panel-bg, #1e1e2e);
-  border-radius: 16px;
+  background: var(--te-card-bg);
+  color: var(--te-settings-text);
+  border: 1px solid var(--te-card-border);
+  border-radius: var(--te-dialog-radius);
+  box-shadow: var(--te-glass-shadow);
   overflow: hidden;
 }
-
 .provider-download-panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--te-border, rgba(255, 255, 255, 0.08));
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--te-card-border);
 }
 
 .provider-download-panel-header h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
+  font-weight: var(--te-text-title);
+  color: var(--te-settings-text);
+}
+
+.provider-download-icon-button {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--te-card-border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--te-settings-text-muted);
+  cursor: pointer;
+  transition:
+    background var(--te-motion-hover) ease,
+    color var(--te-motion-hover) ease;
+}
+
+.provider-download-icon-button:hover {
+  background: var(--te-hover-bg);
+  color: var(--te-settings-text);
 }
 
 .provider-download-empty {
   padding: 32px 20px;
   text-align: center;
-  color: var(--te-muted, rgba(255, 255, 255, 0.5));
+  color: var(--te-settings-text-muted);
   font-size: 13px;
 }
 
 .provider-download-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 0;
+  padding: 6px 0;
 }
-
 .provider-download-item {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 20px;
-  border-bottom: 1px solid var(--te-border, rgba(255, 255, 255, 0.04));
+  padding: 10px 18px;
+}
+
+.provider-download-item + .provider-download-item {
+  border-top: 1px solid var(--te-card-border);
 }
 
 .provider-download-item-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
 }
 
-.provider-download-item-info strong {
+.provider-download-title {
   font-size: 13px;
+  font-weight: var(--te-text-strong);
+  color: var(--te-settings-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.provider-download-item-info span {
+.provider-download-artist {
   font-size: 12px;
-  color: var(--te-muted, rgba(255, 255, 255, 0.5));
+  color: var(--te-settings-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.provider-download-item-info small {
+.provider-download-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 1px;
+}
+.provider-download-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
   font-size: 11px;
-  color: var(--te-muted, rgba(255, 255, 255, 0.4));
+  font-weight: var(--te-text-strong);
+  background: var(--te-hover-bg);
+  color: var(--te-settings-text-muted);
 }
 
-.provider-download-item-info small.error {
-  color: var(--te-danger, #ef4444);
+.provider-download-badge[data-status='queued'],
+.provider-download-badge[data-status='preparing'] {
+  background: var(--te-info-soft-bg);
+  color: var(--te-info-soft-fg);
 }
 
-.provider-download-item-info small.path {
+.provider-download-badge[data-status='downloading'] {
+  background: color-mix(in srgb, var(--te-primary-500) 18%, transparent);
+  color: var(--te-primary-500);
+}
+
+.provider-download-badge[data-status='completed'] {
+  background: var(--te-success-soft-bg);
+  color: var(--te-success-soft-fg);
+}
+
+.provider-download-badge[data-status='failed'] {
+  background: var(--te-danger-soft-bg);
+  color: var(--te-danger-soft-fg);
+}
+
+.provider-download-tag {
+  font-size: 11px;
+  color: var(--te-settings-text-muted);
+}
+.provider-download-progress {
+  margin-top: 3px;
+  width: min(320px, 60vw);
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--te-settings-text-muted) 28%, transparent);
+  overflow: hidden;
+}
+
+.provider-download-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--te-primary-500);
+  transition: width var(--te-motion-panel) var(--te-ease-soft);
+}
+
+.provider-download-error {
+  font-size: 11px;
+  color: var(--te-danger-soft-fg);
+  word-break: break-word;
+}
+
+.provider-download-path {
+  font-size: 11px;
+  color: var(--te-settings-text-muted);
   word-break: break-all;
   font-family: monospace;
 }
@@ -187,7 +318,37 @@ const activeDownloadTasks = computed(() => filterActiveDownloadTasks(props.tasks
   gap: 6px;
   flex-shrink: 0;
 }
+.provider-download-button {
+  min-height: 30px;
+  padding: 6px 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--te-card-border);
+  border-radius: 999px;
+  background: var(--te-subtle-bg);
+  color: var(--te-settings-text);
+  font-size: 12px;
+  font-weight: var(--te-text-strong);
+  cursor: pointer;
+  transition:
+    background var(--te-motion-hover) ease,
+    color var(--te-motion-hover) ease;
+}
 
+.provider-download-button:hover {
+  background: var(--te-hover-bg);
+}
+
+.provider-download-button.subtle {
+  background: transparent;
+  color: var(--te-settings-text-muted);
+}
+
+.provider-download-button.subtle:hover {
+  background: var(--te-hover-bg);
+  color: var(--te-settings-text);
+}
 .provider-download-fab {
   position: fixed;
   bottom: 80px;
@@ -201,10 +362,10 @@ const activeDownloadTasks = computed(() => filterActiveDownloadTasks(props.tasks
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  background: var(--te-accent, #7c3aed);
-  color: #fff;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-  transition: transform 0.15s;
+  background: var(--te-primary-500);
+  color: var(--te-neutral-50);
+  box-shadow: var(--te-glass-shadow);
+  transition: transform var(--te-motion-hover) var(--te-ease-soft);
 }
 
 .provider-download-fab:hover {
@@ -218,8 +379,8 @@ const activeDownloadTasks = computed(() => filterActiveDownloadTasks(props.tasks
   min-width: 18px;
   height: 18px;
   border-radius: 9px;
-  background: var(--te-danger, #ef4444);
-  color: #fff;
+  background: var(--te-danger-soft-fg);
+  color: var(--te-card-bg);
   font-size: 10px;
   font-weight: 700;
   display: flex;
@@ -230,7 +391,7 @@ const activeDownloadTasks = computed(() => filterActiveDownloadTasks(props.tasks
 
 .dialog-fade-enter-active,
 .dialog-fade-leave-active {
-  transition: opacity 0.18s ease;
+  transition: opacity var(--te-motion-hover) ease;
 }
 
 .dialog-fade-enter-from,

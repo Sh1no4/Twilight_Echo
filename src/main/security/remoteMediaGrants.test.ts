@@ -78,7 +78,9 @@ test('provider artist and playlist artwork fields use image grants', () => {
 
   assert.deepEqual(protectedMedia, {
     picUrl: 'twilight-media://image/artwork-1',
+    picUrlSource: 'https://cover.example/artist.jpg',
     avatarUrl: 'twilight-media://image/artwork-2',
+    avatarUrlSource: 'https://cover.example/avatar.jpg',
     coverImgUrl: 'twilight-media://image/artwork-3',
     blurPicUrl: 'twilight-media://image/artwork-4'
   })
@@ -223,6 +225,18 @@ test('grantRemoteImageUrl reissues an opaque image grant for durable cover origi
     source: 'https://p1.music.126.net/cover.jpg',
     kind: 'image'
   })
+})
+
+test('default image grants are deterministic but still require an issued token', () => {
+  const grants = new RemoteMediaGrantService()
+  const first = grants.grant('https://cover.example/art.jpg', 'image')
+  const second = grants.grant('https://cover.example/art.jpg', 'image')
+  assert.equal(first, second)
+  assert.deepEqual(grants.resolve(first, 'image'), {
+    source: 'https://cover.example/art.jpg',
+    kind: 'image'
+  })
+  assert.throws(() => grants.resolve('twilight-media://image/img-not-issued', 'image'), /unknown/)
 })
 
 test('remote media proxy refuses credentialed redirect targets and oversized responses without exposing origins', async () => {

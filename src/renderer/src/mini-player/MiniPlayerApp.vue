@@ -54,6 +54,9 @@ const rawProgressPercent = computed(() =>
 )
 // Snapshot pushes are stepped; glide between them like the main PlayerBar.
 const progressPercent = useSmoothedValue(rawProgressPercent, { tau: 160, snapThreshold: 2.5 })
+const progressFillStyle = computed<CSSProperties>(() => ({
+  transform: `scaleX(${Math.min(100, Math.max(0, progressPercent.value)) / 100})`
+}))
 const resolvedLayout = computed(() =>
   resolveMiniPlayerLayout(
     viewportWidth.value,
@@ -71,7 +74,6 @@ const styleVariables = computed(
       ...buildMiniPlayerCssVariables(
         activeProfile.value,
         state.value.dominantColor,
-        progressPercent.value,
         state.value.volume * 100
       )
     }) as CSSProperties
@@ -526,6 +528,9 @@ onBeforeUnmount(() => {
             class="mini-progress-block mini-no-drag"
             :class="{ 'without-time': !resolvedVisibility.time }"
           >
+            <div class="mini-progress-track" aria-hidden="true">
+              <div class="mini-progress-fill" :style="progressFillStyle"></div>
+            </div>
             <input
               type="range"
               class="mini-range mini-progress-range"

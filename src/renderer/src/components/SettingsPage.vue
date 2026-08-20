@@ -123,7 +123,9 @@ const {
   getShortcutStatuses,
   relaunch,
   addLibraryFolder,
-  removeLibraryFolder
+  removeLibraryFolder,
+  chooseDownloadFolder,
+  resetDownloadFolder
 } = useSettingsStore()
 
 const audioOutputDspStore = useAudioOutputDspStore()
@@ -1237,6 +1239,8 @@ onBeforeUnmount(() => {
           :update-settings="updateSettings"
           :add-library-folder="addLibraryFolder"
           :remove-library-folder="removeLibraryFolder"
+          :choose-download-folder="chooseDownloadFolder"
+          :reset-download-folder="resetDownloadFolder"
           :toggle-setting="toggleSetting"
           :set-genre-separators="setGenreSeparators"
           :set-track-activation-mode="setTrackActivationMode"

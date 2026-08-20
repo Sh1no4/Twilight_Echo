@@ -47,6 +47,17 @@ async function readPlaylistCover(file: File): Promise<string> {
   } finally {
     image.close()
   }
+
+  // Keep the large source out of the reactive playlist snapshot. The main
+  // process resizes and stores the bytes, returning a small content-addressed
+  // cover:// handle. Tests/early boot without the bridge retain the legacy
+  // data URL as a compatibility fallback.
+  const cacheCover = window.api?.data?.cacheCover
+  if (cacheCover && typeof file.arrayBuffer === 'function') {
+    const handle = await cacheCover(await file.arrayBuffer())
+    if (!handle) throw new Error('封面缓存失败')
+    return handle
+  }
   return dataUrl
 }
 

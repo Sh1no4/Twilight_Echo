@@ -8,7 +8,11 @@ import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { usePlaybackBookmarks } from '../stores/playbackBookmarks'
 import { useProviderStore } from '../stores/useProviderStore'
-import { getRecentTracks, useListeningStatsStore } from '../stores/useListeningStatsStore'
+import {
+  buildLastPlayedByTrackId,
+  getRecentTracks,
+  useListeningStatsStore
+} from '../stores/useListeningStatsStore'
 import type { Track } from '../types/music'
 import { resolveUnifiedRecentTracks } from '../utils/unifiedRecentTracks'
 import { getTrackSearchBlob, normalizeSearchText } from '../utils/localLibrarySearch'
@@ -105,6 +109,7 @@ const mediaProviders = useMediaProviders()
 const unifiedSearch = useUnifiedMusicSearch()
 const providerStore = useProviderStore()
 const { listeningStats } = useListeningStatsStore()
+const EMPTY_LAST_PLAYED_BY_TRACK_ID: ReadonlyMap<string, number> = new Map()
 
 const { searchQuery, debouncedSearchQuery, searchInputFocused } = useSongListSearch()
 
@@ -305,12 +310,11 @@ const libraryFilterOptions = computed(() => {
 })
 
 const lastPlayedByTrackId = computed(() => {
-  const result = new Map<string, number>()
-  for (const stat of Object.values(listeningStats.value.tracks)) {
-    if (stat.track?.id) result.set(stat.track.id, stat.lastPlayed)
-    for (const sourceId of stat.sourceIds ?? []) result.set(sourceId.trackId, stat.lastPlayed)
-  }
-  return result
+  // Listening stats tick every five seconds. Unless this view is actually
+  // sorted by last-played, keep stats out of the displayTracks dependency
+  // graph so a playback tick cannot re-filter and re-sort the whole library.
+  if (libraryViewState.value.sortKey !== 'lastPlayed') return EMPTY_LAST_PLAYED_BY_TRACK_ID
+  return buildLastPlayedByTrackId(listeningStats.value)
 })
 
 const viewTitle = computed(() => {
@@ -2105,9 +2109,9 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                         </span>
                       </label>
                       <CoverImg
-                        v-if="track.cover"
-                        :cover="track.cover"
-                        :cover-source="track.coverSource"
+                        v-if="track.coverSmall || track.cover"
+                        :cover="track.coverSmall || track.cover"
+                        :cover-source="track.coverSmallSource || track.coverSource"
                         :identity="track.id"
                         class="cover-img"
                         alt="cover"

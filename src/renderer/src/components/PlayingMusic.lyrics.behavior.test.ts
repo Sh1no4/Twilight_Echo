@@ -342,6 +342,63 @@ window.runPlayingLyricWordsRuntime = async () => {
   expect(firstMask.playState === 'finished', 'the completed karaoke sweep was played again')
   expect(firstWordFloat.playState === 'finished', 'the completed word lift was played again')
 
+  const spacedRoot = document.createElement('div')
+  document.body.appendChild(spacedRoot)
+  createApp({
+    render: () => h(PlayingLyricWords, {
+      active: true,
+      karaokeEnabled: true,
+      offsetSeconds: 0,
+      clock,
+      words: [{ time: 4.2, endTime: 5.6, text: '啊 我的救世主' }]
+    })
+  }).mount(spacedRoot)
+  await nextTick()
+  await new Promise((resolve) => requestAnimationFrame(resolve))
+  const spacedWords = [...spacedRoot.querySelectorAll('.lyric-word')]
+  expect(spacedWords.length === 2, 'the internally spaced TTML translation was not split')
+  expect(
+    spacedWords.every((word) => maskAnimation(word)),
+    'some internally spaced TTML translation fragments did not receive karaoke highlighting'
+  )
+
+  const wrappedRoot = document.createElement('div')
+  wrappedRoot.style.width = '250px'
+  wrappedRoot.style.fontFamily = 'Arial, sans-serif'
+  wrappedRoot.style.fontSize = '32px'
+  document.body.appendChild(wrappedRoot)
+  createApp({
+    render: () => h(PlayingLyricWords, {
+      active: true,
+      karaokeEnabled: false,
+      motionMode: 'off',
+      offsetSeconds: 0,
+      clock,
+      words: [
+        { time: 4.2, endTime: 4.5, text: 'Confusing,' },
+        { time: 4.5, endTime: 4.8, text: ' why,' },
+        { time: 4.8, endTime: 5.1, text: ' why,' },
+        { time: 5.1, endTime: 5.4, text: ' why?' }
+      ]
+    })
+  }).mount(wrappedRoot)
+  await nextTick()
+  await new Promise((resolve) => requestAnimationFrame(resolve))
+  const wrappedWords = [...wrappedRoot.querySelectorAll('.lyric-word')]
+  const firstRect = wrappedWords[0].getBoundingClientRect()
+  const firstWrappedWord = wrappedWords.find(
+    (word) => word.getBoundingClientRect().top > firstRect.top + 2
+  )
+  expect(firstWrappedWord, 'the narrow lyric fixture did not wrap')
+  const wrappedRect = firstWrappedWord.getBoundingClientRect()
+  expect(
+    Math.abs(wrappedRect.left - firstRect.left) < 2,
+    'a preserved boundary space indented the wrapped lyric; first=' +
+      firstRect.left +
+      '; wrapped=' +
+      wrappedRect.left
+  )
+
   const disabledRoot = document.createElement('div')
   document.body.appendChild(disabledRoot)
   createApp({
@@ -434,16 +491,21 @@ function runtimeEntrySource(): string {
     workspaceRoot,
     'src/renderer/src/stores/usePlayerStore.ts'
   ).replaceAll('\\', '/')
-  const mainStylePath = join(
+  const settingsStorePath = join(
     workspaceRoot,
-    'src/renderer/src/assets/main.css'
+    'src/renderer/src/stores/useSettingsStore.ts'
   ).replaceAll('\\', '/')
+  const mainStylePath = join(workspaceRoot, 'src/renderer/src/assets/main.css').replaceAll(
+    '\\',
+    '/'
+  )
   return `import ${JSON.stringify(mainStylePath)}
 import { createApp, h, nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import PlayingMusic from ${JSON.stringify(componentPath)}
 import LyricsManagerPanel from ${JSON.stringify(panelPath)}
 import { usePlayerStore } from ${JSON.stringify(playerStorePath)}
+import { useSettingsStore } from ${JSON.stringify(settingsStorePath)}
 
 function expect(condition, message) {
   if (!condition) throw new Error(message)
@@ -474,6 +536,7 @@ window.runPlayingMusicLyricsRuntime = async () => {
   const pinia = createPinia()
   setActivePinia(pinia)
   const player = usePlayerStore()
+  const settingsStore = useSettingsStore()
   expect(
     'compatibility store created a second playback factory'
   )
@@ -514,21 +577,10 @@ window.runPlayingMusicLyricsRuntime = async () => {
     if (!found) throw new Error('missing button ' + label + '; available: ' + buttons().map((item) => item.textContent.trim()).join(' | '))
     return found
   }
-  const styleControls = panel.querySelector('.lyric-style-controls')
   const editorDisclosure = panel.querySelector('.lyric-editor-disclosure')
-  expect(styleControls, 'lyrics style controls are mounted as a separate section')
+  expect(!panel.querySelector('.lyric-style-controls'), 'HiFi lyrics manager retained duplicate style controls')
   expect(editorDisclosure, 'custom lyrics editor is mounted in a disclosure')
   expect(!editorDisclosure.open, 'custom lyrics editor should start collapsed')
-  expect(
-    Boolean(styleControls.compareDocumentPosition(editorDisclosure) & Node.DOCUMENT_POSITION_FOLLOWING),
-    'lyrics style controls should precede the custom lyrics editor'
-  )
-  button('左对齐').click()
-  await waitFor(
-    () => window.__settingsFixture.settings.lyricsAppearance?.align === 'left',
-    'left alignment did not persist through the lyrics style controls'
-  )
-  expect(button('左对齐').getAttribute('aria-pressed') === 'true', 'left alignment was not projected')
   editorDisclosure.open = true
   const textareas = panel.querySelectorAll('textarea')
   const source = panel.querySelector('.lyric-source-grid select')
@@ -647,6 +699,243 @@ window.runPlayingMusicLyricsRuntime = async () => {
   expect(mixedStored.translationSelection === 'automatic', 'automatic translation selection was lost')
   expect(mixedStored.romanizationSelection === 'manual', 'manual romanization selection was lost')
 
+  const amllTrack = {
+    ...track,
+    id: 'fixture-amll:custom-overrides',
+    title: 'AMLL custom overrides',
+    lyrics:
+      '<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata"><body><div><p begin="00:01.00" end="00:03.00"><span begin="00:01.00" end="00:02.00">AMLL original</span><span ttm:role="x-translation">AMLL translation</span><span ttm:role="x-bg" begin="00:02.00" end="00:03.00"><span begin="00:02.00" end="00:03.00">I&amp;apos;ll see you again</span><span ttm:role="x-translation">你我必将重逢</span></span></p></div></body></tt>',
+    lyricsSource: 'amll'
+  }
+  player.currentTrack.value = structuredClone(amllTrack)
+  player.queue.value = [structuredClone(amllTrack)]
+  await tick()
+  expect(
+    !buttons().some((item) => item.textContent.trim() === '右对齐'),
+    'AMLL TTML still exposed the unsupported right-alignment action'
+  )
+  const defaultVoiceText = document.querySelector('.lyric-text')
+  const defaultVoiceTranslation = document.querySelector('.lyric-voice-translation')
+  expect(defaultVoiceText && defaultVoiceTranslation, 'AMLL original and auxiliary text were not rendered')
+  expect(
+    defaultVoiceTranslation.parentElement?.classList.contains('lyric-voice'),
+    'AMLL auxiliary text was not grouped directly below its original voice'
+  )
+  expect(
+    Number.parseFloat(getComputedStyle(defaultVoiceTranslation).fontSize) <
+      Number.parseFloat(getComputedStyle(defaultVoiceText).fontSize),
+    'AMLL auxiliary text was not smaller than its original lyric'
+  )
+  player.currentTime.value = 1.5
+  player.seek(1.5)
+  await tick()
+  const supportingVoice = document.querySelector('.lyric-voice--supporting')
+  expect(supportingVoice, 'AMLL background voice was not rendered')
+  expect(
+    !supportingVoice.classList.contains('lyric-voice--supporting-visible'),
+    'a later background voice appeared before its own start time'
+  )
+  player.currentTime.value = 2.2
+  player.seek(2.2)
+  await waitFor(
+    () => document.querySelector('.lyric-voice--supporting-visible') != null,
+    'background voice did not fade in at its own start time'
+  )
+  player.currentTime.value = 3.1
+  player.seek(3.1)
+  await waitFor(
+    () => !document.querySelector('.lyric-voice--supporting-visible'),
+    'background voice did not hide after its own end time'
+  )
+
+  const originalAppearance = JSON.parse(JSON.stringify(settingsStore.settings.value.lyricsAppearance))
+  const centeredLayerAppearance = JSON.parse(JSON.stringify(originalAppearance))
+  centeredLayerAppearance.align = 'left'
+  centeredLayerAppearance.styles.normal.align = 'center'
+  await settingsStore.updateSettings({ lyricsAppearance: centeredLayerAppearance })
+  await tick()
+  expect(
+    document.querySelector('.lyric-row-content')?.classList.contains('lyric-row-content--align-center'),
+    'the stale legacy alignment overrode the normal lyric layer alignment'
+  )
+  expect(
+    !document.querySelector('.lyrics-scroll')?.className.includes('lyric-align-'),
+    'the retired global lyric alignment class remained attached to the stage'
+  )
+
+  const leftLayerAppearance = JSON.parse(JSON.stringify(centeredLayerAppearance))
+  leftLayerAppearance.align = 'center'
+  leftLayerAppearance.styles.normal.align = 'left'
+  await settingsStore.updateSettings({ lyricsAppearance: leftLayerAppearance })
+  await tick()
+  expect(
+    document.querySelector('.lyric-row-content')?.classList.contains('lyric-row-content--align-left'),
+    'the normal lyric layer could not switch from center to left alignment'
+  )
+  expect(
+    getComputedStyle(document.querySelector('.lyric-row-content')).alignItems === 'stretch',
+    'the parent player stylesheet still shrank lyric content around centered text'
+  )
+  expect(
+    getComputedStyle(document.querySelector('.lyric-lane--center')).alignItems === 'flex-start',
+    'left alignment did not move the centered compatibility lane to a stable left edge'
+  )
+  player.currentTime.value = 1.5
+  player.seek(1.5)
+  await waitFor(
+    () => document.querySelector('.lyric-row.active .lyric-row-content') != null,
+    'the AMLL fixture did not expose an active row for alignment inspection'
+  )
+  expect(
+    document
+      .querySelector('.lyric-row.active .lyric-row-content')
+      ?.classList.contains('lyric-row-content--align-left'),
+    'the highlighted TTML row drifted away from the normal lyric alignment'
+  )
+  const activeAlignedContent = document.querySelector(
+    '.lyric-row.active .lyric-row-content'
+  ) as HTMLElement | null
+  expect(
+    activeAlignedContent && getComputedStyle(activeAlignedContent).transformOrigin.startsWith('0px'),
+    'the highlighted left-aligned row still scaled around its centre'
+  )
+  player.currentTime.value = 3.1
+  player.seek(3.1)
+  await tick()
+
+  const styledAppearance = JSON.parse(JSON.stringify(originalAppearance))
+  Object.assign(styledAppearance.styles.translation, {
+    fontSize: 34,
+    fontWeight: 900,
+    fontStyle: 'italic',
+    lineHeight: 2.1,
+    letterSpacing: 0.2,
+    align: 'right'
+  })
+  Object.assign(styledAppearance.styles.harmony, {
+    fontSize: 22,
+    fontWeight: 700,
+    fontStyle: 'italic'
+  })
+  await settingsStore.updateSettings({ lyricsAppearance: styledAppearance })
+  await tick()
+  const amllVoiceTranslation = document.querySelector('.lyric-voice-translation')
+  expect(amllVoiceTranslation, 'AMLL voice translation was not rendered')
+  const amllVoiceTranslationStyle = getComputedStyle(amllVoiceTranslation)
+  const inactiveVoiceTranslationColor = amllVoiceTranslationStyle.color
+  expect(
+    amllVoiceTranslationStyle.fontSize === '34px',
+    'AMLL translation ignored its custom font size; actual=' + amllVoiceTranslationStyle.fontSize
+  )
+  expect(
+    amllVoiceTranslationStyle.fontWeight === '900',
+    'AMLL translation ignored its custom font weight; actual=' + amllVoiceTranslationStyle.fontWeight
+  )
+  expect(
+    amllVoiceTranslationStyle.fontStyle === 'italic',
+    'AMLL translation ignored its custom font style; actual=' + amllVoiceTranslationStyle.fontStyle
+  )
+  const styledSupportingVoice = document.querySelector('.lyric-voice--supporting')
+  expect(styledSupportingVoice, 'AMLL supporting voice disappeared before style inspection')
+  expect(
+    getComputedStyle(styledSupportingVoice).fontSize === '22px',
+    'supporting voice ignored its custom font size; actual=' + getComputedStyle(styledSupportingVoice).fontSize
+  )
+  const styledSupportingTranslation = styledSupportingVoice.querySelector('.lyric-voice-translation')
+  expect(styledSupportingTranslation, 'supporting voice translation was not rendered')
+  expect(
+    getComputedStyle(styledSupportingTranslation).fontSize === '22px',
+    'supporting translation did not follow the harmony font size; actual=' +
+      getComputedStyle(styledSupportingTranslation).fontSize
+  )
+  expect(
+    getComputedStyle(styledSupportingTranslation).fontWeight === '700',
+    'supporting translation did not follow the harmony font weight; actual=' +
+      getComputedStyle(styledSupportingTranslation).fontWeight
+  )
+  expect(
+    amllVoiceTranslationStyle.textAlign === 'center',
+    'AMLL translation did not constrain right alignment to center; actual=' +
+      amllVoiceTranslationStyle.textAlign
+  )
+  expect(
+    amllVoiceTranslation.style
+      .getPropertyValue('--lyric-style-active-color')
+      .includes('--te-playback-lyric-translation-active'),
+    'AMLL translation did not receive the active translation color token'
+  )
+  const amllVoiceTranslationRow = amllVoiceTranslation.closest('.lyric-row')
+  expect(amllVoiceTranslationRow, 'AMLL voice translation was not attached to a lyric row')
+  amllVoiceTranslationRow.classList.add('is-singing')
+  const activeVoiceTranslationColor = getComputedStyle(amllVoiceTranslation).color
+  expect(
+    activeVoiceTranslationColor !== inactiveVoiceTranslationColor,
+    'active AMLL translation remained dim; inactive=' +
+      inactiveVoiceTranslationColor +
+      '; active=' +
+      activeVoiceTranslationColor
+  )
+  amllVoiceTranslationRow.classList.remove('is-singing')
+  const leftAlignedAppearance = JSON.parse(JSON.stringify(styledAppearance))
+  leftAlignedAppearance.styles.translation.align = 'left'
+  await settingsStore.updateSettings({ lyricsAppearance: leftAlignedAppearance })
+  await tick()
+  expect(
+    getComputedStyle(document.querySelector('.lyric-voice-translation')).textAlign === 'left',
+    'AMLL translation did not apply the allowed left alignment'
+  )
+  await settingsStore.updateSettings({ lyricsAppearance: originalAppearance })
+  await tick()
+
+  const amllTextareas = panel.querySelectorAll('textarea')
+  const amllSourceSelectors = panel.querySelectorAll('.lyric-editor-content select')
+  expect(amllTextareas[0].disabled, 'raw AMLL TTML should remain read-only as original text')
+  expect(
+    amllSourceSelectors[1].value === 'automatic',
+    'AMLL original should retain the automatic source selection; actual=' + amllSourceSelectors[1].value
+  )
+  input(amllTextareas[1], '[00:01.00]AMLL manual translation')
+  await tick()
+  expect(
+    !button('保存歌词').disabled,
+    'a manual translation should remain saveable while the original is raw AMLL TTML'
+  )
+  button('保存歌词').click()
+  await waitFor(
+    () =>
+      window.__lyricsFixture.document.tracks[amllTrack.id]?.translation ===
+      '[00:01.00]AMLL manual translation',
+    'manual translation was not persisted alongside AMLL TTML'
+  )
+  const amllStoredTranslation = window.__lyricsFixture.document.tracks[amllTrack.id]
+  expect(amllStoredTranslation.originalSelection === 'automatic', 'AMLL original was no longer automatic')
+  expect(amllStoredTranslation.translationSelection === 'manual', 'AMLL translation was not manual')
+  await waitFor(
+    () => document.querySelector('.lyric-translation')?.textContent.includes('AMLL manual translation'),
+    'manual translation was not projected over the embedded AMLL translation'
+  )
+  expect(
+    !document.querySelector('.lyric-voice-translation'),
+    'embedded AMLL translation remained visible beside the manual translation'
+  )
+
+  button('新建手写 LRC').click()
+  await tick()
+  expect(!amllTextareas[0].disabled, 'new handwritten LRC draft did not unlock the original editor')
+  input(amllTextareas[0], '[00:01.00]AMLL manual original')
+  await tick()
+  button('保存歌词').click()
+  await waitFor(
+    () =>
+      window.__lyricsFixture.document.tracks[amllTrack.id]?.original ===
+      '[00:01.00]AMLL manual original',
+    'manual original was not persisted after replacing AMLL TTML'
+  )
+  expect(
+    document.querySelector('.lyric-text')?.textContent.includes('AMLL manual original'),
+    'manual original was not projected over AMLL TTML'
+  )
+
   const playbackTrack = {
     ...track,
     id: 'fixture-provider:playback-clock',
@@ -711,7 +1000,11 @@ window.runPlayingMusicLyricsRuntime = async () => {
   expect(document.querySelector('.lyric-row.active')?.textContent.includes('Seek line'), 'clicked lyric did not stay active while time advanced')
   player.isLoading.value = false
 
-  button('1 行').click()
+  const singleLineAppearance = JSON.parse(
+    JSON.stringify(settingsStore.settings.value.lyricsAppearance)
+  )
+  singleLineAppearance.focusLineCount = 1
+  await settingsStore.updateSettings({ lyricsAppearance: singleLineAppearance })
   await waitFor(
     () => window.__settingsFixture.settings.lyricsAppearance?.focusLineCount === 1,
     'single-line lyric focus did not persist before the handoff regression probe'
@@ -790,7 +1083,11 @@ window.runPlayingMusicLyricsRuntime = async () => {
     'track switching did not preserve the full automatic lyric timeline'
   )
 
-  button('全部').click()
+  const fullLyricsAppearance = JSON.parse(
+    JSON.stringify(settingsStore.settings.value.lyricsAppearance)
+  )
+  fullLyricsAppearance.focusLineCount = 'all'
+  await settingsStore.updateSettings({ lyricsAppearance: fullLyricsAppearance })
   await waitFor(
     () => window.__settingsFixture.settings.lyricsAppearance?.focusLineCount === 'all',
     'full lyric focus did not persist before the scroll regression probe'
@@ -931,6 +1228,62 @@ window.runPlayingMusicLyricsRuntime = async () => {
       restoredRows.map(rowTop).join(',')
   )
 
+  const alternatingTrack = {
+    ...track,
+    id: 'fixture-provider:alternating-voices',
+    title: 'Alternating voices',
+    lyrics: [
+      '[00:01.00][te:voice role=lead lane=start speaker=Alice]All you say is a bunch of lies',
+      '[00:03.00][te:voice role=lead lane=end speaker=Bob]Dear miss genius idol, unmatched'
+    ].join('\\n'),
+    lyricsSource: 'embedded'
+  }
+  player.currentTrack.value = structuredClone(alternatingTrack)
+  player.queue.value = [structuredClone(alternatingTrack)]
+  player.currentTime.value = 1.5
+  player.seek(1.5)
+  await tick()
+  installStageGeometry()
+  await new Promise((resolve) => setTimeout(resolve, 120))
+
+  const alternatingRows = [...document.querySelectorAll('.lyric-row')]
+  expect(alternatingRows.length === 2, 'alternating voices did not remain on separate rows')
+  for (const row of alternatingRows) {
+    const grid = row.querySelector('.lyric-duet-grid')
+    const lane = row.querySelector('.lyric-lane')
+    const voice = row.querySelector('.lyric-voice')
+    expect(grid && lane && voice, 'alternating voice row did not render its side lane')
+    expect(!grid.classList.contains('lyric-duet-grid--split'), 'a single voice row still reserved two lanes')
+    expect(row.querySelectorAll('.lyric-lane').length === 1, 'a single voice row rendered an empty opposite lane')
+    const gridWidth = grid.getBoundingClientRect().width
+    const laneWidth = lane.getBoundingClientRect().width
+    const voiceWidth = voice.getBoundingClientRect().width
+    const text = voice.querySelector('.lyric-text')
+    expect(text, 'a single voice row did not render its lyric text')
+    expect(
+      laneWidth >= gridWidth - 1,
+      'a single voice lane did not use the available row width; grid=' +
+        gridWidth +
+        '; lane=' +
+        laneWidth
+    )
+    expect(
+      voiceWidth >= gridWidth - 1,
+      'a single voice still retained the narrow duet width; grid=' +
+        gridWidth +
+        '; voice=' +
+        voiceWidth
+    )
+    const expectedTextAlign = lane.classList.contains('lyric-lane--end') ? 'end' : 'start'
+    expect(
+      getComputedStyle(text).textAlign === expectedTextAlign,
+      'a side voice lost its singer-lane alignment; expected=' +
+        expectedTextAlign +
+        '; actual=' +
+        getComputedStyle(text).textAlign
+    )
+  }
+
   const duetTrack = {
     ...track,
     id: 'fixture-provider:duet',
@@ -955,6 +1308,10 @@ window.runPlayingMusicLyricsRuntime = async () => {
   const duetRows = [...document.querySelectorAll('.lyric-row')]
   expect(duetRows.length === 2, 'explicit group did not collapse to one seek row; rows=' + duetRows.length)
   const duetRow = duetRows[0]
+  expect(
+    duetRow.querySelector('.lyric-duet-grid')?.classList.contains('lyric-duet-grid--split'),
+    'a simultaneous duet did not retain its split lanes'
+  )
   expect(duetRow.querySelectorAll('.lyric-lane--start .lyric-voice--lead').length === 1, 'start lead lane missing')
   expect(duetRow.querySelectorAll('.lyric-lane--end .lyric-voice--lead').length === 1, 'end lead lane missing')
   expect(duetRow.querySelectorAll('.lyric-voice--harmony').length === 1, 'harmony layer missing')
@@ -1217,7 +1574,10 @@ app.whenReady().then(async () => {
   window.webContents.on('console-message', (_event, _level, message, line, sourceId) => console.error('RENDERER', sourceId + ':' + line, message))
   try {
     await window.loadFile(path.resolve(target))
-    await window.webContents.executeJavaScript('window.runPlayingMusicLyricsRuntime()')
+    const runtimeResult = await window.webContents.executeJavaScript(
+      'window.runPlayingMusicLyricsRuntime().then(() => ({ ok: true }), (error) => ({ ok: false, message: error?.stack ?? error?.message ?? String(error) }))'
+    )
+    if (!runtimeResult.ok) throw new Error(runtimeResult.message)
     if (visualDir) {
       await mkdir(visualDir, { recursive: true })
       await window.webContents.executeJavaScript(${JSON.stringify(resetFixtureGeometrySource)})
@@ -1252,7 +1612,10 @@ app.whenReady().then(async () => {
     }
     app.exit(0)
   } catch (error) {
-    console.error('PLAYING_MUSIC_LYRICS_RUNTIME_FAILED', error && error.stack ? error.stack : error)
+    console.error(
+      'PLAYING_MUSIC_LYRICS_RUNTIME_FAILED',
+      error?.stack ?? error?.message ?? String(error)
+    )
     app.exit(1)
   }
 })`

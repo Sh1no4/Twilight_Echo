@@ -138,6 +138,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoAnalyzeBpm: true,
   closeToTray: false,
   onboardingCompleted: false,
+  developerMode: false,
   startupHomePage: 'local',
   trackActivationMode: 'singleClick',
   theme: 'system',
@@ -157,6 +158,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lyricsAppearance: cloneLyricsAppearance(DEFAULT_LYRICS_APPEARANCE),
   lyricsPresets: cloneLyricsPresetConfig(DEFAULT_LYRICS_PRESET_CONFIG),
   libraryFolders: [],
+  downloadFolder: '',
   genreSeparators: DEFAULT_GENRE_SEPARATORS,
   watchLibrary: true,
   onlineLyricsFallback: false,
@@ -728,6 +730,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     autoAnalyzeBpm: settings.autoAnalyzeBpm !== false,
     closeToTray,
     onboardingCompleted: settings.onboardingCompleted === true,
+    developerMode: settings.developerMode === true,
     startupHomePage: normalizeStartupHomePage(settings.startupHomePage),
     trackActivationMode: normalizeTrackActivationMode(settings.trackActivationMode),
     theme: normalizeAppTheme(settings.theme),
@@ -743,6 +746,10 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     lyricsAppearance: normalizeLyricsAppearance(settings.lyricsAppearance, rawSettings),
     lyricsPresets: normalizeLyricsPresetConfig(settings.lyricsPresets),
     libraryFolders: normalizeStringArray(settings.libraryFolders),
+    downloadFolder:
+      typeof settings.downloadFolder === 'string' && settings.downloadFolder.trim()
+        ? resolve(settings.downloadFolder.trim())
+        : DEFAULT_SETTINGS.downloadFolder,
     genreSeparators: normalizeGenreSeparators(settings.genreSeparators),
     watchLibrary: settings.watchLibrary !== false,
     onlineLyricsFallback: settings.onlineLyricsFallback === true,

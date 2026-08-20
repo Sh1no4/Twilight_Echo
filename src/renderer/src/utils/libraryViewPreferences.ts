@@ -49,6 +49,11 @@ const SORT_KEYS = new Set<LibrarySortKey>([
   'addedAt',
   'lastPlayed'
 ])
+const ZH_COLLATOR = new Intl.Collator('zh')
+const NATURAL_ZH_COLLATOR = new Intl.Collator('zh', {
+  numeric: true,
+  sensitivity: 'base'
+})
 
 export function createDefaultLibraryViewState(category = 'allSongs'): LibraryViewState {
   const sortKey: LibrarySortKey =
@@ -104,12 +109,14 @@ export function applyLibraryView(
     return true
   })
 
+  // Decorate once so hot comparators only read primitive keys. In particular,
+  // this avoids rebuilding ICU options for every natural filename comparison.
   return filtered
-    .map((track, index) => ({ track, index }))
+    .map((track, index) => decorateTrack(track, index, lastPlayedByTrackId))
     .sort((left, right) => {
-      const comparison = compareTracks(left.track, right.track, state.sortKey, lastPlayedByTrackId)
+      const comparison = compareTracks(left, right, state.sortKey)
       if (comparison !== 0) return state.sortDirection === 'asc' ? comparison : -comparison
-      return left.index - right.index || left.track.id.localeCompare(right.track.id)
+      return left.index - right.index || ZH_COLLATOR.compare(left.track.id, right.track.id)
     })
     .map(({ track }) => track)
 }
@@ -153,27 +160,60 @@ export class LibraryViewPreferences {
   }
 }
 
-function compareTracks(
-  left: Track,
-  right: Track,
-  key: LibrarySortKey,
+interface DecoratedTrack {
+  track: Track
+  index: number
+  title: string
+  artist: string
+  album: string
+  format: string
+  fileName: string
+  duration: number
+  sampleRate: number
+  addedAt: number
+  lastPlayed: number
+  discNumber: number
+  trackNumber: number
+}
+
+function decorateTrack(
+  track: Track,
+  index: number,
   lastPlayedByTrackId: ReadonlyMap<string, number>
-): number {
+): DecoratedTrack {
+  return {
+    track,
+    index,
+    title: textValue(track.title),
+    artist: textValue(track.artist),
+    album: textValue(track.album),
+    format: textValue(track.format),
+    fileName: textValue(track.fileName),
+    duration: numericValue(track.duration),
+    sampleRate: numericValue(track.sampleRate),
+    addedAt: numericValue(track.addedAt),
+    lastPlayed: numericValue(lastPlayedByTrackId.get(track.id)),
+    discNumber: sortIndex(track.discNumber),
+    trackNumber: sortIndex(track.trackNumber)
+  }
+}
+
+function compareTracks(left: DecoratedTrack, right: DecoratedTrack, key: LibrarySortKey): number {
   switch (key) {
     case 'duration':
-      return numericValue(left.duration) - numericValue(right.duration)
+      return left.duration - right.duration
     case 'sampleRate':
-      return numericValue(left.sampleRate) - numericValue(right.sampleRate)
+      return left.sampleRate - right.sampleRate
     case 'addedAt':
-      return numericValue(left.addedAt) - numericValue(right.addedAt)
+      return left.addedAt - right.addedAt
     case 'lastPlayed':
-      return numericValue(lastPlayedByTrackId.get(left.id)) - numericValue(lastPlayedByTrackId.get(right.id))
+      return left.lastPlayed - right.lastPlayed
     case 'format':
-      return textValue(left.format).localeCompare(textValue(right.format), 'zh')
+      return ZH_COLLATOR.compare(left.format, right.format)
     case 'artist':
-      return textValue(left.artist).localeCompare(textValue(right.artist), 'zh')
+      return ZH_COLLATOR.compare(left.artist, right.artist)
     case 'album':
-      return textValue(left.album).localeCompare(textValue(right.album), 'zh')
+      return ZH_COLLATOR.compare(left.album, right.album)
     case 'playlist':
       // Playlists keep their own stored order (insertion order); the stable
       // sort below falls back to the input index, so nothing reorders them.
@@ -181,27 +221,23 @@ function compareTracks(
     case 'trackNumber':
       return compareAlbumOrder(left, right)
     case 'title':
-      return textValue(left.title).localeCompare(textValue(right.title), 'zh')
+      return ZH_COLLATOR.compare(left.title, right.title)
   }
 }
 
 /** Disc then track; missing tags sort last; fileName natural order as last resort. */
-function compareAlbumOrder(left: Track, right: Track): number {
-  const disc = sortIndex(left.discNumber) - sortIndex(right.discNumber)
+function compareAlbumOrder(left: DecoratedTrack, right: DecoratedTrack): number {
+  const disc = left.discNumber - right.discNumber
   if (disc !== 0) return disc
-  const track = sortIndex(left.trackNumber) - sortIndex(right.trackNumber)
+  const track = left.trackNumber - right.trackNumber
   if (track !== 0) return track
-  const byFile = naturalTextCompare(textValue(left.fileName), textValue(right.fileName))
+  const byFile = NATURAL_ZH_COLLATOR.compare(left.fileName, right.fileName)
   if (byFile !== 0) return byFile
-  return textValue(left.title).localeCompare(textValue(right.title), 'zh')
+  return ZH_COLLATOR.compare(left.title, right.title)
 }
 
 function sortIndex(value: number | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : Number.MAX_SAFE_INTEGER
-}
-
-function naturalTextCompare(left: string, right: string): number {
-  return left.localeCompare(right, 'zh', { numeric: true, sensitivity: 'base' })
 }
 
 function normalizeViewState(value: unknown, fallback: LibraryViewState): LibraryViewState {

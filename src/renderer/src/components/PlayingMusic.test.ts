@@ -45,8 +45,9 @@ test('visualizer mode does not keep the heavy blurred backdrop mounted', () => {
   assert.match(source, /<div v-if="viewMode !== 'visualizer'" class="backdrop"/)
 })
 
-test('active and translated lyrics preserve the configured font size without a glass surface', () => {
+test('active lyrics keep their size while auxiliary layers render smaller and compact', () => {
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+  const lyricLine = readFileSync(new URL('./PlayingLyricLine.vue', import.meta.url), 'utf8')
   const mainStyle = readFileSync(new URL('../assets/main.css', import.meta.url), 'utf8')
   const activeRow = source.match(/\.lyric-row\.active \{[\s\S]*?\n\}/)?.[0] ?? ''
   const activeText = source.match(/\.lyric-row\.active \.lyric-text \{[\s\S]*?\n\}/)?.[0] ?? ''
@@ -67,10 +68,18 @@ test('active and translated lyrics preserve the configured font size without a g
     /font-size:\s*clamp\(\s*12px,\s*var\(--lyric-style-font-size, var\(--te-lyric-font-size, 18px\)\),\s*48px\s*\)/
   )
   assert.doesNotMatch(activeText, /font-size:/)
-  assert.match(
-    translationText,
-    /font-size:\s*clamp\(\s*12px,\s*var\(--lyric-style-font-size, var\(--te-lyric-font-size, 18px\)\),\s*48px\s*\)/
-  )
+  assert.match(translationText, /font-size:\s*var\(--lyric-style-font-size, 14px\)/)
+  const auxiliaryStyles = lyricLine.match(
+    /\.lyric-translation \{[\s\S]*?\n\}/
+  )?.[0] ?? ''
+  const voiceAuxiliaryStyles = lyricLine.match(
+    /\.lyric-voice-translation,\s*\.lyric-voice-romanization \{\s*width: 100%;\s*padding: 0;[\s\S]*?\n\}/
+  )?.[0] ?? ''
+  assert.match(auxiliaryStyles, /font-size:\s*var\(--lyric-style-font-size, 14px\)/)
+  assert.match(auxiliaryStyles, /line-height:\s*var\(--lyric-style-line-height, 1\.3\)/)
+  assert.match(auxiliaryStyles, /margin-top:\s*max\(2px/)
+  assert.match(voiceAuxiliaryStyles, /font-size:\s*var\(--lyric-style-font-size, 14px\)/)
+  assert.match(voiceAuxiliaryStyles, /line-height:\s*var\(--lyric-style-line-height, 1\.3\)/)
   assert.match(
     activeText,
     /font-weight: var\(--lyric-style-font-weight, var\(--te-lyric-font-weight, 600\)\)/
@@ -112,13 +121,20 @@ test('now playing exposes independent lyric customization with live persisted pr
   assert.match(source, /:style="lyricStyleVars\(item\.singing \? 'active' : 'normal'\)"/)
   assert.match(source, /:translation-style="lyricStyleVars\('translation'\)"/)
   assert.match(source, /:romanization-style="lyricStyleVars\('romanization'\)"/)
+  assert.match(source, /:harmony-style="lyricStyleVars\('harmony'\)"/)
+  assert.match(source, /:align="lyricLineAlign\(item\.singing\)"/)
+  assert.match(source, /lyricTextStyle\.value\[target\]\.align/)
+  assert.doesNotMatch(source, /lyricAlignClass|lyricsAppearance\.value\.align|lyric-align-left/)
   assert.match(source, /resolveLyricsFontFamily\(appearance\.styles\.active\)/)
   assert.doesNotMatch(source, /customFontFamily:\s*''/)
   assert.match(source, /font-family: var\(--te-lyric-font-family, inherit\)/)
   assert.match(customizer, /普通歌词/)
   assert.match(customizer, /当前歌词/)
   assert.match(customizer, /翻译歌词/)
+  assert.match(customizer, /附属歌词/)
   assert.match(customizer, /罗马音/)
+  assert.match(customizer, /showRomanization/)
+  assert.match(customizer, /updateVisibility\(\{ showRomanization:/)
   assert.match(customizer, /实时预览/)
   assert.match(customizer, /恢复全部默认/)
   // The editing surface is shared so the drawer, settings page and playbar panel
@@ -138,6 +154,11 @@ test('lyrics customizer survives slider drags while embedded in the HiFi sidebar
     'utf8'
   )
   const sidebar = readFileSync(new URL('./player-bar/HiFiSidebar.vue', import.meta.url), 'utf8')
+  const manager = readFileSync(
+    new URL('./player-bar/LyricsManagerPanel.vue', import.meta.url),
+    'utf8'
+  )
+  const playerBar = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
 
   // The panel is Teleported to <body>, so the PlayerBar's document-level
   // pointerdown listener (useFloatingPanels) would otherwise misread any
@@ -159,6 +180,9 @@ test('lyrics customizer survives slider drags while embedded in the HiFi sidebar
   )
   assert.match(sidebar, /<LyricsAppearanceCustomizer/)
   assert.match(sidebar, /lyricsCustomizerOpen/)
+  assert.doesNotMatch(sidebar, /当前歌词高光|toggleLyricHighlight|lyricHighlightOn/)
+  assert.doesNotMatch(manager, /lyric-style-controls|updateLyricsAppearance|LYRICS_RANGES/)
+  assert.doesNotMatch(playerBar, /toggleLyricHighlight|lyricHighlightOn/)
 })
 
 test('font size is per layer, with an explicit action to unify it', () => {
@@ -181,6 +205,25 @@ test('font size is per layer, with an explicit action to unify it', () => {
     editor,
     /syncLegacyLyricsAppearance\(draft\.value, \{ fontSize: style\.value\.fontSize \}\)/
   )
+})
+
+test('TTML alignment exposes only left and center while preserving ordinary right alignment', () => {
+  const customizer = readFileSync(
+    new URL('./LyricsAppearanceCustomizer.vue', import.meta.url),
+    'utf8'
+  )
+  const playingLine = readFileSync(new URL('./PlayingLyricLine.vue', import.meta.url), 'utf8')
+  const wordChunks = readFileSync(new URL('../utils/lyricWordChunks.ts', import.meta.url), 'utf8')
+
+  assert.match(customizer, /isCurrentTtml[\s\S]*option\.value !== 'right'/)
+  assert.match(customizer, /constrainLyricsAlignment\(style\.value\.align, isCurrentTtml\.value\)/)
+  assert.match(playingLine, /\.lyric-text[\s\S]*text-align: var\(--lyric-style-align, inherit\)/)
+  assert.match(playingLine, /\.lyric-row-content \{[\s\S]*align-items: stretch;/)
+  assert.doesNotMatch(
+    readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8'),
+    /^\.lyric-row-content \{/m
+  )
+  assert.match(wordChunks, /split\(\/\(\\s\+\)\/u\)/)
 })
 
 test('lyrics keep the full timeline mounted while the viewport follows the active row', () => {
@@ -320,7 +363,7 @@ test('player bar smooths progress between player store ticks and snaps large jum
   assert.match(source, /useSmoothedValue\(progressPercent, \{\s*tau: 160,\s*snapThreshold: 2\.5/)
   assert.match(
     source,
-    /width: `\$\{Math\.min\(100, Math\.max\(0, smoothedProgressPercent\.value\)\)\}%`/
+    /transform: `scaleX\(\$\{Math\.min\(100, Math\.max\(0, smoothedProgressPercent\.value\)\) \/ 100\}\)`/
   )
 })
 

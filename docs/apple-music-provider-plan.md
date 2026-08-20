@@ -195,11 +195,11 @@ Bearer Key 只能鉴权，不能防止 HTTPS 终止点之后的重放。建议�
 3. 完成后准备已授权目标目录及同目录 `.part` 文件。
 4. 通过插件/受控网络通道领取一次性文件。
 5. 校验协议、origin、重定向、Content-Length、最大文件尺寸和实际接收字节数。
-6. fsync 后原子重命名；中断时删除 `.part`。
+6. fsync 后原子重命名；中断时删除 `.part`。Windows 的 fsync 映射为 `FlushFileBuffers`，只读句柄会返回 `EPERM`，因此必须以读写方式打开 `.part`；文件系统完全拒绝刷盘时按尽力而为处理，不得丢弃已校验完成的文件。
 7. 调用 `LocalLibraryIndexCoordinator.enqueueWatcherChanges([{ kind: 'add', path }])` 精确扫描。
 8. 发送任务和音乐库更新事件。
 
-目标目录必须位于用户已授权的 `libraryFolders`。没有授权目录时先要求用户选择。插件没有路径选择权，也不获得 `filesystem:write` 或 `library:write`。
+目标目录取用户在设置中选择的下载目录，未设置时回退到已授权的 `libraryFolders` 第一项；两者都必须经过用户在系统对话框中选择并授权，渲染层写入的路径不构成授权来源。没有任何可用目录时先要求用户选择。落在音乐库之外的下载文件不会进入本地库增量扫描。插件没有路径选择权，也不获得 `filesystem:write` 或 `library:write`。
 
 一次性文件领取失败后不能盲目重复 GET。应查询任务状态；如果文件已消费或过期，重新创建远端下载任务并在 UI 标明重试原因。
 

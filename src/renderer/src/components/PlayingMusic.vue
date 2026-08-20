@@ -16,6 +16,7 @@ import { useLyricsManagement } from '../stores/lyricsManagement'
 import CoverImg from './CoverImg.vue'
 import { buildLyricLines, findActiveLyricIndex } from '../utils/lyrics'
 import type { LyricLine } from '../utils/lyrics'
+import { isAmlTtml } from '../utils/amllTtml.ts'
 import { resolveLyricVoiceLayout } from '../utils/lyricVoiceLayout.ts'
 import { projectLyricDisplay, projectManagedLyrics } from '../../../shared/lyricsManagement.ts'
 import AudioVisualizerPanel from './AudioVisualizerPanel.vue'
@@ -28,7 +29,7 @@ import {
   resolveLyricsFontFamily,
   type LyricsStyleTarget
 } from '../../../shared/lyricsAppearance.ts'
-import { lyricsStyleVars } from '../utils/lyricsStyleVars'
+import { constrainLyricsAlignment, lyricsStyleVars } from '../utils/lyricsStyleVars'
 import { getLyricFocusLineIndices } from '../utils/lyricFocusWindow'
 import { waitForAnimationFrameWithFallback } from '../utils/animationFrameFallback'
 import { createLyricViewportController } from '../utils/lyricViewportController'
@@ -90,20 +91,23 @@ function customizeLyricsAppearance(): void {
 
 const nowPlayingBackground = computed(() => settings.value.nowPlayingBackground)
 const lyricsAppearance = computed(() => settings.value.lyricsAppearance)
-const lyricAlign = computed(() => lyricsAppearance.value.align)
 const lyricsCustomizerOpen = ref(false)
 
 const lyricTextStyle = computed(() => lyricsAppearance.value.styles)
 
 function lyricStyleVars(target: LyricsStyleTarget): Record<string, string> {
-  return lyricsStyleVars(lyricTextStyle.value[target], target)
+  const styles = lyricsStyleVars(lyricTextStyle.value[target], target)
+  styles['--lyric-style-align'] = constrainLyricsAlignment(
+    lyricTextStyle.value[target].align,
+    isTtmlLyrics.value
+  )
+  return styles
 }
 
 const isBlurBackground = computed(() => nowPlayingBackground.value === 'blur')
 const isFluidBackground = computed(() => nowPlayingBackground.value === 'fluid')
 const isSolidBackground = computed(() => nowPlayingBackground.value === 'solid')
 
-const lyricAlignClass = computed(() => `lyric-align-${lyricAlign.value}`)
 const lyricStyle = computed<Record<string, string>>(() => {
   const appearance = lyricsAppearance.value
   const styles: Record<string, string> = {
@@ -122,6 +126,10 @@ const lyricStyle = computed<Record<string, string>>(() => {
       `color-mix(in srgb, ${appearance.textColor} 72%, transparent)`
     styles['--te-playback-lyric-translation-active'] =
       `color-mix(in srgb, ${appearance.activeColor} 82%, transparent)`
+    styles['--te-playback-lyric-harmony'] =
+      `color-mix(in srgb, ${appearance.textColor} 58%, transparent)`
+    styles['--te-playback-lyric-harmony-active'] =
+      `color-mix(in srgb, ${appearance.activeColor} 68%, transparent)`
     styles['--te-playback-lyric-romanization'] =
       `color-mix(in srgb, ${appearance.textColor} 58%, transparent)`
     styles['--te-playback-lyric-romanization-active'] =
@@ -244,11 +252,32 @@ const managedLyrics = computed(() =>
     managedLyricOverride.value
   )
 )
+const isTtmlLyrics = computed(() => isAmlTtml(managedLyrics.value.original))
+function lyricLineAlign(singing: boolean): 'left' | 'center' | 'right' {
+  /*
+   * TTML rows can contain several voices and auxiliary layers.  Letting the
+   * active target carry a separate alignment makes the highlighted row move
+   * sideways when it grows, leaving its neighbouring rows on a different
+   * edge.  The normal lyric alignment is the stable column anchor for the
+   * whole TTML page; active styling still controls weight, colour and effects.
+   */
+  const target = isTtmlLyrics.value ? 'normal' : singing ? 'active' : 'normal'
+  return constrainLyricsAlignment(lyricTextStyle.value[target].align, isTtmlLyrics.value)
+}
+function usesManualManagedLayer(key: 'translationSelection' | 'romanizationSelection'): boolean {
+  const override = managedLyricOverride.value
+  const selection = override?.[key]
+  return selection === 'manual' || (selection == null && override?.source === 'manual')
+}
 const lyricLines = computed<LyricLine[]>(() => {
   return buildLyricLines(
     managedLyrics.value.original,
     managedLyrics.value.translation,
-    managedLyrics.value.romanization
+    managedLyrics.value.romanization,
+    {
+      replaceTtmlTranslation: usesManualManagedLayer('translationSelection'),
+      replaceTtmlRomanization: usesManualManagedLayer('romanizationSelection')
+    }
   )
 })
 const displayLyricLines = computed<LyricLine[]>(() =>
@@ -663,7 +692,6 @@ onBeforeUnmount(() => {
           <div
             ref="lyricsEl"
             class="lyrics-scroll"
-            :class="lyricAlignClass"
             @wheel.passive="onLyricsManualScroll"
             @touchstart.passive="onLyricsTouchStart"
             @touchmove.passive="onLyricsTouchMove"
@@ -713,9 +741,10 @@ onBeforeUnmount(() => {
                   :clock="lyricWordClock"
                   :karaoke-enabled="lyricsAppearance.karaokeEnabled"
                   :motion-mode="lyricMotionLevel"
-                  :align="lyricAlign"
+                  :align="lyricLineAlign(item.singing)"
                   :translation-style="lyricStyleVars('translation')"
                   :romanization-style="lyricStyleVars('romanization')"
+                  :harmony-style="lyricStyleVars('harmony')"
                 />
               </button>
             </div>
@@ -908,12 +937,21 @@ onBeforeUnmount(() => {
 .backdrop-fluid {
   position: absolute;
   inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.backdrop-fluid::before {
+  content: '';
+  position: absolute;
+  inset: -50%;
   background: var(
     --te-playback-fluid-bg,
     linear-gradient(135deg, #0f172a, #1e3a5f, #312e81, #1e3a5f, #0f172a)
   );
   background-size: 400% 400%;
-  animation: fluid-drift 18s ease-in-out infinite;
+  will-change: transform;
+  animation: fluid-drift-transform 18s ease-in-out infinite;
 }
 
 .backdrop-solid {
@@ -926,20 +964,25 @@ onBeforeUnmount(() => {
   background-repeat: no-repeat;
 }
 
-@keyframes fluid-drift {
+@keyframes fluid-drift-transform {
   0%,
   100% {
-    background-position: 0% 50%;
+    transform: translate3d(0, 0, 0);
   }
   25% {
-    background-position: 100% 50%;
+    transform: translate3d(-12%, 0, 0);
   }
   50% {
-    background-position: 100% 100%;
+    transform: translate3d(-12%, -12%, 0);
   }
   75% {
-    background-position: 0% 100%;
+    transform: translate3d(0, -12%, 0);
   }
+}
+
+:global(html[data-te-motion='reduced']) .backdrop-fluid::before,
+:global(html[data-te-motion='off']) .backdrop-fluid::before {
+  animation-play-state: paused;
 }
 
 .stage {
@@ -1306,18 +1349,6 @@ onBeforeUnmount(() => {
   content-visibility: hidden;
 }
 
-.lyric-row-content {
-  display: flex;
-  width: 100%;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
-  overflow: visible;
-  transform: scale(var(--lyric-line-scale, 1));
-  transform-origin: center;
-  will-change: transform;
-}
-
 .lyric-row:hover {
   color: var(--te-playback-lyric-hover-text, rgba(255, 255, 255, 0.74));
 }
@@ -1346,12 +1377,6 @@ onBeforeUnmount(() => {
   letter-spacing: var(--lyric-style-letter-spacing, 0);
   text-align: var(--lyric-style-align, center);
   word-break: break-word;
-}
-
-.lyrics-scroll.lyric-align-left .lyric-text,
-.lyrics-scroll.lyric-align-left .lyric-translation,
-.lyrics-scroll.lyric-align-left .lyric-romanization {
-  text-align: left;
 }
 
 .lyric-row.active .lyric-text {
@@ -1388,10 +1413,6 @@ onBeforeUnmount(() => {
  * `mask-image`, `mask-size` and friends are set inline by the component, because
  * the gradient geometry depends on the measured width of each word.
  */
-.lyric-space {
-  white-space: pre;
-}
-
 .lyric-word-group {
   display: inline-block;
   white-space: pre-wrap;
@@ -1463,14 +1484,14 @@ onBeforeUnmount(() => {
 .lyric-translation {
   min-width: 0;
   width: 100%;
-  margin-top: var(--te-lyric-translation-spacing, 0);
-  padding: 3px 7px;
+  margin-top: max(2px, var(--te-lyric-translation-spacing, 0px));
+  padding: 0;
   border-radius: 9px;
   font-family: var(--lyric-style-font-family, var(--te-lyric-font-family, inherit));
-  font-size: clamp(12px, var(--lyric-style-font-size, var(--te-lyric-font-size, 18px)), 48px);
+  font-size: var(--lyric-style-font-size, 14px);
   font-weight: var(--lyric-style-font-weight, 500);
   font-style: var(--lyric-style-font-style, normal);
-  line-height: var(--lyric-style-line-height, 1.45);
+  line-height: var(--lyric-style-line-height, 1.3);
   letter-spacing: var(--lyric-style-letter-spacing, 0);
   text-align: var(--lyric-style-align, center);
   color: var(--lyric-style-color, var(--te-playback-lyric-translation, rgba(255, 255, 255, 0.58)));
@@ -1491,23 +1512,20 @@ onBeforeUnmount(() => {
 
 .lyric-row.active .lyric-translation {
   color: var(
-    --lyric-style-color,
+    --lyric-style-active-color,
     var(--te-playback-lyric-translation-active, rgba(255, 255, 255, 0.82))
   );
 }
 
 .lyric-romanization {
+  margin-top: max(2px, var(--te-lyric-translation-spacing, 0px));
   min-width: 0;
   width: 100%;
   font-family: var(--lyric-style-font-family, var(--te-lyric-font-family, inherit));
-  font-size: clamp(
-    12px,
-    var(--lyric-style-font-size, calc(var(--te-lyric-font-size, 18px) - 3px)),
-    48px
-  );
+  font-size: var(--lyric-style-font-size, 13px);
   font-weight: var(--lyric-style-font-weight, 400);
   font-style: var(--lyric-style-font-style, normal);
-  line-height: var(--lyric-style-line-height, 1.35);
+  line-height: var(--lyric-style-line-height, 1.25);
   letter-spacing: var(--lyric-style-letter-spacing, 0);
   text-align: var(--lyric-style-align, center);
   color: var(--lyric-style-color, var(--te-playback-lyric-romanization, rgba(255, 255, 255, 0.46)));
@@ -1523,7 +1541,7 @@ onBeforeUnmount(() => {
 
 .lyric-row.active .lyric-romanization {
   color: var(
-    --lyric-style-color,
+    --lyric-style-active-color,
     var(--te-playback-lyric-romanization-active, rgba(255, 255, 255, 0.72))
   );
 }

@@ -11,6 +11,10 @@ const SIDE_MENU_OVERLAP_GAP = 10
 export function useSideMenuClearance(options: SideMenuClearanceOptions) {
   const sideMenuBottomOffset = ref(0)
   let sideMenuMonitorFrame: number | null = null
+  let resizeObserver: ResizeObserver | null = null
+  let playbarMutationObserver: MutationObserver | null = null
+  let observedSideMenu: HTMLElement | null = null
+  let observedPlayerBar: HTMLElement | null = null
 
   function setSideMenuBottomOffset(offset: number): void {
     const nextOffset = Math.max(0, Math.round(offset))
@@ -62,24 +66,43 @@ export function useSideMenuClearance(options: SideMenuClearanceOptions) {
     }
   }
 
+  function observeGeometry(): void {
+    const sideMenu = document.querySelector<HTMLElement>('.side-menu')
+    const playerBar = document.querySelector<HTMLElement>('.player-bar-shell')
+    if (sideMenu === observedSideMenu && playerBar === observedPlayerBar) return
+
+    observedSideMenu = sideMenu
+    observedPlayerBar = playerBar
+    resizeObserver?.disconnect()
+    playbarMutationObserver?.disconnect()
+
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => scheduleMeasure())
+      if (sideMenu) resizeObserver.observe(sideMenu)
+      if (playerBar) resizeObserver.observe(playerBar)
+    }
+    if (typeof MutationObserver !== 'undefined' && playerBar) {
+      playbarMutationObserver = new MutationObserver(() => scheduleMeasure())
+      playbarMutationObserver.observe(playerBar, {
+        attributes: true,
+        attributeFilter: ['class', 'data-te-playbar-hidden', 'data-te-playbar-visibility']
+      })
+    }
+  }
+
+  function scheduleMeasure(): void {
+    if (document.hidden || sideMenuMonitorFrame !== null) return
+    sideMenuMonitorFrame = requestAnimationFrame(() => {
+      sideMenuMonitorFrame = null
+      measureSideMenuClearance()
+      observeGeometry()
+    })
+  }
+
   function startSideMenuMonitor(): void {
     if (document.hidden) return
-    if (sideMenuMonitorFrame !== null) return
-
-    const tick = (): void => {
-      measureSideMenuClearance()
-      if (
-        options.showLocalSidebar.value &&
-        options.hasPlayerBar.value &&
-        (options.menuOpen.value || sideMenuBottomOffset.value > 0)
-      ) {
-        sideMenuMonitorFrame = requestAnimationFrame(tick)
-        return
-      }
-      sideMenuMonitorFrame = null
-    }
-
-    sideMenuMonitorFrame = requestAnimationFrame(tick)
+    observeGeometry()
+    scheduleMeasure()
   }
 
   function resetSideMenuClearance(): void {
@@ -95,6 +118,10 @@ export function useSideMenuClearance(options: SideMenuClearanceOptions) {
     startSideMenuMonitor()
   }
 
+  const onWindowResize = (): void => scheduleMeasure()
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('resize', onWindowResize)
+  }
   document.addEventListener('visibilitychange', onDocumentVisibilityChange)
 
   return {
@@ -103,6 +130,16 @@ export function useSideMenuClearance(options: SideMenuClearanceOptions) {
     stopSideMenuMonitor,
     resetSideMenuClearance,
     measureSideMenuClearance,
-    dispose: () => document.removeEventListener('visibilitychange', onDocumentVisibilityChange)
+    dispose: () => {
+      stopSideMenuMonitor()
+      resizeObserver?.disconnect()
+      playbarMutationObserver?.disconnect()
+      resizeObserver = null
+      playbarMutationObserver = null
+      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+        window.removeEventListener('resize', onWindowResize)
+      }
+      document.removeEventListener('visibilitychange', onDocumentVisibilityChange)
+    }
   }
 }

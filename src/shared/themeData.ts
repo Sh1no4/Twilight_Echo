@@ -14,7 +14,7 @@ export interface BuiltInThemeFont {
 }
 
 export const lightFont =
-  "'Inter', 'Plus Jakarta Sans', 'MiSans Full', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+    "'Inter', 'Plus Jakarta Sans', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
 
 export const BUILT_IN_THEME_FONTS: readonly BuiltInThemeFont[] = Object.freeze([
   { id: 'system', label: '系统与 MiSans', category: 'system', value: lightFont },
@@ -22,32 +22,32 @@ export const BUILT_IN_THEME_FONTS: readonly BuiltInThemeFont[] = Object.freeze([
     id: 'inter',
     label: 'Inter',
     category: 'sans',
-    value: "'Inter', 'MiSans Full', 'MiSans', 'Microsoft YaHei UI', system-ui, sans-serif"
+    value: "'Inter', 'MiSans', 'Microsoft YaHei UI', system-ui, sans-serif"
   },
   {
     id: 'jakarta',
     label: 'Plus Jakarta Sans',
     category: 'sans',
     value:
-      "'Plus Jakarta Sans', 'MiSans Full', 'MiSans', 'Microsoft YaHei UI', system-ui, sans-serif"
+      "'Plus Jakarta Sans', 'MiSans', 'Microsoft YaHei UI', system-ui, sans-serif"
   },
   {
     id: 'lora',
     label: 'Lora Serif',
     category: 'serif',
-    value: "'Lora', 'MiSans Full', 'MiSans', 'Microsoft YaHei UI', Georgia, serif"
+    value: "'Lora', 'MiSans', 'Microsoft YaHei UI', Georgia, serif"
   },
   {
     id: 'jetbrains',
     label: 'JetBrains Mono',
     category: 'mono',
-    value: "'JetBrains Mono', 'MiSans Full', 'MiSans', Consolas, monospace"
+    value: "'JetBrains Mono', 'MiSans', Consolas, monospace"
   },
   {
     id: 'space',
     label: 'Space Grotesk',
     category: 'display',
-    value: "'Space Grotesk', 'MiSans Full', 'MiSans', 'Microsoft YaHei UI', system-ui, sans-serif"
+    value: "'Space Grotesk', 'MiSans', 'Microsoft YaHei UI', system-ui, sans-serif"
   }
 ])
 

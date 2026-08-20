@@ -1397,6 +1397,7 @@ async function openArtist(
       id: Number(artist.id),
       name: artist.name,
       picUrl: artist.picUrl,
+      picUrlSource: artist.picUrlSource ?? null,
       albumSize: artist.albumSize ?? 0,
       musicSize: artist.musicSize ?? 0
     }
@@ -1431,7 +1432,8 @@ async function openArtist(
         if (matchedTracks.length > 0 || matchedAlbums.length > 0 || matchedPlaylists.length > 0) {
           resolvedArtist = {
             ...matchedArtist,
-            picUrl: matchedArtist.picUrl ?? artist.picUrl
+            picUrl: matchedArtist.picUrl ?? artist.picUrl,
+            picUrlSource: matchedArtist.picUrlSource ?? artist.picUrlSource ?? null
           }
           tracks = matchedTracks
           albums = matchedAlbums
@@ -1635,6 +1637,7 @@ async function onUserClick(user: NcmUserSummary): Promise<void> {
         id: artistId,
         name: user.name,
         picUrl: user.picUrl,
+        picUrlSource: user.picUrlSource ?? null,
         albumSize: 0,
         musicSize: user.musicSize
       },
@@ -2030,7 +2033,8 @@ const socialPeople = computed(() =>
   detailUsers.value.map((user) => ({
     id: user.id,
     name: user.name,
-    picUrl: user.picUrl ?? null
+    picUrl: user.picUrl ?? null,
+    picUrlSource: user.picUrlSource ?? null
   }))
 )
 
@@ -2042,6 +2046,8 @@ const socialCollections = computed(() => {
       name: playlist.name,
       cover: playlist.cover,
       coverSource: playlist.coverSource ?? null,
+      coverSmall: playlist.coverSmall ?? null,
+      coverSmallSource: playlist.coverSmallSource ?? null,
       trackCount: playlist.trackCount
     }))
   }
@@ -2052,6 +2058,8 @@ const socialCollections = computed(() => {
         name: album.name,
         cover: album.cover,
         coverSource: album.coverSource ?? null,
+        coverSmall: album.coverSmall ?? null,
+        coverSmallSource: album.coverSmallSource ?? null,
         trackCount: album.trackCount
       }))
     }
@@ -2061,6 +2069,8 @@ const socialCollections = computed(() => {
         name: playlist.name,
         cover: playlist.cover,
         coverSource: playlist.coverSource ?? null,
+        coverSmall: playlist.coverSmall ?? null,
+        coverSmallSource: playlist.coverSmallSource ?? null,
         trackCount: playlist.trackCount
       }))
     }
@@ -2078,6 +2088,7 @@ function onSocialPersonClick(person: {
   id: string | number
   name: string
   picUrl?: string | null
+  picUrlSource?: string | null
 }): void {
   const user = detailUsers.value.find((item) => String(item.id) === String(person.id))
   if (user) void onUserClick(user)

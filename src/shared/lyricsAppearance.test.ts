@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   DEFAULT_LYRICS_APPEARANCE,
+  DEFAULT_LYRICS_TEXT_STYLES,
   LYRICS_APPEARANCE_SCHEMA_VERSION,
   cloneLyricsAppearance,
   normalizeLyricsAppearance,
@@ -196,6 +197,30 @@ test('a deliberately dimmed profile keeps its value across the upgrade', () => {
   assert.equal(upgraded.inactiveOpacity, 55)
 })
 
+test('schema 3 default translations migrate to the compact auxiliary size', () => {
+  const legacyDefaultTranslation = {
+    ...DEFAULT_LYRICS_TEXT_STYLES.translation,
+    fontSize: 18,
+    lineHeight: 1.45
+  }
+  const upgraded = normalizeLyricsAppearance({
+    schemaVersion: 3,
+    inactiveOpacity: 40,
+    styles: { translation: legacyDefaultTranslation }
+  })
+  const customized = normalizeLyricsAppearance({
+    schemaVersion: 3,
+    styles: { translation: { ...legacyDefaultTranslation, fontWeight: 700 } }
+  })
+
+  assert.equal(upgraded.styles.translation.fontSize, 14)
+  assert.equal(upgraded.styles.translation.lineHeight, 1.3)
+  assert.equal(upgraded.styles.romanization.fontSize, 13)
+  assert.equal(upgraded.styles.romanization.lineHeight, 1.25)
+  assert.equal(upgraded.inactiveOpacity, 40, 'schema 3 opacity was already a live user setting')
+  assert.equal(customized.styles.translation.fontSize, 18)
+})
+
 test('layout, motion and typography knobs are clamped to their published ranges', () => {
   const normalized = normalizeLyricsAppearance({
     coverGap: 999,
@@ -241,8 +266,8 @@ test('cascade speed maps its midpoint onto the built-in rhythm', () => {
 
 test('cloning covers every style layer', () => {
   const source = cloneLyricsAppearance(DEFAULT_LYRICS_APPEARANCE)
-  source.styles.romanization.fontSize = 13
-  assert.equal(DEFAULT_LYRICS_APPEARANCE.styles.romanization.fontSize, 15)
+  source.styles.romanization.fontSize = 16
+  assert.equal(DEFAULT_LYRICS_APPEARANCE.styles.romanization.fontSize, 13)
 })
 
 test('legacy quick controls stay compatible with the independent style layers', () => {

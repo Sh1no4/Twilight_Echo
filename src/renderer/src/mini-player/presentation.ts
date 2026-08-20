@@ -87,7 +87,6 @@ export function readableTextColors(surfaceColor: string): { primary: string; mut
 export function buildMiniPlayerCssVariables(
   profile: MiniPlayerThemeProfile,
   dominantColor: string,
-  progress: number,
   volume: number
 ): MiniPlayerCssVariables {
   const accent =
@@ -139,7 +138,6 @@ export function buildMiniPlayerCssVariables(
     '--mini-gradient-angle': `${profile.background.gradientAngle}deg`,
     '--mini-gradient-start': profile.background.gradientStart,
     '--mini-gradient-end': profile.background.gradientEnd,
-    '--mini-progress': `${clampPercent(progress)}%`,
     '--mini-volume': `${clampPercent(volume)}%`
   }
 }

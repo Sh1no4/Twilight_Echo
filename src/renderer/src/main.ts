@@ -7,7 +7,6 @@ import { bootstrapThemeRuntime } from './stores/useThemeStore'
 import { beginStartupSnapshot } from './app/startupSnapshot'
 import { installAutoHideScrollbars } from './utils/autoHideScrollbars'
 import { injectCachedThemeRuntime } from './app/themeRuntimeCache'
-import { activateDeferredFontStyles } from './app/deferredFontStyles'
 
 const query = new URLSearchParams(window.location.search)
 const windowKind = query.get('window')
@@ -51,7 +50,6 @@ async function mountApp(): Promise<void> {
       : (await import('./App.vue')).default
   if (isMiniPlayer) await bootstrapThemeRuntime()
   createApp(rootComponent).use(createPinia()).mount('#app')
-  activateDeferredFontStyles()
   void startupSnapshot
 }
 

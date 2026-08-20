@@ -17,10 +17,16 @@ import {
 } from '../security/localPaths'
 import { normalizeIpcString, normalizeLocalPath } from '../security/ipcValidation.ts'
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
+import { fetchAmlTtml } from '../lyrics/amllTtml.ts'
 
 const MAX_LYRICS_FILE_NAME_LENGTH = 512
 
 export function registerLyricsIpc(ipcMain: IpcMain): void {
+  ipcMain.handle('lyrics:getAmlTtml', async (event, songId: unknown): Promise<string | null> => {
+    assertTrustedIpcSender(event, 'AMLL TTML IPC')
+    return await fetchAmlTtml(songId)
+  })
+
   // Lyrics lazy loader — reads .lrc file on demand, falls back to embedded lyrics
   ipcMain.handle(
     'lyrics:get',

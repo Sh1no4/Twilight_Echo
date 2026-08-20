@@ -119,15 +119,40 @@ test('provider and local layer choices keep resolver-owned content out of manual
 })
 
 test('lyric display toggles independently hide original, translation, and romanization', () => {
-  const line = { text: 'Original', translation: 'Translation', romanization: 'Roma' }
-  assert.deepEqual(
-    projectLyricDisplay(line, {
-      showOriginal: false,
-      showTranslation: true,
-      showRomanization: false
-    }),
-    { text: '', translation: 'Translation', romanization: null }
-  )
+  const line = {
+    text: 'Original',
+    translation: 'Translation',
+    romanization: 'Roma',
+    voices: [
+      {
+        voiceKey: 'v1',
+        role: 'lead',
+        lane: 'center',
+        text: 'Voice original',
+        translation: { time: 1, text: 'Voice translation' },
+        romanization: { time: 1, text: 'Voice romanization' }
+      }
+    ]
+  }
+  const hidden = projectLyricDisplay(line, {
+    showOriginal: false,
+    showTranslation: true,
+    showRomanization: false
+  })
+  assert.deepEqual(hidden, {
+    ...line,
+    text: '',
+    translation: 'Translation',
+    romanization: null,
+    voices: [
+      {
+        ...line.voices[0],
+        text: '',
+        translation: { time: 1, text: 'Voice translation' },
+        romanization: null
+      }
+    ]
+  })
 })
 
 test('lyrics management validation rejects malformed and oversized track maps', () => {

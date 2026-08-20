@@ -15,7 +15,9 @@ const IPC_CONSTANTS = (() => {
       domain = domainMatch[1]
       continue
     }
-    const entry = line.match(/^ {4}(\w+): '([^']+)',?$/)
+    // Source files are commonly checked out with CRLF on Windows; tolerate
+    // the carriage return so IPC.* references resolve consistently.
+    const entry = line.match(/^ {4}(\w+): '([^']+)',?\s*$/)
     if (entry && domain) map.set(`IPC.${domain}.${entry[1]}`, entry[2])
   }
   return map

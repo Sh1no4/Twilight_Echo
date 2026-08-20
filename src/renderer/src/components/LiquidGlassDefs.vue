@@ -25,15 +25,21 @@ import {
   LIQUID_GLASS_MAX_VISIBLE_EXPANDED_SURFACES,
   LIQUID_GLASS_OFFSCREEN_CLASS,
   LIQUID_GLASS_PLAYBAR_FILTER_ID,
+  LIQUID_GLASS_PLAYBAR_SELECTOR,
   LIQUID_GLASS_TUNING_CHANGED_EVENT,
   resolveAberrationBlur,
-  resolveChannelScales
+  resolveChannelScales,
+  resolveSpecularMapStrength
 } from '../../../shared/liquidGlass.ts'
 import {
-  CARD_DISPLACEMENT_BUCKET,
+  displacementScaleForRadius,
   getDisplacementMapUrl,
-  PLAYBAR_DISPLACEMENT_BUCKET
+  measureSurfaceGeometry,
+  NOMINAL_CARD_GEOMETRY,
+  NOMINAL_PLAYBAR_GEOMETRY,
+  type DisplacementGeometry
 } from '../utils/liquidGlassDisplacement.ts'
+import { getSpecularMapUrl } from '../utils/liquidGlassSpecular.ts'
 import {
   createFrameCoalescer,
   LIQUID_GLASS_POINTER_FRAME_INTERVAL_MS,
@@ -59,8 +65,21 @@ const props = defineProps<{
   expandedActive: boolean
 }>()
 
+/**
+ * Floor between geometry re-measures. A map rasterize plus `toDataURL` is far too
+ * heavy for a resize frame, and a window drag emits them continuously; the maps
+ * are also memoized, so a coalesced trailing measure is enough to land on the
+ * final size.
+ */
+const GEOMETRY_REMEASURE_INTERVAL_MS = 120
+
 const cardMapUrl = ref('')
 const playbarMapUrl = ref('')
+const cardSpecularUrl = ref('')
+const playbarSpecularUrl = ref('')
+const specularOpacity = ref(DEFAULT_LIQUID_GLASS_LIGHT.specularOpacity)
+const homeSpecularOpacity = ref(DEFAULT_LIQUID_GLASS_HOME_CARDS.light.specularOpacity)
+const expandedSpecularOpacity = ref(36)
 const displacementScale = ref(DEFAULT_LIQUID_GLASS_LIGHT.displacementScale)
 const aberrationIntensity = ref(DEFAULT_LIQUID_GLASS_LIGHT.aberrationIntensity)
 const homeDisplacementScale = ref(DEFAULT_LIQUID_GLASS_HOME_CARDS.light.displacementScale)
@@ -68,39 +87,90 @@ const homeAberrationIntensity = ref(DEFAULT_LIQUID_GLASS_HOME_CARDS.light.aberra
 const expandedDisplacementScale = ref(24)
 const expandedAberrationIntensity = ref(0.8)
 
+/**
+ * Measured geometry of the surfaces each filter serves. The maps are baked at the
+ * real element size and corner radius rather than an aspect bucket, so the rim
+ * field lines up with the radius actually painted on screen.
+ */
+const cardGeometry = ref<DisplacementGeometry>(NOMINAL_CARD_GEOMETRY)
+const playbarGeometry = ref<DisplacementGeometry>(NOMINAL_PLAYBAR_GEOMETRY)
+
+/**
+ * `feDisplacementMap scale` in px, derived from the measured corner radius rather
+ * than taken from the setting directly. The setting is a percentage of the
+ * physically correct amplitude — see `displacementScaleForRadius`.
+ */
 const channelScales = computed(() =>
-  resolveChannelScales(displacementScale.value, aberrationIntensity.value)
+  resolveChannelScales(
+    displacementScaleForRadius(playbarGeometry.value.radius, displacementScale.value / 100),
+    aberrationIntensity.value
+  )
+)
+const cardChannelScales = computed(() =>
+  resolveChannelScales(
+    displacementScaleForRadius(cardGeometry.value.radius, displacementScale.value / 100),
+    aberrationIntensity.value
+  )
 )
 const aberrationBlur = computed(() => resolveAberrationBlur(aberrationIntensity.value))
 const homeChannelScales = computed(() =>
-  resolveChannelScales(homeDisplacementScale.value, homeAberrationIntensity.value)
+  resolveChannelScales(
+    displacementScaleForRadius(cardGeometry.value.radius, homeDisplacementScale.value / 100),
+    homeAberrationIntensity.value
+  )
 )
 const homeAberrationBlur = computed(() => resolveAberrationBlur(homeAberrationIntensity.value))
 const expandedChannelScales = computed(() =>
-  resolveChannelScales(expandedDisplacementScale.value, expandedAberrationIntensity.value)
+  resolveChannelScales(
+    displacementScaleForRadius(cardGeometry.value.radius, expandedDisplacementScale.value / 100),
+    expandedAberrationIntensity.value
+  )
 )
 const expandedAberrationBlur = computed(() =>
   resolveAberrationBlur(expandedAberrationIntensity.value)
 )
 /**
- * Alpha ramp for the edge mask, reshaping the map's continuous rim magnitude
- * (carried in its alpha channel) into the aberration band. The middle stop scales
- * with aberration so a higher setting lets more of the refracted band through at
- * partial strength instead of a hard cutoff.
+ * Alpha multiplier for the baked specular map. The raster is baked at full
+ * intensity so tuning never invalidates it; strength is applied here instead. At
+ * zero the primitives are dropped from the chain entirely rather than compositing
+ * a transparent layer.
  */
-const edgeMaskTable = computed(() => `0 ${(0.15 + aberrationIntensity.value * 0.05).toFixed(3)} 1`)
-const homeEdgeMaskTable = computed(
-  () => `0 ${(0.15 + homeAberrationIntensity.value * 0.05).toFixed(3)} 1`
+const specularStrength = computed(() => resolveSpecularMapStrength(specularOpacity.value))
+const homeSpecularStrength = computed(() => resolveSpecularMapStrength(homeSpecularOpacity.value))
+const expandedSpecularStrength = computed(() =>
+  resolveSpecularMapStrength(expandedSpecularOpacity.value)
 )
-const expandedEdgeMaskTable = computed(
-  () => `0 ${(0.15 + expandedAberrationIntensity.value * 0.05).toFixed(3)} 1`
+/**
+ * Whether the baked highlight is worth compositing at all. A zero-strength layer
+ * still costs an feImage decode and two blend passes per referencing element, so
+ * the primitives are omitted rather than rendered as a no-op. An empty URL means
+ * canvas was unavailable, in which case there is nothing to composite either.
+ */
+const cardSpecularActive = computed(() => specularStrength.value > 0 && Boolean(cardSpecularUrl.value))
+const playbarSpecularActive = computed(
+  () => specularStrength.value > 0 && Boolean(playbarSpecularUrl.value)
 )
-
+const homeSpecularActive = computed(
+  () => homeSpecularStrength.value > 0 && Boolean(cardSpecularUrl.value)
+)
+const expandedSpecularActive = computed(
+  () => expandedSpecularStrength.value > 0 && Boolean(cardSpecularUrl.value)
+)
 function readNumericVariable(name: string, fallback: number): number {
   const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
   if (!raw) return fallback
   const parsed = Number.parseFloat(raw)
   return Number.isFinite(parsed) ? parsed : fallback
+}
+
+/**
+ * The specular variables are emitted as 0-1 ratios for direct use in colour
+ * functions, while the tuning model and `resolveSpecularMapStrength` work in
+ * percent. Convert on read so the filter and the CSS layers stay in step.
+ */
+function readSpecularPercent(name: string, fallbackPercent: number): number {
+  const ratio = readNumericVariable(name, fallbackPercent / 100)
+  return ratio * 100
 }
 
 /** Re-reads the theme-written tuning variables into bound attribute values. */
@@ -114,6 +184,10 @@ function syncFilterInputs(): void {
     '--te-lg-aberration',
     DEFAULT_LIQUID_GLASS_LIGHT.aberrationIntensity
   )
+  specularOpacity.value = readSpecularPercent(
+    '--te-lg-specular',
+    DEFAULT_LIQUID_GLASS_LIGHT.specularOpacity
+  )
   if (props.homeCardsActive) {
     homeDisplacementScale.value = readNumericVariable(
       '--te-home-lg-displacement',
@@ -123,10 +197,15 @@ function syncFilterInputs(): void {
       '--te-home-lg-aberration',
       DEFAULT_LIQUID_GLASS_HOME_CARDS.light.aberrationIntensity
     )
+    homeSpecularOpacity.value = readSpecularPercent(
+      '--te-home-lg-specular',
+      DEFAULT_LIQUID_GLASS_HOME_CARDS.light.specularOpacity
+    )
   }
   if (props.expandedActive) {
     expandedDisplacementScale.value = readNumericVariable('--te-lg-expanded-displacement', 24)
     expandedAberrationIntensity.value = readNumericVariable('--te-lg-expanded-aberration', 0.8)
+    expandedSpecularOpacity.value = readSpecularPercent('--te-lg-expanded-specular', 36)
   }
   pointerElasticity = readNumericVariable('--te-lg-elasticity', 0)
 }
@@ -135,12 +214,120 @@ function onTuningChanged(): void {
   syncFilterInputs()
 }
 
+/**
+ * Geometry of the first matching surface, or the nominal fallback when the
+ * surface is absent or has no layout box yet. The fallbacks match the shipped
+ * CSS, so a filter bound before first paint is already close.
+ */
+function measureSelector(
+  selector: string,
+  fallback: DisplacementGeometry
+): DisplacementGeometry {
+  const element = document.querySelector(selector)
+  return (element && measureSurfaceGeometry(element)) || fallback
+}
+
+/**
+ * Bakes both rasters for one surface class at its measured geometry.
+ *
+ * Maps used to be baked per aspect-ratio bucket and stretched to fit. Baking at
+ * the element's real size and real `border-radius` is what keeps the refracting
+ * band registered with the corner that is actually painted — a 512x64 strip map
+ * scaled onto a 1180x72 bar put its arc nowhere near the visible 22px radius.
+ *
+ * Both callers are memoized inside the generators, so re-running this after a
+ * resize that rounds to the same geometry costs a map lookup, not a rasterize.
+ */
 function ensureMaps(): void {
   if (!props.active) return
-  if (!cardMapUrl.value) cardMapUrl.value = getDisplacementMapUrl(CARD_DISPLACEMENT_BUCKET)
-  if (!playbarMapUrl.value) {
-    playbarMapUrl.value = getDisplacementMapUrl(PLAYBAR_DISPLACEMENT_BUCKET)
+
+  const playbar = measureSelector(LIQUID_GLASS_PLAYBAR_SELECTOR, NOMINAL_PLAYBAR_GEOMETRY)
+  playbarGeometry.value = playbar
+  playbarMapUrl.value = getDisplacementMapUrl(playbar)
+  playbarSpecularUrl.value = getSpecularMapUrl(playbar)
+
+  // Cards are many elements sharing one filter, so they cannot each carry their
+  // own raster. The first visible card stands in for the class; they are laid out
+  // on a uniform grid, so one measurement is representative.
+  const card = measureSelector(LIQUID_GLASS_CARD_SELECTOR, NOMINAL_CARD_GEOMETRY)
+  cardGeometry.value = card
+  cardMapUrl.value = getDisplacementMapUrl(card)
+  cardSpecularUrl.value = getSpecularMapUrl(card)
+}
+
+/**
+ * Re-measures after layout changes. Rasterizing is far too costly to run per
+ * resize frame, so it is coalesced; `getDisplacementMapUrl` additionally returns
+ * a cached URL whenever the rounded geometry has not actually moved.
+ */
+const geometryFrames = createFrameCoalescer<void>(() => ensureMaps(), {
+  minIntervalMs: GEOMETRY_REMEASURE_INTERVAL_MS
+})
+
+let geometryObserver: ResizeObserver | null = null
+let geometryMutationObserver: MutationObserver | null = null
+
+/**
+ * The surface currently being watched for each measured class. Exactly one
+ * element per class is observed — the maps are shared, so a second card would
+ * only re-measure the same geometry — and re-pointing here lets the old element
+ * be released when a virtualised card is recycled.
+ */
+const geometryTargets = new Map<string, Element>()
+
+const GEOMETRY_SELECTORS = [LIQUID_GLASS_PLAYBAR_SELECTOR, LIQUID_GLASS_CARD_SELECTOR]
+
+/**
+ * Points the size observer at whichever measured surfaces exist right now.
+ *
+ * Needed because the surfaces arrive late and unpredictably: `PlayerBar` is an
+ * async component, so `.player-bar-liquid` is absent at mount, and dashboard
+ * cards come and go with virtualisation. Observing only what exists at mount
+ * would leave the playbar permanently stuck on its nominal fallback.
+ *
+ * Returns whether anything changed, so a caller can re-measure only then.
+ */
+function attachGeometryTargets(): boolean {
+  if (!geometryObserver) return false
+  let changed = false
+  for (const selector of GEOMETRY_SELECTORS) {
+    const surface = document.querySelector(selector)
+    const previous = geometryTargets.get(selector)
+    if (surface === previous) continue
+    // Recycled cards would otherwise pile up as detached observations.
+    if (previous) geometryObserver.unobserve(previous)
+    if (surface) {
+      geometryTargets.set(selector, surface)
+      geometryObserver.observe(surface)
+    } else {
+      geometryTargets.delete(selector)
+    }
+    changed = true
   }
+  return changed
+}
+
+function clearGeometryObservers(): void {
+  geometryObserver?.disconnect()
+  geometryObserver = null
+  geometryMutationObserver?.disconnect()
+  geometryMutationObserver = null
+  geometryTargets.clear()
+}
+
+function syncGeometryObserver(): void {
+  clearGeometryObservers()
+  if (!props.active || typeof ResizeObserver === 'undefined' || !document.body) return
+
+  geometryObserver = new ResizeObserver(() => geometryFrames.schedule(undefined))
+  attachGeometryTargets()
+
+  // A resize observer cannot fire for an element that does not exist yet, so a
+  // childList watch is what lets a late-mounted surface get measured at all.
+  geometryMutationObserver = new MutationObserver(() => {
+    if (attachGeometryTargets()) geometryFrames.schedule(undefined)
+  })
+  geometryMutationObserver.observe(document.body, { childList: true, subtree: true })
 }
 
 function writePointerVariables(variables: LiquidGlassPointerVariables, target: HTMLElement): void {
@@ -575,6 +762,7 @@ onMounted(() => {
   syncPointerTracking()
   syncPressTracking()
   syncSurfaceVisibility()
+  syncGeometryObserver()
   window.addEventListener(LIQUID_GLASS_TUNING_CHANGED_EVENT, onTuningChanged)
 
   // The theme runtime rewrites its stylesheet and `data-te-*` attributes on tone or
@@ -601,6 +789,8 @@ onBeforeUnmount(() => {
   resetPress()
   pressAttached = false
   clearSurfaceVisibility()
+  geometryFrames.cancel()
+  clearGeometryObservers()
   motionObserver?.disconnect()
   motionObserver = null
 })
@@ -613,6 +803,7 @@ watch(
     syncPointerTracking()
     syncPressTracking()
     syncSurfaceVisibility()
+    syncGeometryObserver()
   }
 )
 </script>
@@ -634,30 +825,16 @@ watch(
           width="100%"
           height="100%"
           result="MAP"
-          preserveAspectRatio="xMidYMid slice"
+          preserveAspectRatio="none"
           :href="cardMapUrl"
         />
-        <!-- The map's alpha carries the continuous rim magnitude; the transfer
-             reshapes it into the soft edge mask that gates where aberration shows. -->
-        <feColorMatrix
-          in="MAP"
-          type="matrix"
-          values="0.3 0.3 0.3 0 0
-                  0.3 0.3 0.3 0 0
-                  0.3 0.3 0.3 0 0
-                  0 0 0 1 0"
-          result="EDGE_INTENSITY"
-        />
-        <feComponentTransfer in="EDGE_INTENSITY" result="EDGE_MASK">
-          <feFuncA type="table" :tableValues="edgeMaskTable" />
-        </feComponentTransfer>
-
         <!-- Each channel is displaced by a slightly different amount; recombining
-             them with a screen blend is what produces the chromatic fringe. -->
+             them with a screen blend is what produces the chromatic fringe.
+             Scales are derived from the *card* radius, not the playbar's. -->
         <feDisplacementMap
           in="SourceGraphic"
           in2="MAP"
-          :scale="channelScales.red"
+          :scale="cardChannelScales.red"
           xChannelSelector="R"
           yChannelSelector="B"
           result="RED_DISPLACED"
@@ -674,7 +851,7 @@ watch(
         <feDisplacementMap
           in="SourceGraphic"
           in2="MAP"
-          :scale="channelScales.green"
+          :scale="cardChannelScales.green"
           xChannelSelector="R"
           yChannelSelector="B"
           result="GREEN_DISPLACED"
@@ -691,7 +868,7 @@ watch(
         <feDisplacementMap
           in="SourceGraphic"
           in2="MAP"
-          :scale="channelScales.blue"
+          :scale="cardChannelScales.blue"
           xChannelSelector="R"
           yChannelSelector="B"
           result="BLUE_DISPLACED"
@@ -707,33 +884,34 @@ watch(
         />
         <feBlend in="GREEN_CHANNEL" in2="BLUE_CHANNEL" mode="screen" result="GB_COMBINED" />
         <feBlend in="RED_CHANNEL" in2="GB_COMBINED" mode="screen" result="RGB_COMBINED" />
-        <feGaussianBlur
-          in="RGB_COMBINED"
-          :stdDeviation="aberrationBlur"
-          result="ABERRATED_BLURRED"
-        />
+        <feGaussianBlur in="RGB_COMBINED" :stdDeviation="aberrationBlur" result="REFRACTED" />
 
-        <!-- Keep aberration at the rim, keep the middle of the surface honest. -->
-        <feComposite
-          in="ABERRATED_BLURRED"
-          in2="EDGE_MASK"
-          operator="in"
-          result="EDGE_ABERRATION"
-        />
-        <!-- Clip the refraction band back to the source's own rounded alpha. The
-             displacement map is a full rectangle, so without this the corners of
-             a rounded card get filled with refracted content and read as square. -->
-        <feComposite
-          in="EDGE_ABERRATION"
-          in2="SourceGraphic"
-          operator="in"
-          result="EDGE_ABERRATION_CLIPPED"
-        />
-        <feComponentTransfer in="EDGE_MASK" result="INVERTED_MASK">
-          <feFuncA type="table" tableValues="1 0" />
-        </feComponentTransfer>
-        <feComposite in="SourceGraphic" in2="INVERTED_MASK" operator="in" result="CENTER_CLEAN" />
-        <feComposite in="EDGE_ABERRATION_CLIPPED" in2="CENTER_CLEAN" operator="over" />
+        <!-- Shape-following specular. The map's alpha carries per-pixel incidence
+             between the surface normal and the light, which is why the bright band
+             bends around each corner instead of running along one axis the way a
+             CSS gradient must. Screen over premultiplied white lerps toward white
+             by exactly that alpha.
+
+             Dropped entirely rather than composited at zero strength: REFRACTED is
+             then the chain's last primitive and already the intended output. -->
+        <template v-if="cardSpecularActive">
+          <feImage
+            x="0"
+            y="0"
+            width="100%"
+            height="100%"
+            result="SPECULAR_RAW"
+            preserveAspectRatio="none"
+            :href="cardSpecularUrl"
+          />
+          <feComponentTransfer in="SPECULAR_RAW" result="SPECULAR">
+            <feFuncA type="linear" :slope="specularStrength" intercept="0" />
+          </feComponentTransfer>
+          <!-- The map is a full rectangle; clip it to the surface's own rounded alpha
+               so the highlight never paints outside the corners. -->
+          <feComposite in="SPECULAR" in2="SourceGraphic" operator="in" result="SPECULAR_CLIPPED" />
+          <feBlend in="REFRACTED" in2="SPECULAR_CLIPPED" mode="screen" />
+        </template>
       </filter>
 
       <filter
@@ -751,21 +929,9 @@ watch(
           width="100%"
           height="100%"
           result="MAP"
-          preserveAspectRatio="xMidYMid slice"
+          preserveAspectRatio="none"
           :href="cardMapUrl"
         />
-        <feColorMatrix
-          in="MAP"
-          type="matrix"
-          values="0.3 0.3 0.3 0 0
-                  0.3 0.3 0.3 0 0
-                  0.3 0.3 0.3 0 0
-                  0 0 0 1 0"
-          result="EDGE_INTENSITY"
-        />
-        <feComponentTransfer in="EDGE_INTENSITY" result="EDGE_MASK">
-          <feFuncA type="table" :tableValues="expandedEdgeMaskTable" />
-        </feComponentTransfer>
         <feDisplacementMap
           in="SourceGraphic"
           in2="MAP"
@@ -822,25 +988,28 @@ watch(
         <feGaussianBlur
           in="RGB_COMBINED"
           :stdDeviation="expandedAberrationBlur"
-          result="ABERRATED_BLURRED"
+          result="REFRACTED"
         />
-        <feComposite
-          in="ABERRATED_BLURRED"
-          in2="EDGE_MASK"
-          operator="in"
-          result="EDGE_ABERRATION"
-        />
-        <feComposite
-          in="EDGE_ABERRATION"
-          in2="SourceGraphic"
-          operator="in"
-          result="EDGE_ABERRATION_CLIPPED"
-        />
-        <feComponentTransfer in="EDGE_MASK" result="INVERTED_MASK">
-          <feFuncA type="table" tableValues="1 0" />
-        </feComponentTransfer>
-        <feComposite in="SourceGraphic" in2="INVERTED_MASK" operator="in" result="CENTER_CLEAN" />
-        <feComposite in="EDGE_ABERRATION_CLIPPED" in2="CENTER_CLEAN" operator="over" />
+
+        <!-- Same shape-following highlight as the card filter, at the restrained
+             expanded strength: broad content panes turn to white plastic long
+             before compact chrome does. -->
+        <template v-if="expandedSpecularActive">
+          <feImage
+            x="0"
+            y="0"
+            width="100%"
+            height="100%"
+            result="SPECULAR_RAW"
+            preserveAspectRatio="none"
+            :href="cardSpecularUrl"
+          />
+          <feComponentTransfer in="SPECULAR_RAW" result="SPECULAR">
+            <feFuncA type="linear" :slope="expandedSpecularStrength" intercept="0" />
+          </feComponentTransfer>
+          <feComposite in="SPECULAR" in2="SourceGraphic" operator="in" result="SPECULAR_CLIPPED" />
+          <feBlend in="REFRACTED" in2="SPECULAR_CLIPPED" mode="screen" />
+        </template>
       </filter>
 
       <filter
@@ -858,21 +1027,9 @@ watch(
           width="100%"
           height="100%"
           result="MAP"
-          preserveAspectRatio="xMidYMid slice"
+          preserveAspectRatio="none"
           :href="cardMapUrl"
         />
-        <feColorMatrix
-          in="MAP"
-          type="matrix"
-          values="0.3 0.3 0.3 0 0
-                  0.3 0.3 0.3 0 0
-                  0.3 0.3 0.3 0 0
-                  0 0 0 1 0"
-          result="EDGE_INTENSITY"
-        />
-        <feComponentTransfer in="EDGE_INTENSITY" result="EDGE_MASK">
-          <feFuncA type="table" :tableValues="homeEdgeMaskTable" />
-        </feComponentTransfer>
         <feDisplacementMap
           in="SourceGraphic"
           in2="MAP"
@@ -929,25 +1086,26 @@ watch(
         <feGaussianBlur
           in="RGB_COMBINED"
           :stdDeviation="homeAberrationBlur"
-          result="ABERRATED_BLURRED"
+          result="REFRACTED"
         />
-        <feComposite
-          in="ABERRATED_BLURRED"
-          in2="EDGE_MASK"
-          operator="in"
-          result="EDGE_ABERRATION"
-        />
-        <feComposite
-          in="EDGE_ABERRATION"
-          in2="SourceGraphic"
-          operator="in"
-          result="EDGE_ABERRATION_CLIPPED"
-        />
-        <feComponentTransfer in="EDGE_MASK" result="INVERTED_MASK">
-          <feFuncA type="table" tableValues="1 0" />
-        </feComponentTransfer>
-        <feComposite in="SourceGraphic" in2="INVERTED_MASK" operator="in" result="CENTER_CLEAN" />
-        <feComposite in="EDGE_ABERRATION_CLIPPED" in2="CENTER_CLEAN" operator="over" />
+
+        <!-- Shape-following specular, on the dashboard's independent profile. -->
+        <template v-if="homeSpecularActive">
+          <feImage
+            x="0"
+            y="0"
+            width="100%"
+            height="100%"
+            result="SPECULAR_RAW"
+            preserveAspectRatio="none"
+            :href="cardSpecularUrl"
+          />
+          <feComponentTransfer in="SPECULAR_RAW" result="SPECULAR">
+            <feFuncA type="linear" :slope="homeSpecularStrength" intercept="0" />
+          </feComponentTransfer>
+          <feComposite in="SPECULAR" in2="SourceGraphic" operator="in" result="SPECULAR_CLIPPED" />
+          <feBlend in="REFRACTED" in2="SPECULAR_CLIPPED" mode="screen" />
+        </template>
       </filter>
 
       <!-- Same chain against the wide-strip map, so the playbar's short axis keeps a
@@ -966,21 +1124,9 @@ watch(
           width="100%"
           height="100%"
           result="MAP"
-          preserveAspectRatio="xMidYMid slice"
+          preserveAspectRatio="none"
           :href="playbarMapUrl"
         />
-        <feColorMatrix
-          in="MAP"
-          type="matrix"
-          values="0.3 0.3 0.3 0 0
-                  0.3 0.3 0.3 0 0
-                  0.3 0.3 0.3 0 0
-                  0 0 0 1 0"
-          result="EDGE_INTENSITY"
-        />
-        <feComponentTransfer in="EDGE_INTENSITY" result="EDGE_MASK">
-          <feFuncA type="table" :tableValues="edgeMaskTable" />
-        </feComponentTransfer>
         <feDisplacementMap
           in="SourceGraphic"
           in2="MAP"
@@ -1034,30 +1180,26 @@ watch(
         />
         <feBlend in="GREEN_CHANNEL" in2="BLUE_CHANNEL" mode="screen" result="GB_COMBINED" />
         <feBlend in="RED_CHANNEL" in2="GB_COMBINED" mode="screen" result="RGB_COMBINED" />
-        <feGaussianBlur
-          in="RGB_COMBINED"
-          :stdDeviation="aberrationBlur"
-          result="ABERRATED_BLURRED"
-        />
-        <feComposite
-          in="ABERRATED_BLURRED"
-          in2="EDGE_MASK"
-          operator="in"
-          result="EDGE_ABERRATION"
-        />
-        <!-- Same corner fix as the card filter: never paint refraction outside
-             the source's own rounded alpha. -->
-        <feComposite
-          in="EDGE_ABERRATION"
-          in2="SourceGraphic"
-          operator="in"
-          result="EDGE_ABERRATION_CLIPPED"
-        />
-        <feComponentTransfer in="EDGE_MASK" result="INVERTED_MASK">
-          <feFuncA type="table" tableValues="1 0" />
-        </feComponentTransfer>
-        <feComposite in="SourceGraphic" in2="INVERTED_MASK" operator="in" result="CENTER_CLEAN" />
-        <feComposite in="EDGE_ABERRATION_CLIPPED" in2="CENTER_CLEAN" operator="over" />
+        <feGaussianBlur in="RGB_COMBINED" :stdDeviation="aberrationBlur" result="REFRACTED" />
+
+        <!-- Wide-strip highlight, so the playbar's rim light keeps the same
+             physical thickness on its short axis as the cards do. -->
+        <template v-if="playbarSpecularActive">
+          <feImage
+            x="0"
+            y="0"
+            width="100%"
+            height="100%"
+            result="SPECULAR_RAW"
+            preserveAspectRatio="none"
+            :href="playbarSpecularUrl"
+          />
+          <feComponentTransfer in="SPECULAR_RAW" result="SPECULAR">
+            <feFuncA type="linear" :slope="specularStrength" intercept="0" />
+          </feComponentTransfer>
+          <feComposite in="SPECULAR" in2="SourceGraphic" operator="in" result="SPECULAR_CLIPPED" />
+          <feBlend in="REFRACTED" in2="SPECULAR_CLIPPED" mode="screen" />
+        </template>
       </filter>
     </defs>
   </svg>

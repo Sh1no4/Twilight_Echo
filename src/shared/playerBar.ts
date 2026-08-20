@@ -2,10 +2,9 @@
  * Player bar presentation — shared contract.
  *
  * The playbar has two shapes. `standard` is the full bar (cover, inline
- * progress, time labels). `mini` is a longer, progress-free pill: it drops the
- * cover, the inline progress row and the bottom border rail, keeping only the
- * track info and transport. The rail stays in the DOM behind `display: none`
- * so a future "show rail" option can restore seeking on the mini shape.
+ * progress, time labels). `mini` is a compact control strip: it drops cover,
+ * track metadata and previous/next controls, leaving play/pause at the far left,
+ * a long flat progress rail in the middle and utility tools on the right.
  *
  * Visibility is a separate dimension from shape, with three steps: `visible`
  * keeps the bar on screen, `autoHide` tucks it away until the pointer

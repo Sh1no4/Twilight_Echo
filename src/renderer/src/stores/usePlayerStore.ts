@@ -73,7 +73,8 @@ import {
 } from '../utils/playbackQueueVirtualization.ts'
 import { clampProviderReliability, findPlaybackFallbackTrack } from '../utils/playbackFallback.ts'
 import { findProviderRematchCandidate } from '../utils/libraryRepair.ts'
-import { stripValidLyricVoiceTags } from '../utils/lyrics.ts'
+import { buildLyricLines, stripValidLyricVoiceTags } from '../utils/lyrics.ts'
+import { isAmlTtml } from '../utils/amllTtml.ts'
 import { useNcmStore } from './useNcmStore.ts'
 import { useLyricsManagement } from './lyricsManagement.ts'
 import { usePlaybackBookmarks } from './playbackBookmarks'
@@ -100,10 +101,7 @@ import { syncPluginProviders, useMediaProviders } from '../providers'
 import { useSettingsStore } from './useSettingsStore'
 import { useMusicStore } from './useMusicStore'
 import { type SleepTimerMode, type SleepTimerState } from '../../../shared/sleepTimer.ts'
-import {
-  projectManagedLyrics,
-  type LyricSource
-} from '../../../shared/lyricsManagement.ts'
+import { projectManagedLyrics, type LyricSource } from '../../../shared/lyricsManagement.ts'
 import { DEFAULT_SOFTWARE_VOLUME } from '../../../shared/audioProcessingOptions.ts'
 import { createPlayerSleepTimer } from './player/usePlayerSleepTimer.ts'
 import { useAppNoticeStore } from './useAppNoticeStore'
@@ -1022,15 +1020,18 @@ function hydratePlaybackTrack(track: Track, libraryHint?: Track | null): Track {
     nonEmptyString(track.translatedLyrics) || nonEmptyString(hint?.translatedLyrics)
   const romanizedLyrics =
     nonEmptyString(track.romanizedLyrics) || nonEmptyString(hint?.romanizedLyrics)
-  const lyricsSource = track.lyricsSource ?? hint?.lyricsSource ?? (lyrics ? 'embedded' : null)
+  const fallbackLyricsSource: LyricSource =
+    getTrackSource(track) === 'ncm' ? 'provider' : 'embedded'
+  const lyricsSource =
+    track.lyricsSource ?? hint?.lyricsSource ?? (lyrics ? fallbackLyricsSource : null)
   const translatedLyricsSource =
     track.translatedLyricsSource ??
     hint?.translatedLyricsSource ??
-    (translatedLyrics ? 'embedded' : null)
+    (translatedLyrics ? fallbackLyricsSource : null)
   const romanizedLyricsSource =
     track.romanizedLyricsSource ??
     hint?.romanizedLyricsSource ??
-    (romanizedLyrics ? 'embedded' : null)
+    (romanizedLyrics ? fallbackLyricsSource : null)
 
   if (
     cover === (track.cover ?? null) &&
@@ -3153,10 +3154,52 @@ function normalizeDesktopLyricSource(source: string | null | undefined): LyricSo
   return source === 'embedded' ||
     source === 'local' ||
     source === 'provider' ||
+    source === 'amll' ||
     source === 'manual' ||
     source === 'online'
     ? source
     : null
+}
+
+function formatCompactLrcTimestamp(seconds: number): string {
+  const centiseconds = Math.max(0, Math.round(seconds * 100))
+  const minutes = Math.floor(centiseconds / 6000)
+  const remainder = centiseconds % 6000
+  return `[${String(minutes).padStart(2, '0')}:${(remainder / 100).toFixed(2).padStart(5, '0')}]`
+}
+
+function projectCompactTtmlLyrics(
+  lyrics: string | null | undefined,
+  translatedLyrics: string | null | undefined,
+  replaceTranslation: boolean
+): {
+  original: string | null
+  translation: string | null
+} | null {
+  if (!isAmlTtml(lyrics)) return null
+  const lines = buildLyricLines(lyrics, translatedLyrics, null, {
+    replaceTtmlTranslation: replaceTranslation
+  })
+  const primary = lines
+    .filter((line) => line.time != null)
+    .map((line) => {
+      const voice = line.voices?.find((candidate) => candidate.role === 'lead') ?? line.voices?.[0]
+      return {
+        time: line.time!,
+        text: voice?.text ?? line.text,
+        translation: voice?.translation?.text ?? line.translation
+      }
+    })
+    .filter((line) => line.text.trim())
+  if (!primary.length) return { original: null, translation: null }
+  const original = primary
+    .map((line) => `${formatCompactLrcTimestamp(line.time)}${line.text}`)
+    .join('\n')
+  const translated = primary
+    .filter((line) => line.translation)
+    .map((line) => `${formatCompactLrcTimestamp(line.time)}${line.translation}`)
+    .join('\n')
+  return { original, translation: translated || null }
 }
 
 function syncDesktopLyricsSnapshot(): void {
@@ -3165,6 +3208,7 @@ function syncDesktopLyricsSnapshot(): void {
 
   const track = currentTrack.value
   if (track) {
+    const managedOverride = lyricsManagement.entryFor(track.id)
     const automaticSources = {
       lyricsSource: track.lyricsSource ?? null,
       translatedLyricsSource: track.translatedLyricsSource ?? null
@@ -3178,17 +3222,26 @@ function syncDesktopLyricsSnapshot(): void {
         translationSource: track.translatedLyricsSource,
         romanizationSource: track.romanizedLyricsSource
       },
-      lyricsManagement.entryFor(track.id)
+      managedOverride
+    )
+    const replaceTtmlTranslation =
+      managedOverride?.translationSelection === 'manual' ||
+      (managedOverride?.translationSelection == null && managedOverride?.source === 'manual')
+    const compactTtml = projectCompactTtmlLyrics(
+      lyrics.original,
+      lyrics.translation,
+      replaceTtmlTranslation
     )
     desktopLyricsApi.updateTrack({
-      lyrics: stripValidLyricVoiceTags(lyrics.original),
-      translatedLyrics: stripValidLyricVoiceTags(lyrics.translation),
+      lyrics: compactTtml?.original ?? stripValidLyricVoiceTags(lyrics.original),
+      translatedLyrics: compactTtml?.translation ?? stripValidLyricVoiceTags(lyrics.translation),
       lyricsSource:
         lyrics.originalSource === track.lyricsSource
           ? automaticSources.lyricsSource
           : normalizeDesktopLyricSource(lyrics.originalSource),
-      translatedLyricsSource:
-        lyrics.translationSource === track.translatedLyricsSource
+      translatedLyricsSource: compactTtml?.translation
+        ? normalizeDesktopLyricSource(lyrics.originalSource)
+        : lyrics.translationSource === track.translatedLyricsSource
           ? automaticSources.translatedLyricsSource
           : normalizeDesktopLyricSource(lyrics.translationSource),
       title: track.title || '',
@@ -3450,11 +3503,9 @@ function setupPlayerIntegrationSideEffects(): void {
     { immediate: true }
   )
 
-  watch(
-    [currentTrack, lyricsManagement.document],
-    () => syncDesktopLyricsSnapshot(),
-    { immediate: true }
-  )
+  watch([currentTrack, lyricsManagement.document], () => syncDesktopLyricsSnapshot(), {
+    immediate: true
+  })
 
   watch(
     [() => currentTrack.value?.queueEntryId, () => currentTrack.value?.id, queueIndex],

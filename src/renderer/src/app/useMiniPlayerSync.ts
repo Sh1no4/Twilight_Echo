@@ -8,6 +8,23 @@ import type { Track } from '../types/music'
 import type { PlayMode } from '../types/settings'
 import { buildLyricLines, findActiveLyricIndex } from '../utils/lyrics.ts'
 
+function compactLyricLine(line: ReturnType<typeof buildLyricLines>[number]): {
+  original: string
+  translation: string | null
+} {
+  const leads = line.voices?.filter((voice) => voice.role === 'lead') ?? []
+  const primary = leads[0] ?? line.voices?.[0]
+  return {
+    original: leads.length
+      ? leads
+          .map((voice) => voice.text)
+          .filter(Boolean)
+          .join(' · ')
+      : line.text,
+    translation: primary?.translation?.text ?? line.translation
+  }
+}
+
 interface MiniPlayerStateSource {
   track: Track | null
   isPlaying: boolean
@@ -88,17 +105,11 @@ export function buildMiniPlayerStateSnapshot(
  * Timed lyric lines for the mini player's multi-line view. Plain untimed
  * lyrics are excluded because the mini player switches lines by timestamp.
  */
-export function buildMiniPlayerLyricLines(
-  track: Track | null
-): MiniPlayerLyricLineSnapshot[] {
+export function buildMiniPlayerLyricLines(track: Track | null): MiniPlayerLyricLineSnapshot[] {
   if (!track) return []
   return buildLyricLines(track.lyrics, track.translatedLyrics)
     .filter((line) => line.time != null && line.text.trim().length > 0)
-    .map((line) => ({
-      time: line.time,
-      original: line.text,
-      translation: line.translation
-    }))
+    .map((line) => ({ time: line.time, ...compactLyricLine(line) }))
 }
 
 /**
@@ -146,8 +157,9 @@ export function resolveCurrentLyricForMiniPlayer(
   const index = findActiveLyricIndex(lines, time)
   if (index < 0) return null
   const line = lines[index]
-  if (!line.text) return null
-  return { original: line.text, translation: line.translation ?? null }
+  const compact = compactLyricLine(line)
+  if (!compact.original) return null
+  return compact
 }
 
 export function useMiniPlayerSync(options: MiniPlayerSyncOptions): void {

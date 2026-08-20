@@ -30,6 +30,13 @@ export const LIQUID_GLASS_MAX_VISIBLE_EXPANDED_SURFACES = 24
 /** Clear glass is reserved for the dashboard's media-rich Hero treatment. */
 export const LIQUID_GLASS_HOME_CARD_SELECTOR = '.home .feature-card'
 
+/**
+ * The playbar surface itself. Its displacement map is baked at this element's
+ * measured size and corner radius, so the refracting band lines up with the
+ * radius actually painted rather than with a stretched aspect bucket.
+ */
+export const LIQUID_GLASS_PLAYBAR_SELECTOR = '.player-bar-liquid'
+
 /** Selector used by the pointer tracker and visibility observer. */
 export const LIQUID_GLASS_CARD_SELECTOR = LIQUID_GLASS_HOME_CARD_SELECTOR
 
@@ -102,7 +109,10 @@ interface Bound {
 }
 
 export const LIQUID_GLASS_BOUNDS: Readonly<Record<keyof LiquidGlassTheme, Bound>> = {
-  displacementScale: { min: 0, max: 140 },
+  // Percent of the physically correct lens amplitude, not a pixel count. 100 means
+  // a boundary pixel samples exactly one corner-radius inward, which is the most a
+  // real lens edge can bend without reading as a duplicate of unrelated content.
+  displacementScale: { min: 0, max: 100 },
   blurAmount: { min: 0, max: 40 },
   saturation: { min: 80, max: 200 },
   aberrationIntensity: { min: 0, max: 8 },
@@ -114,28 +124,34 @@ export const LIQUID_GLASS_BOUNDS: Readonly<Record<keyof LiquidGlassTheme, Bound>
 /**
  * Tuned against the Apple material: a thin refracting rim with a fully clear
  * center (see DEFAULT_RIM_FRACTION), restrained chromatic fringing, and a
- * bright shape-following specular. Legibility comes from blur and saturation,
- * not from darkening — dark-mode tint stays low so the backdrop's colour shows
- * through the way Apple's clear material does.
+ * bright shape-following specular. Legibility comes from how the backdrop is
+ * *transmitted* — the playbar compresses its contrast and shifts it away from the
+ * label colour — not from covering it up, so tint stays near zero and the surface
+ * reads as tinted glass rather than frosted plastic.
+ *
+ * Displacement sits near the physical ceiling and blur stays low, and the two are
+ * related: the refracting band is only as deep as the corner radius, so a heavy
+ * backdrop blur smooths away the very detail the rim is bending. Past about 10px
+ * the surface stops reading as a lens.
  */
 export const DEFAULT_LIQUID_GLASS_LIGHT: LiquidGlassTheme = {
-  displacementScale: 46,
-  blurAmount: 12,
-  saturation: 140,
-  aberrationIntensity: 0.7,
+  displacementScale: 95,
+  blurAmount: 5,
+  saturation: 150,
+  aberrationIntensity: 1.1,
   elasticity: 12,
-  specularOpacity: 68,
-  tintOpacity: 3
+  specularOpacity: 74,
+  tintOpacity: 4
 }
 
 export const DEFAULT_LIQUID_GLASS_DARK: LiquidGlassTheme = {
-  displacementScale: 50,
-  blurAmount: 14,
-  saturation: 144,
-  aberrationIntensity: 0.9,
+  displacementScale: 100,
+  blurAmount: 5,
+  saturation: 155,
+  aberrationIntensity: 1.2,
   elasticity: 10,
-  specularOpacity: 68,
-  tintOpacity: 5
+  specularOpacity: 76,
+  tintOpacity: 4
 }
 
 export const DEFAULT_LIQUID_GLASS_HOME_CARDS: LiquidGlassHomeCardsSettings = {
@@ -230,7 +246,9 @@ export function normalizeLiquidGlass(raw: unknown): LiquidGlassSettings {
  */
 export function resolveExpandedLiquidGlassTheme(theme: LiquidGlassTheme): LiquidGlassTheme {
   return {
-    displacementScale: Math.min(theme.displacementScale, 16),
+    // A third of the true lens amplitude: broad content panes read as warped
+    // panels long before compact chrome does.
+    displacementScale: Math.min(theme.displacementScale, 35),
     blurAmount: Math.min(theme.blurAmount, 16),
     saturation: Math.min(theme.saturation, 150),
     aberrationIntensity: Math.min(theme.aberrationIntensity, 0.5),
@@ -251,12 +269,18 @@ export interface LiquidGlassChannelScales {
  * and green/blue trail behind it, which is what separates into chromatic fringing
  * at the refracted edge. Scales stay non-negative so a high aberration value at a
  * low displacement cannot flip the channel direction.
+ *
+ * `baseScale` is the resolved `feDisplacementMap scale` for the surface — see
+ * `displacementScaleForRadius`, which derives it from the corner radius. Red is
+ * held *at* that amplitude rather than beyond it so no channel can sample further
+ * than one radius inward, which is the bound that keeps refraction from doubling
+ * unrelated content at the edge.
  */
 export function resolveChannelScales(
-  displacementScale: number,
+  baseScale: number,
   aberrationIntensity: number
 ): LiquidGlassChannelScales {
-  const base = Math.max(0, displacementScale)
+  const base = Math.max(0, baseScale)
   const step = Math.max(0, aberrationIntensity) * 0.05
   return {
     red: base,
@@ -268,6 +292,33 @@ export function resolveChannelScales(
 /** Softening applied after the channel blend; mirrors the reference falloff. */
 export function resolveAberrationBlur(aberrationIntensity: number): number {
   return Math.max(0.1, 0.5 - Math.max(0, aberrationIntensity) * 0.1)
+}
+
+/**
+ * Ceiling on the baked highlight's contribution, as a fraction of the specular
+ * setting. The map is baked at full intensity so user tuning never invalidates the
+ * raster; the filter scales it here instead.
+ *
+ * Held well below 1 because the highlight stacks with the CSS rim/sheen layers that
+ * already read `--te-lg-specular`. At full strength the two together blow the rim
+ * out to plain white, which is the exact "frosted plastic" look the material is
+ * tuned to avoid.
+ */
+export const LIQUID_GLASS_SPECULAR_MAP_CEILING = 0.55
+
+/**
+ * Alpha multiplier applied to the baked specular map. Returns 0 when the user turns
+ * the highlight off, letting the renderer drop the primitive from the chain rather
+ * than compositing a fully transparent layer.
+ */
+export function resolveSpecularMapStrength(specularOpacity: number): number {
+  // Math.min/max propagate NaN, and a NaN here would be bound straight onto an SVG
+  // attribute. Treat unusable input as "no highlight" instead.
+  if (!Number.isFinite(specularOpacity)) {
+    return specularOpacity === Number.POSITIVE_INFINITY ? LIQUID_GLASS_SPECULAR_MAP_CEILING : 0
+  }
+  const normalized = Math.min(100, Math.max(0, specularOpacity)) / 100
+  return normalized * LIQUID_GLASS_SPECULAR_MAP_CEILING
 }
 
 export function liquidGlassCssVariables(theme: LiquidGlassTheme): Record<string, string> {

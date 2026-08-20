@@ -158,6 +158,8 @@ export interface AppSettings {
   closeToTray: boolean
   /** First-run welcome wizard has been completed or skipped. */
   onboardingCompleted: boolean
+  /** Unlocks developer-only affordances, e.g. installing an unpacked plugin directory. */
+  developerMode: boolean
   startupHomePage: StartupHomePage
   trackActivationMode: TrackActivationMode
   theme: AppTheme
@@ -172,6 +174,8 @@ export interface AppSettings {
   lyricsAppearance: LyricsAppearanceSettings
   lyricsPresets: LyricsPresetConfig
   libraryFolders: string[]
+  /** Destination for provider downloads. Empty falls back to the first music library folder. */
+  downloadFolder: string
   genreSeparators: string
   watchLibrary: boolean
   /** When true, empty local/provider lyrics may fall back to LRCLIB online search. */

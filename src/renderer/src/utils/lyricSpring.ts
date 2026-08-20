@@ -21,12 +21,13 @@ const DEFAULT_MASS = 1
 const DEFAULT_DAMPING = 10
 const DEFAULT_STIFFNESS = 100
 
-/** Vertical travel settles at its destination without reversing through it. */
+/** Vertical travel is visibly underdamped so lines overshoot and settle back. */
 export const LYRIC_POS_Y_SPRING: Partial<LyricSpringParams> = {
   mass: 0.9,
-  damping: 15,
-  stiffness: 90,
-  soft: true
+  // A damping ratio around 0.72 keeps a restrained, short overshoot without
+  // making the line feel rigid.
+  damping: 13,
+  stiffness: 90
 }
 
 /**
@@ -145,11 +146,20 @@ export class LyricSpring {
 
   /** `delay` is in seconds and is what staggers the cascade across lines. */
   setTargetPosition(position: number, delay = 0): void {
-    if (delay <= 0 && Math.abs(this.targetPosition - position) < 0.001) {
-      this.queuedPosition = undefined
+    const targetIsUnchanged = Math.abs(this.targetPosition - position) < 0.001
+    if (targetIsUnchanged) {
+      if (delay <= 0 || this.queuedPosition?.position !== position) {
+        // A resize can re-issue the current target while another delayed target
+        // is pending. There is no movement to schedule in that case, so drop the
+        // stale queue; otherwise keep an identical queue and its elapsed time.
+        this.queuedPosition = undefined
+      }
       return
     }
     if (delay > 0) {
+      // Repeated ResizeObserver passes may write the same delayed target every
+      // frame. Preserve the original departure time instead of restarting it.
+      if (this.queuedPosition?.position === position) return
       this.queuedPosition = { position, time: delay }
       return
     }

@@ -116,3 +116,10 @@ test('the shell is what publishes the flag both consumers query', () => {
   assert.match(playerBar, /'data-te-playbar-hidden':/)
   assert.match(playerBar, /class="player-bar-shell"[\s\S]{0,200}v-bind="shellDataAttrs"/)
 })
+
+test('sidebar clearance is event-driven instead of a perpetual rAF loop', () => {
+  const source = readFileSync(new URL('../app/useSideMenuClearance.ts', import.meta.url), 'utf8')
+  assert.match(source, /new ResizeObserver\(/)
+  assert.match(source, /new MutationObserver\(/)
+  assert.doesNotMatch(source, /requestAnimationFrame\(tick\)/)
+})

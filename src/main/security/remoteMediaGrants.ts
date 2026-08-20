@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 export type RemoteMediaKind = 'audio' | 'image'
 
@@ -10,6 +10,8 @@ export interface RemoteMediaGrant {
 export interface RemoteMediaGrantServiceOptions {
   now?: () => number
   createToken?: () => string
+  /** Use a stable source-derived image token so Chromium can reuse its cache. */
+  deterministicImageTokens?: boolean
 }
 
 export interface RemoteMediaRequestHandlerOptions {
@@ -33,15 +35,21 @@ export class RemoteMediaGrantService {
   private readonly grants = new Map<string, StoredGrant>()
   private readonly now: () => number
   private readonly createToken: () => string
+  private readonly deterministicImageTokens: boolean
 
   constructor(options: RemoteMediaGrantServiceOptions = {}) {
     this.now = options.now ?? Date.now
     this.createToken = options.createToken ?? randomUUID
+    this.deterministicImageTokens =
+      options.deterministicImageTokens ?? options.createToken === undefined
   }
 
   grant(source: string, kind: RemoteMediaKind): string {
     const normalized = normalizeRemoteMediaSource(source)
-    const token = this.createToken()
+    const token =
+      kind === 'image' && this.deterministicImageTokens
+        ? deterministicImageToken(normalized)
+        : this.createToken()
     if (!token || /[/?#]/.test(token)) throw new Error('Remote media grant token is invalid')
     this.grants.set(token, { source: normalized, kind, lastAccessAt: this.now() })
     return `twilight-media://${kind}/${token}`
@@ -181,16 +189,28 @@ function protectValue(value: unknown, method: string, grants: RemoteMediaGrantSe
  */
 function durableImageSourceKey(key: string): string | null {
   if (key === 'cover' || key === 'coverUrl') return 'coverSource'
+  if (key === 'coverSmall') return 'coverSmallSource'
+  if (key === 'picUrl') return 'picUrlSource'
+  if (key === 'picUrlSmall') return 'picUrlSmallSource'
+  if (key === 'avatarUrl') return 'avatarUrlSource'
+  if (key === 'avatarUrlSmall') return 'avatarUrlSmallSource'
   return null
+}
+
+function deterministicImageToken(source: string): string {
+  return `img-${createHash('sha256').update(source).digest('hex').slice(0, 48)}`
 }
 
 function isImageField(key: string, method: string): boolean {
   return (
     key === 'cover' ||
     key === 'coverUrl' ||
+    key === 'coverSmall' ||
     key === 'imageUrl' ||
     key === 'picUrl' ||
+    key === 'picUrlSmall' ||
     key === 'avatarUrl' ||
+    key === 'avatarUrlSmall' ||
     key === 'coverImgUrl' ||
     key === 'blurPicUrl' ||
     (key === 'url' && method === 'getQrImage')

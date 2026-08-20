@@ -390,7 +390,7 @@ function toggleAdaptiveTone(): void {
       <div class="setting-item">
         <div class="setting-copy">
           <strong>折射强度</strong>
-          <span>边缘弯曲背景的位移量，越高玻璃感越强。</span>
+          <span>边缘弯曲背景的强度，100% 为真实透镜的最大弯曲量。</span>
         </div>
         <div class="range-pill">
           <span>折射</span>
@@ -398,7 +398,7 @@ function toggleAdaptiveTone(): void {
             class="range-input"
             type="range"
             min="0"
-            max="140"
+            max="100"
             :value="activeLiquidGlassTheme.displacementScale"
             @input="
               setLiquidGlassField(
@@ -410,7 +410,7 @@ function toggleAdaptiveTone(): void {
           <EditableRangeValue
             :value="activeLiquidGlassTheme.displacementScale"
             :min="0"
-            :max="140"
+            :max="100"
             aria-label="编辑折射强度"
             @change="setLiquidGlassField('displacementScale', $event)"
           />

@@ -25,6 +25,21 @@ const remoteCoverGrantInflight = new Map<string, Promise<string | null>>()
 const localCoverDataCache = new Map<string, string>()
 const localCoverDataInflight = new Map<string, Promise<string | null>>()
 
+const LOCAL_COVER_DATA_CACHE_LIMIT = 128
+
+/** Insert a materialized cover while keeping the renderer cache bounded. */
+function cacheLocalCoverData(handle: string, dataUrl: string): void {
+  // Re-setting an existing key should make it the newest entry for FIFO
+  // eviction, avoiding eviction of a frequently reused cover.
+  localCoverDataCache.delete(handle)
+  localCoverDataCache.set(handle, dataUrl)
+  while (localCoverDataCache.size > LOCAL_COVER_DATA_CACHE_LIMIT) {
+    const oldest = localCoverDataCache.keys().next().value
+    if (typeof oldest !== 'string') break
+    localCoverDataCache.delete(oldest)
+  }
+}
+
 function isTwilightMediaImageHandle(handle: string): boolean {
   return /^twilight-media:\/\/image\//i.test(handle.trim())
 }
@@ -126,18 +141,26 @@ async function materializeLocalCoverForDisplay(handle: string): Promise<string |
     try {
       const api = (
         globalThis as {
-          window?: { api?: { data?: { getCover?: (src: string) => Promise<string | null> } } }
+          window?: {
+            api?: {
+              data?: {
+                getCover?: (src: string) => Promise<string | Uint8Array | null>
+              }
+            }
+          }
         }
       ).window?.api?.data
       if (api?.getCover) {
-        const dataUrl = await api.getCover(bare)
-        if (typeof dataUrl === 'string' && dataUrl.startsWith('data:')) {
-          localCoverDataCache.set(bare, dataUrl)
-          if (localCoverDataCache.size > 128) {
-            const first = localCoverDataCache.keys().next().value
-            if (first) localCoverDataCache.delete(first)
-          }
+        const response = await api.getCover(bare)
+        if (typeof response === 'string' && response.startsWith('data:')) {
+          const dataUrl = response
+          cacheLocalCoverData(bare, dataUrl)
           return dataUrl
+        }
+        const materialized = await coverBytesToDataUrl(response, bare)
+        if (materialized) {
+          cacheLocalCoverData(bare, materialized)
+          return materialized
         }
       }
 
@@ -148,7 +171,7 @@ async function materializeLocalCoverForDisplay(handle: string): Promise<string |
         const blob = await response.blob()
         const dataUrl = await blobToDataUrl(blob)
         if (dataUrl) {
-          localCoverDataCache.set(bare, dataUrl)
+          cacheLocalCoverData(bare, dataUrl)
           return dataUrl
         }
       }
@@ -162,6 +185,25 @@ async function materializeLocalCoverForDisplay(handle: string): Promise<string |
 
   localCoverDataInflight.set(bare, request)
   return request
+}
+
+async function coverBytesToDataUrl(
+  value: unknown,
+  handle: string
+): Promise<string | null> {
+  let bytes: Uint8Array | null = null
+  if (value instanceof ArrayBuffer) bytes = new Uint8Array(value)
+  else if (ArrayBuffer.isView(value)) {
+    bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+  }
+  if (!bytes || bytes.byteLength === 0) return null
+  const extension = handle.split(/[?#]/, 1)[0].toLowerCase()
+  const type = extension.endsWith('.png')
+    ? 'image/png'
+    : extension.endsWith('.webp')
+      ? 'image/webp'
+      : 'image/jpeg'
+  return blobToDataUrl(new Blob([bytes as unknown as BlobPart], { type }))
 }
 
 function blobToDataUrl(blob: Blob): Promise<string | null> {

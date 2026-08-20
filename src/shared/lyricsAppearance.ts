@@ -13,11 +13,12 @@ export type LyricsFocusLineCount = 'all' | 1 | 3 | 5
 export type LyricsBackgroundStyle = 'none' | 'solid' | 'glass' | 'gradient'
 export type LyricsHighlightEffect = 'none' | 'shadow' | 'glow' | 'outline'
 export type LyricsFontStyle = 'normal' | 'italic'
-export type LyricsStyleTarget = 'normal' | 'active' | 'translation' | 'romanization'
+export type LyricsStyleTarget = 'normal' | 'active' | 'harmony' | 'translation' | 'romanization'
 
 export const LYRICS_STYLE_TARGETS: readonly LyricsStyleTarget[] = [
   'normal',
   'active',
+  'harmony',
   'translation',
   'romanization'
 ]
@@ -145,7 +146,7 @@ export const LYRICS_RANGES = {
   cascadeSpeed: { min: 0, max: 100, step: 5 }
 } as const satisfies Record<string, LyricsRange>
 
-export const LYRICS_APPEARANCE_SCHEMA_VERSION = 3
+export const LYRICS_APPEARANCE_SCHEMA_VERSION = 5
 
 /**
  * `cascadeSpeed` is a speed, so it maps to a delay multiplier geometrically:
@@ -185,27 +186,36 @@ export const DEFAULT_LYRICS_TEXT_STYLES: Record<LyricsStyleTarget, LyricsTextSty
     highlightColor: '#fff8df',
     highlightIntensity: 32
   },
+  harmony: {
+    ...BASE_TEXT_STYLE,
+    fontSize: 14,
+    fontWeight: 500,
+    lineHeight: 1.3,
+    opacity: 62,
+    highlightIntensity: 20
+  },
   translation: {
     ...BASE_TEXT_STYLE,
+    fontSize: 14,
     fontWeight: 500,
-    lineHeight: 1.45,
+    lineHeight: 1.3,
     opacity: 82,
     highlightIntensity: 24
   },
   romanization: {
     ...BASE_TEXT_STYLE,
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: 400,
-    lineHeight: 1.35,
+    lineHeight: 1.25,
     opacity: 70,
     highlightIntensity: 24
   }
 }
 
 /**
- * Every default here reproduces what the page rendered before these knobs
- * existed, so upgrading changes nothing on screen. Opinionated looks live in
- * the presets, not in the defaults.
+ * The default profile keeps auxiliary layers compact like the main playback
+ * view. Migration below preserves explicitly customized legacy profiles; the
+ * opinionated alternatives still live in presets rather than this baseline.
  */
 export const DEFAULT_LYRICS_APPEARANCE: LyricsAppearanceSettings = {
   schemaVersion: LYRICS_APPEARANCE_SCHEMA_VERSION,
@@ -235,6 +245,7 @@ export const DEFAULT_LYRICS_APPEARANCE: LyricsAppearanceSettings = {
   styles: {
     normal: { ...DEFAULT_LYRICS_TEXT_STYLES.normal },
     active: { ...DEFAULT_LYRICS_TEXT_STYLES.active },
+    harmony: { ...DEFAULT_LYRICS_TEXT_STYLES.harmony },
     translation: { ...DEFAULT_LYRICS_TEXT_STYLES.translation },
     romanization: { ...DEFAULT_LYRICS_TEXT_STYLES.romanization }
   }
@@ -331,6 +342,20 @@ function normalizeTextStyle(
   }
 }
 
+function isSchema3DefaultAuxiliaryStyle(
+  target: 'translation' | 'romanization',
+  raw: unknown
+): boolean {
+  const legacyDefault: LyricsTextStyle =
+    target === 'translation'
+      ? { ...DEFAULT_LYRICS_TEXT_STYLES.translation, fontSize: 18, lineHeight: 1.45 }
+      : { ...DEFAULT_LYRICS_TEXT_STYLES.romanization, fontSize: 15, lineHeight: 1.35 }
+  const normalized = normalizeTextStyle(raw, legacyDefault)
+  return (Object.keys(legacyDefault) as Array<keyof LyricsTextStyle>).every(
+    (key) => normalized[key] === legacyDefault[key]
+  )
+}
+
 function migrateLegacyStyles(
   value: Record<string, unknown>
 ): Record<LyricsStyleTarget, LyricsTextStyle> {
@@ -371,6 +396,14 @@ function migrateLegacyStyles(
       colorMode,
       color: activeColor,
       highlightColor: normalizeColor(value.karaokeColor, DEFAULT_LYRICS_APPEARANCE.karaokeColor)
+    },
+    harmony: {
+      ...DEFAULT_LYRICS_TEXT_STYLES.harmony,
+      fontFamily,
+      fontSize: clampRange(fontSize - 4, LYRICS_RANGES.fontSize, fontSize),
+      align,
+      colorMode,
+      color: textColor
     },
     translation: {
       ...DEFAULT_LYRICS_TEXT_STYLES.translation,
@@ -454,6 +487,14 @@ export function normalizeLyricsAppearance(
       migratedStyles[target],
       migrateLegacyDefaultGlow
     )
+    if (
+      storedVersion === 3 &&
+      (target === 'translation' || target === 'romanization') &&
+      isSchema3DefaultAuxiliaryStyle(target, stylesValue[target])
+    ) {
+      styles[target].fontSize = DEFAULT_LYRICS_TEXT_STYLES[target].fontSize
+      styles[target].lineHeight = DEFAULT_LYRICS_TEXT_STYLES[target].lineHeight
+    }
   }
 
   return {
@@ -543,7 +584,7 @@ function normalizeInactiveOpacity(
   legacy: Record<string, unknown>,
   storedVersion: number
 ): number {
-  if (storedVersion < LYRICS_APPEARANCE_SCHEMA_VERSION) {
+  if (storedVersion < 3) {
     if (value.inactiveOpacity === LEGACY_INERT_INACTIVE_OPACITY) {
       return DEFAULT_LYRICS_APPEARANCE.inactiveOpacity
     }
@@ -590,6 +631,7 @@ export function syncLegacyLyricsAppearance(
   if (patch.lineHeight !== undefined) next.styles.normal.lineHeight = patch.lineHeight
   if (patch.textColor !== undefined) {
     next.styles.normal.color = patch.textColor
+    next.styles.harmony.color = patch.textColor
     next.styles.translation.color = patch.textColor
     next.styles.romanization.color = patch.textColor
   }

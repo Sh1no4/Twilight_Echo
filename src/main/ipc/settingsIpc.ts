@@ -19,8 +19,10 @@ import { updateAppSettings } from '../audio/state'
 import { getPlayerShortcutStatuses } from '../integrations/shortcutsTray'
 import {
   grantUserSelectedCacheRoot,
+  grantUserSelectedDownloadRoot,
   grantUserSelectedLibraryRoot,
   resolveAuthorizedCacheRoot,
+  resolveAuthorizedDownloadRootSetting,
   resolveAuthorizedImpulseResponseFile,
   resolveAuthorizedLibraryRootSettings
 } from '../security/localPaths'
@@ -54,6 +56,12 @@ async function authorizeSettingsPathPatch(
   if (Object.prototype.hasOwnProperty.call(patch, 'libraryFolders')) {
     authorizedPatch.libraryFolders = await resolveAuthorizedLibraryRootSettings(
       normalizedSettings.libraryFolders
+    )
+  }
+
+  if (Object.prototype.hasOwnProperty.call(patch, 'downloadFolder')) {
+    authorizedPatch.downloadFolder = await resolveAuthorizedDownloadRootSetting(
+      normalizedSettings.downloadFolder
     )
   }
 
@@ -174,6 +182,21 @@ export function registerSettingsIpc(ipcMain: IpcMain): void {
     if (result.canceled || result.filePaths.length === 0) return null
     ensureMusicCacheDirectories(result.filePaths[0])
     return await grantUserSelectedCacheRoot(result.filePaths[0])
+  })
+
+  ipcMain.handle('settings:chooseDownloadFolder', async (event) => {
+    assertTrustedIpcSender(event, 'settings IPC')
+    const win = BrowserWindow.getFocusedWindow() ?? runtime.mainWindow
+    const options: Electron.OpenDialogOptions = {
+      title: '选择下载目录',
+      properties: ['openDirectory', 'createDirectory']
+    }
+    const result =
+      win && !win.isDestroyed()
+        ? await dialog.showOpenDialog(win, options)
+        : await dialog.showOpenDialog(options)
+    if (result.canceled || result.filePaths.length === 0) return null
+    return await grantUserSelectedDownloadRoot(result.filePaths[0])
   })
 
   ipcMain.handle('settings:getCacheSize', async (event) => {

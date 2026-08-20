@@ -423,9 +423,9 @@ function playPersonalizedStream(section: RecSection | null): void {
           >
             <span class="shelf-cover">
               <CoverImg
-                v-if="playlist.cover"
-                :cover="playlist.cover"
-                :cover-source="playlist.coverSource"
+                v-if="playlist.coverSmall || playlist.cover"
+                :cover="playlist.coverSmall || playlist.cover"
+                :cover-source="playlist.coverSmallSource || playlist.coverSource"
                 alt=""
               />
               <span v-else class="shelf-cover-empty"><i class="pi pi-list"></i></span>

@@ -2404,6 +2404,35 @@ test('dashboard memo: byIdMap not rebuilt when only listeningStats changes', () 
   assert.ok(mapBuildCount > initialBuildCount, 'byIdMap should rebuild when tracks change')
 })
 
+test('library display does not subscribe to listening stats unless sorting by last-played', () => {
+  const songListSource = readFileSync(
+    new URL('../components/SongList.vue', import.meta.url),
+    'utf8'
+  )
+  assert.match(
+    songListSource,
+    /if \(libraryViewState\.value\.sortKey !== 'lastPlayed'\) return EMPTY_LAST_PLAYED_BY_TRACK_ID/
+  )
+
+  const sortKey = vue.ref<'title' | 'lastPlayed'>('title')
+  const stats = vue.shallowRef({ tracks: {} as Record<string, unknown> })
+  const EMPTY_LAST_PLAYED_BY_TRACK_ID: ReadonlyMap<string, number> = new Map()
+  let mapBuilds = 0
+  const map = vue.computed(() => {
+    if (sortKey.value !== 'lastPlayed') return EMPTY_LAST_PLAYED_BY_TRACK_ID
+    mapBuilds += 1
+    return new Map(Object.keys(stats.value.tracks).map((id) => [id, 1]))
+  })
+  void map.value
+  stats.value = { tracks: { one: {} } }
+  void map.value
+  assert.equal(mapBuilds, 0)
+
+  sortKey.value = 'lastPlayed'
+  void map.value
+  assert.equal(mapBuilds, 1)
+})
+
 // Wave 5: pointermove rAF throttle — pure logic extracted from SongList.vue
 // (rAF/DOM not available in bare Node; throttle behavior degraded to typecheck+build)
 

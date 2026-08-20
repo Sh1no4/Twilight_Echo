@@ -333,3 +333,153 @@ test('online companion translation does not overwrite an existing translation', 
   assert.equal(result.translatedLyrics, '[00:01.00]Embedded translation')
   assert.equal(result.translatedLyricsSource, 'embedded')
 })
+
+test('automatic resolution prefers AMLL after a local miss and before provider', async () => {
+  const calls: string[] = []
+  const result = await resolveLyricsWithSources({
+    track: {
+      ...localTrack,
+      metadataMatch: { providerId: 'ncm', trackId: '12345', confidence: 'high', score: 1 }
+    },
+    loadLocalLyrics: async () => {
+      calls.push('local')
+      return null
+    },
+    loadAmlTtml: async () => {
+      calls.push('amll')
+      return '<tt><body><p begin="00:01.00" end="00:02.00">AMLL</p></body></tt>'
+    },
+    loadProviderLyrics: async () => {
+      calls.push('provider')
+      return { lyrics: '[00:01.00]Provider', translatedLyrics: null }
+    }
+  })
+  assert.equal(result.lyricsSource, 'amll')
+  assert.equal(result.lyrics?.includes('<tt>'), true)
+  assert.deepEqual(calls, ['local', 'amll'])
+})
+
+test('automatic resolution replaces existing NCM provider lyrics with AMLL', async () => {
+  let providerCalls = 0
+  const ttml = '<tt><body><p begin="00:01.00" end="00:02.00" ttm:agent="v1">AMLL</p></body></tt>'
+  const result = await resolveLyricsWithSources({
+    track: {
+      ...localTrack,
+      id: 'ncm:28996501',
+      source: 'ncm',
+      ncmSongId: 28996501,
+      lyrics: '[0,1000](0,500,0)Provider words',
+      translatedLyrics: '[00:00.00]Provider translation',
+      lyricsSource: 'provider',
+      translatedLyricsSource: 'provider'
+    },
+    loadAmlTtml: async () => ttml,
+    loadProviderLyrics: async () => {
+      providerCalls++
+      return { lyrics: '[00:01.00]Provider', translatedLyrics: '[00:01.00]Provider translation' }
+    }
+  })
+
+  assert.equal(providerCalls, 0)
+  assert.equal(result.lyrics, ttml)
+  assert.equal(result.lyricsSource, 'amll')
+  assert.equal(result.translatedLyrics, null)
+  assert.equal(result.translatedLyricsSource, null)
+})
+
+test('unmarked NCM lyrics are treated as provider data and remain AMLL-replaceable', async () => {
+  const ttml = '<tt><body><p begin="00:01.00" end="00:02.00">AMLL</p></body></tt>'
+  const result = await resolveLyricsWithSources({
+    track: {
+      ...localTrack,
+      id: 'ncm:28996501',
+      source: 'ncm',
+      ncmSongId: 28996501,
+      lyrics: '[00:01.00]Legacy NCM lyric',
+      translatedLyrics: '[00:01.00]Legacy NCM translation'
+    },
+    loadAmlTtml: async () => ttml
+  })
+
+  assert.equal(result.lyrics, ttml)
+  assert.equal(result.lyricsSource, 'amll')
+  assert.equal(result.translatedLyrics, null)
+})
+
+test('automatic AMLL miss preserves existing provider lyrics as the fallback', async () => {
+  const result = await resolveLyricsWithSources({
+    track: {
+      ...localTrack,
+      id: 'ncm:28996501',
+      source: 'ncm',
+      ncmSongId: 28996501,
+      lyrics: '[00:01.00]Provider lyric',
+      translatedLyrics: '[00:01.00]Provider translation',
+      lyricsSource: 'provider',
+      translatedLyricsSource: 'provider'
+    },
+    loadAmlTtml: async () => null
+  })
+
+  assert.equal(result.lyrics, '[00:01.00]Provider lyric')
+  assert.equal(result.lyricsSource, 'provider')
+  assert.equal(result.translatedLyrics, '[00:01.00]Provider translation')
+  assert.equal(result.translatedLyricsSource, 'provider')
+})
+
+test('automatic AMLL never overwrites embedded lyrics', async () => {
+  let amlCalls = 0
+  const result = await resolveLyricsWithSources({
+    track: {
+      ...localTrack,
+      metadataMatch: { providerId: 'ncm', trackId: '28996501', confidence: 'high', score: 1 },
+      lyrics: '[00:01.00]Embedded lyric',
+      lyricsSource: 'embedded'
+    },
+    loadAmlTtml: async () => {
+      amlCalls++
+      return '<tt />'
+    }
+  })
+
+  assert.equal(amlCalls, 0)
+  assert.equal(result.lyrics, '[00:01.00]Embedded lyric')
+  assert.equal(result.lyricsSource, 'embedded')
+})
+
+test('automatic local lyrics replace a lower-priority provider baseline before AMLL', async () => {
+  let amlCalls = 0
+  const result = await resolveLyricsWithSources({
+    track: {
+      ...localTrack,
+      lyrics: '[00:01.00]Provider lyric',
+      lyricsSource: 'provider',
+      metadataMatch: { providerId: 'ncm', trackId: '28996501', confidence: 'high', score: 1 }
+    },
+    loadLocalLyrics: async () => '[00:01.00]Local lyric',
+    loadAmlTtml: async () => {
+      amlCalls++
+      return '<tt />'
+    }
+  })
+
+  assert.equal(amlCalls, 0)
+  assert.equal(result.lyrics, '[00:01.00]Local lyric')
+  assert.equal(result.lyricsSource, 'local')
+})
+
+test('low-confidence local metadata never requests AMLL', async () => {
+  let amlCalls = 0
+  const result = await resolveLyricsWithSources({
+    track: {
+      ...localTrack,
+      metadataMatch: { providerId: 'ncm', trackId: '12345', confidence: 'medium', score: 0.5 }
+    },
+    loadAmlTtml: async () => {
+      amlCalls++
+      return '<tt />'
+    }
+  })
+  assert.equal(amlCalls, 0)
+  assert.equal(result.lyrics, null)
+})

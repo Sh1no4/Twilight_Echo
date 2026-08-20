@@ -108,6 +108,7 @@ interface RowState {
   lastOpacity: number | null
   lastBlur: number | null
   lastIntrinsicHeight: number | null
+  ready: boolean
   inSight: boolean
 }
 
@@ -269,7 +270,10 @@ export function createLyricViewportController(options: LyricViewportControllerOp
     let settled = true
 
     for (const row of rows.values()) {
-      row.element.style.setProperty('--lyric-line-ready', '1')
+      if (!row.ready) {
+        row.ready = true
+        row.element.style.setProperty('--lyric-line-ready', '1')
+      }
       const top = row.posY.getCurrentPosition()
       const scale = row.scale.getCurrentPosition()
       if (!row.posY.arrived() || !row.scale.arrived()) settled = false
@@ -390,6 +394,7 @@ export function createLyricViewportController(options: LyricViewportControllerOp
       lastOpacity: null,
       lastBlur: null,
       lastIntrinsicHeight: null,
+      ready: false,
       inSight: true
     })
   }
@@ -470,7 +475,10 @@ export function createLyricViewportController(options: LyricViewportControllerOp
       () => {
         cancelResize = null
         if (!manualBrowse && activeTrackId && stage) {
-          applyLayout(mode === 'snap', true)
+          // A spring resize is a geometry remeasure, not a seek. Preserve the
+          // per-line cascade so ResizeObserver cannot turn a staggered push into
+          // a rigid block; only an explicit snap should suppress delays.
+          applyLayout(mode === 'snap', mode === 'snap')
         }
       },
       FRAME_FALLBACK_MS,

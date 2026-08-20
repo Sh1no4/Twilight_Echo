@@ -308,9 +308,9 @@ function emitPage(nextOffset: number): void {
         >
           <div class="disc-card-media">
             <CoverImg
-              v-if="playlist.cover"
-              :cover="playlist.cover"
-              :cover-source="playlist.coverSource"
+              v-if="playlist.coverSmall || playlist.cover"
+              :cover="playlist.coverSmall || playlist.cover"
+              :cover-source="playlist.coverSmallSource || playlist.coverSource"
               class="disc-card-img"
               alt=""
             />
