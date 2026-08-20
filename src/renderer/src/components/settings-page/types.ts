@@ -52,6 +52,7 @@ export type BooleanSettingKey =
   | 'smtcEnabled'
   | 'discordRpcEnabled'
   | 'remoteControlEnabled'
+  | 'developerMode'
 
 export const sections: { key: SectionKey; label: string; icon: string }[] = [
   { key: 'general', label: '常规', icon: 'pi pi-sliders-h' },
@@ -315,6 +316,11 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = (
       title: '插件设置',
       match: '插件设置',
       terms: '插件 plugin 面板 设置 扩展'
+    },
+    {
+      section: 'general',
+      title: '开发者模式',
+      terms: '开发者 开发 模式 developer dev debug 调试 插件 目录 文件夹 未打包 unpacked 本地安装'
     },
     { section: 'general', title: '代理模式', terms: '代理 proxy 模式 网络 系统 关闭' },
     { section: 'general', title: '代理地址', terms: '代理 proxy 地址 host 服务器' },

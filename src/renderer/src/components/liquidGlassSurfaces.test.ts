@@ -147,7 +147,111 @@ test('all SVG filters remain defined once and referenced from their intended sur
   assert.match(defs, /:id="LIQUID_GLASS_EXPANDED_CARD_FILTER_ID"[\s\S]*expandedChannelScales/)
   assert.match(settingsStyle, /filter: url\(#te-lg-card\)/)
   assert.match(dashboardStyle, /filter: var\(--home-lg-filter\)/)
-  assert.match(playerBarStyle, /filter: url\(#te-lg-playbar\)/)
+  // The playbar warp layer paints only its own gradients, so `filter` would have
+  // nothing textured to bend. The chain has to sit in the *backdrop* list, where
+  // the compositor hands it the scrolling content behind the bar.
+  assert.match(playerBarStyle, /backdrop-filter:[^;]*url\(#te-lg-playbar\)/)
+  assert.ok(
+    !/(^|[^-])filter: url\(#te-lg-playbar\)/m.test(playerBarStyle),
+    'playbar must not reference the chain from `filter`, where it is a visual no-op'
+  )
+})
+
+test('every filter chain lands the baked highlight after refraction resolves', () => {
+  // The highlight is a lerp toward white, so it has to sit on top of the resolved
+  // refraction rather than being displaced along with the source.
+  const chains = defs.match(/<filter[\s\S]*?<\/filter>/g) ?? []
+  assert.equal(chains.length, 4, 'all four shared chains must be present')
+
+  for (const chain of chains) {
+    const refracted = chain.indexOf('result="REFRACTED"')
+    const specular = chain.indexOf('result="SPECULAR_RAW"')
+    assert.ok(refracted >= 0, 'refraction must be a named result')
+    assert.ok(specular > refracted, 'the highlight must composite after refraction')
+    // The map is a full rectangle; unclipped it fills the rounded corners and the
+    // surface reads as square.
+    assert.match(
+      chain,
+      /<feComposite in="SPECULAR" in2="SourceGraphic" operator="in" result="SPECULAR_CLIPPED" \/>/
+    )
+    assert.match(chain, /<feBlend in="REFRACTED" in2="SPECULAR_CLIPPED" mode="screen" \/>/)
+    // Co-registration with the displacement map depends on identical subregion
+    // attributes, since both are resolved against the same primitive subregion.
+    // `none` rather than `slice`: the rasters are now baked at the surface's own
+    // measured size, so any aspect-preserving fit would re-introduce the crop that
+    // put the corner arc off the visible corner.
+    assert.match(chain, /result="SPECULAR_RAW"\s*\n\s*preserveAspectRatio="none"/)
+  }
+})
+
+test('no chain masks refraction against an feImage-derived alpha', () => {
+  // Chromium silently yields an empty result for `feComposite operator="in"` whose
+  // `in2` traces back to an `feImage`, when the filter runs on the *backdrop* path.
+  // It then abandons the whole `backdrop-filter` and paints the raw backdrop, so
+  // the blur disappears too — the surface reads as plain unfiltered content. That
+  // is exactly the failure these chains shipped with: covers behind the playbar
+  // stayed pin-sharp.
+  //
+  // Masking here was redundant anyway. The displacement map's offset already
+  // decays to zero by `radius` depth, so the middle of a surface is optically
+  // clear without any composite gymnastics.
+  //
+  // `in2="SourceGraphic"` is a different case and is fine — verified by pixel
+  // probe — which is why the specular clip is still allowed.
+  const chains = defs.match(/<filter[\s\S]*?<\/filter>/g) ?? []
+  assert.equal(chains.length, 4)
+
+  for (const chain of chains) {
+    assert.doesNotMatch(
+      chain,
+      /EDGE_MASK|EDGE_INTENSITY|INVERTED_MASK|CENTER_CLEAN/,
+      'the map-derived edge mask makes the whole backdrop-filter a no-op'
+    )
+    for (const composite of chain.match(/<feComposite[\s\S]*?\/>/g) ?? []) {
+      const in2 = /in2="([^"]+)"/.exec(composite)?.[1]
+      assert.equal(
+        in2,
+        'SourceGraphic',
+        `feComposite in2="${in2}" derives from the map and empties the chain on the backdrop path`
+      )
+    }
+  }
+})
+
+test('a zero-strength highlight drops out of the chain instead of compositing a no-op', () => {
+  for (const flag of [
+    'cardSpecularActive',
+    'expandedSpecularActive',
+    'homeSpecularActive',
+    'playbarSpecularActive'
+  ]) {
+    assert.match(defs, new RegExp(`<template v-if="${flag}">`))
+    // Both halves matter: zero strength, and an empty URL from a canvas-less context.
+    assert.match(defs, new RegExp(`const ${flag} = computed\\(`))
+  }
+  assert.match(defs, /resolveSpecularMapStrength/)
+  // Both rasters are baked from the measured geometry, so the highlight lands on
+  // exactly the rim the refraction bends.
+  assert.match(defs, /getSpecularMapUrl\(playbar\)/)
+  assert.match(defs, /getSpecularMapUrl\(card\)/)
+})
+
+test('the expanded and dashboard chains scale the highlight by their own profile', () => {
+  const chains = defs.match(/<filter[\s\S]*?<\/filter>/g) ?? []
+  const byId = (constant: string): string => {
+    const chain = chains.find((candidate) => candidate.includes(`:id="${constant}"`))
+    assert.ok(chain, `${constant} chain must exist`)
+    return chain
+  }
+
+  assert.match(byId('LIQUID_GLASS_CARD_FILTER_ID'), /:slope="specularStrength"/)
+  assert.match(byId('LIQUID_GLASS_PLAYBAR_FILTER_ID'), /:slope="specularStrength"/)
+  // Broad content panes turn to white plastic long before compact chrome does.
+  assert.match(byId('LIQUID_GLASS_EXPANDED_CARD_FILTER_ID'), /:slope="expandedSpecularStrength"/)
+  assert.match(byId('LIQUID_GLASS_HOME_CARD_FILTER_ID'), /:slope="homeSpecularStrength"/)
+  // The playbar's short axis needs the wide-strip bake, not the square one.
+  assert.match(byId('LIQUID_GLASS_PLAYBAR_FILTER_ID'), /:href="playbarSpecularUrl"/)
+  assert.match(byId('LIQUID_GLASS_CARD_FILTER_ID'), /:href="cardSpecularUrl"/)
 })
 
 test('playbar pointer tracking remains element-local', () => {

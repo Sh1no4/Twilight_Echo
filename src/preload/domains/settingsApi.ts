@@ -27,8 +27,9 @@ export const settingsApi = {
   get: (): Promise<SettingsSnapshot> => ipcRenderer.invoke('settings:get'),
   update: (patch: Partial<AppSettings>): Promise<SettingsSnapshot> =>
     ipcRenderer.invoke('settings:update', JSON.parse(JSON.stringify(patch))),
-  chooseCacheFolder: (): Promise<string | null> =>
-    ipcRenderer.invoke('settings:chooseCacheFolder'),
+  chooseCacheFolder: (): Promise<string | null> => ipcRenderer.invoke('settings:chooseCacheFolder'),
+  chooseDownloadFolder: (): Promise<string | null> =>
+    ipcRenderer.invoke('settings:chooseDownloadFolder'),
   chooseBackgroundImage: (): Promise<string | null> =>
     ipcRenderer.invoke('settings:chooseBackgroundImage'),
   importBackgroundImage: (fileName: string, data: ArrayBuffer): Promise<string | null> =>

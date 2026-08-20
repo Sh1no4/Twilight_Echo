@@ -4,7 +4,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 
-// fonts: MiSans SC subsets (~8MB) + full MiSans faces (~20MB) + Latin UI fonts
+// fonts: MiSans SC subsets + Latin UI fonts
 const BUDGETS = Object.freeze({
   jsChunk: 900 * 1024,
   cssChunk: 400 * 1024,
@@ -78,9 +78,6 @@ function assertRendererBudgets(rendererDir) {
       /^(Lora|JetBrainsMono|SpaceGrotesk)-latin-wght-normal\.woff2$/i.test(rel) ||
       /^OFL-(Inter|PlusJakartaSans|Lora|JetBrainsMono|SpaceGrotesk)\.txt$/i.test(rel) ||
       /^misans\/(MiSans-(Regular|Medium|Bold|Heavy)\.[\w-]+\.woff2|misans\.css|LICENSE)$/i.test(
-        rel
-      ) ||
-      /^misans\/full\/(MiSans-(Regular|Medium|Bold|Heavy)\.woff2|misans-full\.css|README\.md)$/i.test(
         rel
       )
     assert.ok(ok, `Unexpected public font asset: ${rel}`)

@@ -109,6 +109,7 @@ agent-tools/
 !.vscode/tasks.json
 !.vscode/launch.json
 .codex-tools/
+.codex/
 .claude/
 .agents/
 .gemini/
@@ -164,6 +165,3 @@ resources/sponsor/wechat.png
 !resources/sponsor/
 !resources/sponsor/alipay.jpg
 !resources/sponsor/wechat.png
-
-# Optional full MiSans faces (multi-MB; keep local)
-resources/font/misans/full/*.woff2

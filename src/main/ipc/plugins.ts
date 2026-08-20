@@ -7,6 +7,10 @@ import { PluginIndexService, resolvePluginIndexUrl } from '../plugins/indexServi
 import { buildPluginProxyEnv } from '../plugins/proxyBootstrap'
 import { ProviderDownloadManager } from '../plugins/providerDownloadManager.ts'
 import { isTwilightMediaProviderMethod } from '../plugins/providerRouting'
+import {
+  assertLocalPluginInstallSourceAllowed,
+  normalizeLocalPluginInstallSourceKind
+} from '../plugins/installDialog.ts'
 import type { TwilightMediaProviderMethod, TwilightPluginUninstallOptions } from '../plugins/types'
 import {
   bundledPluginPath,
@@ -21,6 +25,7 @@ import {
   stringifyJsonForIpcStorage
 } from '../security/ipcValidation.ts'
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
+import { resolveConfiguredDownloadRoot } from '../security/localPaths.ts'
 import { reconcileThemeAfterPluginChange } from './themes.ts'
 import {
   PROVIDER_DOWNLOAD_CHANGED_CHANNEL,
@@ -97,6 +102,7 @@ export function setupPluginIpc(): void {
   runtime.providerDownloadManager = new ProviderDownloadManager({
     pluginManager: runtime.pluginManager,
     getLibraryFolders: () => runtime.appSettings.libraryFolders,
+    resolveDownloadRoot: () => resolveConfiguredDownloadRoot(runtime.appSettings.downloadFolder),
     libraryIndexCoordinator: () => runtime.localLibraryIndexCoordinator,
     onChanged: (tasks) => {
       runtime.mainWindow?.webContents.send(PROVIDER_DOWNLOAD_CHANGED_CHANNEL, tasks)
@@ -142,10 +148,12 @@ export function setupPluginIpc(): void {
       normalizeIpcString(sourcePath, 'plugin package path', MAX_IPC_PATH_LENGTH)
     )
   })
-  ipcMain.handle('plugins:chooseAndInstall', async (event) => {
+  ipcMain.handle('plugins:chooseAndInstall', async (event, kind?: unknown) => {
     assertTrustedIpcSender(event, 'plugin IPC')
     await runtime.pluginManagerReady
-    return await runtime.pluginManager!.chooseAndInstall()
+    const sourceKind = normalizeLocalPluginInstallSourceKind(kind)
+    assertLocalPluginInstallSourceAllowed(sourceKind, runtime.appSettings.developerMode === true)
+    return await runtime.pluginManager!.chooseAndInstall(sourceKind)
   })
   ipcMain.handle('plugins:enable', async (_event, id: string) => {
     assertTrustedIpcSender(_event, 'plugin IPC')

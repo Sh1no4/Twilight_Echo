@@ -46,6 +46,10 @@ import {
   runFinalPluginPackageTrustBoundary
 } from './installTrust.ts'
 import {
+  buildLocalPluginInstallDialogOptions,
+  type LocalPluginInstallSourceKind
+} from './installDialog.ts'
+import {
   assertPluginPackageFileSize,
   assertPluginTreeSafe,
   extractPluginPackage,
@@ -410,15 +414,10 @@ export class TwilightPluginManager extends EventEmitter {
     }
   }
 
-  async chooseAndInstall(): Promise<TwilightPluginInstallResult | null> {
-    const result = await dialog.showOpenDialog({
-      title: '安装 Twilight Echo 插件',
-      properties: ['openFile', 'openDirectory'],
-      filters: [
-        { name: 'Twilight Echo Plugin', extensions: ['tep'] },
-        { name: 'All Files', extensions: ['*'] }
-      ]
-    })
+  async chooseAndInstall(
+    kind: LocalPluginInstallSourceKind = 'package'
+  ): Promise<TwilightPluginInstallResult | null> {
+    const result = await dialog.showOpenDialog(buildLocalPluginInstallDialogOptions(kind))
     if (result.canceled || result.filePaths.length === 0) return null
     return this.installFromPath(result.filePaths[0])
   }

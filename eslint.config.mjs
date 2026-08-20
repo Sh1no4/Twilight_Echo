@@ -171,6 +171,7 @@ export default defineConfig(
       'src/renderer/src/utils/autoHideScrollbars.ts',
       'src/renderer/src/utils/animationFrameFallback.ts',
       'src/renderer/src/utils/liquidGlassDisplacement.ts',
+      'src/renderer/src/utils/liquidGlassSpecular.ts',
       'src/renderer/src/utils/lyricViewportController.ts',
       'src/renderer/src/utils/themePreviewScheduler.ts',
       'src/renderer/src/utils/useSmoothedValue.ts',

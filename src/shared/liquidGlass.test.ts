@@ -117,9 +117,9 @@ test('normalization never aliases the exported default objects', () => {
   // Values track the tuned defaults in liquidGlass.ts. The point of the test is
   // that mutating a normalized copy never writes through to the exported
   // constants, so these read the real defaults rather than a placeholder 0.
-  assert.equal(DEFAULT_LIQUID_GLASS_LIGHT.blurAmount, 12)
-  assert.equal(DEFAULT_LIQUID_GLASS_DARK.blurAmount, 14)
-  assert.equal(DEFAULT_LIQUID_GLASS.light.blurAmount, 12)
+  assert.equal(DEFAULT_LIQUID_GLASS_LIGHT.blurAmount, 5)
+  assert.equal(DEFAULT_LIQUID_GLASS_DARK.blurAmount, 5)
+  assert.equal(DEFAULT_LIQUID_GLASS.light.blurAmount, 5)
   assert.equal(DEFAULT_LIQUID_GLASS.dark.elasticity, 10)
   assert.equal(DEFAULT_LIQUID_GLASS.overLight, false)
   assert.equal(DEFAULT_LIQUID_GLASS.coverage, 'functional')
@@ -138,7 +138,8 @@ test('expanded profiles cap high-cost optical parameters without mutating the so
   }
   const expanded = resolveExpandedLiquidGlassTheme(source)
   assert.deepEqual(expanded, {
-    displacementScale: 16,
+    // Percent of the physically correct lens amplitude, not a pixel count.
+    displacementScale: 35,
     blurAmount: 16,
     saturation: 150,
     aberrationIntensity: 0.5,
@@ -215,7 +216,7 @@ test('homepage cards normalize independently and emit their own variables', () =
   const variables = liquidGlassHomeCardCssVariables(normalized.homeCards.light)
   assert.equal(variables['--te-home-lg-blur'], '22px')
   assert.equal(variables['--te-home-lg-tint'], '0.310')
-  assert.equal(variables['--te-home-lg-displacement'], '46')
+  assert.equal(variables['--te-home-lg-displacement'], '95')
 })
 
 test('expanded CSS variables carry the bounded profile units', () => {
@@ -228,7 +229,7 @@ test('expanded CSS variables carry the bounded profile units', () => {
     specularOpacity: 55,
     tintOpacity: 12
   })
-  assert.equal(variables['--te-lg-expanded-displacement'], '16')
+  assert.equal(variables['--te-lg-expanded-displacement'], '35')
   assert.equal(variables['--te-lg-expanded-blur'], '16px')
   assert.equal(variables['--te-lg-expanded-saturate'], '150%')
   assert.equal(variables['--te-lg-expanded-aberration'], '0.5')

@@ -22,11 +22,13 @@ const audioCacheGrants = new CanonicalPathGrantSet()
 const appDataGrants = new CanonicalPathGrantSet()
 const impulseResponseGrants = new CanonicalPathGrantSet()
 const vst3SearchPathGrants = new CanonicalPathGrantSet()
+const downloadRootGrants = new CanonicalPathGrantSet()
 
 const declaredLibraryRoots = new Map<string, string>()
 const declaredCacheRoots = new Map<string, string>()
 const declaredImpulseResponseFiles = new Map<string, string>()
 const declaredVst3SearchPaths = new Map<string, string>()
+const declaredDownloadRoots = new Map<string, string>()
 
 let initializationPromise: Promise<void> | null = null
 
@@ -67,6 +69,40 @@ export async function grantUserSelectedVst3SearchPath(folder: string): Promise<s
   const canonicalPath = await vst3SearchPathGrants.grantRoot(folder)
   declaredVst3SearchPaths.set(lexicalPathKey(folder), resolve(folder))
   return canonicalPath
+}
+
+export async function grantUserSelectedDownloadRoot(folder: string): Promise<string> {
+  await ensureInitialized()
+  const canonicalPath = await downloadRootGrants.grantRoot(folder)
+  declaredDownloadRoots.set(lexicalPathKey(folder), resolve(folder))
+  return canonicalPath
+}
+
+/**
+ * Strict resolution for persisting the setting: an ungranted directory is rejected
+ * so the renderer cannot widen filesystem access by writing a path into settings.
+ * A directory the user already picked stays configured while it is temporarily
+ * unavailable, mirroring how declared library roots survive a missing volume.
+ * An empty value clears the setting and hands downloads back to the music library.
+ */
+export async function resolveAuthorizedDownloadRootSetting(folder: unknown): Promise<string> {
+  await ensureInitialized()
+  if (typeof folder !== 'string') throw new Error('下载目录无效')
+  if (!folder.trim()) return ''
+  const grantedPath = await resolveGrantedDownloadRoot(folder)
+  const resolvedPath = grantedPath ?? resolveDeclaredExactPath(declaredDownloadRoots, folder)
+  if (!resolvedPath) throw new Error('下载目录未经用户授权')
+  return resolvedPath
+}
+
+/**
+ * Download time is stricter than persistence: only a directory that still resolves
+ * to a live grant may receive files, and anything else falls back to the library.
+ */
+export async function resolveConfiguredDownloadRoot(folder: unknown): Promise<string | null> {
+  if (typeof folder !== 'string' || !folder.trim()) return null
+  await ensureInitialized()
+  return await resolveGrantedDownloadRoot(folder)
 }
 
 /**
@@ -216,7 +252,11 @@ export async function resolveAuthorizedOpenPath(targetPath: string): Promise<str
   const targetStat = await stat(canonicalPath)
   if (targetStat.isDirectory()) {
     if (!isCanonicalDirectoryAllowed(canonicalPath)) {
-      await Promise.all([refreshDeclaredLibraryRoots(), refreshDeclaredCacheRoots()])
+      await Promise.all([
+        refreshDeclaredLibraryRoots(),
+        refreshDeclaredCacheRoots(),
+        refreshDeclaredDownloadRoots()
+      ])
     }
     if (isCanonicalDirectoryAllowed(canonicalPath)) return canonicalPath
     throw new Error('目录不在已授权范围内')
@@ -237,7 +277,11 @@ export async function resolveAuthorizedShowItemPath(filePath: string): Promise<s
   const targetStat = await stat(canonicalPath)
   const checkedPath = targetStat.isDirectory() ? canonicalPath : dirname(canonicalPath)
   if (!isCanonicalDirectoryAllowed(checkedPath)) {
-    await Promise.all([refreshDeclaredLibraryRoots(), refreshDeclaredCacheRoots()])
+    await Promise.all([
+      refreshDeclaredLibraryRoots(),
+      refreshDeclaredCacheRoots(),
+      refreshDeclaredDownloadRoots()
+    ])
   }
   if (!isCanonicalDirectoryAllowed(checkedPath)) {
     throw new Error('路径不在已授权范围内')
@@ -267,10 +311,18 @@ async function initializeLocalPathGrantsOnce(settings: AppSettings): Promise<voi
     )
   }
 
+  if (typeof settings.downloadFolder === 'string' && settings.downloadFolder.trim()) {
+    declaredDownloadRoots.set(
+      lexicalPathKey(settings.downloadFolder),
+      resolve(settings.downloadFolder)
+    )
+  }
+
   await Promise.all([
     refreshDeclaredLibraryRoots(),
     refreshDeclaredCacheRoots(),
-    refreshDeclaredImpulseResponseFiles()
+    refreshDeclaredImpulseResponseFiles(),
+    refreshDeclaredDownloadRoots()
   ])
 }
 
@@ -322,6 +374,34 @@ async function refreshDeclaredImpulseResponseFiles(): Promise<void> {
   )
 }
 
+async function refreshDeclaredDownloadRoots(): Promise<void> {
+  await Promise.all(
+    [...declaredDownloadRoots.values()].map(async (folder) => {
+      try {
+        await downloadRootGrants.grantRoot(folder)
+      } catch {
+        // A removed download directory stays configured but grants no filesystem access.
+      }
+    })
+  )
+}
+
+async function resolveGrantedDownloadRoot(folder: string): Promise<string | null> {
+  await refreshDeclaredDownloadRoots()
+  return await tryResolveExactRoot(downloadRootGrants, folder)
+}
+
+async function tryResolveExactRoot(
+  grants: CanonicalPathGrantSet,
+  targetPath: string
+): Promise<string | null> {
+  try {
+    return await grants.resolveExactRoot(targetPath)
+  } catch {
+    return null
+  }
+}
+
 async function grantCacheRoot(rootPath: string): Promise<string> {
   const canonicalRoot = await resolveCanonicalExistingPath(rootPath, 'directory')
   const managedDirectories = await Promise.all(
@@ -363,7 +443,8 @@ function isCanonicalDirectoryAllowed(canonicalPath: string): boolean {
     libraryGrants.isCanonicalWithinRoots(canonicalPath) ||
     cacheRootGrants.hasCanonicalRoot(canonicalPath) ||
     audioCacheGrants.isCanonicalWithinRoots(canonicalPath) ||
-    appDataGrants.isCanonicalWithinRoots(canonicalPath)
+    appDataGrants.isCanonicalWithinRoots(canonicalPath) ||
+    downloadRootGrants.isCanonicalWithinRoots(canonicalPath)
   )
 }
 

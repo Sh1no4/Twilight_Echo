@@ -3507,11 +3507,40 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 .player-bar-liquid {
   --te-lg-sheen-rgb: 255, 255, 255;
   --te-lg-surface-rgb: var(--te-lg-context-rgb, 241, 245, 249);
-  --te-lg-shade-rgb: var(--te-lg-context-label-rgb, 15, 23, 42);
-  --te-lg-drop-rgb: var(--te-lg-context-label-rgb, 15, 23, 42);
+  /* Shade and drop are *ink*, and must not be read from the context label.
+     `--te-lg-context-label-rgb` is the text colour the sampler picked for
+     legibility, so over a dark backdrop it flips to near-white — which turned the
+     bottom lip and the 70px drop shadow into a white halo and was a large part of
+     why the surface read as a grey slab instead of glass. */
+  --te-lg-shade-rgb: 15, 23, 42;
+  --te-lg-drop-rgb: 15, 23, 42;
   /* Color form of the shade base for the color-mix rim light below; defined once
      here so the gradient layers need no literal color functions. */
-  --te-lg-shade: var(--te-lg-context-label, rgb(15 23 42));
+  --te-lg-shade: rgb(15 23 42);
+  /* Body opacity stays exactly the user's tint. It is the crudest way to buy
+     legibility and the first thing that kills both the refraction and the colour
+     behind the glass; the transmission pair below does that job instead. */
+  --te-lg-surface-alpha: var(--te-lg-tint, 0.12);
+  /* How the backdrop is *transmitted*, rather than how much of it is covered.
+     Contrast is compressed toward the middle and the whole range is then shifted
+     away from the label colour — up toward white under this tone's dark labels,
+     down toward black in the dark-tone override. Every shape and hue behind the
+     glass survives, muted, so it reads as tinted glass rather than frosted
+     plastic, and unlike opacity it costs the refraction nothing.
+
+     Keyed off the theme tone rather than the sampled backdrop luminance: the
+     playbar's labels come from the tone, so a bright wallpaper under a dark theme
+     must still transmit *darker*, not lighter. Tying this to the sample instead
+     made white labels sit on a brightened wash.
+
+     The light tone also pulls saturation down. Ink on a saturated pastel is the
+     worst case for legibility, and desaturating what the glass transmits is what
+     macOS's light material does — shapes and hue stay readable, the chroma stops
+     competing with the text. The dark tone keeps full chroma: darkening already
+     separates the labels, and vivid art under smoked glass is the look. */
+  --te-lg-transmit: 0.5;
+  --te-lg-transmit-sat: 0.62;
+  --te-lg-luma: 1.4;
   --te-lg-rim-strength: 0.55;
   --te-lg-top-wash-alpha: 0.11;
   --te-lg-bottom-density-alpha: 0.1;
@@ -3542,21 +3571,27 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   border-radius: inherit;
   /* Elasticity lets the playbar reach toward the cursor; 0 keeps it pinned. */
   transform: translate(var(--te-lg-elastic-x, 0px), var(--te-lg-elastic-y, 0px));
+  /* Only the press flash and edge accents live here. The broad sheen washes this
+     layer used to carry were a hand-drawn *simulation* of glass lighting, written
+     when `filter: url()` saw nothing but this element's own gradients and so had
+     no visible effect. Two of them peaked over the middle of the bar — together
+     ~35% white across the center — which is exactly where real glass is clearest.
+     Stacked on top of the refracted backdrop and the baked shape-following
+     specular, they read as a white slab, not a lens.
+
+     Shape-following light now comes from the baked specular map inside
+     `#te-lg-playbar`, whose per-pixel incidence bends around each corner in a way
+     no CSS gradient can express. What remains below paints edges only. */
   background:
     radial-gradient(
       circle at var(--te-lg-press-x, 50%) var(--te-lg-press-y, 50%),
       var(--te-lg-press-color) 0%,
       transparent 30%
     ),
-    radial-gradient(
-      135% 210% at var(--te-lg-light-x, 50%) var(--te-lg-light-y, 42%),
-      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.36)) 0%,
-      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.12))
-        27%,
-      transparent 67%
-    ),
-    /* Shape-aware rim light: bright bevel on the light side, faint counter-shade
-       opposite, clear through the middle. */
+    /* Bevel accent: bright on the light side, faint counter-shade opposite, and
+       fully transparent through the middle. Stops are in px, not percent: at 10%
+       of a 1180px bar the "accent" was a 118px wash across the left third of the
+       surface, which is haze rather than a lit edge. */
     linear-gradient(
       var(--te-lg-angle, 135deg),
       color-mix(
@@ -3564,9 +3599,9 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
           white calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 40%),
           transparent
         )
-        0%,
-      transparent 10%,
-      transparent 90%,
+        0,
+      transparent 22px,
+      transparent calc(100% - 22px),
       color-mix(
           in srgb,
           var(--te-lg-shade) calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 16%),
@@ -3574,36 +3609,60 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
         )
         100%
     ),
-    linear-gradient(
-      var(--te-lg-angle, 135deg),
-      transparent 0%,
-      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.2))
-        36%,
-      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 0.055))
-        65%,
-      transparent 100%
-    ),
+    /* Vertical thickness cue: a hairline catch along the top lip and a slight
+       settling at the bottom. Held to the outer fifth so the middle stays open. */
     linear-gradient(
       180deg,
       rgba(var(--te-lg-sheen-rgb), var(--te-lg-top-wash-alpha)) 0%,
-      rgba(var(--te-lg-sheen-rgb), calc(var(--te-lg-top-wash-alpha) * 0.25)) 38%,
-      transparent 62%,
+      transparent 20%,
+      transparent 80%,
       rgba(var(--te-lg-shade-rgb), var(--te-lg-bottom-density-alpha)) 100%
     ),
-    rgba(var(--te-lg-surface-rgb), var(--te-lg-tint, 0.12));
-  backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
-  -webkit-backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
-  filter: url(#te-lg-playbar);
+    rgba(var(--te-lg-surface-rgb), var(--te-lg-surface-alpha, 0.12));
+  /* The SVG chain belongs in the *backdrop* list, not in `filter`. `filter` only
+     ever sees this element's own rendering — the gradient layers above — and
+     displacing a smooth gradient resamples to nearly the same colour, so the
+     refraction was mathematically real and visually absent. The backdrop is the
+     only input that carries the scrolling content there is something to bend.
+
+     Order inside the list is the order of application, and the lens has to run
+     *first*. Behind `blur()` the chain was handed an already-smoothed wash, and
+     displacing a wash resamples to the same colour it started from — the same
+     no-op that putting the chain in `filter` produced, one layer further along.
+     Refracting the sharp backdrop and blurring afterwards is what makes the bend
+     at the rim visible at all; the blur then still softens the interior for
+     legibility.
+
+     The gradients stay as this element's own background, painted over the
+     refracted backdrop, so the sheen and rim light read crisp instead of being
+     displaced along with everything else. */
+  backdrop-filter: url(#te-lg-playbar) blur(var(--te-lg-blur, 16px))
+    saturate(var(--te-lg-saturate, 140%)) saturate(var(--te-lg-transmit-sat, 1))
+    contrast(var(--te-lg-transmit, 1)) brightness(var(--te-lg-luma, 1));
+  -webkit-backdrop-filter: url(#te-lg-playbar) blur(var(--te-lg-blur, 16px))
+    saturate(var(--te-lg-saturate, 140%)) saturate(var(--te-lg-transmit-sat, 1))
+    contrast(var(--te-lg-transmit, 1)) brightness(var(--te-lg-luma, 1));
 }
 
+/* A solid app background gives the environment sampler no image to read, but it
+   says nothing about the bar's own backdrop: the window content behind a floating
+   playbar is still real, still scrolls, and both the blur and the lens work on it.
+
+   This rule used to replace the whole background with `--te-lg-context-material` —
+   the sampled colour at `--te-lg-context-surface-alpha`, which resolves to ~0.49
+   over a dark app background. A 49%-opaque fill sits on top of everything the
+   filter produced, so refraction, tint and specular were all invisible and no
+   tuning slider could move the result: the surface read as a flat grey slab.
+
+   Solid mode therefore only thickens the material slightly, on top of the
+   luminance-driven density the base rule already applies, because a sampler with
+   no image to read is working from the app's flat background colour alone.
+   Overriding `background-color` keeps the gradient layers above intact. */
 html[data-te-liquid-glass-source='solid'] .player-bar-liquid .player-bar-warp {
-  background:
-    radial-gradient(
-      135% 210% at var(--te-lg-light-x, 50%) var(--te-lg-light-y, 42%),
-      color-mix(in srgb, var(--te-lg-context-rim) 24%, transparent),
-      transparent 67%
-    ),
-    var(--te-lg-context-material);
+  background-color: rgba(
+    var(--te-lg-surface-rgb),
+    calc(var(--te-lg-surface-alpha, 0.12) + 0.02)
+  );
 }
 
 /* Grid children are not positioned by default, so they would paint below a z-index 0
@@ -3636,7 +3695,16 @@ html[data-te-liquid-glass-source='solid'] .player-bar-liquid .player-bar-warp {
    this component, so a plain descendant selector is already correct: scoping
    appends the id to the subject and leaves the document-level ancestor alone. */
 html[data-theme='dark'] .player-bar-liquid {
-  --te-lg-drop-rgb: var(--te-lg-shade-rgb);
+  /* Black rather than the shared ink: on a near-black shell a navy-tinted drop
+     shadow reads as a grey ring, while black just deepens. */
+  --te-lg-drop-rgb: 0, 0, 0;
+  /* Labels are light here, so the backdrop is transmitted *down* — smoked glass.
+     Bright album art behind the bar keeps its hues and shapes but lands in a
+     narrow dark band that white text sits on cleanly, so chroma stays at full
+     strength. */
+  --te-lg-transmit: 0.6;
+  --te-lg-transmit-sat: 1;
+  --te-lg-luma: 0.66;
   /* Apple's dark glass reads clear, not smoked: legibility comes from blur and
      the saturated backdrop, so the density/shade stack stays restrained while
      the rim brightens. */
@@ -3648,8 +3716,10 @@ html[data-theme='dark'] .player-bar-liquid {
   --te-lg-drop-alpha: 0.36;
 }
 
-/* Degradation mirrors the card contracts: refraction without its blurred backdrop
-   reads as a smear, so the filter goes with the blur. */
+/* Degradation mirrors the card contracts. The chain itself now lives in
+   `backdrop-filter`, which `body.te-no-blur *` already clears globally in
+   base.css, so this rule only keeps the legacy `filter` slot clean for surfaces
+   that still carry one. */
 body.te-no-blur .player-bar-liquid .player-bar-warp {
   filter: none !important;
 }

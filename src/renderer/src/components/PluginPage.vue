@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import PuzzleIcon from './icons/PuzzleIcon.vue'
+import { useSettingsStore } from '../stores/useSettingsStore'
 import {
   pluginIndexLoadedFromLabel,
   pluginIndexSourceLabel,
@@ -16,7 +17,9 @@ type TwilightPluginIndexEntry = Awaited<ReturnType<typeof window.api.plugins.lis
 type TwilightPluginIndexStatus = Awaited<ReturnType<typeof window.api.plugins.getIndexStatus>>
 
 const activeTab = ref('installed')
-const devMode = ref(false)
+const { settings, updateSettings } = useSettingsStore()
+// 开发者模式是持久化设置：这里的开关与「设置 → 常规 → 开发者选项」是同一个值。
+const devMode = computed(() => settings.value.developerMode === true)
 const searchText = ref('')
 
 const installedPlugins = ref<TwilightPluginDescriptor[]>([])
@@ -201,17 +204,26 @@ function formatPluginInstallError(error: unknown): string {
   return `安装失败：${message}`
 }
 
-async function installFromLocal() {
+async function installFromLocal(kind: 'package' | 'directory' = 'package') {
   errorMsg.value = ''
   warningMsg.value = ''
   try {
-    const result = await window.api.plugins.chooseAndInstall()
+    const result = await window.api.plugins.chooseAndInstall(kind)
     if (result) {
       await loadAll()
       if (result.warning) warningMsg.value = result.warning
     }
   } catch (e) {
     errorMsg.value = formatPluginInstallError(e)
+  }
+}
+
+async function toggleDevMode() {
+  errorMsg.value = ''
+  try {
+    await updateSettings({ developerMode: !devMode.value })
+  } catch (e) {
+    errorMsg.value = `切换开发者模式失败：${e instanceof Error ? e.message : String(e)}`
   }
 }
 
@@ -371,9 +383,9 @@ onUnmounted(() => {
               aria-label="开发者模式"
               :aria-checked="devMode"
               :class="{ on: devMode }"
-              @click="devMode = !devMode"
-              @keydown.enter.prevent="devMode = !devMode"
-              @keydown.space.prevent="devMode = !devMode"
+              @click="toggleDevMode"
+              @keydown.enter.prevent="toggleDevMode"
+              @keydown.space.prevent="toggleDevMode"
             ></div>
           </div>
         </div>
@@ -401,9 +413,17 @@ onUnmounted(() => {
             <button
               v-if="activeTab === 'installed'"
               class="btn btn-outline"
-              @click="installFromLocal"
+              @click="installFromLocal('package')"
             >
               <i class="pi pi-folder-open"></i> 从本地安装包 (.tep)
+            </button>
+            <button
+              v-if="activeTab === 'installed' && devMode"
+              class="btn btn-outline"
+              title="选择包含 plugin.json 的未打包插件目录（开发者模式）"
+              @click="installFromLocal('directory')"
+            >
+              <i class="pi pi-folder"></i> 从文件夹安装（开发）
             </button>
             <button
               v-if="activeTab === 'discover'"

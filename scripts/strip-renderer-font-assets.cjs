@@ -20,9 +20,6 @@ const ALLOWED_PUBLIC_FONTS = new Set([
 
 // Numeric CJK chunks + named script subsets (latin/cyrillic/vietnamese/...).
 const MISANS_FILE_RE = /^(MiSans-(Regular|Medium|Bold|Heavy)\.[\w-]+\.woff2|misans\.css|LICENSE)$/i
-// Optional full faces + docs under font/misans/full/
-const MISANS_FULL_FILE_RE =
-  /^(MiSans-(Regular|Medium|Bold|Heavy)\.woff2|misans-full\.css|README\.md)$/i
 
 function stripRendererFontAssets(rendererDir) {
   const assets = path.join(rendererDir, 'assets')
@@ -61,14 +58,6 @@ function stripRendererFontAssets(rendererDir) {
     if (name === 'misans' && stat.isDirectory()) {
       for (const child of fs.readdirSync(full)) {
         const childPath = path.join(full, child)
-        if (child === 'full' && fs.statSync(childPath).isDirectory()) {
-          for (const fullChild of fs.readdirSync(childPath)) {
-            if (!MISANS_FULL_FILE_RE.test(fullChild)) {
-              fs.rmSync(path.join(childPath, fullChild), { force: true, recursive: true })
-            }
-          }
-          continue
-        }
         if (!MISANS_FILE_RE.test(child)) {
           fs.rmSync(childPath, { force: true, recursive: true })
         }
@@ -85,6 +74,5 @@ if (require.main === module) stripRendererFontAssets(process.argv[2] || 'out/ren
 module.exports = {
   stripRendererFontAssets,
   ALLOWED_PUBLIC_FONTS,
-  MISANS_FILE_RE,
-  MISANS_FULL_FILE_RE
+  MISANS_FILE_RE
 }

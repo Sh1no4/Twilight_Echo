@@ -1117,6 +1117,7 @@ interface WindowAPI {
     get: () => Promise<SettingsSnapshot>
     update: (patch: Partial<AppSettings>) => Promise<SettingsSnapshot>
     chooseCacheFolder: () => Promise<string | null>
+    chooseDownloadFolder: () => Promise<string | null>
     chooseBackgroundImage: () => Promise<string | null>
     importBackgroundImage: (fileName: string, data: ArrayBuffer) => Promise<string | null>
     exportBackup: () => Promise<string>
@@ -1155,7 +1156,9 @@ interface WindowAPI {
   plugins: {
     list: () => Promise<TwilightPluginDescriptor[]>
     installFromPath: (path: string) => Promise<TwilightPluginInstallResult>
-    chooseAndInstall: () => Promise<TwilightPluginInstallResult | null>
+    chooseAndInstall: (
+      kind?: 'package' | 'directory'
+    ) => Promise<TwilightPluginInstallResult | null>
     enable: (id: string) => Promise<TwilightPluginDescriptor>
     disable: (id: string) => Promise<TwilightPluginDescriptor>
     uninstall: (id: string, options?: { removeData?: boolean }) => Promise<void>

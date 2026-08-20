@@ -14,9 +14,7 @@ import type {
 } from '../types'
 
 const pluginChangedCallbacks = new Set<() => void>()
-const providerDownloadChangedCallbacks = new Set<
-  (tasks: ProviderDownloadTaskSnapshot[]) => void
->()
+const providerDownloadChangedCallbacks = new Set<(tasks: ProviderDownloadTaskSnapshot[]) => void>()
 const providerWriteIdempotency = new ProviderWriteIdempotencyCoordinator()
 
 export function bindPluginsIpcEvents(): void {
@@ -41,8 +39,10 @@ export const pluginsApi = {
     list: (): Promise<TwilightPluginDescriptor[]> => ipcRenderer.invoke('plugins:list'),
     installFromPath: (path: string): Promise<TwilightPluginInstallResult> =>
       ipcRenderer.invoke('plugins:installFromPath', path),
-    chooseAndInstall: (): Promise<TwilightPluginInstallResult | null> =>
-      ipcRenderer.invoke('plugins:chooseAndInstall'),
+    chooseAndInstall: (
+      kind?: 'package' | 'directory'
+    ): Promise<TwilightPluginInstallResult | null> =>
+      ipcRenderer.invoke('plugins:chooseAndInstall', kind),
     enable: (id: string): Promise<TwilightPluginDescriptor> =>
       ipcRenderer.invoke('plugins:enable', id),
     disable: (id: string): Promise<TwilightPluginDescriptor> =>

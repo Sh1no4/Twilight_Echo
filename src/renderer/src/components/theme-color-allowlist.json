@@ -34,7 +34,7 @@
   "src/renderer/src/components/SettingsPage.vue": 62,
   "src/renderer/src/components/song-list/SongList.css": 258,
   "src/renderer/src/components/streaming-page/NcmPlaylistDialogs.vue": 24,
-  "src/renderer/src/components/streaming-page/ProviderDownloadsPanel.vue": 13,
+  "src/renderer/src/components/streaming-page/ProviderDownloadsPanel.vue": 1,
   "src/renderer/src/components/streaming-page/ProviderSidebar.vue": 8,
   "src/renderer/src/components/streaming-page/StreamingContentHeader.css": 42,
   "src/renderer/src/components/streaming-page/StreamingContextMenu.vue": 18,

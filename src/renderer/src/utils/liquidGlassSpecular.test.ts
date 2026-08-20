@@ -2,17 +2,16 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { BASE_HIGHLIGHT_ANGLE } from './liquidGlassPointer.ts'
 import {
-  CARD_DISPLACEMENT_BUCKET,
-  DEFAULT_CORNER_FRACTION,
-  DEFAULT_RIM_FRACTION,
-  PLAYBAR_DISPLACEMENT_BUCKET,
+  buildDisplacementPixels,
+  NOMINAL_CARD_GEOMETRY,
+  NOMINAL_PLAYBAR_GEOMETRY,
   roundedRectSDF,
   type RoundedRectShape
 } from './liquidGlassDisplacement.ts'
 import {
   BAYER_8X8,
   bayerOffset,
-  buildSpecularPixels,
+  buildSpecularPixels as buildSpecularRaster,
   clearSpecularMapCache,
   DEFAULT_SPECULAR_ANGLE_DEG,
   getSpecularMapUrl,
@@ -25,9 +24,41 @@ import {
   specularTerms
 } from './liquidGlassSpecular.ts'
 
+/**
+ * The fractions the maps used to be baked with, kept here as test geometry. The
+ * production path now measures a real element instead, but the field's shape is
+ * what these assertions are about, so a fixed shape keeps them deterministic.
+ */
+const RIM_FRACTION = 0.16
+const CORNER_FRACTION = 0.22
+
 const SQUARE_SHAPE: RoundedRectShape = { halfWidth: 32, halfHeight: 32, radius: 14.08 }
-const SQUARE_RIM = DEFAULT_RIM_FRACTION * 64
+const SQUARE_RIM = RIM_FRACTION * 64
 const LIGHT = lightVectorFromAngle(DEFAULT_SPECULAR_ANGLE_DEG)
+
+/**
+ * Bakes at a size with the legacy fraction-derived shape. `buildSpecularPixels`
+ * now takes a geometry with an absolute radius and band width; expressing the old
+ * fractions through it keeps every assertion below comparable.
+ */
+function buildSpecularPixels(
+  width: number,
+  height: number,
+  rimFraction: number = RIM_FRACTION,
+  cornerFraction: number = CORNER_FRACTION,
+  angleDegrees: number = DEFAULT_SPECULAR_ANGLE_DEG
+): Uint8ClampedArray {
+  const short = Math.min(width, height)
+  return buildSpecularRaster(
+    {
+      width,
+      height,
+      radius: cornerFraction * short,
+      blurRadius: rimFraction * short
+    },
+    angleDegrees
+  ).pixels
+}
 
 /** Alpha of the baked map at a pixel. */
 function alphaAt(pixels: Uint8ClampedArray, width: number, x: number, y: number): number {
@@ -81,42 +112,6 @@ function intensityAtAngle(angleDegrees: number, depth: number): number {
 function sheenAtAngle(angleDegrees: number, depth: number): number {
   const point = rimPointAtDepth(angleDegrees, depth, SQUARE_SHAPE)
   return specularTerms(point.x, point.y, SQUARE_SHAPE, SQUARE_RIM, LIGHT).sheen
-}
-
-/**
- * Point sitting exactly `depth` px inside the boundary, on the ray leaving the
- * center at `angleDeg` (screen space, so y grows downward and 225deg is up-left).
- *
- * Probing at a constant depth is what isolates incidence. Depth alone drives the
- * falloff, so comparing two points at different depths says nothing about whether
- * the highlight follows the shape — which is the property being tested.
- */
-function rimPoint(
-  angleDeg: number,
-  depth: number,
-  shape: RoundedRectShape
-): { x: number; y: number } {
-  const radians = (angleDeg * Math.PI) / 180
-  const dx = Math.cos(radians)
-  const dy = Math.sin(radians)
-  const depthAt = (radius: number): number =>
-    -roundedRectSDF(dx * radius, dy * radius, shape.halfWidth, shape.halfHeight, shape.radius)
-
-  let inner = 0
-  let outer = Math.hypot(shape.halfWidth, shape.halfHeight) * 2
-  for (let i = 0; i < 80; i++) {
-    const mid = (inner + outer) / 2
-    if (depthAt(mid) > depth) inner = mid
-    else outer = mid
-  }
-  const radius = (inner + outer) / 2
-  return { x: dx * radius, y: dy * radius }
-}
-
-/** Combined highlight at a constant depth around the rim. */
-function intensityAtDepth(angleDeg: number, depth: number): number {
-  const point = rimPoint(angleDeg, depth, SQUARE_SHAPE)
-  return specularIntensity(point.x, point.y, SQUARE_SHAPE, SQUARE_RIM, LIGHT)
 }
 
 test('the baked light angle matches the CSS highlight convention', () => {
@@ -464,12 +459,12 @@ test('non-square buckets keep a highlight on the wide playbar strip', () => {
 
 test('rotating the light rotates the baked map', () => {
   const size = 48
-  const litFromLeft = buildSpecularPixels(size, size, DEFAULT_RIM_FRACTION, DEFAULT_CORNER_FRACTION, 90)
+  const litFromLeft = buildSpecularPixels(size, size, RIM_FRACTION, CORNER_FRACTION, 90)
   const litFromRight = buildSpecularPixels(
     size,
     size,
-    DEFAULT_RIM_FRACTION,
-    DEFAULT_CORNER_FRACTION,
+    RIM_FRACTION,
+    CORNER_FRACTION,
     270
   )
 
@@ -494,15 +489,26 @@ test('invalid sizes are rejected rather than producing a broken map', () => {
   assert.throws(() => buildSpecularPixels(0, 10), /invalid specular map size/)
   assert.throws(() => buildSpecularPixels(10, 0), /invalid specular map size/)
   assert.throws(() => buildSpecularPixels(-4, 4), /invalid specular map size/)
-  assert.throws(() => buildSpecularPixels(4.5, 4), /invalid specular map size/)
 })
 
-test('the specular map reuses the displacement buckets so the two stay registered', () => {
-  // Same sizes, same rim fraction, same corner fraction: the highlight has to
-  // land on the rim the refraction bends, not near it.
-  for (const bucket of [CARD_DISPLACEMENT_BUCKET, PLAYBAR_DISPLACEMENT_BUCKET]) {
-    const pixels = buildSpecularPixels(bucket.width, bucket.height)
-    assert.equal(pixels.length, bucket.width * bucket.height * 4)
+test('fractional layout sizes are rounded rather than rejected', () => {
+  // Measured geometry comes from getBoundingClientRect, which is fractional at
+  // most zoom levels. Rejecting it would leave the surface unfiltered.
+  const raster = buildSpecularRaster({ width: 24.6, height: 16.2, radius: 4 })
+  assert.equal(raster.width, 25)
+  assert.equal(raster.height, 16)
+  assert.equal(raster.pixels.length, 25 * 16 * 4)
+})
+
+test('the specular map reuses the displacement geometry so the two stay registered', () => {
+  // Same resolver, same rounded-rect shape, same refraction depth: the highlight
+  // has to land on the rim the refraction bends, not near it.
+  for (const geometry of [NOMINAL_CARD_GEOMETRY, NOMINAL_PLAYBAR_GEOMETRY]) {
+    const specular = buildSpecularRaster(geometry)
+    const displacement = buildDisplacementPixels(geometry)
+    assert.equal(specular.width, displacement.width)
+    assert.equal(specular.height, displacement.height)
+    assert.equal(specular.pixels.length, displacement.pixels.length)
   }
 })
 
@@ -510,5 +516,5 @@ test('map url generation degrades to empty string without a DOM', () => {
   clearSpecularMapCache()
   // node test env has no document; callers are expected to skip the highlight
   assert.equal(typeof globalThis.document, 'undefined')
-  assert.equal(getSpecularMapUrl(CARD_DISPLACEMENT_BUCKET), '')
+  assert.equal(getSpecularMapUrl(NOMINAL_CARD_GEOMETRY), '')
 })

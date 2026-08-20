@@ -37,6 +37,8 @@ defineProps<{
   updateSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>
   addLibraryFolder: () => void
   removeLibraryFolder: (folder: string) => void
+  chooseDownloadFolder: () => void
+  resetDownloadFolder: () => void
   toggleSetting: (key: BooleanSettingKey) => void
   setGenreSeparators: (event: Event) => void
   setTrackActivationMode: (mode: TrackActivationMode) => void
@@ -98,6 +100,33 @@ const emit = defineEmits<{
             <button type="button" class="dashed-button" @click="addLibraryFolder">
               <i class="pi pi-plus"></i>
               添加文件夹
+            </button>
+          </div>
+        </div>
+        <hr />
+        <div class="setting-item top-align">
+          <div class="setting-copy">
+            <strong>下载目录</strong>
+            <span>
+              流媒体「下载到本地」的保存位置；留空时沿用第一个扫描文件夹。选在扫描文件夹之外时，下载完成的文件不会自动进入媒体库。
+            </span>
+          </div>
+          <div class="path-control">
+            <input
+              readonly
+              aria-label="下载目录"
+              :value="settings.downloadFolder || '跟随扫描文件夹'"
+            />
+            <button type="button" class="soft-button" @click="chooseDownloadFolder">
+              选择文件夹
+            </button>
+            <button
+              v-if="settings.downloadFolder"
+              type="button"
+              class="muted-button"
+              @click="resetDownloadFolder"
+            >
+              清除
             </button>
           </div>
         </div>
@@ -513,5 +542,27 @@ const emit = defineEmits<{
       @update:proxy-port="(value: number) => void updateSettings({ proxyPort: value })"
       @toggle:allow-direct-fallback="toggleSetting('proxyAllowDirectFallback')"
     />
+
+    <div class="section-block">
+      <h3>开发者选项 (Developer)</h3>
+      <div class="setting-list">
+        <div class="setting-item">
+          <div class="setting-copy">
+            <strong>开发者模式</strong>
+            <span>
+              解锁插件中心的「从文件夹安装」，可直接装入未打包的插件目录，方便本地调试；关闭时只能安装
+              .tep 包。默认关闭。
+            </span>
+          </div>
+          <span
+            class="toggle-switch"
+            :class="{ active: settings.developerMode, inactive: !settings.developerMode }"
+            role="switch"
+            :aria-checked="settings.developerMode"
+            @click="toggleSetting('developerMode')"
+          ></span>
+        </div>
+      </div>
+    </div>
   </section>
 </template>

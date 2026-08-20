@@ -20,7 +20,7 @@ files:
   - '!out/renderer/audio-engine/**'
   - '!out/renderer/plugins/**'
   - '!out/renderer/plugin-index/**'
-  # Keep Inter/Jakarta + MiSans subsets + full MiSans; strip legacy TTF/OTF/WOFF.
+  # Keep packaged Inter/Jakarta + MiSans subsets; strip legacy TTF/OTF/WOFF.
   - '!out/renderer/font/Alibaba-PuHuiTi-Medium.ttf'
   - '!out/renderer/font/Outfit-**'
   - '!out/renderer/font/**/*.{ttf,otf,woff}'

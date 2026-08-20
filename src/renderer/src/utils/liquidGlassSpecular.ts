@@ -44,14 +44,25 @@
  */
 
 import {
-  DEFAULT_CORNER_FRACTION,
-  DEFAULT_RIM_FRACTION,
+  geometryKey,
+  liquidRel,
+  resolveRasterGeometry,
   roundedRectSDF,
   sdfNormal,
-  type DisplacementBucket,
+  type DisplacementGeometry,
+  type DisplacementRaster,
   type DisplacementVector,
   type RoundedRectShape
 } from './liquidGlassDisplacement.ts'
+
+/**
+ * Re-exported so callers that only reason about the highlight do not need to know
+ * the curve is shared with the refraction field. One definition, two consumers.
+ */
+export { liquidRel }
+
+/** Same raster shape as the displacement map: bytes plus the size they were baked at. */
+export type SpecularRaster = DisplacementRaster
 
 /**
  * Light direction in CSS `linear-gradient` degrees, so the baked highlight and
@@ -61,27 +72,33 @@ import {
  */
 export const DEFAULT_SPECULAR_ANGLE_DEG = 135
 
-/** Width in px of the tight catch right at the boundary. */
-export const SPECULAR_EDGE_BAND_PX = 2.25
+/**
+ * Width in px of the tight catch right at the boundary. Kept near a hairline: the
+ * band is clamped to 1, so any width much above this leaves a saturated plateau
+ * along the lit edge instead of a line with a falling edge.
+ */
+export const SPECULAR_EDGE_BAND_PX = 1.5
 
-/** Falloff/incidence exponent. 2.2 keeps the bloom tight instead of milky. */
-export const SPECULAR_EXPONENT = 2.2
+/**
+ * Falloff/incidence exponent. Governs how far the body sheen carries inward, and
+ * it is the difference between a lit edge and a milky surface — at 2.2 the sheen
+ * still put ~28% of the surface above the visible threshold, which reads as haze
+ * rather than glass.
+ */
+export const SPECULAR_EXPONENT = 3.4
 
 /**
  * Incidence floor for the rim catch. Without it the boundary vanishes on the
  * side facing away from the light, which reads as a broken outline rather than a
- * lit edge.
+ * lit edge. Set only as high as that job needs: the floor is a `max`, so a
+ * generous value flattens every shadow-side normal onto one constant and the
+ * outline stops looking lit at all.
  */
-export const SPECULAR_MIN_INCIDENCE = 0.16
+export const SPECULAR_MIN_INCIDENCE = 0.1
 
 /** Weight of the lobe facing the light, and of the transmitted counter-lobe. */
 export const SPECULAR_PRIMARY_LOBE = 0.72
-export const SPECULAR_COUNTER_LOBE = 0.42
-
-/** Shaping constants of the refraction curve, from the reference material. */
-const REL_INPUT_EXPONENT = 1.75
-const REL_INNER_EXPONENT = 1.25
-const REL_OUTER_EXPONENT = 2
+export const SPECULAR_COUNTER_LOBE = 0.3
 
 /**
  * Unit vector pointing *toward* the light for a CSS gradient angle.
@@ -93,20 +110,6 @@ const REL_OUTER_EXPONENT = 2
 export function lightVectorFromAngle(angleDegrees: number): DisplacementVector {
   const radians = (angleDegrees * Math.PI) / 180
   return { x: -Math.sin(radians), y: Math.cos(radians) }
-}
-
-/**
- * Fraction of the surface that is *not* refracted at a given depth into the rim:
- * 0 at the boundary (fully refracting) easing to 1 at the rim's inner edge
- * (perfectly clear), where `t` is depth normalized against the rim width.
- *
- * This is a sharper, non-linear lens profile than a smoothstep — it concentrates
- * the bend hard against the boundary, which is what keeps the middle of a surface
- * optically open instead of hazing over.
- */
-export function liquidRel(t: number): number {
-  const normalized = Math.pow(Math.min(1, Math.max(0, 1 - t)), REL_INPUT_EXPONENT)
-  return 1 - Math.pow(1 - Math.pow(1 - normalized, REL_INNER_EXPONENT), REL_OUTER_EXPONENT)
 }
 
 /** Screen-combines two bounded intensities so stacked highlights stay in [0, 1]. */
@@ -197,22 +200,22 @@ export function bayerOffset(x: number, y: number): number {
  * encode colour.
  */
 export function buildSpecularPixels(
-  width: number,
-  height: number,
-  rimFraction: number = DEFAULT_RIM_FRACTION,
-  cornerFraction: number = DEFAULT_CORNER_FRACTION,
+  geometry: DisplacementGeometry,
   angleDegrees: number = DEFAULT_SPECULAR_ANGLE_DEG
-): Uint8ClampedArray {
-  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {
-    throw new Error(`invalid specular map size: ${width}x${height}`)
+): SpecularRaster {
+  if (
+    !Number.isFinite(geometry.width) ||
+    !Number.isFinite(geometry.height) ||
+    geometry.width < 1 ||
+    geometry.height < 1
+  ) {
+    throw new Error(`invalid specular map size: ${geometry.width}x${geometry.height}`)
   }
 
-  const shape: RoundedRectShape = {
-    halfWidth: width / 2,
-    halfHeight: height / 2,
-    radius: Math.min(1, Math.max(0, cornerFraction)) * Math.min(width, height)
-  }
-  const rimWidth = rimFraction * Math.min(width, height)
+  // Same resolver as the displacement map, so the highlight lands on exactly the
+  // rim the refraction bends.
+  const { width, height, shape, blurRadius } = resolveRasterGeometry(geometry)
+  const rimWidth = blurRadius
   const lightVector = lightVectorFromAngle(angleDegrees)
 
   const pixels = new Uint8ClampedArray(width * height * 4)
@@ -234,47 +237,35 @@ export function buildSpecularPixels(
     }
   }
 
-  return pixels
+  return { pixels, width, height }
 }
 
 const cache = new Map<string, string>()
 
-function bucketKey(
-  bucket: DisplacementBucket,
-  rimFraction: number,
-  cornerFraction: number,
-  angleDegrees: number
-): string {
-  return `${bucket.width}x${bucket.height}@${rimFraction}@${cornerFraction}@${angleDegrees}`
-}
-
 /**
- * Renders the map to a data URL, memoized per bucket. Returns an empty string when
- * canvas is unavailable (non-DOM context), letting callers skip the highlight
+ * Renders the map to a data URL, memoized per geometry. Returns an empty string
+ * when canvas is unavailable (non-DOM context), letting callers skip the highlight
  * rather than throw.
  */
 export function getSpecularMapUrl(
-  bucket: DisplacementBucket,
-  rimFraction: number = DEFAULT_RIM_FRACTION,
-  cornerFraction: number = DEFAULT_CORNER_FRACTION,
+  geometry: DisplacementGeometry,
   angleDegrees: number = DEFAULT_SPECULAR_ANGLE_DEG
 ): string {
-  const key = bucketKey(bucket, rimFraction, cornerFraction, angleDegrees)
+  const key = `${geometryKey(geometry)}@${angleDegrees}`
   const cached = cache.get(key)
   if (cached !== undefined) return cached
 
   if (typeof document === 'undefined') return ''
 
+  const raster = buildSpecularPixels(geometry, angleDegrees)
   const canvas = document.createElement('canvas')
-  canvas.width = bucket.width
-  canvas.height = bucket.height
+  canvas.width = raster.width
+  canvas.height = raster.height
   const context = canvas.getContext('2d')
   if (!context) return ''
 
-  const imageData = context.createImageData(bucket.width, bucket.height)
-  imageData.data.set(
-    buildSpecularPixels(bucket.width, bucket.height, rimFraction, cornerFraction, angleDegrees)
-  )
+  const imageData = context.createImageData(raster.width, raster.height)
+  imageData.data.set(raster.pixels)
   context.putImageData(imageData, 0, 0)
 
   const url = canvas.toDataURL()
