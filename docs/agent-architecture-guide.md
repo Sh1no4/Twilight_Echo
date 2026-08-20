@@ -304,7 +304,7 @@ BPM/响度只走 `audioAnalysisService` 的有界优先级队列（aging 防饥�
 | `components/SongList.vue` | 约 93KB | 已虚拟化，逻辑再抽 utils |
 | `components/ThemeStudioPage.vue` | 约 51KB | 编辑逻辑已抽到 `theme-studio/useThemeStudioEditor.ts`（约 47KB），页面为编排入口 |
 | `stores/useMusicStore.ts` | 约 72KB | 数据助手已抽到 `stores/library/musicStoreData.ts`（约 11KB），继续按库操作领域拆 |
-| `components/settings-page/AppearanceSettingsSection.vue` | 约 13KB | 已拆为 `ThemeControlsSettings`、`BackgroundEditorSettings`、`PlayerBarSettings`、`LiquidGlassSettings`、`CardAppearanceSettings`，当前为编排入口 |
+| `components/settings-page/AppearanceSettingsSection.vue` | 约 13KB | 已拆为 `ThemeControlsSettings`、`BackgroundEditorSettings`、`LyricsStyleSettings`、`PlayerBarSettings`、`LiquidGlassSettings`、`CardAppearanceSettings`，当前为编排入口 |
 | `main/plugins/manager.ts` | 约 68KB | provider 路由/幂等/安全助手已迁到插件域模块，后续继续按子域收敛 |
 | `components/SettingsPage.vue` | 约 62KB | 已拆为 13 个 `settings-page/` 分区组件，当前为编排入口 |
 | `components/EqualizerPage.vue` | 约 54KB | 已拆出 `equalizer/` 面板与频率响应组件，当前为编排入口 |

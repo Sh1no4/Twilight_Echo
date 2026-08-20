@@ -6,6 +6,7 @@ import { createPinia } from 'pinia'
 import { bootstrapThemeRuntime } from './stores/useThemeStore'
 import { beginStartupSnapshot } from './app/startupSnapshot'
 import { installAutoHideScrollbars } from './utils/autoHideScrollbars'
+import { installScrollToTopButton } from './utils/scrollToTopButton'
 import { injectCachedThemeRuntime } from './app/themeRuntimeCache'
 
 const query = new URLSearchParams(window.location.search)
@@ -22,7 +23,13 @@ if (isMiniPlayer || isTrayPlayer) {
 }
 
 installAutoHideScrollbars()
-if (!isMiniPlayer && !isTrayPlayer) injectCachedThemeRuntime()
+if (!isMiniPlayer && !isTrayPlayer) {
+  injectCachedThemeRuntime()
+  // The satellite windows are only a few hundred pixels tall, so a floating
+  // back-to-top would cover more than it saves; the main window gets it for
+  // every scroll container it owns.
+  installScrollToTopButton()
+}
 
 // Chromium starts an OS drag for images, links, and arbitrary elements, letting
 // users drag app content out of the window onto the desktop. Block every

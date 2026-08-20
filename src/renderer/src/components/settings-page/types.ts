@@ -27,6 +27,7 @@ import type {
   UiDensity
 } from '../../types/settings'
 import { DESKTOP_LYRICS_FOLLOW_FONT } from '../../../../shared/desktopLyricsFont.ts'
+import type { AppFontFamily } from '../../../../shared/appFont.ts'
 
 export type SectionKey =
   | 'general'
@@ -161,8 +162,8 @@ export const accentColorOptions: { value: string; label: string; class: string }
   { value: 'slate', label: '石板', class: 'slate' }
 ]
 
-export const fontFamilyOptions: { value: string; label: string }[] = [
-  { value: 'system', label: '系统默认 (System)' },
+export const fontFamilyOptions: { value: AppFontFamily; label: string }[] = [
+  { value: 'system', label: '默认（跟随主题）' },
   { value: 'inter', label: 'Inter / Roboto' },
   { value: 'lxgw', label: '霞鹜文楷 (LXGW)' },
   { value: 'sarasa', label: 'Sarasa Gothic' },
@@ -448,7 +449,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = (
     {
       section: 'appearance',
       title: '全局字体 (Typography)',
-      terms: '字体 font typography 排版 全局'
+      terms: '字体 font typography 排版 全局 界面字体 正文 标题 霞鹜文楷 更纱黑体 跟随主题'
     },
     {
       section: 'appearance',

@@ -209,6 +209,11 @@
   --te-back-button-border: rgba(15, 23, 42, 0.12);
   --te-back-button-color: #2563eb;
   --te-back-button-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+  --te-scroll-top-bg: rgba(255, 255, 255, 0.92);
+  --te-scroll-top-bg-hover: #ffffff;
+  --te-scroll-top-border: rgba(15, 23, 42, 0.1);
+  --te-scroll-top-color: #2563eb;
+  --te-scroll-top-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
 }
 
 /* Scrollbars stay visually absent until the pointer reaches the scroll edge or scrolling is active. */
@@ -290,6 +295,56 @@
 
 :where([data-te-back-button]):focus-visible {
   outline-color: var(--te-back-button-color) !important;
+}
+
+/* Shared back-to-top control. scrollToTopButton.ts keeps exactly one of these in
+   the document and anchors it to whichever container is scrolled, so `left`/`top`
+   are written from script while everything else stays theme-owned here. */
+.te-scroll-top {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 16000;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--te-scroll-top-border);
+  border-radius: 999px;
+  background: var(--te-scroll-top-bg);
+  box-shadow: var(--te-scroll-top-shadow);
+  color: var(--te-scroll-top-color);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  transform: translate3d(0, 8px, 0) scale(0.92);
+  pointer-events: none;
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  transition:
+    opacity var(--te-motion-hover) ease,
+    transform var(--te-motion-panel) var(--te-ease-out-expo),
+    visibility var(--te-motion-hover) linear,
+    translate var(--te-motion-hover) var(--te-ease-soft),
+    background-color var(--te-motion-hover) ease,
+    border-color var(--te-motion-hover) ease;
+}
+
+.te-scroll-top[data-te-scroll-top-visible='true'] {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  pointer-events: auto;
+}
+
+.te-scroll-top:hover {
+  border-color: color-mix(in srgb, var(--te-scroll-top-color) 26%, var(--te-scroll-top-border));
+  background: var(--te-scroll-top-bg-hover);
+}
+
+.te-scroll-top:focus-visible {
+  outline: 2px solid var(--te-scroll-top-color);
+  outline-offset: 2px;
 }
 
 :where(button, [role='button'], [role='switch'], [data-te-interactive]) {
@@ -456,6 +511,11 @@ html[data-te-motion='off'] *::after {
   --te-back-button-border: rgba(255, 255, 255, 0.14);
   --te-back-button-color: #60a5fa;
   --te-back-button-shadow: 0 4px 14px rgba(0, 0, 0, 0.24);
+  --te-scroll-top-bg: rgba(28, 28, 31, 0.9);
+  --te-scroll-top-bg-hover: rgba(46, 46, 51, 0.96);
+  --te-scroll-top-border: rgba(255, 255, 255, 0.14);
+  --te-scroll-top-color: #60a5fa;
+  --te-scroll-top-shadow: 0 10px 28px rgba(0, 0, 0, 0.44);
   --te-shell-control-hover: rgba(245, 158, 11, 0.12);
   --te-settings-text: #f7f7f2;
   --te-settings-text-muted: #9b9b9b;
@@ -2976,7 +3036,8 @@ html[data-te-effects-mode='reduced']
     .title-bar,
     .theme-studio-page,
     .settings-page,
-    .settings-preview-page
+    .settings-preview-page,
+    .te-scroll-top
   ) {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;

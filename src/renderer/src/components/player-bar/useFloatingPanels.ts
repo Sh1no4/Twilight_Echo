@@ -1,6 +1,16 @@
 import { computed, onBeforeUnmount, onMounted, ref, type ComputedRef, type Ref } from 'vue'
 
-export function useFloatingPanels(shellRef: Ref<HTMLElement | null>): {
+export function useFloatingPanels(
+  shellRef: Ref<HTMLElement | null>,
+  options: {
+    /**
+     * Blocks outside-pointer dismissal while a surface the panels own — a picker
+     * dialog teleported to `body`, for example — is taking the pointer. Without
+     * it the drawer collapses behind the dialog the drawer itself opened.
+     */
+    isDismissBlocked?: () => boolean
+  } = {}
+): {
   volumeOpen: Ref<boolean>
   playlistOpen: Ref<boolean>
   moreOpen: Ref<boolean>
@@ -29,6 +39,7 @@ export function useFloatingPanels(shellRef: Ref<HTMLElement | null>): {
 
   function onDocumentPointerDown(event: PointerEvent): void {
     if (!volumeOpen.value && !playlistOpen.value && !moreOpen.value) return
+    if (options.isDismissBlocked?.()) return
     const target = event.target
     if (target instanceof Node && shellRef.value?.contains(target)) return
     closeFloatingPanels()

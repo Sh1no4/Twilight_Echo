@@ -330,7 +330,30 @@ export function createLyricViewportController(options: LyricViewportControllerOp
   }
 
   function cancelFollow(): void {
+    invalidateFollow()
+    stopFrameLoop()
+  }
+
+  /**
+   * Drop any `follow()` still waiting on layout, without touching the frame
+   * loop. Stopping the loop as well is only right when the rows themselves are
+   * going away: a re-layout hands the springs new targets and the running loop
+   * carries them there.
+   *
+   * Stopping it on every re-layout is what used to freeze the lyrics whenever a
+   * row animated its height — a background voice collapsing with its line runs a
+   * `max-height` transition for the length of the hand-off, so ResizeObserver
+   * fires on every frame of the cascade the line change just started. Each
+   * notification cancelled the in-flight frame and re-scheduled it from inside a
+   * rAF callback, so the replacement could not run until the frame after, where
+   * the next notification cancelled it again. The springs never advanced: the
+   * lines stood still for the whole collapse and then jumped.
+   */
+  function invalidateFollow(): void {
     followRequest += 1
+  }
+
+  function stopFrameLoop(): void {
     cancelFrame?.()
     cancelFrame = null
     lastFrameNow = null
@@ -401,7 +424,7 @@ export function createLyricViewportController(options: LyricViewportControllerOp
 
   async function follow(index: number, followOptions: LyricFollowOptions = {}): Promise<void> {
     if (!activeTrackId || index < 0 || manualBrowse) return
-    cancelFollow()
+    invalidateFollow()
     const token = activation
     const request = followRequest
     const mode = followOptions.mode ?? 'spring'
@@ -433,7 +456,7 @@ export function createLyricViewportController(options: LyricViewportControllerOp
    */
   function browseBy(deltaY: number): void {
     if (!activeTrackId || !stage) return
-    cancelFollow()
+    invalidateFollow()
     setManualBrowse(true)
     scrollOffset = Math.min(scrollBoundary[1], Math.max(scrollBoundary[0], scrollOffset + deltaY))
     applyLayout(false)
@@ -455,7 +478,7 @@ export function createLyricViewportController(options: LyricViewportControllerOp
 
   function beginManualBrowse(): void {
     if (!activeTrackId || !stage) return
-    cancelFollow()
+    invalidateFollow()
     setManualBrowse(true)
     armManualBrowseRelease()
   }
@@ -470,7 +493,7 @@ export function createLyricViewportController(options: LyricViewportControllerOp
 
   function onResize(mode: 'spring' | 'snap' = 'spring'): void {
     if (manualBrowse || cancelResize) return
-    cancelFollow()
+    invalidateFollow()
     cancelResize = requestAnimationFrameWithFallback(
       () => {
         cancelResize = null

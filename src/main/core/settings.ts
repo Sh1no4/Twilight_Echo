@@ -70,6 +70,7 @@ import {
   normalizeLyricsAppearance
 } from '../../shared/lyricsAppearance.ts'
 import { DESKTOP_LYRICS_FOLLOW_FONT } from '../../shared/desktopLyricsFont.ts'
+import { normalizeAppFontFamily } from '../../shared/appFont.ts'
 import {
   DEFAULT_LYRICS_PRESET_CONFIG,
   cloneLyricsPresetConfig,
@@ -760,10 +761,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     ),
     lightAccentColor: normalizeLightAccentColor(settings.lightAccentColor),
     darkAccentColor: normalizeDarkAccentColor(settings.darkAccentColor, settings.accentColor),
-    fontFamily:
-      typeof settings.fontFamily === 'string' && settings.fontFamily.trim()
-        ? settings.fontFamily.trim().slice(0, 64)
-        : DEFAULT_SETTINGS.fontFamily,
+    fontFamily: normalizeAppFontFamily(settings.fontFamily),
     uiDensity: normalizeUiDensity(settings.uiDensity),
     appBackground: normalizeAppBackground(settings.appBackground),
     cardAppearance: normalizeCardAppearance(settings.cardAppearance),

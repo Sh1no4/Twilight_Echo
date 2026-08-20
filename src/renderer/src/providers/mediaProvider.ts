@@ -1,5 +1,6 @@
 import { toRaw } from 'vue'
 import type { Track } from '../types/music'
+import { getNcmSongId } from './ncmTrack.ts'
 import { unifiedSearchSongs, type UnifiedSearchResult } from '../utils/unifiedMusicSearch.ts'
 import type { NetworkEntry } from '../../../shared/networkSources.ts'
 
@@ -411,6 +412,20 @@ export function getTrackProviderId(track: Pick<Track, 'id' | 'source'>): string 
 export function getProviderLocalId(trackId: string, providerId: string): string | null {
   const prefix = `${normalizeProviderId(providerId)}:`
   return trackId.startsWith(prefix) ? trackId.slice(prefix.length) : null
+}
+
+/**
+ * Remote track id a provider's library writes (favorites, playlist adds) expect.
+ * NetEase carries a numeric song id; other providers keep it in the `<provider>:`
+ * prefixed track id.
+ */
+export function resolveProviderTrackId(
+  track: Pick<Track, 'id' | 'ncmSongId'>,
+  providerId: string
+): string | number | null {
+  if (normalizeProviderId(providerId) === 'ncm') return getNcmSongId(track)
+  const localId = getProviderLocalId(track.id, providerId)?.trim()
+  return localId || null
 }
 
 export function toProviderIpcArgs(args: unknown[]): unknown[] {

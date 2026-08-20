@@ -62,16 +62,16 @@ onBeforeUnmount(() => {
   <div class="mini-player-settings-section">
     <button
       type="button"
-      class="mini-player-settings-trigger"
+      class="settings-accordion-trigger setting-item"
       :class="{ open }"
       :aria-expanded="open"
       @click="toggleOpen"
     >
-      <span>
-        <i class="ph ph-device-mobile-speaker"></i>
+      <span class="setting-copy">
         <strong>迷你播放器</strong>
+        <span>自定义迷你播放器窗口的主题、背景与布局。</span>
       </span>
-      <i class="ph ph-caret-down"></i>
+      <i class="pi pi-chevron-down"></i>
     </button>
 
     <MiniPlayerCustomizer
@@ -92,45 +92,5 @@ onBeforeUnmount(() => {
 <style scoped>
 .mini-player-settings-section {
   min-width: 0;
-  padding-top: 12px;
-  border-top: 1px solid var(--te-card-border, rgba(27, 32, 52, 0.12));
-}
-
-.mini-player-settings-trigger {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  min-height: 42px;
-  padding: 0 4px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-}
-
-.mini-player-settings-trigger > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.mini-player-settings-trigger > i:last-child {
-  transition: transform 160ms ease;
-}
-
-.mini-player-settings-trigger.open > i:last-child {
-  transform: rotate(180deg);
-}
-
-.mini-player-settings-trigger:focus-visible {
-  outline: 2px solid var(--te-accent, #5966d9);
-  outline-offset: 2px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .mini-player-settings-trigger > i:last-child {
-    transition-duration: 0.01ms;
-  }
 }
 </style>

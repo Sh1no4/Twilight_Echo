@@ -65,6 +65,46 @@ test('settings chrome no longer dual-writes theme-owned CSS variables', () => {
   assert.match(songListSource, /background-image:[\s\S]*var\(--te-local-bg-image\)/)
 })
 
+test('the global font setting reaches the theme runtime instead of dying in the store', () => {
+  const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
+  const themeSource = readFileSync(new URL('./useThemeStore.ts', import.meta.url), 'utf8')
+  const mainSource = readFileSync(
+    new URL('../../../main/core/settings.ts', import.meta.url),
+    'utf8'
+  )
+  const sharedSource = readFileSync(new URL('../../../shared/appFont.ts', import.meta.url), 'utf8')
+  const appearanceSource = readFileSync(
+    new URL('../components/settings-page/AppearanceSettingsSection.vue', import.meta.url),
+    'utf8'
+  )
+  const optionsSource = readFileSync(
+    new URL('../components/settings-page/types.ts', import.meta.url),
+    'utf8'
+  )
+
+  // The setting is settings-owned but theme-applied: the theme runtime is the
+  // sole writer of --te-font-*, and it emits the block with `!important`, so an
+  // inline style in the settings store could never win. Writing it into the
+  // runtime variables also lands the choice in the startup theme cache.
+  assert.match(themeSource, /uiFontFamily = normalizeAppFontFamily\(settings\.fontFamily\)/)
+  assert.match(themeSource, /Object\.assign\(variables, appFontCssVariables\(uiFontFamily\)\)/)
+  assert.match(themeSource, /\| 'fontFamily'/)
+  assert.match(storeSource, /syncThemeSettingsAppearance\(settings\.value\)/)
+  assert.doesNotMatch(storeSource, /setProperty\('--te-font/)
+  assert.match(storeSource, /'--te-font-sans',/)
+
+  // Every layer normalizes through one contract, so a stored value that is not
+  // a known family degrades to the theme font rather than reaching CSS raw.
+  assert.match(sharedSource, /export function normalizeAppFontFamily/)
+  assert.match(sharedSource, /export function appFontCssVariables/)
+  assert.match(mainSource, /fontFamily: normalizeAppFontFamily\(settings\.fontFamily\)/)
+  assert.match(appearanceSource, /normalizeAppFontFamily\(\(event\.target as HTMLSelectElement\)/)
+  assert.match(optionsSource, /fontFamilyOptions: \{ value: AppFontFamily; label: string \}\[\]/)
+  // "系统默认" promised a system stack while the value really means "leave the
+  // theme alone"; the label has to say so or the option reads as broken.
+  assert.match(optionsSource, /value: 'system', label: '默认（跟随主题）'/)
+})
+
 test('manual tone scheduling follows the app preference, not a stale DOM attribute', () => {
   const source = readFileSync(new URL('./useThemeStore.ts', import.meta.url), 'utf8')
   const start = source.indexOf('function resolveRuntimeTone(')

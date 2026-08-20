@@ -157,9 +157,15 @@ export class LyricSpring {
       return
     }
     if (delay > 0) {
-      // Repeated ResizeObserver passes may write the same delayed target every
-      // frame. Preserve the original departure time instead of restarting it.
-      if (this.queuedPosition?.position === position) return
+      // Repeated ResizeObserver passes may write a delayed target every frame,
+      // and while a row above is still animating its own height the value drifts
+      // from pass to pass rather than repeating. Either way the departure has
+      // already been scheduled, so only the destination may move: restarting the
+      // countdown on every pass parks the line for as long as the resizing lasts.
+      if (this.queuedPosition) {
+        this.queuedPosition.position = position
+        return
+      }
       this.queuedPosition = { position, time: delay }
       return
     }

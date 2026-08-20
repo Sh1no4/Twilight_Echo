@@ -40,6 +40,12 @@ import {
 } from '../utils/themePerformance'
 import type { AppBackgroundColorPair, AppBackgroundPage, AppSettings } from '../types/settings'
 import {
+  APP_FONT_SYSTEM,
+  appFontCssVariables,
+  normalizeAppFontFamily,
+  type AppFontFamily
+} from '../../../shared/appFont.ts'
+import {
   DEFAULT_LIQUID_GLASS,
   LIQUID_GLASS_TUNING_CHANGED_EVENT,
   liquidGlassCssVariables,
@@ -92,6 +98,7 @@ let toneRefreshTimer: number | null = null
 let lastAppliedTone: ThemeTone | null = null
 let lightAccentColor = 'blue'
 let darkAccentColor = 'blue'
+let uiFontFamily: AppFontFamily = APP_FONT_SYSTEM
 let themePreference: AppSettings['theme'] = 'system'
 let appBackground: AppSettings['appBackground'] | null = null
 let surfaceMaterial: SurfaceMaterial = 'standard'
@@ -129,6 +136,7 @@ type SettingsAppearanceInput = Pick<
   | 'accentColor'
   | 'lightAccentColor'
   | 'darkAccentColor'
+  | 'fontFamily'
   | 'uiDensity'
   | 'appBackground'
   | 'surfaceMaterial'
@@ -138,6 +146,7 @@ type SettingsAppearanceInput = Pick<
 function cacheSettingsAppearance(settings: SettingsAppearanceInput): void {
   lightAccentColor = settings.lightAccentColor || settings.accentColor || 'blue'
   darkAccentColor = settings.darkAccentColor || settings.accentColor || 'blue'
+  uiFontFamily = normalizeAppFontFamily(settings.fontFamily)
   appBackground = settings.appBackground
   surfaceMaterial = normalizeSurfaceMaterial(settings.surfaceMaterial)
   liquidGlass = settings.liquidGlass ?? DEFAULT_LIQUID_GLASS
@@ -436,6 +445,10 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
   }
   applyAppBackgroundVariables(tone, variables)
   applySettingsAccentColor(tone, variables)
+  // Settings-owned, like the accent color: an explicit global font outranks the
+  // theme's own faces (including a profile's uploaded font asset). `system`
+  // contributes nothing, so themed typography survives the default.
+  Object.assign(variables, appFontCssVariables(uiFontFamily))
   applyLiquidGlassVariables(tone, variables)
   const root = Object.entries({ ...themeShellLayoutToCssVariables(shellLayout), ...variables })
     .map(([name, value]) => `  ${name}: ${value} !important;`)

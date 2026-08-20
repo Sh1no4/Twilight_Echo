@@ -42,6 +42,10 @@ import { resolveSeekTargetSeconds, type PlayerBarMode } from '../../../shared/pl
 import { useEscapeToClose } from '../app/useDismissLayer.ts'
 import { usePlaybackQueueVirtualScroll } from './player-bar/usePlaybackQueueVirtualScroll'
 import { usePlaybackQueueDrawerActions } from './player-bar/usePlaybackQueueDrawerActions'
+import { useQueueAddToPlaylist } from './player-bar/useQueueAddToPlaylist'
+import QueueAddToPlaylistDialog from './player-bar/QueueAddToPlaylistDialog.vue'
+import { useAppNoticeStore } from '../stores/useAppNoticeStore'
+import { syncPluginProviders } from '../providers'
 import type {
   AudioOutputId,
   ChannelRoutingMode,
@@ -161,6 +165,7 @@ const playerLeftKey = computed(
 const {
   playlists,
   addToPlaylist,
+  addTracksToPlaylist,
   removeFromPlaylist,
   createPlaylist,
   createPlaylistWithTracks,
@@ -169,6 +174,7 @@ const {
   removeFavoriteTrack
 } = useMusicStore()
 const mediaProviders = useMediaProviders()
+const { pushNotice } = useAppNoticeStore()
 
 const coverRef = ref<HTMLElement | null>(null)
 const playerBarShellRef = ref<HTMLElement | null>(null)
@@ -178,9 +184,17 @@ const playerBarButtons = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'playerBarButton')
 )
 const { settings } = useSettingsStore()
+/* Mini is deliberately a flat control strip, so it opts out of the material
+   entirely rather than wearing it with the refracting layer switched off.
+   `.player-bar-liquid` claims `background`, `border-color` and the rim
+   `box-shadow` with `!important`, which a mini bar cannot out-rank: the strip
+   rendered as a transparent pane ringed by the rim highlight — a white outline
+   drawn around glass that was not there. Gating it here also skips the warp
+   element and the per-pointer-move variable writes for mini. */
 const liquidGlassActive = computed(
   () =>
-    settings.value.surfaceMaterial === 'liquidGlass' || settings.value.liquidGlass.playbarEnabled
+    !isMini.value &&
+    (settings.value.surfaceMaterial === 'liquidGlass' || settings.value.liquidGlass.playbarEnabled)
 )
 const lyricsManagement = useLyricsManagement()
 const desktopLyricsOn = ref(settings.value.desktopLyrics.enabled)
@@ -512,6 +526,34 @@ const sleepTimerStatus = computed(() => {
   return `${Math.max(1, Math.ceil((state.endsAt - Date.now()) / 60_000))} 分钟后停止`
 })
 
+const queueAddToPlaylist = useQueueAddToPlaylist({
+  queue,
+  playlists,
+  mediaProviders,
+  addTracksToPlaylist,
+  createPlaylistWithTracks,
+  notify: (notice) => {
+    pushNotice({ kind: notice.kind, message: notice.message })
+  },
+  syncProviders: async () => {
+    if (typeof window !== 'undefined' && window.api?.providers) await syncPluginProviders()
+  }
+})
+
+/** One prop for the remote section; null keeps it out of the dialog entirely. */
+const queueAddToPlaylistProvider = computed(() =>
+  queueAddToPlaylist.providerId.value === null
+    ? null
+    : {
+        name: queueAddToPlaylist.providerName.value,
+        writable: queueAddToPlaylist.providerWritable.value,
+        canCreate: queueAddToPlaylist.providerCanCreate.value,
+        playlists: queueAddToPlaylist.providerPlaylists.value,
+        loading: queueAddToPlaylist.providerLoading.value,
+        error: queueAddToPlaylist.providerError.value
+      }
+)
+
 const {
   volumeOpen,
   playlistOpen,
@@ -521,7 +563,10 @@ const {
   toggleVolume,
   togglePlaylist,
   toggleMore
-} = useFloatingPanels(playerBarShellRef)
+} = useFloatingPanels(playerBarShellRef, {
+  // The picker is teleported to `body`, so its clicks read as "outside the bar".
+  isDismissBlocked: () => queueAddToPlaylist.open.value
+})
 
 watch(moreOpen, (open) => {
   if (open) void playbackBookmarks.ensureLoaded()
@@ -1472,6 +1517,14 @@ onBeforeUnmount(() => {
                   </button>
                   <button
                     type="button"
+                    title="添加到歌单"
+                    :aria-label="`将 ${item.title} 添加到歌单`"
+                    @click="queueAddToPlaylist.openForEntry(item.queueEntryId)"
+                  >
+                    <i class="pi pi-list-check" aria-hidden="true"></i>
+                  </button>
+                  <button
+                    type="button"
                     class="row-action-danger"
                     title="从队列移除"
                     :aria-label="`从队列移除 ${item.title}`"
@@ -1486,6 +1539,25 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </Transition>
+
+    <QueueAddToPlaylistDialog
+      :open="queueAddToPlaylist.open.value"
+      :target-label="queueAddToPlaylist.targetLabel.value"
+      :local-playlists="queueAddToPlaylist.localPlaylists.value"
+      :provider="queueAddToPlaylistProvider"
+      :error-message="queueAddToPlaylist.errorMessage.value"
+      :busy-target="queueAddToPlaylist.busyTarget.value"
+      :create-scope="queueAddToPlaylist.createScope.value"
+      :new-playlist-name="queueAddToPlaylist.newPlaylistName.value"
+      @update:new-playlist-name="queueAddToPlaylist.newPlaylistName.value = $event"
+      @close="queueAddToPlaylist.close"
+      @start-create="queueAddToPlaylist.startCreate"
+      @cancel-create="queueAddToPlaylist.cancelCreate"
+      @confirm-create="queueAddToPlaylist.confirmCreate"
+      @reload-provider="queueAddToPlaylist.reloadProviderPlaylists"
+      @add-local="queueAddToPlaylist.addToLocalPlaylist"
+      @add-provider="queueAddToPlaylist.addToProviderPlaylist"
+    />
 
     <!-- PlayerBar 主体 -->
     <div
