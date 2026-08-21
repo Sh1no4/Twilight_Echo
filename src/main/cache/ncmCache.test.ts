@@ -91,6 +91,29 @@ test('ncm cache lookups run on an in-memory index instead of a per-play director
   )
 })
 
+test('ncm cache downloads supersede in-flight ones and start after a skip-window delay', () => {
+  const source = readFileSync(new URL('./ncmCache.ts', import.meta.url), 'utf8')
+  const cacheWrite = extractFunction(source, 'cacheNcmSong')
+  // 8.1②：新解析抢占所有进行中的下载（AbortController map + 全部 abort 后 clear）。
+  assert.match(source, /const activeCacheDownloads = new Map<number, AbortController>\(\)/)
+  assert.match(
+    cacheWrite,
+    /for \(const active of activeCacheDownloads\.values\(\)\) \{\s*active\.abort/
+  )
+  assert.match(cacheWrite, /activeCacheDownloads\.clear\(\)/)
+  // 8.1③：30s 延迟启动必须发生在 fetch 之前，且 45s 下载超时在其后才计时。
+  const delayAt = cacheWrite.indexOf('await waitForNcmCacheStartDelay(controller.signal)')
+  const fetchAt = cacheWrite.indexOf('await fetch(url,')
+  assert.ok(delayAt >= 0 && fetchAt > delayAt, 'delay must gate the actual download start')
+  const timerAt = cacheWrite.indexOf('setTimeout(() => controller.abort(), 45000)')
+  assert.ok(timerAt > delayAt, 'download timeout must start after the delay, not at enqueue')
+  // 抢占取消静默结束，不写误导性告警；完成后从活跃表清理自己的条目。
+  assert.match(cacheWrite, /NCM_CACHE_DOWNLOAD_SUPERSEDED_MESSAGE/)
+  assert.match(cacheWrite, /activeCacheDownloads\.get\(songId\) === controller/)
+  assert.match(cacheWrite, /activeCacheDownloads\.delete\(songId\)/)
+  assert.match(source, /NCM_CACHE_DOWNLOAD_START_DELAY_MS = 30_000/)
+})
+
 function extractFunction(source: string, functionName: string): string {
   const signature = new RegExp(
     `(?:async\\s+)?function ${functionName}\\([^)]*\\)[:\\w\\s<>\\[\\]'|]*\\s\\{`
