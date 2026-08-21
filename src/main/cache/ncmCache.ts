@@ -1,10 +1,22 @@
 import { app } from 'electron'
-import { mkdirSync, readdirSync, existsSync } from 'fs'
-import { writeFile } from 'fs/promises'
+import {
+  createWriteStream,
+  mkdirSync,
+  readdirSync,
+  existsSync,
+  statSync,
+  unlinkSync,
+  utimesSync
+} from 'fs'
+import { rename, rm } from 'fs/promises'
 import { join, extname } from 'path'
+import { randomUUID } from 'crypto'
+import { Readable } from 'stream'
+import { pipeline } from 'stream/promises'
 import { runtime } from '../core/runtime'
 import { redactSensitiveText } from '../security/secureStorage.ts'
 import { getMusicCacheStorageDirectories } from './musicCacheLayout.ts'
+import { NCM_CACHE_MAX_BYTES, planNcmCachePrune } from './ncmCachePrune.ts'
 
 export function ensureMusicCacheDirectories(rootPath: string): void {
   if (!rootPath) return
@@ -55,10 +67,46 @@ export function inferNcmCacheExtension(
 export function getCachedNcmSong(songId: number): string | null {
   const dir = getNcmCacheDir()
   const prefix = `${songId}.`
-  const file = readdirSync(dir).find((name) => name.startsWith(prefix))
+  // .part 是下载中的临时文件，同样满足前缀但绝不可提供给播放。
+  const file = readdirSync(dir).find(
+    (name) => name.startsWith(prefix) && !name.includes('.part')
+  )
   if (!file) return null
   const fullPath = join(dir, file)
-  return existsSync(fullPath) ? fullPath : null
+  if (!existsSync(fullPath)) return null
+  // LRU 依靠 mtime：命中即刷新，让容量淘汰驱逐真正最久不用的条目。
+  try {
+    const now = new Date()
+    utimesSync(fullPath, now, now)
+  } catch {
+    /* 只读文件系统等场景下放弃 touch，不影响命中。 */
+  }
+  return fullPath
+}
+
+/** 容量上限 + 孤儿 .part 清理；出问题（权限/占用）只告警，不阻断缓存路径。 */
+function pruneNcmCacheDir(dir: string): void {
+  try {
+    const files = readdirSync(dir).map((name) => {
+      try {
+        const info = statSync(join(dir, name))
+        return { name, size: info.isFile() ? info.size : 0, mtimeMs: info.mtimeMs }
+      } catch {
+        return { name, size: 0, mtimeMs: 0 }
+      }
+    })
+    const plan = planNcmCachePrune(files, NCM_CACHE_MAX_BYTES)
+    for (const name of [...plan.deleteNames, ...plan.orphanPartNames]) {
+      try {
+        unlinkSync(join(dir, name))
+      } catch {
+        /* 个别文件占用不阻塞其余清理 */
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn('网易云歌曲缓存清理失败：', redactSensitiveText(message))
+  }
 }
 
 export async function cacheNcmSong(
@@ -87,10 +135,24 @@ export async function cacheNcmSong(
       }
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.body) throw new Error('响应没有内容流')
     const ext = inferNcmCacheExtension(url, res.headers.get('content-type'), fileName)
     const target = join(getNcmCacheDir(), `${songId}${ext}`)
-    const buffer = Buffer.from(await res.arrayBuffer())
-    await writeFile(target, buffer)
+    // 流式落盘：整文件不经内存（无损单曲 50-150MB）；先写 .part，完成才原子
+    // rename 为成品，中断只会留下可清理的 .part 而不会混入“成品”。
+    const partPath = `${target}.${randomUUID()}.part`
+    try {
+      await pipeline(
+        Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]),
+        createWriteStream(partPath, { flags: 'wx' }),
+        { signal: controller.signal }
+      )
+      await rename(partPath, target)
+    } catch (error) {
+      await rm(partPath, { force: true }).catch(() => undefined)
+      throw error
+    }
+    pruneNcmCacheDir(getNcmCacheDir())
     return target
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
