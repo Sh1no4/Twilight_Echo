@@ -155,11 +155,21 @@ const streamingViewKey = computed(() => {
 
 // Scroll offsets per streamingViewKey, saved on forward navigation and restored
 // when the user navigates back (Transition after-enter, once layout exists).
+const SAVED_SCROLL_POSITION_LIMIT = 32
 const savedScrollPositions = new Map<string, number>()
 
 function saveStreamingScrollPosition(): void {
   const el = streamingContentRef.value
-  if (el) savedScrollPositions.set(streamingViewKey.value, el.scrollTop)
+  if (!el) return
+  // 封顶：深层详情导航只进不出会让这个 Map 无界增长；超出时淘汰最旧条目，
+  // 回退到顶部滚动的代价可接受。
+  savedScrollPositions.delete(streamingViewKey.value)
+  savedScrollPositions.set(streamingViewKey.value, el.scrollTop)
+  while (savedScrollPositions.size > SAVED_SCROLL_POSITION_LIMIT) {
+    const oldest = savedScrollPositions.keys().next().value
+    if (oldest === undefined) break
+    savedScrollPositions.delete(oldest)
+  }
 }
 
 function restoreStreamingScrollPosition(): void {

@@ -2052,3 +2052,20 @@ test('visualizationData uses shallowRef so 200ms replacements skip deep proxying
   )
   assert.doesNotMatch(storeSource, /const visualizationData = ref</)
 })
+
+test('nativeSourceToTrackId stays bounded and re-prunes on every native queue load', () => {
+  const storeSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  assert.match(storeSource, /const NATIVE_SOURCE_TO_TRACK_ID_LIMIT = \d+/)
+  const prune = extractInternalFunctionBody(storeSource, 'pruneNativeSourceToTrackId')
+  // Entries outside the freshly loaded native queue are evicted first.
+  assert.match(prune, /!validSources\.has\(source\) && source !== protectedSource/)
+  // The active playing source must survive pruning.
+  assert.match(prune, /if \(source === protectedSource\) continue/)
+  const loadAndPlay = extractInternalFunctionBody(storeSource, 'loadAndPlay')
+  assert.match(
+    loadAndPlay,
+    /nativeSourceToTrackId\.delete\(playTarget\)[\s\S]*nativeSourceToTrackId\.set\(playTarget, track\.id\)[\s\S]*pruneNativeSourceToTrackId\(preparedQueue\.items, playTarget\)/
+  )
+  const syncNativeQueueState = extractInternalFunctionBody(storeSource, 'syncNativeQueueState')
+  assert.match(syncNativeQueueState, /pruneNativeSourceToTrackId\(preparedQueue\.items/)
+})

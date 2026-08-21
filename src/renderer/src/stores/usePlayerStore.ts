@@ -346,6 +346,30 @@ let nativeQueueDelegated = false
  * 时先按 source 查映射，保证原生自动切歌后 queueIndex/currentTrack 能同步。
  */
 const nativeSourceToTrackId = new Map<string, string>()
+// source->track.id 只是 playback-info 匹配提示（失配时走 queueIndex+source 校验
+// 回退），但授权层解析出的缓存路径/CDN 直链会让 source 每次播放都不同，只增不减
+// 即无界增长。超过上限时先收紧到当前原生队列 source 集合，再按插入序淘汰旧项。
+const NATIVE_SOURCE_TO_TRACK_ID_LIMIT = 1024
+
+function pruneNativeSourceToTrackId(
+  items: ReadonlyArray<{ source: string; id: string }>,
+  protectedSource?: string
+): void {
+  if (nativeSourceToTrackId.size <= NATIVE_SOURCE_TO_TRACK_ID_LIMIT) return
+  const validSources = new Set(items.map((item) => item.source))
+  for (const source of nativeSourceToTrackId.keys()) {
+    if (nativeSourceToTrackId.size <= NATIVE_SOURCE_TO_TRACK_ID_LIMIT) break
+    if (!validSources.has(source) && source !== protectedSource) {
+      nativeSourceToTrackId.delete(source)
+    }
+  }
+  for (const source of nativeSourceToTrackId.keys()) {
+    if (nativeSourceToTrackId.size <= NATIVE_SOURCE_TO_TRACK_ID_LIMIT) break
+    if (source === protectedSource) continue
+    nativeSourceToTrackId.delete(source)
+  }
+}
+
 const nativeQueueRevisionFence = new NativeQueueRevisionFence()
 let activeLoadToken = 0
 let rendererFallbackInProgress = false
@@ -1396,6 +1420,7 @@ async function syncNativeQueueState(snapshot: NativeQueueStateSnapshot): Promise
   )
   if (!synchronized.applied) return
   const preparedQueue = synchronized.prepared
+  if (preparedQueue) pruneNativeSourceToTrackId(preparedQueue.items, getTrackAudioSource(current))
   if (!preparedQueue) {
     // 不要因为队列重同步失败就停掉正在播放的引擎：停止会让主进程误判
     // “播放结束”（单曲队列 queueIndex>=len-1 恒真）→ 渲染层自动切歌/重播。
@@ -2692,6 +2717,10 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         for (const item of preparedQueue.items) {
           nativeSourceToTrackId.set(item.source, item.id)
         }
+        // 当前播放 source 挪到最新插入位，保证淘汰时最后才被考虑。
+        nativeSourceToTrackId.delete(playTarget)
+        nativeSourceToTrackId.set(playTarget, track.id)
+        pruneNativeSourceToTrackId(preparedQueue.items, playTarget)
         if (!isActiveLoad(loadToken, track)) {
           releaseLoadIfOwned()
           return

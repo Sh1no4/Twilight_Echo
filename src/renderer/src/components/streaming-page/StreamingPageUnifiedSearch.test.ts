@@ -345,3 +345,8 @@ function createLocalResult(tracks: Track[], removedTrackIds: string[]): LocalLib
     failures: []
   }
 }
+
+test('saved streaming scroll positions stay bounded', () => {
+  assert.match(source, /SAVED_SCROLL_POSITION_LIMIT = \d+/)
+  assert.match(source, /while \(savedScrollPositions\.size > SAVED_SCROLL_POSITION_LIMIT\)/)
+})
