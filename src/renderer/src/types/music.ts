@@ -15,6 +15,16 @@ import type { SleepTimerState } from '../../../shared/sleepTimer.ts'
 import type { CueRange, ParsedCueSheet } from '../../../shared/cue.ts'
 import type { NetworkEntry } from '../../../shared/networkSources.ts'
 
+/**
+ * 单个歌手的 provider 侧身份。`artist` 展示串是同名歌手无法区分的，跳转歌手页
+ * 必须走这里的 id。顺序与 `artist` 的 ' / ' 分段严格一致，`id` 缺失时也保留条目，
+ * 否则首位歌手会错位到第二位的 id 上。
+ */
+export interface TrackArtistRef {
+  id?: string | number
+  name: string
+}
+
 export interface Track {
   id: string
   /**
@@ -24,6 +34,8 @@ export interface Track {
   queueEntryId?: string
   title: string
   artist: string
+  /** 结构化歌手身份（流媒体 provider 提供）；本地扫描曲目没有这个概念。 */
+  artists?: TrackArtistRef[]
   album: string
   /** Primary genre tag; multi-value tags keep the first non-empty entry. */
   genre?: string | null

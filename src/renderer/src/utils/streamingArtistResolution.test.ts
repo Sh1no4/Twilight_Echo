@@ -4,7 +4,10 @@ import type { StreamingArtistCandidate } from './streamingArtistResolution.ts'
 
 const {
   findBestStreamingArtistMatch,
+  findStreamingArtistById,
+  getPrimaryStreamingArtistId,
   getPrimaryStreamingArtistName,
+  matchStreamingArtistsByName,
   normalizeStreamingArtistName,
   resolveLinkedStreamingArtist
 } = (await import(
@@ -36,6 +39,66 @@ test('uses exact artist name matches and rejects unrelated search fallbacks', ()
     ]),
     null
   )
+})
+
+test('primary artist id comes from the ref backing the displayed name', () => {
+  const artists = [
+    { id: 9001, name: '沙包--' },
+    { id: 9002, name: 'Om Chincholkar' }
+  ]
+
+  assert.equal(getPrimaryStreamingArtistId('沙包-- / Om Chincholkar', artists), 9001)
+  // 空格差异归一化后仍是同一位歌手。
+  assert.equal(getPrimaryStreamingArtistId(' 沙包--  / Om Chincholkar ', artists), 9001)
+  assert.equal(
+    getPrimaryStreamingArtistId('沙包--', [{ id: 'ncm-9001', name: '沙包--' }]),
+    'ncm-9001'
+  )
+  // refs 只覆盖首位歌手也够用——需要的就是首位那个 id。
+  assert.equal(getPrimaryStreamingArtistId('沙包-- / Om Chincholkar', [artists[0]]), 9001)
+})
+
+test('primary artist id is withheld when the refs cannot back the displayed name', () => {
+  const artists = [{ id: 9001, name: '沙包--' }]
+
+  // 展示串与 refs 对不上（曲目被重新匹配过等）：回退名字搜索，绝不把 9001 安到别人身上。
+  assert.equal(getPrimaryStreamingArtistId('在你怀里的桃花', artists), undefined)
+  assert.equal(getPrimaryStreamingArtistId('Om Chincholkar / 沙包--', artists), undefined)
+  // id 缺失的占位条目不能当作命中。
+  assert.equal(getPrimaryStreamingArtistId('沙包--', [{ name: '沙包--' }]), undefined)
+  assert.equal(getPrimaryStreamingArtistId('沙包--', []), undefined)
+  assert.equal(getPrimaryStreamingArtistId('沙包--', undefined), undefined)
+  assert.equal(getPrimaryStreamingArtistId('', artists), undefined)
+})
+
+test('every same-named artist surfaces so callers can disambiguate', () => {
+  const artists = [
+    { id: 1, name: '张三', picUrl: null },
+    { id: 2, name: '张 三', picUrl: null },
+    { id: 3, name: '李四', picUrl: null }
+  ]
+
+  assert.deepEqual(
+    matchStreamingArtistsByName('张三', artists).map((item) => item.id),
+    [1, 2]
+  )
+  assert.deepEqual(matchStreamingArtistsByName('', artists), [])
+  assert.deepEqual(matchStreamingArtistsByName('王五', artists), [])
+  // 取“最佳”仍是同名候选里的第一个——正因为这个选择可能错，才需要歌手 id。
+  assert.equal(findBestStreamingArtistMatch('张三', artists)?.id, 1)
+})
+
+test('artist lookup by id never degrades into a name comparison', () => {
+  const artists = [
+    { id: 9001, name: '张三', picUrl: null },
+    { id: 9002, name: '张三', picUrl: 'second.png' }
+  ]
+
+  assert.equal(findStreamingArtistById(9002, artists)?.picUrl, 'second.png')
+  // provider id 在传输中可能变成字符串，比较前统一成字符串。
+  assert.equal(findStreamingArtistById('9002', artists)?.picUrl, 'second.png')
+  assert.equal(findStreamingArtistById(9003, artists), null)
+  assert.equal(findStreamingArtistById(9001, []), null)
 })
 
 test('linked musician users resolve to matched artist ids before content fetches', async () => {

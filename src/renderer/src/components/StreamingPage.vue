@@ -49,6 +49,8 @@ import {
 } from '../utils/streamingNavigation'
 import {
   findBestStreamingArtistMatch,
+  findStreamingArtistById,
+  matchStreamingArtistsByName,
   resolveLinkedStreamingArtist,
   type StreamingArtistNavigationRequest
 } from '../utils/streamingArtistResolution'
@@ -1486,7 +1488,9 @@ async function openRequestedArtist(request: StreamingArtistNavigationRequest): P
 
   await providerStore.syncProviders().catch(() => undefined)
   const provider = mediaProviders.get(providerId)
-  if (!provider?.searchArtists || !provider.fetchArtistTopSongs) {
+  // 带歌手 id 时搜索只用来补头图等展示字段，provider 没有 searchArtists 也能开页；
+  // 只有回退到按名字定位才必须能搜。
+  if (!provider?.fetchArtistTopSongs || (request.artistId == null && !provider.searchArtists)) {
     if (token !== artistNavigationToken) return
     pushNotice({
       kind: 'error',
@@ -1501,12 +1505,38 @@ async function openRequestedArtist(request: StreamingArtistNavigationRequest): P
   }
 
   try {
-    const result = await mediaProviders.searchArtists(providerId, artistName, 8, 0)
+    const searchResult = provider.searchArtists
+      ? await mediaProviders.searchArtists(providerId, artistName, 8, 0).catch((error: unknown) => {
+          // 按名字定位时搜不到就彻底无从下手；带 id 时搜索失败只是少了头图。
+          if (request.artistId == null) throw error
+          return null
+        })
+      : null
     if (token !== artistNavigationToken) return
-    const artist = findBestStreamingArtistMatch(artistName, result.items)
+
+    if (request.artistId != null) {
+      // 选人只认 id，所以同名歌手里挑出的一定是曲目实际标注的那位。搜索结果仅用于
+      // 补 picUrl / albumSize 等展示字段，没有同 id 的候选就用最小信息开页。
+      const matched = searchResult
+        ? findStreamingArtistById(request.artistId, searchResult.items)
+        : null
+      await openArtist(matched ?? { id: request.artistId, name: artistName, picUrl: null })
+      return
+    }
+
+    const candidates = matchStreamingArtistsByName(artistName, searchResult?.items ?? [])
+    const artist = candidates[0]
     if (!artist) {
       pushNotice({ kind: 'error', message: `未找到歌手「${artistName}」` })
       return
+    }
+    if (candidates.length > 1) {
+      // 曲目没带歌手 id（旧快照 / provider 未提供），同名候选只能按搜索排序取第一个。
+      // 结果可能不是用户想要的那位，明说出来，别装作命中唯一。
+      pushNotice({
+        kind: 'info',
+        message: `有多位歌手叫「${artistName}」，已打开搜索结果中排最前的一位`
+      })
     }
     await openArtist(artist)
   } catch (error) {
@@ -2179,6 +2209,10 @@ async function favoriteStreamingTracks(tracks: Track[]): Promise<void> {
   const actionLabel = allLiked ? '取消收藏' : '收藏'
   let succeeded = 0
   let failed = 0
+  // The local favorites playlist can decline a write when an equivalent entry is
+  // already there. Reporting that as success is how a silently dropped favorite
+  // used to look like it worked.
+  let unchanged = 0
   for (const track of tracks) {
     if (track.ncmSongId != null) {
       if (likingTracks.value.has(track.ncmSongId)) continue
@@ -2194,11 +2228,11 @@ async function favoriteStreamingTracks(tracks: Track[]): Promise<void> {
         likingTracks.value = next
       }
     } else if (allLiked) {
-      musicStore.removeFavoriteTrack(track)
-      succeeded++
+      if (musicStore.removeFavoriteTrack(track)) succeeded++
+      else unchanged++
     } else {
-      musicStore.addFavoriteTrack(track)
-      succeeded++
+      if (musicStore.addFavoriteTrack(track)) succeeded++
+      else unchanged++
     }
   }
   if (failed > 0) {
@@ -2206,8 +2240,16 @@ async function favoriteStreamingTracks(tracks: Track[]): Promise<void> {
       kind: 'error',
       message: `${actionLabel}完成 ${succeeded}/${succeeded + failed} 首，${failed} 首失败`
     })
+  } else if (unchanged > 0 && succeeded === 0) {
+    pushNotice({
+      kind: 'info',
+      message: allLiked ? '这些歌曲不在收藏中' : '这些歌曲已在收藏中'
+    })
   } else if (tracks.length > 1) {
-    pushNotice({ kind: 'success', message: `已${actionLabel} ${succeeded} 首歌曲` })
+    pushNotice({
+      kind: 'success',
+      message: `已${actionLabel} ${succeeded} 首歌曲${unchanged > 0 ? `，${unchanged} 首无需改动` : ''}`
+    })
   }
 }
 

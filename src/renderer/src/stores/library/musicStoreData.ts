@@ -155,6 +155,7 @@ export function toPlaylistTrackSnapshot(track: Track): Track {
     ...(track.queueEntryId !== undefined ? { queueEntryId: track.queueEntryId } : {}),
     title: track.title,
     artist: track.artist,
+    ...(track.artists !== undefined ? { artists: track.artists.map((item) => ({ ...item })) } : {}),
     album: track.album,
     ...(track.genre !== undefined ? { genre: track.genre } : {}),
     ...(track.albumArtist !== undefined ? { albumArtist: track.albumArtist } : {}),

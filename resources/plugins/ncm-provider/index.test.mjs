@@ -94,6 +94,75 @@ test('personal FM requests a 30-track roaming batch', async () => {
   }
 })
 
+test('tracks carry provider artist ids aligned with the display string', async () => {
+  const provider = await activateProvider(async (path) => {
+    assert.equal(parseRequest(path).pathname, '/personal/fm/mode')
+    return {
+      data: [
+        {
+          id: 501,
+          name: 'duet',
+          ar: [
+            { id: 9001, name: '沙包--' },
+            { id: 9002, name: 'Om Chincholkar' }
+          ],
+          al: { name: 'album-501', picUrl: null },
+          dt: 180000
+        },
+        {
+          id: 502,
+          name: 'legacy payload',
+          artists: [{ id: 9003, name: '在你怀里的桃花' }],
+          artist: '在你怀里的桃花（遗留字符串）',
+          al: { name: 'album-502', picUrl: null },
+          dt: 180000
+        },
+        {
+          id: 503,
+          name: 'partial ids',
+          ar: [{ name: '无 id 歌手' }, { id: 9004, name: '有 id 歌手' }],
+          al: { name: 'album-503', picUrl: null },
+          dt: 180000
+        },
+        {
+          id: 504,
+          name: 'string artist only',
+          artist: '只有字符串',
+          al: { name: 'album-504', picUrl: null },
+          dt: 180000
+        },
+        // 补满一个漫游批次，避免落到经典 FM 回退路径上。
+        ...Array.from({ length: 26 }, (_, index) => song(600 + index))
+      ]
+    }
+  })
+
+  try {
+    const tracks = await provider.fetchPersonalFm()
+
+    // 展示串由 artists 拼出，两者同源同序：首位名字必定对应 artists[0]。
+    assert.equal(tracks[0].artist, '沙包-- / Om Chincholkar')
+    assert.deepEqual(tracks[0].artists, [
+      { id: 9001, name: '沙包--' },
+      { id: 9002, name: 'Om Chincholkar' }
+    ])
+
+    // 老接口的 artists 数组也带 id，优先于拿不到 id 的 artist 字符串。
+    assert.equal(tracks[1].artist, '在你怀里的桃花')
+    assert.deepEqual(tracks[1].artists, [{ id: 9003, name: '在你怀里的桃花' }])
+
+    // 缺 id 的条目保留占位，否则第二位歌手会顶到首位、把 id 配错人。
+    assert.equal(tracks[2].artist, '无 id 歌手 / 有 id 歌手')
+    assert.deepEqual(tracks[2].artists, [{ name: '无 id 歌手' }, { id: 9004, name: '有 id 歌手' }])
+
+    // 完全没有结构化歌手时不写 artists 键，歌手页跳转自然回退到名字搜索。
+    assert.equal(tracks[3].artist, '只有字符串')
+    assert.equal('artists' in tracks[3], false)
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
 test('upstream requests are rate limited by a global token bucket', async () => {
   const requestTimes = []
   const provider = await activateProvider(async (path) => {

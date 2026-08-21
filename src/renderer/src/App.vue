@@ -50,6 +50,7 @@ import { useAppNoticeStore } from './stores/useAppNoticeStore'
 import { getTrackSource } from './utils/logicalTrackModel'
 import { scheduleIdleTask, type IdleTaskHandle } from './app/scheduleIdleTask'
 import {
+  getPrimaryStreamingArtistId,
   getPrimaryStreamingArtistName,
   type StreamingArtistNavigationRequest
 } from './utils/streamingArtistResolution'
@@ -298,11 +299,14 @@ function handlePlayerBarArtistClick(): void {
 
   const artistName = getPrimaryStreamingArtistName(trackArtist)
   if (!artistName) return
+  // 同名歌手只能靠 provider 歌手 id 区分；曲目没带 id 时才让流媒体页按名字搜。
+  const artistId = getPrimaryStreamingArtistId(trackArtist, track.artists)
   streamingInitialTab.value = 'home'
   streamingArtistRequest.value = {
     key: ++streamingArtistRequestKey,
     providerId: source,
-    artistName
+    artistName,
+    ...(artistId !== undefined ? { artistId } : {})
   }
   enterStreamingMode()
 }

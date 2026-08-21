@@ -581,19 +581,35 @@ function getSongAudioMeta(song) {
   }
 }
 
+/**
+ * 收集结构化歌手身份。name 与 id 必须成对同序输出：歌手页跳转按 id 打开，而
+ * 展示串只能给出首位歌手的名字，两个数组一旦错位就会跳到另一位歌手身上。
+ * 所以 name 为空的条目整体丢弃，id 缺失的条目保留（只留 name）占住位置。
+ * `song.ar` 是 cloudsearch / song detail 的字段，老接口只给 `song.artists`。
+ */
+function normalizeTrackArtists(song) {
+  const source =
+    Array.isArray(song.ar) && song.ar.length > 0
+      ? song.ar
+      : Array.isArray(song.artists)
+        ? song.artists
+        : []
+  const refs = []
+  for (const item of source) {
+    const name = typeof item?.name === 'string' ? item.name.trim() : ''
+    if (!name) continue
+    const id = Number(item?.id)
+    refs.push(Number.isFinite(id) && id > 0 ? { id, name } : { name })
+  }
+  return refs
+}
+
 function normalizeTrack(song) {
   const songId = Number(song.id)
-  const artists = Array.isArray(song.ar)
-    ? song.ar.map((artist) => artist?.name).filter(Boolean)
-    : []
-  const artist =
-    artists.join(' / ') ||
-    song.artist ||
-    song.artists
-      ?.map?.((item) => item?.name)
-      .filter(Boolean)
-      .join(' / ') ||
-    '未知艺术家'
+  const artistRefs = normalizeTrackArtists(song)
+  // 展示串由 artistRefs 拼出，两者同源同序。结构化数组优先于遗留的 song.artist
+  // 字符串，后者拿不到歌手 id，同名歌手就只能靠名字搜索去猜。
+  const artist = artistRefs.map((item) => item.name).join(' / ') || song.artist || '未知艺术家'
   const title = song.name || song.title || '未知歌曲'
   const album = song.al?.name || song.album?.name || '未知专辑'
   const rawCover = song.al?.picUrl || song.album?.picUrl || song.picUrl || song.coverImgUrl || null
@@ -622,6 +638,7 @@ function normalizeTrack(song) {
     sampleRate: audioMeta.sampleRate,
     bitrate: audioMeta.bitrate
   }
+  if (artistRefs.length > 0) track.artists = artistRefs
   if (bpm !== undefined) track.bpm = bpm
   return track
 }

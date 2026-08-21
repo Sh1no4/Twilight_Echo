@@ -348,6 +348,15 @@ test('player bar artist is a keyboard-accessible navigation button', () => {
   assert.match(app, /:artist-navigation-request="streamingArtistRequest"/)
 })
 
+test('player bar artist navigation carries the provider artist id', () => {
+  const app = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
+
+  // 同名歌手只能靠 provider 歌手 id 区分。展示串与曲目 artists 对不上时
+  // getPrimaryStreamingArtistId 返回 undefined，请求才退回按名字搜索。
+  assert.match(app, /getPrimaryStreamingArtistId\(trackArtist, track\.artists\)/)
+  assert.match(app, /\.\.\.\(artistId !== undefined \? \{ artistId \} : \{\}\)/)
+})
+
 test('player bar remounts the progress control for every queue entry', () => {
   const source = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
 
