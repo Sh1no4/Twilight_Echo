@@ -507,11 +507,17 @@ test('player state persists a selected track before shell-level autosave is avai
     'persistSelectedTrackSession'
   )
 
+  const writeSelectedTrackSession = extractInternalFunctionBody(
+    sessionSource,
+    'writeSelectedTrackSession'
+  )
   assert.match(
-    persistSelectedTrackSession,
+    writeSelectedTrackSession,
     /const mode = options\.getAppSettings\(\)\.value\.playbackResumeMode/
   )
-  assert.match(persistSelectedTrackSession, /playbackSessionWriter\.save\(dataApi, session\)/)
+  assert.match(writeSelectedTrackSession, /playbackSessionWriter\.save\(dataApi, session\)/)
+  // 快速切歌合并为一次写：防抖到期后构建快照并写入。
+  assert.match(persistSelectedTrackSession, /writeSelectedTrackSession\(\)/)
   assert.match(
     setupSideEffects,
     /currentTrack\.value\?\.id[\s\S]*persistSelectedTrackSession\(\)[\s\S]*flush: 'sync'/
@@ -1129,7 +1135,8 @@ test('playback session strips transient provider stream URLs before restore', ()
     'restored provider playback should resolve a fresh stream URL instead of reusing a stale proxy URL'
   )
   assert.match(sessionTrackSource, /bpm: track\.bpm/)
-  assert.match(sessionTrackSource, /bpmAnalysis: track\.bpmAnalysis/)
+  // bpmAnalysis (tempoMap) must stay out of session clones; it is re-resolved on demand.
+  assert.doesNotMatch(sessionTrackSource, /bpmAnalysis: track\.bpmAnalysis/)
   assert.match(
     sessionSource,
     /const track = options\.hydratePlaybackTrack\(cloneTrackForPlaybackSession\(session\.track\)\)/
