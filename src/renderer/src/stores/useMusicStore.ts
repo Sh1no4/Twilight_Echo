@@ -26,6 +26,7 @@ import {
 import { getLogicalTrackKey } from '../utils/logicalTrackIdentity.ts'
 import {
   buildLogicalTracks,
+  canShareTrackIdentity,
   getTrackSource,
   type LogicalTrack
 } from '../utils/logicalTrackModel.ts'
@@ -186,7 +187,7 @@ let playlistIdentityCache: {
   snapshots: Record<string, Track> | undefined
   tracksRevision: number
   ids: Set<string>
-  logicalKeys: Set<string>
+  snapshotsByLogicalKey: Map<string, Track[]>
 } | null = null
 
 // Rebuild coalescing state — module-level so it persists across useMusicStore() calls.
@@ -275,8 +276,10 @@ export function useMusicStore(): {
   applyBpmAnalysis: (trackId: string, filePath: string, analysis: Track['bpmAnalysis']) => boolean
   clearBpmAnalysis: () => boolean
   isFavoriteTrack: (track: Track) => boolean
-  addFavoriteTrack: (track: Track) => void
-  removeFavoriteTrack: (track: Track) => void
+  /** True when the favorites playlist changed; false when an equivalent entry already covered it. */
+  addFavoriteTrack: (track: Track) => boolean
+  /** True when the favorites playlist changed; false when nothing matched. */
+  removeFavoriteTrack: (track: Track) => boolean
   setFavoriteTracks: (favoriteTracks: Track[], favorite: boolean) => number
   deletePlaylist: (playlistId: string) => void
   getPlaylistTracks: (playlistName: string) => Track[]
@@ -1617,7 +1620,10 @@ export function useMusicStore(): {
     return trackById.get(trackId) ?? playlist.trackSnapshots?.[trackId]
   }
 
-  function getPlaylistIdentity(playlist: Playlist): { ids: Set<string>; logicalKeys: Set<string> } {
+  function getPlaylistIdentity(playlist: Playlist): {
+    ids: Set<string>
+    snapshotsByLogicalKey: Map<string, Track[]>
+  } {
     if (
       playlistIdentityCache &&
       playlistIdentityCache.playlist === playlist &&
@@ -1628,12 +1634,19 @@ export function useMusicStore(): {
       return playlistIdentityCache
     }
 
+    // Keyed by title+artist, but the bucket keeps every snapshot: two different
+    // recordings can share that key, so callers compare the candidates instead
+    // of treating the key itself as the identity.
     const ids = new Set<string>()
-    const logicalKeys = new Set<string>()
+    const snapshotsByLogicalKey = new Map<string, Track[]>()
     for (const trackId of playlist.trackIds) {
       ids.add(trackId)
       const snapshot = getPlaylistTrackSnapshot(playlist, trackId)
-      if (snapshot) logicalKeys.add(getLogicalTrackKey(snapshot))
+      if (!snapshot) continue
+      const key = getLogicalTrackKey(snapshot)
+      const bucket = snapshotsByLogicalKey.get(key)
+      if (bucket) bucket.push(snapshot)
+      else snapshotsByLogicalKey.set(key, [snapshot])
     }
     playlistIdentityCache = {
       playlist,
@@ -1641,7 +1654,7 @@ export function useMusicStore(): {
       snapshots: playlist.trackSnapshots,
       tracksRevision,
       ids,
-      logicalKeys
+      snapshotsByLogicalKey
     }
     return playlistIdentityCache
   }
@@ -1656,7 +1669,11 @@ export function useMusicStore(): {
     const snapshot = playlist.trackSnapshots?.[trackId]
     if (!snapshot) return undefined
     const key = getLogicalTrackKey(snapshot)
-    const localReplacement = getLocalLogicalTracks().get(key)?.preferredTrack
+    // Variants are ordered best-first, so this takes the best local file that is
+    // actually the same recording rather than any same-titled neighbour.
+    const localReplacement = getLocalLogicalTracks()
+      .get(key)
+      ?.variants.find((variant) => canShareTrackIdentity(snapshot, variant.track))?.track
     if (localReplacement) return localReplacement
     return getTrackSource(snapshot) === 'local' ? undefined : snapshot
   }
@@ -1691,15 +1708,17 @@ export function useMusicStore(): {
     const playlist = getDefaultFavoritePlaylist()
     if (!playlist) return false
     const identity = getPlaylistIdentity(playlist)
-    return identity.ids.has(track.id) || identity.logicalKeys.has(getLogicalTrackKey(track))
+    if (identity.ids.has(track.id)) return true
+    const candidates = identity.snapshotsByLogicalKey.get(getLogicalTrackKey(track))
+    return candidates?.some((candidate) => canShareTrackIdentity(candidate, track)) ?? false
   }
 
-  function addFavoriteTrack(track: Track): void {
-    setFavoriteTracks([track], true)
+  function addFavoriteTrack(track: Track): boolean {
+    return setFavoriteTracks([track], true) > 0
   }
 
-  function removeFavoriteTrack(track: Track): void {
-    setFavoriteTracks([track], false)
+  function removeFavoriteTrack(track: Track): boolean {
+    return setFavoriteTracks([track], false) > 0
   }
 
   function setFavoriteTracks(favoriteTracks: Track[], favorite: boolean): number {
@@ -1710,12 +1729,19 @@ export function useMusicStore(): {
       const target = playlist ?? ensurePlaylist(DEFAULT_FAVORITE_PLAYLIST_NAME, { isDefault: true })
       const identity = getPlaylistIdentity(target)
       const knownIds = new Set(identity.ids)
-      const knownLogicalKeys = new Set(identity.logicalKeys)
+      // Copy the buckets: the map above is cached and must not be mutated.
+      const knownByLogicalKey = new Map<string, Track[]>()
+      for (const [key, snapshots] of identity.snapshotsByLogicalKey) {
+        knownByLogicalKey.set(key, [...snapshots])
+      }
       const toAdd = favoriteTracks.filter((track) => {
+        if (knownIds.has(track.id)) return false
         const logicalKey = getLogicalTrackKey(track)
-        if (knownIds.has(track.id) || knownLogicalKeys.has(logicalKey)) return false
+        const known = knownByLogicalKey.get(logicalKey)
+        if (known?.some((candidate) => canShareTrackIdentity(candidate, track))) return false
         knownIds.add(track.id)
-        knownLogicalKeys.add(logicalKey)
+        if (known) known.push(track)
+        else knownByLogicalKey.set(logicalKey, [track])
         return true
       })
       const created = !playlist
@@ -1726,11 +1752,21 @@ export function useMusicStore(): {
 
     if (!playlist) return 0
     const ids = new Set(favoriteTracks.map((track) => track.id))
-    const logicalKeys = new Set(favoriteTracks.map(getLogicalTrackKey))
+    // Mirror the add/query rule: drop the entries that are this recording, and
+    // leave a same-titled neighbour alone.
+    const requestedByLogicalKey = new Map<string, Track[]>()
+    for (const track of favoriteTracks) {
+      const key = getLogicalTrackKey(track)
+      const bucket = requestedByLogicalKey.get(key)
+      if (bucket) bucket.push(track)
+      else requestedByLogicalKey.set(key, [track])
+    }
     const nextTrackIds = playlist.trackIds.filter((trackId) => {
       if (ids.has(trackId)) return false
       const snapshot = getPlaylistTrackSnapshot(playlist, trackId)
-      return !snapshot || !logicalKeys.has(getLogicalTrackKey(snapshot))
+      if (!snapshot) return true
+      const requested = requestedByLogicalKey.get(getLogicalTrackKey(snapshot))
+      return !requested?.some((track) => canShareTrackIdentity(track, snapshot))
     })
     const removedCount = playlist.trackIds.length - nextTrackIds.length
     if (removedCount === 0) return 0

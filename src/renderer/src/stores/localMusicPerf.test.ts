@@ -2777,6 +2777,65 @@ test('favorite logical state reuses playlist identity cache for repeated button 
   store.clearTracks()
 })
 
+test('same-titled provider songs each reach the default favorites', async () => {
+  const store = setupStore()
+  store.playlists.value = []
+  const base = {
+    ...generateMockTracks(1)[0],
+    title: '同名歌曲',
+    artist: '同一歌手',
+    duration: 200,
+    size: 0,
+    source: 'ncm'
+  }
+  const studio = { ...base, id: 'ncm:1001', ncmSongId: 1001, filePath: 'ncm:1001', album: '专辑 A' }
+  const live = { ...base, id: 'ncm:1002', ncmSongId: 1002, filePath: 'ncm:1002', album: '专辑 B' }
+
+  assert.equal(store.addFavoriteTrack(studio), true)
+  // Identical title, artist and duration — only the provider song id differs.
+  assert.equal(store.addFavoriteTrack(live), true)
+
+  const favorite = store.playlists.value.find((playlist) => playlist.name === '我收藏的音乐')
+  assert.deepEqual(favorite?.trackIds, ['ncm:1001', 'ncm:1002'])
+  assert.equal(store.isFavoriteTrack(studio), true)
+  assert.equal(store.isFavoriteTrack(live), true)
+
+  // Re-adding an entry already covered reports "nothing changed" instead of
+  // silently dropping the write.
+  assert.equal(store.addFavoriteTrack(live), false)
+  assert.deepEqual(favorite?.trackIds, ['ncm:1001', 'ncm:1002'])
+
+  store.clearTracks()
+})
+
+test('unfavoriting one same-titled song leaves its namesake in place', async () => {
+  const store = setupStore()
+  store.playlists.value = []
+  const base = {
+    ...generateMockTracks(1)[0],
+    title: '同名歌曲',
+    artist: '同一歌手',
+    duration: 200,
+    size: 0,
+    source: 'ncm'
+  }
+  const studio = { ...base, id: 'ncm:1001', ncmSongId: 1001, filePath: 'ncm:1001' }
+  const live = { ...base, id: 'ncm:1002', ncmSongId: 1002, filePath: 'ncm:1002' }
+
+  store.addFavoriteTrack(studio)
+  store.addFavoriteTrack(live)
+
+  assert.equal(store.removeFavoriteTrack(live), true)
+
+  const favorite = store.playlists.value.find((playlist) => playlist.name === '我收藏的音乐')
+  assert.deepEqual(favorite?.trackIds, ['ncm:1001'])
+  assert.equal(store.isFavoriteTrack(studio), true)
+  assert.equal(store.isFavoriteTrack(live), false)
+  assert.equal(store.removeFavoriteTrack(live), false)
+
+  store.clearTracks()
+})
+
 test('removing a logical favorite removes all source variants from default favorites', async () => {
   const store = setupStore()
   store.playlists.value = []
