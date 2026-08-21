@@ -1,4 +1,4 @@
-import { ref, shallowRef, toRaw, type Ref } from 'vue'
+import { ref, shallowRef, toRaw, triggerRef, type Ref } from 'vue'
 import type { Track } from '../types/music'
 import type {
   LocalLibraryExclusion,
@@ -138,7 +138,9 @@ const artists = shallowRef<LibraryItem[]>([])
 const albums = shallowRef<LibraryItem[]>([])
 const genres = shallowRef<LibraryItem[]>([])
 const folders = shallowRef<LibraryItem[]>([])
-const playlists = ref<Playlist[]>([])
+// 歌单内含完整 trackSnapshots，深度代理代价高。所有变更（替换与就地修改）都
+// 汇入 queuePlaylistPersistence，统一在那里 triggerRef，见下。
+const playlists = shallowRef<Playlist[]>([])
 const playlistPersistenceStatus = ref<PlaylistPersistenceStatus>({
   state: 'idle',
   dirty: false,
@@ -1189,6 +1191,9 @@ export function useMusicStore(): {
     base = clonePlaylistSnapshot(playlistAuthoritativeSnapshot)
   ): void {
     playlistIdentityCache = null
+    // playlists 是 shallowRef：就地修改（trackIds/trackSnapshots/name/cover）不会
+    // 自动通知，所有变更路径都在此汇合，统一触发。
+    triggerRef(playlists)
     getPlaylistPersistence().enqueue(clonePlaylistSnapshot(), base)
   }
 
