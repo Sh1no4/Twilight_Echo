@@ -25,6 +25,7 @@ import {
   availableCollectionLetters,
   AZ_INDEX_LETTERS,
   collectionIndexLetter,
+  collectionLetterAtScroll,
   firstCollectionIndexForLetter,
   LibraryCollectionViewPreferences,
   type LibraryCollectionSort,
@@ -847,7 +848,9 @@ const {
   paddingTop,
   onScroll,
   onRowPointerMove,
-  updateViewportHeight
+  updateViewportHeight,
+  scrollTop,
+  viewportHeight
 } = useSongListVirtualScroll({
   displayTracks,
   resetSources: [
@@ -1200,14 +1203,20 @@ function applyTagManagerWrite(filePaths: string[], patch: LocalLibraryTagPatch):
 }
 
 const {
-  renderedGridCount,
   filteredGridItems,
   gridTotalCount,
+  gridWindowStart,
+  gridPaddingTop,
+  gridPaddingBottom,
+  showPlaylistCreateCard,
   visibleArtists,
   visibleAlbums,
   visibleGenres,
   visiblePlaylists,
   visibleFolders,
+  gridColumns,
+  gridRowStride,
+  gridOffsetTop,
   renderGridThroughIndex,
   localTransitionName,
   viewKey,
@@ -1221,7 +1230,10 @@ const {
   debouncedSearchQuery,
   currentGridItems,
   showGrid,
-  updateViewportHeight
+  updateViewportHeight,
+  containerRef,
+  scrollTop,
+  viewportHeight
 })
 
 const availableIndexLetters = computed(() => availableCollectionLetters(filteredGridItems.value))
@@ -1230,54 +1242,49 @@ function collectionLetterDisabled(letter: string): boolean {
   return !availableIndexLetters.value.has(letter)
 }
 
-async function jumpToCollectionLetter(letter: string): Promise<void> {
+function jumpToCollectionLetter(letter: string): void {
   if (!isCollectionGrid.value || collectionLetterDisabled(letter)) return
   const index = firstCollectionIndexForLetter(filteredGridItems.value, letter)
   if (index < 0) return
   activeCollectionLetter.value = letter
   renderGridThroughIndex(index)
-  await nextTick()
-  const card = await ensureCollectionCardRendered(index)
-  if (!card || !containerRef.value) return
-  const containerRect = containerRef.value.getBoundingClientRect()
-  const cardRect = card.getBoundingClientRect()
-  containerRef.value.scrollTo({
-    top: Math.max(0, containerRef.value.scrollTop + cardRect.top - containerRect.top - 92),
-    behavior: 'smooth'
-  })
-}
-
-async function ensureCollectionCardRendered(index: number): Promise<HTMLElement | null> {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const card = containerRef.value?.querySelector<HTMLElement>(
-      `[data-collection-index="${index}"]`
-    )
-    if (card) return card
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 50))
-  }
-  return null
 }
 
 function updateActiveCollectionLetter(): void {
-  if (!isCollectionGrid.value || !containerRef.value) return
-  const containerTop = containerRef.value.getBoundingClientRect().top + 104
-  let current: string | null = null
-  for (const card of containerRef.value.querySelectorAll<HTMLElement>('[data-collection-letter]')) {
-    if (card.getBoundingClientRect().top <= containerTop)
-      current = card.dataset.collectionLetter ?? null
-    else break
-  }
-  activeCollectionLetter.value =
-    current ?? collectionIndexLetter(filteredGridItems.value[0]?.name ?? '')
+  if (!isCollectionGrid.value) return
+  const next =
+    collectionLetterAtScroll(
+      filteredGridItems.value,
+      scrollTop.value,
+      gridOffsetTop.value,
+      gridColumns.value,
+      gridRowStride.value
+    ) ?? collectionIndexLetter(filteredGridItems.value[0]?.name ?? '')
+  if (next === activeCollectionLetter.value) return
+  activeCollectionLetter.value = next
 }
 
+let collectionLetterFrame: number | null = null
 function onSongListScroll(event: Event): void {
   onScroll(event)
-  updateActiveCollectionLetter()
+  if (collectionLetterFrame !== null) return
+  collectionLetterFrame = window.requestAnimationFrame(() => {
+    collectionLetterFrame = null
+    updateActiveCollectionLetter()
+  })
 }
+
+onBeforeUnmount(() => {
+  if (collectionLetterFrame !== null) window.cancelAnimationFrame(collectionLetterFrame)
+  collectionLetterFrame = null
+})
 
 watch([filteredGridItems, () => props.category], () => {
   activeCollectionLetter.value = collectionIndexLetter(filteredGridItems.value[0]?.name ?? '')
+})
+
+watch([scrollTop, gridWindowStart], () => {
+  if (isCollectionGrid.value) updateActiveCollectionLetter()
 })
 
 function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
@@ -1391,13 +1398,19 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
           </div>
           <div v-else class="collection-grid-layout" :class="{ 'has-az-index': isCollectionGrid }">
             <div class="card-grid">
+              <div
+                v-if="gridPaddingTop > 0"
+                class="grid-virtual-spacer"
+                :style="{ height: `${gridPaddingTop}px` }"
+                aria-hidden="true"
+              ></div>
               <!-- Artist Cards -->
               <template v-if="category === 'artists'">
                 <div
                   v-for="(artist, index) in visibleArtists"
                   :key="artist.name"
                   class="artist-card"
-                  :data-collection-index="index"
+                  :data-collection-index="gridWindowStart + index"
                   :data-collection-letter="collectionIndexLetter(artist.name) ?? undefined"
                   data-te-interactive
                   @click="emit('selectView', 'artists', `artist:${artist.name}`)"
@@ -1407,15 +1420,13 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                     :cover="artist.cover"
                     class="artist-cover"
                     alt="cover"
+                    loading="lazy"
                   />
                   <div v-else class="artist-cover-placeholder">
                     <ThemeIcon class="library-placeholder-icon" icon-slot="library.artist" />
                   </div>
                   <div class="artist-name">{{ artist.name }}</div>
                   <div class="artist-count">{{ artist.trackCount }} 首</div>
-                </div>
-                <div v-if="renderedGridCount < gridTotalCount" class="grid-loading-more">
-                  正在加载更多艺术家...
                 </div>
               </template>
               <!-- Album Cards -->
@@ -1424,7 +1435,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   v-for="(album, index) in visibleAlbums"
                   :key="album.id"
                   class="album-card"
-                  :data-collection-index="index"
+                  :data-collection-index="gridWindowStart + index"
                   :data-collection-letter="collectionIndexLetter(album.name) ?? undefined"
                   data-te-interactive
                   @click="emit('selectView', 'albums', `album:${album.id}`)"
@@ -1434,6 +1445,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                     :cover="album.cover"
                     class="album-cover"
                     alt="cover"
+                    loading="lazy"
                   />
                   <div v-else class="album-cover-placeholder">
                     <ThemeIcon class="library-placeholder-icon" icon-slot="library.album" />
@@ -1456,6 +1468,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                     :cover="genre.cover"
                     class="artist-cover"
                     alt="cover"
+                    loading="lazy"
                   />
                   <div v-else class="artist-cover-placeholder">
                     <ThemeIcon class="library-placeholder-icon" icon-slot="library.genre" />
@@ -1463,14 +1476,12 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   <div class="artist-name">{{ genre.name }}</div>
                   <div class="artist-count">{{ genre.trackCount }} 首</div>
                 </div>
-                <div v-if="renderedGridCount < gridTotalCount" class="grid-loading-more">
-                  正在加载更多流派...
-                </div>
               </template>
               <!-- Playlist Cards -->
               <template v-if="category === 'playlists'">
                 <!-- Create Playlist Card -->
                 <div
+                  v-if="showPlaylistCreateCard"
                   class="playlist-card create-playlist-card"
                   data-te-interactive
                   @click="openCreatePlaylistDialog()"
@@ -1493,6 +1504,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                     :cover="playlist.cover"
                     class="album-cover"
                     alt="playlist cover"
+                    loading="lazy"
                   />
                   <div
                     v-else
@@ -1533,6 +1545,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                     :cover="folder.cover"
                     class="album-cover"
                     alt="cover"
+                    loading="lazy"
                   />
                   <div v-else class="playlist-cover-placeholder">
                     <ThemeIcon class="library-placeholder-icon" icon-slot="library.folder" />
@@ -1541,6 +1554,12 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   <div class="playlist-count">{{ folder.trackCount }} 首</div>
                 </div>
               </template>
+              <div
+                v-if="gridPaddingBottom > 0"
+                class="grid-virtual-spacer"
+                :style="{ height: `${gridPaddingBottom}px` }"
+                aria-hidden="true"
+              ></div>
             </div>
             <nav v-if="isCollectionGrid" class="az-index" aria-label="A-Z 快捷索引">
               <button

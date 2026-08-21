@@ -1,63 +1,106 @@
 import { computed, onBeforeUnmount, ref, watch, type ComputedRef } from 'vue'
+import { getPlaybackQueueWindow } from '../../utils/playbackQueueVirtualization.ts'
 
-// Progressive prefix rendering for long track lists: mount a bounded window and
-// grow it while a sentinel row is within reach, instead of materializing
-// thousands of rows in one shot. The window is always a prefix of the source,
-// so row indices passed to selection/playback handlers stay valid.
+const STREAMING_ROW_HEIGHT = 64
+const STREAMING_OVERSCAN = 8
+
+function findScrollParent(el: HTMLElement | null): HTMLElement | null {
+  let current = el?.parentElement ?? null
+  while (current) {
+    const style = window.getComputedStyle(current)
+    if (
+      /(auto|scroll|overlay)/.test(style.overflowY) &&
+      current.scrollHeight > current.clientHeight
+    ) {
+      return current
+    }
+    current = current.parentElement
+  }
+  return document.scrollingElement instanceof HTMLElement ? document.scrollingElement : null
+}
+
 export function useProgressiveList<T>(
   source: () => readonly T[],
-  options: { initial?: number; step?: number } = {}
+  options: { initial?: number; step?: number; rowHeight?: number; overscan?: number } = {}
 ): {
   visibleItems: ComputedRef<T[]>
+  visibleStart: ComputedRef<number>
+  paddingTop: ComputedRef<number>
+  totalHeight: ComputedRef<number>
   hasMoreToRender: ComputedRef<boolean>
-  sentinelRef: (el: unknown) => void
+  listRef: (el: unknown) => void
 } {
-  const initial = options.initial ?? 80
-  const step = options.step ?? 80
-  const visibleCount = ref(initial)
+  const rowHeight = options.rowHeight ?? STREAMING_ROW_HEIGHT
+  const overscan = options.overscan ?? STREAMING_OVERSCAN
   const items = computed(source)
+  const scrollTop = ref(0)
+  const viewportHeight = ref(720)
+  const listOffsetTop = ref(0)
+  let listEl: HTMLElement | null = null
+  let scrollRoot: HTMLElement | null = null
 
-  watch(items, (next, prev) => {
-    // A different list (new detail view) restarts the window; appends and
-    // removals keep it, since the rendered prefix is still the same list.
-    if (next[0] !== prev?.[0]) visibleCount.value = initial
+  function onScroll(): void {
+    if (!scrollRoot) return
+    scrollTop.value = scrollRoot.scrollTop
+  }
+
+  function bindScrollRoot(element: HTMLElement | null): void {
+    if (scrollRoot === element) return
+    if (scrollRoot) scrollRoot.removeEventListener('scroll', onScroll)
+    scrollRoot = element
+    if (scrollRoot) scrollRoot.addEventListener('scroll', onScroll, { passive: true })
+  }
+
+  function measure(): void {
+    if (!listEl) return
+    if (!scrollRoot) bindScrollRoot(findScrollParent(listEl))
+    if (!scrollRoot) return
+    const listRect = listEl.getBoundingClientRect()
+    const rootRect = scrollRoot.getBoundingClientRect()
+    listOffsetTop.value = listRect.top - rootRect.top + scrollRoot.scrollTop
+    viewportHeight.value = scrollRoot.clientHeight
+    scrollTop.value = scrollRoot.scrollTop
+  }
+
+  function listRef(el: unknown): void {
+    listEl = el instanceof HTMLElement ? el : null
+    bindScrollRoot(findScrollParent(listEl))
+    measure()
+  }
+
+  const windowRange = computed(() =>
+    getPlaybackQueueWindow(
+      items.value.length,
+      Math.max(0, scrollTop.value - listOffsetTop.value),
+      viewportHeight.value,
+      rowHeight,
+      overscan
+    )
+  )
+  const visibleStart = computed(() => windowRange.value.start)
+  const visibleItems = computed(() =>
+    items.value.slice(windowRange.value.start, windowRange.value.end)
+  )
+  const paddingTop = computed(() => windowRange.value.start * rowHeight)
+  const totalHeight = computed(() => items.value.length * rowHeight)
+  const hasMoreToRender = computed(() => false)
+
+  watch(items, () => {
+    measure()
   })
 
-  const visibleItems = computed(() => items.value.slice(0, visibleCount.value))
-  const hasMoreToRender = computed(() => visibleCount.value < items.value.length)
+  onBeforeUnmount(() => {
+    if (scrollRoot) scrollRoot.removeEventListener('scroll', onScroll)
+    scrollRoot = null
+    listEl = null
+  })
 
-  let observer: IntersectionObserver | null = null
-  let observed: Element | null = null
-
-  function disconnect(): void {
-    observer?.disconnect()
-    observer = null
-    observed = null
+  return {
+    visibleItems,
+    visibleStart,
+    paddingTop,
+    totalHeight,
+    hasMoreToRender,
+    listRef
   }
-
-  function sentinelRef(el: unknown): void {
-    const element = el instanceof Element ? el : null
-    if (element === observed) return
-    disconnect()
-    if (!element || typeof IntersectionObserver === 'undefined') return
-    observed = element
-    observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries.some((entry) => entry.isIntersecting)) return
-        visibleCount.value = Math.min(items.value.length, visibleCount.value + step)
-        // Re-observe so the observer reports fresh state even when the sentinel
-        // is still within range after the newly grown rows land.
-        if (observer && observed) {
-          observer.unobserve(observed)
-          observer.observe(observed)
-        }
-      },
-      { rootMargin: '600px 0px' }
-    )
-    observer.observe(element)
-  }
-
-  onBeforeUnmount(disconnect)
-
-  return { visibleItems, hasMoreToRender, sentinelRef }
 }

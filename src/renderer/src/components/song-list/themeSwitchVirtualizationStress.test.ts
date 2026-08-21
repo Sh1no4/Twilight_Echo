@@ -7,7 +7,11 @@ import {
   themeModesToDataAttributes
 } from '../../../../shared/theme.ts'
 import { nearestRankPercentile } from '../../utils/themePerformance.ts'
-import { getSongListVirtualRange } from './songListVirtualWindow.ts'
+import {
+  getSongListGridVirtualRange,
+  getSongListVirtualRange,
+  maxMountedGridCards
+} from './songListVirtualWindow.ts'
 
 const TRACK_COUNT = 10_000
 const ROW_HEIGHT = 68
@@ -63,4 +67,23 @@ test('theme runtime cannot rebuild the library or become a SongList reset source
   assert.doesNotMatch(virtualScroll, /useThemeStore|data-te-|dataset\.theme/)
   assert.match(songList, /v-for="\(track, index\) in visibleTracks"/)
   assert.doesNotMatch(songList.match(/resetSources:\s*\[[\s\S]*?\]/)?.[0] ?? '', /theme/i)
+})
+
+test('10k collection grid stays within viewport + overscan while scrolling', () => {
+  const itemCount = 10_000
+  const columns = 5
+  const rowStride = 260
+  const viewportHeight = 720
+  const cap = maxMountedGridCards(viewportHeight, rowStride, columns)
+  for (const scrollTop of [0, 8_000, 40_000, 120_000]) {
+    const range = getSongListGridVirtualRange({
+      itemCount,
+      scrollTop,
+      viewportHeight,
+      gridOffsetTop: 180,
+      columns,
+      rowStride
+    })
+    assert.ok(range.end - range.start <= cap)
+  }
 })

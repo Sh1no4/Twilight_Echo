@@ -12,6 +12,9 @@ test('auto-hide scrollbar runtime discovers nested scroll containers through eve
   assert.match(runtime, /SCROLLBAR_PROXIMITY_PX = 28/)
   assert.match(runtime, /is-scrollbar-near/)
   assert.match(runtime, /is-scrollbar-active/)
+  assert.match(runtime, /ancestorCache/)
+  assert.match(runtime, /SCROLLBAR_FAR_SKIP_PX/)
+  assert.match(runtime, /invalidateAutoHideScrollbarCache/)
 })
 
 test('global scrollbar styling is hidden by default and uses neutral reveal tokens', () => {

@@ -7,6 +7,37 @@ export interface SongListVirtualWindowInput {
   overscanRows?: number
 }
 
+export interface SongListGridVirtualWindowInput {
+  itemCount: number
+  scrollTop: number
+  viewportHeight: number
+  gridOffsetTop: number
+  columns: number
+  rowStride: number
+  overscanRows?: number
+}
+
+export interface SongListGridVirtualRange {
+  start: number
+  end: number
+  startRow: number
+  endRow: number
+  columns: number
+  rowStride: number
+}
+
+export interface GridLayoutMetrics {
+  minColumnWidth: number
+  columnGap: number
+  rowGap: number
+  padX: number
+  padY: number
+}
+
+export const GRID_OVERSCAN_ROWS = 2
+export const GRID_AZ_SCAN_OFFSET = 104
+export const GRID_AZ_SCROLL_PADDING = 92
+
 export function getSongListVirtualRange({
   trackCount,
   scrollTop,
@@ -22,4 +53,82 @@ export function getSongListVirtualRange({
     start: Math.max(0, start),
     end: Math.min(trackCount, start + count)
   }
+}
+
+export function resolveGridLayoutMetrics(viewportWidth: number): GridLayoutMetrics {
+  if (viewportWidth <= 640) {
+    return { minColumnWidth: 128, columnGap: 10, rowGap: 12, padX: 16, padY: 18 }
+  }
+  if (viewportWidth <= 900) {
+    return { minColumnWidth: 160, columnGap: 14, rowGap: 16, padX: 20, padY: 22 }
+  }
+  return { minColumnWidth: 192, columnGap: 20, rowGap: 22, padX: 26, padY: 28 }
+}
+
+export function estimateGridColumns(containerWidth: number, viewportWidth: number): number {
+  const { minColumnWidth, columnGap } = resolveGridLayoutMetrics(viewportWidth)
+  const width = Math.max(0, containerWidth)
+  return Math.max(1, Math.floor((width + columnGap) / (minColumnWidth + columnGap)))
+}
+
+export function estimateGridRowStride(columnWidth: number, viewportWidth: number): number {
+  const { rowGap, padX, padY } = resolveGridLayoutMetrics(viewportWidth)
+  const cover = Math.max(1, columnWidth - padX)
+  const textBlock = 46
+  return Math.max(1, Math.round(cover + padY + textBlock + rowGap))
+}
+
+export function getSongListGridVirtualRange({
+  itemCount,
+  scrollTop,
+  viewportHeight,
+  gridOffsetTop,
+  columns,
+  rowStride,
+  overscanRows = GRID_OVERSCAN_ROWS
+}: SongListGridVirtualWindowInput): SongListGridVirtualRange {
+  const safeCount = Math.max(0, Math.floor(itemCount))
+  const safeColumns = Math.max(1, Math.floor(columns))
+  const safeStride = Math.max(1, rowStride)
+  const totalRows = Math.ceil(safeCount / safeColumns)
+  const virtualScrollTop = Math.max(0, scrollTop - gridOffsetTop)
+  const startRow = Math.max(0, Math.floor(virtualScrollTop / safeStride) - overscanRows)
+  const visibleRows = Math.ceil(Math.max(0, viewportHeight) / safeStride) + overscanRows * 2
+  const endRow = Math.min(totalRows, startRow + visibleRows)
+  return {
+    start: Math.min(safeCount, startRow * safeColumns),
+    end: Math.min(safeCount, endRow * safeColumns),
+    startRow,
+    endRow,
+    columns: safeColumns,
+    rowStride: safeStride
+  }
+}
+
+export function getSongListGridScrollTopForIndex(
+  index: number,
+  itemCount: number,
+  columns: number,
+  rowStride: number,
+  gridOffsetTop: number,
+  headerPadding = GRID_AZ_SCROLL_PADDING
+): number {
+  const safeCount = Math.max(0, Math.floor(itemCount))
+  if (safeCount === 0) return 0
+  const safeColumns = Math.max(1, Math.floor(columns))
+  const safeStride = Math.max(1, rowStride)
+  const safeIndex = Math.min(safeCount - 1, Math.max(0, Math.floor(index)))
+  const row = Math.floor(safeIndex / safeColumns)
+  return Math.max(0, gridOffsetTop + row * safeStride - headerPadding)
+}
+
+export function maxMountedGridCards(
+  viewportHeight: number,
+  rowStride: number,
+  columns: number,
+  overscanRows = GRID_OVERSCAN_ROWS
+): number {
+  const safeColumns = Math.max(1, Math.floor(columns))
+  const visibleRows = Math.ceil(Math.max(0, viewportHeight) / Math.max(1, rowStride))
+  return (visibleRows + overscanRows * 2) * safeColumns
 }

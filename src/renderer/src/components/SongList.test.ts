@@ -356,3 +356,30 @@ test('track table places the list number before artwork and reserves metadata tr
   assert.match(row, /trackListNumber\(track, Number\(index\)\)/)
   assert.doesNotMatch(row, /track\.trackNumber\s*\?\?/)
 })
+
+test('collection grid window-mounts cards and derives A-Z from data', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('./song-list/SongList.css', import.meta.url), 'utf8')
+  const grid = readFileSync(
+    new URL('./song-list/useSongListGridRendering.ts', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(source, /grid-virtual-spacer/)
+  assert.match(source, /gridWindowStart \+ index/)
+  assert.match(source, /collectionLetterAtScroll/)
+  assert.match(source, /loading="lazy"/)
+  assert.doesNotMatch(source, /querySelectorAll<HTMLElement>\('\[data-collection-letter\]'\)/)
+  assert.doesNotMatch(grid, /pumpGridRendering/)
+  assert.match(grid, /getSongListGridVirtualRange/)
+  assert.match(styles, /\.grid-virtual-spacer/)
+  assert.match(styles, /\.artist-card:hover[\s\S]*backdrop-filter: blur\(20px\)/)
+  assert.doesNotMatch(
+    styles.slice(
+      styles.indexOf('/* Unified Card Component Styles */'),
+      styles.indexOf('.artist-card:hover')
+    ),
+    /backdrop-filter: blur\(20px\)/
+  )
+  assert.match(styles, /\.track-playing::before \{[\s\S]*backdrop-filter: blur\(18px\)/)
+})
