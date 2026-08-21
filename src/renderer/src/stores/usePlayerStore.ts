@@ -62,7 +62,11 @@ import {
   shouldReuseResolvedStreamUrl,
   shouldUseNativePlaybackTarget
 } from '../utils/playbackRouting'
-import { preparePlayerNativeQueue } from '../utils/nativeQueuePreparation.ts'
+import {
+  NCM_STREAM_URL_MAX_AGE_MS,
+  preparePlayerNativeQueue,
+  stripStaleNcmStreamUrls
+} from '../utils/nativeQueuePreparation.ts'
 import {
   NativeQueueRevisionFence,
   synchronizeLatestNativeQueue
@@ -367,6 +371,65 @@ function pruneNativeSourceToTrackId(
     if (nativeSourceToTrackId.size <= NATIVE_SOURCE_TO_TRACK_ID_LIMIT) break
     if (source === protectedSource) continue
     nativeSourceToTrackId.delete(source)
+  }
+}
+
+// —— 8.4 NCM 下一曲播放地址预取 ——
+// 触发点：播放进度 ≥70% 或「next 意图」（曲目激活切换）。只预取 1 首、并发 1；
+// 预取地址仅在 NCM_STREAM_URL_MAX_AGE_MS（10min）窗口内被原生队列携带——短于
+// CDN 链接有效期，也尊重 twilight-media grant 的 30min 空闲 TTL。
+const NCM_PREFETCH_TRIGGER_PROGRESS = 0.7
+const MAX_NCM_STREAM_URL_RECORDS = 64
+const ncmStreamUrlCommittedAt = new Map<string, number>()
+let ncmPrefetchInFlightTrackId = ''
+
+function rememberNcmStreamUrlCommit(trackId: string): void {
+  ncmStreamUrlCommittedAt.delete(trackId)
+  ncmStreamUrlCommittedAt.set(trackId, Date.now())
+  while (ncmStreamUrlCommittedAt.size > MAX_NCM_STREAM_URL_RECORDS) {
+    const oldest = ncmStreamUrlCommittedAt.keys().next().value
+    if (oldest == null) break
+    ncmStreamUrlCommittedAt.delete(oldest)
+  }
+}
+
+/** 队列里的「下一首」：与 advanceAfterPlaybackEnded 的推进语义保持一致。 */
+function findUpcomingQueueTrack(): Track | null {
+  if (playMode.value === 'repeat' || playMode.value === 'heart') return null
+  const nextIndex = queueIndex.value + 1
+  if (nextIndex >= 0 && nextIndex < queue.value.length) return queue.value[nextIndex] ?? null
+  if ((playMode.value === 'listLoop' || playMode.value === 'shuffle') && queue.value.length > 0) {
+    return queue.value[0] ?? null
+  }
+  return null
+}
+
+async function prefetchUpcomingNcmStream(): Promise<void> {
+  const upcoming = findUpcomingQueueTrack()
+  if (!upcoming || getTrackSource(upcoming) !== 'ncm') return
+  const trackId = upcoming.id
+  if (ncmPrefetchInFlightTrackId) return
+  const committedAt = ncmStreamUrlCommittedAt.get(trackId)
+  if (committedAt != null && Date.now() - committedAt < NCM_STREAM_URL_MAX_AGE_MS) return
+  ncmPrefetchInFlightTrackId = trackId
+  try {
+    await syncPluginProviders()
+    const resolved = await useMediaProviders().resolvePlaybackUrl(upcoming, {
+      quality: appSettings.value.ncmPlaybackQuality
+    })
+    if (!resolved) return
+    // 迟到守卫：解析期间目标已不再是「下一首」时丢弃结果，绝不写共享轨状态。
+    const stillUpcoming = findUpcomingQueueTrack()
+    if (!stillUpcoming || stillUpcoming.id !== trackId) return
+    if (/^https?:\/\//i.test(resolved)) {
+      stillUpcoming.streamUrl = resolved
+    }
+    // 有结果（含 provider 磁盘缓存命中）即视为已预热：下次解析即时返回。
+    rememberNcmStreamUrlCommit(trackId)
+  } catch {
+    // 预取失败静默：切曲时走正常解析与错误提示链路。
+  } finally {
+    if (ncmPrefetchInFlightTrackId === trackId) ncmPrefetchInFlightTrackId = ''
   }
 }
 
@@ -1404,7 +1467,9 @@ async function syncNativeQueueState(snapshot: NativeQueueStateSnapshot): Promise
           {
             // 心动模式由渲染层管理智能列表与边界续播，原生引擎只加载当前曲目，
             // 避免原生引擎在列表耗尽时静默停止而无法触发渲染层补拉。
-            queue: heartModeActive ? [current] : snapshot.queue,
+            queue: stripStaleNcmStreamUrls(heartModeActive ? [current] : snapshot.queue, {
+              committedAtByTrackId: ncmStreamUrlCommittedAt
+            }),
             currentTrack: current,
             currentTarget: getTrackAudioSource(current),
             currentIndex: heartModeActive ? 0 : snapshot.currentIndex
@@ -2677,6 +2742,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
     track.streamUrl = playTarget
     if (getTrackSource(track) === 'ncm') {
       track.streamQuality = appSettings.value.ncmPlaybackQuality
+      rememberNcmStreamUrlCommit(track.id)
     }
     patchTrackInQueues(track)
     nativeSourceToTrackId.set(playTarget, track.id)
@@ -2702,7 +2768,9 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         const preparedQueue = await preparePlayerNativeQueue(
           {
             // 心动模式：渲染层自行驱动切歌与补拉，原生引擎只加载当前曲目。
-            queue: playMode.value === 'heart' ? [track] : queue.value,
+            queue: stripStaleNcmStreamUrls(playMode.value === 'heart' ? [track] : queue.value, {
+              committedAtByTrackId: ncmStreamUrlCommittedAt
+            }),
             currentTrack: track,
             currentTarget: playTarget,
             currentIndex: playMode.value === 'heart' ? 0 : queueIndex.value
@@ -3494,6 +3562,22 @@ function setupPlayerIntegrationSideEffects(): void {
   watch([currentTime, duration], () => {
     if (appSettings.value?.smtcEnabled && isPlaying.value) updateMediaSessionPositionState()
   })
+
+  // 8.4：播放后段（≥70%）预解析下一首网易云地址；窗口内的地址由原生队列直接
+  // 携带，切曲时 provider 命中磁盘/TTL 缓存即时返回，消除现场解析往返。
+  watch([currentTime, duration], ([time, total]) => {
+    if (!isPlaying.value || !Number.isFinite(total) || total <= 0) return
+    if (time / total < NCM_PREFETCH_TRIGGER_PROGRESS) return
+    void prefetchUpcomingNcmStream()
+  })
+
+  // 「next 意图」：曲目完成激活切换即预取再下一首（窗口内去重，零额外请求）。
+  watch(
+    () => currentTrack.value?.id,
+    () => {
+      if (isPlaying.value) void prefetchUpcomingNcmStream()
+    }
+  )
 
   watch(
     () => appSettings.value?.discordRpcEnabled,

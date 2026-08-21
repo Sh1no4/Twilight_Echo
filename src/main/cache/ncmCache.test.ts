@@ -87,7 +87,7 @@ test('ncm cache lookups run on an in-memory index instead of a per-play director
   // .part 临时文件仍绝不可入索引。
   assert.match(
     readFileSync(new URL('./ncmCacheIndex.ts', import.meta.url), 'utf8'),
-    /name\.includes\('\.part\'\)/
+    /name\.includes\('\.part'\)/
   )
 })
 

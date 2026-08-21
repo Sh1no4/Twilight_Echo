@@ -684,6 +684,36 @@ test('cached playback paths are validated before reuse after a cache clear', () 
   )
 })
 
+test('NetEase next-track prefetch wires into playback progress and the native queue', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const prefetch = extractInternalFunctionBody(source, 'prefetchUpcomingNcmStream')
+  const loadAndPlay = extractInternalFunctionBody(source, 'loadAndPlay')
+
+  // 只预取 NCM 轨；并发 1；窗口内不重复发请求。
+  assert.match(prefetch, /getTrackSource\(upcoming\) !== 'ncm'/)
+  assert.match(prefetch, /if \(ncmPrefetchInFlightTrackId\) return/)
+  assert.match(prefetch, /NCM_STREAM_URL_MAX_AGE_MS/)
+  // 解析带当前音质偏好；http(s) 地址才写回队列轨，且只写在最新队列里的对象实例。
+  assert.match(prefetch, /quality: appSettings\.value\.ncmPlaybackQuality/)
+  assert.match(prefetch, /stillUpcoming\.streamUrl = resolved/)
+  // 迟到守卫：解析期间目标漂移即丢弃结果，绝不写共享轨状态。
+  const resolveAt = prefetch.indexOf('resolvePlaybackUrl')
+  const guardAt = prefetch.indexOf('findUpcomingQueueTrack()', resolveAt)
+  const writeAt = prefetch.indexOf('stillUpcoming.streamUrl = resolved')
+  assert.ok(resolveAt >= 0 && guardAt > resolveAt && writeAt > guardAt)
+  // 预取不 patchTrackInQueues：loadAndPlay 的提交路径仍是唯一权威写点。
+  assert.doesNotMatch(prefetch, /patchTrackInQueues/)
+  // 触发：播放后段 ≥70% 或曲目切换（next 意图）。
+  assert.match(source, /NCM_PREFETCH_TRIGGER_PROGRESS = 0\.7/)
+  assert.match(source, /void prefetchUpcomingNcmStream\(\)/)
+  // 原生队列构建前剥离过期/来路不明的 NCM 地址；加载提交即记录时间戳。
+  assert.match(loadAndPlay, /rememberNcmStreamUrlCommit\(track\.id\)/)
+  assert.match(
+    loadAndPlay,
+    /stripStaleNcmStreamUrls\(playMode\.value === 'heart' \? \[track\] : queue\.value,/
+  )
+})
+
 test('mini player switching recovers from stale unauthorized local tracks', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const preloadSource = readFileSync(
@@ -760,7 +790,7 @@ test('player store prepares native queues before loading or synchronizing them',
 
   assert.match(
     source,
-    /import \{ preparePlayerNativeQueue \} from '\.\.\/utils\/nativeQueuePreparation\.ts'/
+    /import \{[\s\S]*preparePlayerNativeQueue[\s\S]*\} from '\.\.\/utils\/nativeQueuePreparation\.ts'/
   )
   assert.match(loadAndPlay, /const preparedQueue = await preparePlayerNativeQueue\(/)
   assert.match(loadAndPlay, /isAudioFileAuthorized: window\.api\.fs\.isAudioFileAuthorized/)
@@ -1853,7 +1883,10 @@ test('heart mode is gated to the liked NCM playlist and drives smart-list playba
     /if \(playMode\.value === 'heart'\) \{[\s\S]*advanceHeartPlayback\(\)/
   )
   // 心动模式边界由渲染层处理：原生引擎只加载当前曲目且不代管队列。
-  assert.match(syncNativeQueueState, /queue: heartModeActive \? \[current\] : snapshot\.queue/)
+  assert.match(
+    syncNativeQueueState,
+    /queue: stripStaleNcmStreamUrls\(heartModeActive \? \[current\] : snapshot\.queue,/
+  )
   assert.match(
     syncNativeQueueState,
     /nativeQueueDelegated = heartModeActive \? false : preparedQueue\.delegated/

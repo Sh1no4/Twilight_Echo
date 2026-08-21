@@ -195,6 +195,41 @@ function isLocalFilesystemTarget(target: string): boolean {
   return false
 }
 
+/** 8.4：预取/提交的 NCM 远程播放地址只在这个窗口内可信（CDN 签发链接会过期）。 */
+export const NCM_STREAM_URL_MAX_AGE_MS = 10 * 60_000
+
+export interface NcmStreamUrlFreshness {
+  /** trackId → 最近一次播放解析提交该轨 streamUrl 的时间戳。 */
+  committedAtByTrackId: ReadonlyMap<string, number>
+  nowMs?: number
+  maxAgeMs?: number
+}
+
+/**
+ * 剥离队列里过期或来路不明的 NCM 远程播放地址：只有提交时间在窗口内的
+ * http(s) 地址才允许携带进原生队列；其余一律留空，由渲染层切曲时重解析
+ * （provider 侧的磁盘缓存/TTL 内存缓存会让重解析近乎零成本）。本地缓存路径
+ * 等非 http 目标是 provider 托管成品，不参与过期剥离。
+ */
+export function stripStaleNcmStreamUrls(
+  queue: readonly Track[],
+  freshness: NcmStreamUrlFreshness
+): Track[] {
+  const now = freshness.nowMs ?? Date.now()
+  const maxAge = freshness.maxAgeMs ?? NCM_STREAM_URL_MAX_AGE_MS
+  let changed = false
+  const items = queue.map((track) => {
+    if (getTrackSource(track) !== 'ncm') return track
+    const streamUrl = track.streamUrl
+    if (typeof streamUrl !== 'string' || !/^https?:\/\//i.test(streamUrl)) return track
+    const committedAt = freshness.committedAtByTrackId.get(track.id)
+    if (committedAt != null && now - committedAt <= maxAge) return track
+    changed = true
+    return { ...track, streamUrl: '' }
+  })
+  return changed ? items : ([...queue] as Track[])
+}
+
 function isAuthorizedRemoteUrl(target: string): boolean {
   // Opaque grants are already vetted when issued by main (protectProviderMedia).
   if (isTwilightMediaGrantTarget(target)) return true
