@@ -490,7 +490,7 @@ std::optional<QueueItem> QueueManager::current() const {
 }
 
 std::optional<QueueItem> QueueManager::upcoming() const {
-  const int index = queueIndexAtOrderOffset(1, true, false);
+  const int index = queueIndexAtOrderOffset(1, true, wrapsAfterEnd());
   if (index < 0 || index >= static_cast<int>(items_.size())) return std::nullopt;
   return items_[static_cast<size_t>(index)];
 }
@@ -518,7 +518,7 @@ std::optional<QueueItem> QueueManager::previous() {
 }
 
 std::optional<QueueItem> QueueManager::advanceAfterEnd() {
-  const int index = queueIndexAtOrderOffset(1, true, false);
+  const int index = queueIndexAtOrderOffset(1, true, wrapsAfterEnd());
   if (index < 0) return std::nullopt;
   setCurrentIndex(index);
   return current();
@@ -535,6 +535,7 @@ std::string QueueManager::upcomingJson() const {
 PlayMode QueueManager::parsePlayMode(const std::string& mode) {
   if (mode == "repeat") return PlayMode::Repeat;
   if (mode == "shuffle") return PlayMode::Shuffle;
+  if (mode == "listLoop") return PlayMode::ListLoop;
   return PlayMode::Sequential;
 }
 
@@ -544,6 +545,8 @@ std::string QueueManager::playModeToId(PlayMode mode) {
       return "repeat";
     case PlayMode::Shuffle:
       return "shuffle";
+    case PlayMode::ListLoop:
+      return "listLoop";
     case PlayMode::Sequential:
     default:
       return "sequential";
@@ -623,6 +626,10 @@ void QueueManager::rebuildPlayOrder() {
     // random other track while nothing was playing.
     setCurrentIndex(current >= 0 ? current : 0);
   }
+}
+
+bool QueueManager::wrapsAfterEnd() const {
+  return playMode_ == PlayMode::ListLoop || playMode_ == PlayMode::Shuffle;
 }
 
 int QueueManager::queueIndexAtOrderOffset(int offset, bool honorRepeat, bool allowWrap) const {

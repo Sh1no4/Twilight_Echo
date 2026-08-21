@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <string>
+#include <vector>
 
 using namespace twilight::audio;
 
@@ -177,6 +178,73 @@ void testShuffleAddKeepsCurrentTrackStable() {
   }
 }
 
+void testListLoopAdvanceWrapsInsteadOfStopping() {
+  QueueManager queue;
+  std::string error;
+  assert(queue.loadFromJson(kQueueJson, 2, &error));
+  queue.setPlayMode(PlayMode::ListLoop);
+  assert(queue.playModeId() == "listLoop");
+  // Regression: auto-advance used to return nullopt on the last entry, so the
+  // engine stopped and the host saw a jump cap equal to the queue length.
+  auto next = queue.advanceAfterEnd();
+  assert(next);
+  assert(queue.currentIndex() == 0);
+  assert(next->source == "a.flac");
+  // Keep going well past one full pass — list loop has no jump budget at all.
+  for (int advanced = 0; advanced < 10; ++advanced) {
+    const auto item = queue.advanceAfterEnd();
+    assert(item);
+    assert(!item->source.empty());
+  }
+  assert(queue.currentIndex() == 10 % 3);
+}
+
+void testListLoopUpcomingWrapsForGaplessPreload() {
+  QueueManager queue;
+  std::string error;
+  assert(queue.loadFromJson(kQueueJson, 2, &error));
+  queue.setPlayMode(PlayMode::ListLoop);
+  // The engine preloads upcoming(). Without wrapping here the last->first hop
+  // would still lose gapless even though advanceAfterEnd() wraps.
+  const auto upcoming = queue.upcoming();
+  assert(upcoming);
+  assert(upcoming->source == "a.flac");
+  assert(queue.upcomingJson().find("\"source\":\"a.flac\"") != std::string::npos);
+}
+
+void testShuffleCycleWrapsWithoutReshuffling() {
+  QueueManager queue;
+  std::string error;
+  assert(queue.loadFromJson(kQueueJson, 0, &error));
+  queue.setPlayMode(PlayMode::Shuffle);
+  // The host hands over an already-shuffled queue, so a shuffle cycle wraps in
+  // place: the same order every cycle, never a fresh permutation mid-session.
+  std::vector<std::string> firstCycle;
+  firstCycle.push_back(queue.current()->source);
+  for (int step = 0; step < 2; ++step) {
+    const auto item = queue.advanceAfterEnd();
+    assert(item);
+    firstCycle.push_back(item->source);
+  }
+  const auto wrapped = queue.advanceAfterEnd();
+  assert(wrapped);
+  assert(wrapped->source == firstCycle.front());
+  for (size_t step = 1; step < firstCycle.size(); ++step) {
+    const auto item = queue.advanceAfterEnd();
+    assert(item);
+    assert(item->source == firstCycle[step]);
+  }
+}
+
+void testPlayModeIdRoundTripsListLoop() {
+  assert(QueueManager::parsePlayMode("listLoop") == PlayMode::ListLoop);
+  assert(QueueManager::playModeToId(PlayMode::ListLoop) == "listLoop");
+  // Ids this engine does not know still fail closed to sequential, so a host
+  // newer than the shipped binary degrades instead of refusing the queue.
+  assert(QueueManager::parsePlayMode("heart") == PlayMode::Sequential);
+  assert(QueueManager::parsePlayMode("") == PlayMode::Sequential);
+}
+
 }  // namespace
 
 int main() {
@@ -185,6 +253,10 @@ int main() {
   testSequentialManualNextStillWraps();
   testRepeatAdvanceKeepsCurrentTrack();
   testRepeatManualNextUsesPlaylistOrder();
+  testListLoopAdvanceWrapsInsteadOfStopping();
+  testListLoopUpcomingWrapsForGaplessPreload();
+  testShuffleCycleWrapsWithoutReshuffling();
+  testPlayModeIdRoundTripsListLoop();
   testAddRemoveAndInvalidInput();
   testShuffleAddKeepsCurrentTrackStable();
   testSingleFileCueRangesKeepDistinctQueueIdentity();

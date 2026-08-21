@@ -107,6 +107,7 @@ import { useMusicStore } from './useMusicStore'
 import { type SleepTimerMode, type SleepTimerState } from '../../../shared/sleepTimer.ts'
 import { projectManagedLyrics, type LyricSource } from '../../../shared/lyricsManagement.ts'
 import { DEFAULT_SOFTWARE_VOLUME } from '../../../shared/audioProcessingOptions.ts'
+import { toNativePlayMode } from '../../../shared/playbackModes.ts'
 import { createPlayerSleepTimer } from './player/usePlayerSleepTimer.ts'
 import { useAppNoticeStore } from './useAppNoticeStore'
 import { claimRendererRuntime } from './playerRuntimeOwnership.ts'
@@ -1453,10 +1454,7 @@ async function syncNativeQueueState(snapshot: NativeQueueStateSnapshot): Promise
     return
   }
 
-  const nativePlayMode =
-    snapshot.playMode === 'repeat' || snapshot.playMode === 'shuffle'
-      ? snapshot.playMode
-      : 'sequential'
+  const nativePlayMode = toNativePlayMode(snapshot.playMode)
   const heartModeActive = snapshot.playMode === 'heart'
   const synchronized = await synchronizeLatestNativeQueue(
     nativeQueueRevisionFence,
@@ -1516,7 +1514,7 @@ function queueNativeQueueStateSync(): Promise<void> {
 }
 
 function queueNativePlayModeSync(mode: PlayMode): Promise<void> {
-  const nativePlayMode = mode === 'repeat' || mode === 'shuffle' ? mode : 'sequential'
+  const nativePlayMode = toNativePlayMode(mode)
   const previousRequest = nativeQueueSyncRequest
   const request = (previousRequest ?? Promise.resolve())
     .catch(() => {})
@@ -1558,9 +1556,10 @@ async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<vo
   const wasPlaying = isPlaying.value
   clearPlaybackToggleIntent()
 
-  // In shuffle mode the native queue owns play order. Do not predict an adjacent
-  // renderer item; wait for playback-info to identify the actual shuffled target.
-  const target = playMode.value === 'shuffle' ? null : getNativeQueueAdvanceTarget(direction)
+  // The native queue mirrors the renderer's queue order in every mode now
+  // (shuffle is applied by the renderer before the queue is handed over), so the
+  // adjacent item is a safe prediction and shuffle keeps the optimistic UI too.
+  const target = getNativeQueueAdvanceTarget(direction)
   if (target) {
     // Optimistic UI update so cover/title/progress reset immediately instead of
     // waiting for (or missing) the first native playback-info event.
@@ -1961,7 +1960,13 @@ async function advanceAfterPlaybackEnded(): Promise<void> {
 
 function handleNativePlaybackEnded(): void {
   if (!nativePlaybackActive) return
-  if (isNativeQueueDelegated()) return
+  // Do not drop this because the queue is delegated. A delegated queue that
+  // actually reached its end is exactly the case that needs the renderer's
+  // boundary handling: listLoop/shuffle wrap in advanceAfterPlaybackEnded, and
+  // without this the auto-advance budget ended up equal to the queue length.
+  // Main only publishes the EOF signal when the engine reports no upcoming
+  // track, i.e. when it cannot advance on its own, so this never races the
+  // engine's own auto-advance (issue #48).
   void handlePlaybackEnded()
 }
 
@@ -2803,10 +2808,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         // 心动模式由渲染层驱动切歌与补拉，原生队列不代管边界。
         if (playMode.value === 'heart') nativeQueueDelegated = false
 
-        const nativePlayMode =
-          playMode.value === 'repeat' || playMode.value === 'shuffle'
-            ? playMode.value
-            : 'sequential'
+        const nativePlayMode = toNativePlayMode(playMode.value)
         await window.api.audioEngine.setPlayMode(nativePlayMode)
         if (!isActiveLoad(loadToken, track)) {
           releaseLoadIfOwned()
@@ -3842,6 +3844,20 @@ function setPlayModeInternal(mode: PlayMode, options: { persist?: boolean } = {}
     void updateSettings({ playMode: mode }).catch((err) => {
       console.error('[音频引擎] 保存播放模式失败:', err)
     })
+  }
+  if (!castTargetUsn.value && nativePlaybackActive && isNativeQueueDelegated()) {
+    // A delegated engine has already preloaded its next item, so a later renderer
+    // boundary can no longer influence what plays next: the pending reorder would
+    // never take effect and shuffle would keep playing in plain queue order.
+    // Apply it now and resync the whole queue instead. The active track stays at
+    // the head of the new order and loadQueue does not touch the pipeline, so
+    // playback continues uninterrupted.
+    applyPendingRendererPlayModeAtBoundary()
+    void queueNativeQueueStateSync().catch((err) => {
+      setAudioEngineError(err instanceof Error ? err.message : String(err))
+      console.error('[音频引擎] 同步播放模式失败:', err)
+    })
+    return
   }
   void queueNativePlayModeSync(mode).catch((err) => {
     setAudioEngineError(err instanceof Error ? err.message : String(err))

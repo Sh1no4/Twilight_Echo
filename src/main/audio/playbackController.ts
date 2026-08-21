@@ -34,6 +34,7 @@ import {
   sourceLooksDsd,
   withPrecomputedVisualizerBars
 } from './audioEngineHelpers.ts'
+import { playModeWrapsAtQueueEnd } from '../../shared/playbackModes.ts'
 import { rendererFallbackAllowed } from './nativeBinding.ts'
 import type { DspGraphConfig } from '../../shared/dspGraph.ts'
 
@@ -1381,6 +1382,19 @@ export class PlaybackController {
           // callback. Report its boundary in the main process so sleep timers
           // retain the same semantics as renderer-managed playback.
           if (this.queue.length > 1) this.emit('sleep-timer-boundary', { boundary: 'trackEnd' })
+          // A looping native queue never stops, so passing the last entry is the
+          // only queue boundary it will ever produce. The renderer path reports
+          // queueEnd right before it wraps (advanceAfterPlaybackEnded), so mirror
+          // that order here — otherwise "stop at end of queue" would never fire
+          // once the queue is delegated.
+          if (
+            this.queue.length > 1 &&
+            playModeWrapsAtQueueEnd(this.playbackInfo.playMode) &&
+            previousQueueIndex === this.queue.length - 1 &&
+            nativeInfo.queueIndex === 0
+          ) {
+            this.emit('sleep-timer-boundary', { boundary: 'queueEnd' })
+          }
           this.emit('start-file')
         }
         if (
@@ -1389,7 +1403,12 @@ export class PlaybackController {
           this.pendingNativePositionTarget === null &&
           nativeInfo.state === 'stopped'
         ) {
-          const isAtEnd = this.queue.length === 0 || nativeInfo.queueIndex >= this.queue.length - 1
+          // Trust the engine's own verdict instead of comparing indexes:
+          // upcomingTrack is null exactly when its queue manager cannot advance
+          // any further. The old index comparison misread a looping or repeating
+          // queue as finished, and read the last entry of a shuffled native play
+          // order as mid-queue.
+          const isAtEnd = this.queue.length === 0 || !nativeInfo.upcomingTrack
           if (isAtEnd) {
             // 播放结束：保持 nativePlaybackActive=true 以便持续轮询原生真实状态，
             // 避免状态发散后无法自我纠正。下次 play() 会重新设置状态。

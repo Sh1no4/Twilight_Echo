@@ -924,10 +924,10 @@ test('native queue switching guards the target track before applying playback-in
   )
 
   assert.match(source, /evaluateNativePlaybackInfoIntent/)
-  assert.match(
-    advanceNativePlayback,
-    /const target = playMode\.value === 'shuffle' \? null : getNativeQueueAdvanceTarget\(direction\)/
-  )
+  // The native queue mirrors the renderer's order in every mode (shuffle is applied
+  // before hand-off), so shuffle predicts its target like any other mode.
+  assert.match(advanceNativePlayback, /const target = getNativeQueueAdvanceTarget\(direction\)/)
+  assert.doesNotMatch(advanceNativePlayback, /playMode\.value === 'shuffle' \? null/)
   assert.match(advanceNativePlayback, /activateCurrentTrack\(target\.track/)
   assert.match(source, /function activateCurrentTrack/)
   assert.match(source, /function hydratePlaybackTrack/)
@@ -1797,13 +1797,16 @@ test('play mode is persisted in settings and restored on launch', () => {
   assert.match(setPlayModeInternal, /rendererPlayModeBoundaryPending\.value = true/)
   assert.match(setPlayModeInternal, /void updateSettings\(\{ playMode: mode \}\)/)
   assert.match(setPlayModeInternal, /queueNativePlayModeSync\(mode\)/)
-  assert.doesNotMatch(setPlayModeInternal, /queueNativeQueueStateSync\(/)
-  assert.doesNotMatch(setPlayModeInternal, /loadQueue\(/)
-  assert.doesNotMatch(setPlayModeInternal, /playQueueTrack\(|loadAndPlay\(/)
+  // A delegated engine has already preloaded its next item, so the pending reorder
+  // has to be applied and resynced at switch time or shuffle silently keeps playing
+  // in plain queue order. Everywhere else the reorder still waits for a boundary.
   assert.match(
-    queueNativePlayModeSync,
-    /mode === 'repeat' \|\| mode === 'shuffle' \? mode : 'sequential'/
+    setPlayModeInternal,
+    /if \(!castTargetUsn\.value && nativePlaybackActive && isNativeQueueDelegated\(\)\) \{[\s\S]*applyPendingRendererPlayModeAtBoundary\(\)\s*\n\s*void queueNativeQueueStateSync\(\)/
   )
+  // Switching mode must never restart playback, delegated or not.
+  assert.doesNotMatch(setPlayModeInternal, /playQueueTrack\(|loadAndPlay\(/)
+  assert.match(queueNativePlayModeSync, /toNativePlayMode\(mode\)/)
   assert.match(queueNativePlayModeSync, /window\.api\.audioEngine\.setPlayMode\(nativePlayMode\)/)
   assert.doesNotMatch(queueNativePlayModeSync, /loadQueue\(/)
   assert.match(
@@ -1827,7 +1830,18 @@ test('play mode is persisted in settings and restored on launch', () => {
   assert.match(previous, /applyPendingRendererPlayModeAtBoundary\(\)/)
   assert.match(
     loadAndPlay,
-    /playMode\.value === 'repeat' \|\| playMode\.value === 'shuffle'[\s\S]*await window\.api\.audioEngine\.setPlayMode\(nativePlayMode\)/
+    /const nativePlayMode = toNativePlayMode\(playMode\.value\)[\s\S]*await window\.api\.audioEngine\.setPlayMode\(nativePlayMode\)/
+  )
+  // Every native mode push routes through the one shared mapping. Re-inlining it
+  // is how listLoop ended up pinned to a non-wrapping native sequential.
+  assert.doesNotMatch(
+    playerSource,
+    /=== 'repeat' \|\| [a-zA-Z.]*playMode[a-zA-Z.]* === 'shuffle'\s*\n?\s*\? /,
+    'map play modes for the native engine through toNativePlayMode, not a local copy'
+  )
+  assert.match(
+    playerSource,
+    /import \{ toNativePlayMode \} from '\.\.\/\.\.\/\.\.\/shared\/playbackModes\.ts'/
   )
   assert.match(
     playerSource,
@@ -1921,7 +1935,11 @@ test('playback end auto-advance stops at queue end without changing manual next 
   assert.match(advanceAfterPlaybackEnded, /isPlaying\.value = false/)
   assert.match(advanceAfterPlaybackEnded, /stopVisualizationPolling\(true\)/)
   assert.match(handleNativePlaybackEnded, /if \(!nativePlaybackActive\) return/)
-  assert.match(handleNativePlaybackEnded, /if \(isNativeQueueDelegated\(\)\) return/)
+  // Regression (issue #48): a delegated queue that reached its end must reach the
+  // renderer's boundary handling, otherwise listLoop/shuffle never wrap and the
+  // auto-advance budget equals the queue length. Main only signals EOF when the
+  // engine reports no upcoming track, so this cannot race its auto-advance.
+  assert.doesNotMatch(handleNativePlaybackEnded, /if \(isNativeQueueDelegated\(\)\) return/)
   assert.match(handleNativePlaybackEnded, /handlePlaybackEnded\(\)/)
   assert.match(setupAudioEngineListeners, /case 'eof-reached':\s*handleNativePlaybackEnded\(\)/)
   assert.match(

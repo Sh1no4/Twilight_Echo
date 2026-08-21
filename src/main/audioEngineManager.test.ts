@@ -3493,7 +3493,9 @@ test('switching to shuffle preserves the active stream and only updates native p
   const after = await manager.getPlaybackInfo()
 
   assert.equal(nativeBinding.playModeCalls, playModeCalls + 1)
-  assert.equal(nativeBinding.playbackInfo.playMode, 'shuffle')
+  // The renderer already shuffled the queue it handed over, so shuffle rides the
+  // engine's listLoop: wrap that order, do not permute it a second time.
+  assert.equal(nativeBinding.playbackInfo.playMode, 'listLoop')
   assert.equal(nativeBinding.loadQueueCalls, loadQueueCalls)
   assert.equal(nativeBinding.playCalls.length, playCalls)
   assert.equal(nativeBinding.stopCalls, stopCalls)
@@ -3502,6 +3504,112 @@ test('switching to shuffle preserves the active stream and only updates native p
   assert.equal(after.queueIndex, before.queueIndex)
   assert.equal(after.position, before.position)
   assert.equal(after.state, before.state)
+})
+
+test('a native stop mid-queue is not reported as a queue end while an upcoming track exists', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const queue = [
+    { id: 'first', source: 'first.flac', title: 'First' },
+    { id: 'last', source: 'last.flac', title: 'Last' }
+  ]
+  const boundaries: Array<'trackEnd' | 'queueEnd'> = []
+  manager.on('sleep-timer-boundary', ({ boundary }) => boundaries.push(boundary))
+
+  await manager.loadQueue(queue, 1)
+  await manager.play(queue[1].source, 0)
+  // The engine reports a stop while it still has somewhere to go — a device
+  // hiccup or a repeating queue, not the end of playback. The old index-based
+  // check called this a queue end because the index was already the last one.
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    state: 'stopped',
+    queueIndex: 1,
+    upcomingTrack: { id: 'first', source: 'first.flac', title: 'First' }
+  }
+
+  const tickManager = manager as unknown as { tick: () => void }
+  tickManager.tick()
+  tickManager.tick()
+
+  assert.deepEqual(boundaries, [])
+})
+
+test('a delegated listLoop queue reports trackEnd then queueEnd when it wraps', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const queue = [
+    { id: 'first', source: 'first.flac', title: 'First' },
+    { id: 'last', source: 'last.flac', title: 'Last' }
+  ]
+  const boundaries: Array<'trackEnd' | 'queueEnd'> = []
+  manager.on('sleep-timer-boundary', ({ boundary }) => boundaries.push(boundary))
+
+  await manager.loadQueue(queue, 1)
+  await manager.setPlayMode('listLoop')
+  await manager.play(queue[1].source, 0)
+  // A looping engine never stops, so wrapping past the last entry is the only
+  // queue boundary it will ever produce. Without this a "stop at end of queue"
+  // timer would never fire once the queue is delegated.
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    state: 'playing',
+    source: queue[0].source,
+    queueIndex: 0,
+    upcomingTrack: { id: 'last', source: 'last.flac', title: 'Last' }
+  }
+
+  const tickManager = manager as unknown as { tick: () => void }
+  tickManager.tick()
+
+  assert.deepEqual(boundaries, ['trackEnd', 'queueEnd'])
+})
+
+test('a delegated sequential queue does not report a queue end on an ordinary advance', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const queue = [
+    { id: 'first', source: 'first.flac', title: 'First' },
+    { id: 'last', source: 'last.flac', title: 'Last' }
+  ]
+  const boundaries: Array<'trackEnd' | 'queueEnd'> = []
+  manager.on('sleep-timer-boundary', ({ boundary }) => boundaries.push(boundary))
+
+  await manager.loadQueue(queue, 0)
+  await manager.play(queue[0].source, 0)
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    state: 'playing',
+    source: queue[1].source,
+    queueIndex: 1,
+    upcomingTrack: null
+  }
+
+  const tickManager = manager as unknown as { tick: () => void }
+  tickManager.tick()
+
+  assert.deepEqual(boundaries, ['trackEnd'])
 })
 
 test('shuffle next accepts the native non-adjacent queue target', async () => {
