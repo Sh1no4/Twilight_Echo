@@ -18,6 +18,12 @@ import type {
 const POLL_INTERVAL_MS = 1_500
 const MAX_DOWNLOAD_BYTES = 4 * 1024 * 1024 * 1024
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled'])
+/** 每个任务进度事件的最小下发间隔；分块流期间的进度 patch 大量合并于此。 */
+const PROGRESS_EMIT_INTERVAL_MS = 250
+/** 即使间隔未到，进度推进超过 1% 也立即下发，保证大文件粗粒度仍然流暢。 */
+const PROGRESS_EMIT_STEP = 0.01
+/** 终态任务只保留最近 N 条，防止任务 Map 随使用时长无界增长。 */
+const TERMINAL_TASK_RETENTION = 50
 const AUDIO_EXTENSIONS = new Set([
   '.mp3',
   '.flac',
@@ -124,6 +130,7 @@ export class ProviderDownloadManager {
       updatedAt: timestamp
     }
     this.tasks.set(task.id, task)
+    if (TERMINAL_STATUSES.has(task.status)) this.pruneTerminalTasks()
     this.emitChanged()
     if (!TERMINAL_STATUSES.has(task.status)) void this.run(task.id, targetRoot, remote)
     return structuredClone(task)
@@ -239,13 +246,27 @@ export class ProviderDownloadManager {
       if (expectedSize != null && expectedSize > MAX_DOWNLOAD_BYTES)
         throw new Error('下载文件超过 4 GiB 限制')
       let received = 0
+      // 每 chunk 直接 patch 会让 64KB 分块的下载（100MB ≈ 1600 次）每次都触发
+      // 全列表克隆+IPC 广播；节流为 ≤1 次/250ms 或 ≥1% 步进，终态另有即时 patch。
+      let lastProgressEmitAt = 0
+      let lastProgressEmitValue = 0.45
       const progress = new Transform({
         transform: (chunk: Buffer, _encoding, callback) => {
           received += chunk.length
           if (received > MAX_DOWNLOAD_BYTES) return callback(new Error('下载文件超过 4 GiB 限制'))
-          this.patch(taskId, {
-            progress: expectedSize ? 0.45 + Math.min(0.54, (received / expectedSize) * 0.54) : 0.45
-          })
+          const nextProgress = expectedSize
+            ? 0.45 + Math.min(0.54, (received / expectedSize) * 0.54)
+            : 0.45
+          const nowMs = Date.now()
+          if (
+            nextProgress > lastProgressEmitValue &&
+            (nowMs - lastProgressEmitAt >= PROGRESS_EMIT_INTERVAL_MS ||
+              nextProgress - lastProgressEmitValue >= PROGRESS_EMIT_STEP)
+          ) {
+            lastProgressEmitAt = nowMs
+            lastProgressEmitValue = nextProgress
+            this.patch(taskId, { progress: nextProgress })
+          }
           callback(null, chunk)
         }
       })
@@ -314,7 +335,22 @@ export class ProviderDownloadManager {
   private patch(taskId: string, patch: Partial<ProviderDownloadTaskSnapshot>): void {
     const task = this.requireTask(taskId)
     Object.assign(task, patch, { updatedAt: this.now().toISOString() })
+    if (patch.status && TERMINAL_STATUSES.has(patch.status)) this.pruneTerminalTasks()
     this.emitChanged()
+  }
+
+  /** 终态任务（插入序 ≈ 创建序）只保留最近若干条，首张 FIFO 淘汰。 */
+  private pruneTerminalTasks(): void {
+    let terminalCount = 0
+    for (const task of this.tasks.values()) {
+      if (TERMINAL_STATUSES.has(task.status)) terminalCount += 1
+    }
+    for (const [taskId, task] of this.tasks) {
+      if (terminalCount <= TERMINAL_TASK_RETENTION) break
+      if (!TERMINAL_STATUSES.has(task.status)) continue
+      this.tasks.delete(taskId)
+      terminalCount -= 1
+    }
   }
 
   private emitChanged(): void {
