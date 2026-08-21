@@ -535,6 +535,68 @@ test('playback URL memory cache expires after its TTL and re-resolves', async ()
   }
 })
 
+test('playback fallback ladder backs off between steps instead of bursting', async () => {
+  const requestTimes = []
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    if (url.pathname !== '/song/url/v1') throw new Error(`unexpected path: ${url.pathname}`)
+    requestTimes.push(Date.now())
+    const level = url.searchParams.get('level')
+    if (level === 'exhigh') {
+      return {
+        code: 200,
+        data: [{ id: 92, url: 'https://music.example/92.mp3', code: 200, level: 'exhigh' }]
+      }
+    }
+    return { code: 200, data: [{ id: 92, url: null, code: 404, msg: 'unavailable' }] }
+  })
+
+  try {
+    mock.timers.enable({ apis: ['Date', 'setTimeout'] })
+    const pending = provider.getPlaybackUrl({ id: 'ncm:92' }, { quality: 'hires' })
+    // 第一级请求立即发出（无前缀等待）。
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(requestTimes.length, 1)
+    mock.timers.tick(250)
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(requestTimes.length, 2)
+    mock.timers.tick(500)
+    assert.equal(await pending, 'https://music.example/92.mp3')
+    assert.deepEqual(
+      requestTimes.slice(1).map((time, index) => time - requestTimes[index]),
+      [250, 500],
+      'fallback steps must be spaced by a 250→500ms backoff'
+    )
+  } finally {
+    mock.timers.reset()
+    ncmProvider.deactivate()
+  }
+})
+
+test('risk control messages stop the whole playback fallback ladder early', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    return {
+      code: 200,
+      data: [{ id: 93, url: null, code: 460, msg: '操作已拦截，存在安全风险' }]
+    }
+  })
+
+  try {
+    assert.equal(await provider.getPlaybackUrl({ id: 'ncm:93' }, { quality: 'hires' }), null)
+    assert.deepEqual(
+      requests.map((path) => parseRequest(path).pathname),
+      ['/song/url/v1'],
+      'a risk-control response must stop both the level ladder and the gray-track match'
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
 test('artist songs keep paging when a short page reports more items', async () => {
   const requests = []
   const provider = await activateProvider(async (path) => {

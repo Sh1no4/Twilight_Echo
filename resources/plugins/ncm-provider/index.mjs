@@ -1581,7 +1581,15 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
   }
 
   let lastFailureMessage = ''
-  for (const path of getPlaybackUrlRequestPaths(songId, quality)) {
+  let riskControlMessage = ''
+  const requestPaths = getPlaybackUrlRequestPaths(songId, quality)
+  for (let attempt = 0; attempt < requestPaths.length; attempt += 1) {
+    // 回退阶梯步间退避（250ms 起步、封顶 500ms）：连续失败的连打既放大风控
+    // 概率也让低级音质的响应无意义地挤占带宽（批量 8.5）。
+    if (attempt > 0) {
+      await waitWithAbort(Math.min(500, 250 * attempt), requestContext?.signal)
+    }
+    const path = requestPaths[attempt]
     try {
       const data = await requestAuthed(path, requestContext)
       const streamItems = getPlaybackStreamItems(data)
@@ -1599,24 +1607,36 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
       throwIfRequestAborted(requestContext)
       lastFailureMessage = getErrorMessage(error)
     }
-  }
-
-  try {
-    const data = await requestAuthed(getUnblockedPlaybackUrlPath(songId), requestContext)
-    const url = getUnblockedPlaybackUrl(data)
-    if (url) {
-      rememberStreamUrl(cacheKey, url)
-      void ncmApi.cacheSong(songId, url, track?.fileName).catch(() => {})
-      return url
+    // 风控提示命中即终止整条阶梯：继续连打只会加深风控（批量 8.5）。
+    if (isRiskControlMessage(lastFailureMessage)) {
+      riskControlMessage = lastFailureMessage
+      break
     }
-    lastFailureMessage =
-      getPlaybackFailureMessage(data, {}) || '灰色歌曲解锁响应缺少有效的 HTTP(S) URL'
-  } catch (error) {
-    throwIfRequestAborted(requestContext)
-    lastFailureMessage = getErrorMessage(error)
   }
 
-  if (lastFailureMessage) getContext().logger.warn(`网易云播放地址解析失败：${lastFailureMessage}`)
+  // 风控命中后连灰色解锁也不再试——它同样是上游请求，会把风控窗口越拉越长。
+  if (!riskControlMessage) {
+    try {
+      const data = await requestAuthed(getUnblockedPlaybackUrlPath(songId), requestContext)
+      const url = getUnblockedPlaybackUrl(data)
+      if (url) {
+        rememberStreamUrl(cacheKey, url)
+        void ncmApi.cacheSong(songId, url, track?.fileName).catch(() => {})
+        return url
+      }
+      lastFailureMessage =
+        getPlaybackFailureMessage(data, {}) || '灰色歌曲解锁响应缺少有效的 HTTP(S) URL'
+    } catch (error) {
+      throwIfRequestAborted(requestContext)
+      lastFailureMessage = getErrorMessage(error)
+    }
+  }
+
+  if (riskControlMessage) {
+    getContext().logger.warn(`网易云播放地址解析命中风控，已提前终止回退：${riskControlMessage}`)
+  } else if (lastFailureMessage) {
+    getContext().logger.warn(`网易云播放地址解析失败：${lastFailureMessage}`)
+  }
   return null
 }
 
