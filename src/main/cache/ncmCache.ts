@@ -17,6 +17,7 @@ import { runtime } from '../core/runtime'
 import { redactSensitiveText } from '../security/secureStorage.ts'
 import { getMusicCacheStorageDirectories } from './musicCacheLayout.ts'
 import { NCM_CACHE_MAX_BYTES, planNcmCachePrune } from './ncmCachePrune.ts'
+import { buildNcmCacheIndexFromNames, parseNcmCacheFileSongId } from './ncmCacheIndex.ts'
 
 export function ensureMusicCacheDirectories(rootPath: string): void {
   if (!rootPath) return
@@ -65,15 +66,14 @@ export function inferNcmCacheExtension(
 }
 
 export function getCachedNcmSong(songId: number): string | null {
-  const dir = getNcmCacheDir()
-  const prefix = `${songId}.`
-  // .part 是下载中的临时文件，同样满足前缀但绝不可提供给播放。
-  const file = readdirSync(dir).find(
-    (name) => name.startsWith(prefix) && !name.includes('.part')
-  )
-  if (!file) return null
-  const fullPath = join(dir, file)
-  if (!existsSync(fullPath)) return null
+  const entry = getNcmCacheEntryName(songId)
+  if (!entry) return null
+  const fullPath = join(entry.dir, entry.name)
+  if (!existsSync(fullPath)) {
+    // 外部手动删除后索引会陈旧：同步剔除并视为未命中。
+    if (ncmCacheIndex?.dir === entry.dir) ncmCacheIndex.files.delete(songId)
+    return null
+  }
   // LRU 依靠 mtime：命中即刷新，让容量淘汰驱逐真正最久不用的条目。
   try {
     const now = new Date()
@@ -82,6 +82,40 @@ export function getCachedNcmSong(songId: number): string | null {
     /* 只读文件系统等场景下放弃 touch，不影响命中。 */
   }
   return fullPath
+}
+
+/**
+ * 缓存目录快照索引：命中走内存，免去每次播放的整目录 readdirSync（批量 8.3）。
+ * 索引内 .part 临时文件绝不入录，缓存目录变更（设置改路径）即整体失效惰重建。
+ */
+let ncmCacheIndex: { dir: string; files: Map<number, string> } | null = null
+
+function getNcmCacheEntryName(songId: number): { dir: string; name: string } | null {
+  const dir = getNcmCacheDir()
+  if (!ncmCacheIndex || ncmCacheIndex.dir !== dir) {
+    let files: Map<number, string>
+    try {
+      files = buildNcmCacheIndexFromNames(readdirSync(dir))
+    } catch {
+      // 目录暂不可读不阻断播放：记空索引也不会误伤，写入成功时会补条目。
+      files = new Map()
+    }
+    ncmCacheIndex = { dir, files }
+  }
+  const name = ncmCacheIndex.files.get(songId)
+  return name ? { dir, name } : null
+}
+
+function rememberNcmCacheEntry(songId: number, dir: string, fileName: string): void {
+  if (ncmCacheIndex?.dir !== dir) return
+  ncmCacheIndex.files.set(songId, fileName)
+}
+
+function forgetNcmCacheEntry(dir: string, fileName: string): void {
+  if (ncmCacheIndex?.dir !== dir) return
+  const songId = parseNcmCacheFileSongId(fileName)
+  if (songId == null) return
+  if (ncmCacheIndex.files.get(songId) === fileName) ncmCacheIndex.files.delete(songId)
 }
 
 /** 容量上限 + 孤儿 .part 清理；出问题（权限/占用）只告警，不阻断缓存路径。 */
@@ -102,6 +136,9 @@ function pruneNcmCacheDir(dir: string): void {
       } catch {
         /* 个别文件占用不阻塞其余清理 */
       }
+      // 无论删除成功与否都从索引剔除：失败（占用）时下一次 existsSync 校验
+      // 仍会兜住，索引陈旧比索引漏删更安全。
+      forgetNcmCacheEntry(dir, name)
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -137,7 +174,8 @@ export async function cacheNcmSong(
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     if (!res.body) throw new Error('响应没有内容流')
     const ext = inferNcmCacheExtension(url, res.headers.get('content-type'), fileName)
-    const target = join(getNcmCacheDir(), `${songId}${ext}`)
+    const dir = getNcmCacheDir()
+    const target = join(dir, `${songId}${ext}`)
     // 流式落盘：整文件不经内存（无损单曲 50-150MB）；先写 .part，完成才原子
     // rename 为成品，中断只会留下可清理的 .part 而不会混入“成品”。
     const partPath = `${target}.${randomUUID()}.part`
@@ -152,7 +190,8 @@ export async function cacheNcmSong(
       await rm(partPath, { force: true }).catch(() => undefined)
       throw error
     }
-    pruneNcmCacheDir(getNcmCacheDir())
+    rememberNcmCacheEntry(songId, dir, `${songId}${ext}`)
+    pruneNcmCacheDir(dir)
     return target
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

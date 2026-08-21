@@ -61,9 +61,49 @@ test('ncm cache write path streams to .part and only renames the finished file',
   assert.match(source, /await rename\(partPath, target\)/)
   // Failures must not leave a stale .part behind from this invocation.
   assert.match(source, /await rm\(partPath, \{ force: true \}\)/)
-  // Cache lookups must never hand out in-flight .part files.
-  assert.match(source, /!name\.includes\('\.part'\)/)
+  // Cache lookups must never hand out in-flight .part files (enforced by the
+  // index builder in ncmCacheIndex.ts).
+  assert.match(
+    readFileSync(new URL('./ncmCacheIndex.ts', import.meta.url), 'utf8'),
+    /name\.includes\('\.part'\)/
+  )
   // Capacity governance hooks into the write path and hits refresh mtime (LRU).
-  assert.match(source, /pruneNcmCacheDir\(getNcmCacheDir\(\)\)/)
+  assert.match(source, /pruneNcmCacheDir\(dir\)/)
   assert.match(source, /utimesSync\(fullPath/)
 })
+
+test('ncm cache lookups run on an in-memory index instead of a per-play directory scan', () => {
+  const source = readFileSync(new URL('./ncmCache.ts', import.meta.url), 'utf8')
+  const lookup = extractFunction(source, 'getCachedNcmSong')
+  // 8.3: 命中路径不再 readdirSync；索引由目录快照惰性构建，写入/淘汰同步维护。
+  assert.match(lookup, /getNcmCacheEntryName\(songId\)/)
+  assert.doesNotMatch(lookup, /readdirSync/)
+  assert.match(
+    source,
+    /!ncmCacheIndex \|\| ncmCacheIndex\.dir !== dir[\s\S]*?buildNcmCacheIndexFromNames\(readdirSync\(dir\)\)/
+  )
+  assert.match(source, /rememberNcmCacheEntry\(songId, dir, `\$\{songId\}\$\{ext\}`\)/)
+  assert.match(source, /forgetNcmCacheEntry\(dir, name\)/)
+  // .part 临时文件仍绝不可入索引。
+  assert.match(
+    readFileSync(new URL('./ncmCacheIndex.ts', import.meta.url), 'utf8'),
+    /name\.includes\('\.part\'\)/
+  )
+})
+
+function extractFunction(source: string, functionName: string): string {
+  const signature = new RegExp(
+    `(?:async\\s+)?function ${functionName}\\([^)]*\\)[:\\w\\s<>\\[\\]'|]*\\s\\{`
+  )
+  const match = source.match(signature)
+  assert.ok(match?.index != null, `${functionName} function should exist`)
+  const bodyStart = match.index + match[0].length - 1
+  let depth = 0
+  for (let index = bodyStart; index < source.length; index += 1) {
+    const char = source[index]
+    if (char === '{') depth += 1
+    if (char === '}') depth -= 1
+    if (depth === 0) return source.slice(bodyStart + 1, index)
+  }
+  throw new Error(`${functionName} body should close`)
+}
