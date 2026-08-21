@@ -19,6 +19,7 @@ import {
   playlistDataEqual,
   replayPlaylistRecord,
   replayPlaylistTransaction,
+  slimPlaylistLegacySnapshots,
   toPlaylistTrackSnapshot
 } from './musicStoreData.ts'
 
@@ -180,7 +181,94 @@ test('playlist snapshots strip volatile stream urls for non-local sources only',
 
   assert.equal(toPlaylistTrackSnapshot(local).streamUrl, 'https://local.example/stream')
   assert.equal(toPlaylistTrackSnapshot(remote).streamUrl, undefined)
+  assert.equal('streamUrl' in toPlaylistTrackSnapshot(remote), false)
   assert.equal(toPlaylistTrackSnapshot(remote).fileName, 'remote.flac')
+})
+
+test('playlist snapshots strip heavy payloads but retain display and routing fields', () => {
+  const heavy = makeTrack({
+    id: 'ncm:42',
+    source: 'ncm',
+    genre: 'Rock',
+    albumArtist: 'Album Artist',
+    discNumber: 1,
+    trackNumber: 3,
+    addedAt: 1234567890,
+    coverSmall: 'small-url',
+    coverSmallSource: 'small-source',
+    lyrics: '[00:01.00]full lyrics payload',
+    translatedLyrics: '[00:01.00]translation payload',
+    romanizedLyrics: '[00:01.00]romanized payload',
+    lyricsSource: 'provider',
+    bpm: 128,
+    bpmAnalysis: {
+      bpm: 128,
+      confidence: 0.9,
+      source: 'analyzed',
+      analyzedAt: 'now',
+      algorithmVersion: 1
+    },
+    metadataMatch: {
+      providerId: 'ncm',
+      trackId: '42',
+      confidence: 'high',
+      score: 0.95
+    },
+    replayGainTrackGainDb: -6,
+    streamUrl: 'https://provider.example/stream'
+  })
+
+  const snapshot = toPlaylistTrackSnapshot(heavy)
+  assert.equal(snapshot.lyrics, null)
+  assert.equal(snapshot.translatedLyrics, undefined)
+  assert.equal(snapshot.romanizedLyrics, undefined)
+  assert.equal(snapshot.lyricsSource, undefined)
+  assert.equal(snapshot.bpmAnalysis, undefined)
+  assert.equal(snapshot.metadataMatch, undefined)
+
+  // Display / sorting / routing fields survive.
+  assert.equal(snapshot.genre, 'Rock')
+  assert.equal(snapshot.albumArtist, 'Album Artist')
+  assert.equal(snapshot.discNumber, 1)
+  assert.equal(snapshot.trackNumber, 3)
+  assert.equal(snapshot.addedAt, 1234567890)
+  assert.equal(snapshot.coverSmall, 'small-url')
+  assert.equal(snapshot.coverSmallSource, 'small-source')
+  assert.equal(snapshot.bpm, 128)
+  assert.equal(snapshot.replayGainTrackGainDb, -6)
+  assert.equal(snapshot.source, 'ncm')
+})
+
+test('slimPlaylistLegacySnapshots rewrites legacy heavy snapshots and keeps slim ones intact', () => {
+  const legacy = makeTrack({
+    id: 'legacy-1',
+    lyrics: '[00:01.00]legacy embedded lyrics',
+    bpmAnalysis: {
+      bpm: 90,
+      confidence: 0.5,
+      source: 'analyzed',
+      analyzedAt: 'then',
+      algorithmVersion: 1
+    }
+  })
+  const slim = toPlaylistTrackSnapshot(makeTrack({ id: 'slim-1' }))
+  const slimPlaylist = makePlaylist({ trackIds: ['slim-1'], trackSnapshots: { 'slim-1': slim } })
+  const legacyPlaylist = makePlaylist({
+    trackIds: ['legacy-1'],
+    trackSnapshots: { 'legacy-1': legacy }
+  })
+
+  // Already-slim playlists are returned untouched (identity preserved).
+  assert.equal(slimPlaylistLegacySnapshots(slimPlaylist), slimPlaylist)
+
+  const normalized = slimPlaylistLegacySnapshots(legacyPlaylist)
+  assert.notEqual(normalized, legacyPlaylist)
+  const rewritten = normalized.trackSnapshots?.['legacy-1']
+  assert.ok(rewritten)
+  assert.equal(rewritten.lyrics, null)
+  assert.equal(rewritten.bpmAnalysis, undefined)
+  assert.equal(rewritten.title, legacy.title)
+  assert.equal(rewritten.filePath, legacy.filePath)
 })
 
 test('playlist clone and equality use deep JSON semantics', () => {

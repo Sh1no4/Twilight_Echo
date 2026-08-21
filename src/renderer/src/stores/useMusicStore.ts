@@ -58,6 +58,7 @@ import {
   parentDirectoryOf,
   playlistDataEqual,
   replayPlaylistTransaction,
+  slimPlaylistLegacySnapshots,
   toPlaylistTrackSnapshot
 } from './library/musicStoreData.ts'
 
@@ -1815,12 +1816,10 @@ export function useMusicStore(): {
     for (const playlist of playlists.value) {
       const snapshot = playlist.trackSnapshots?.[trackId] ?? playlist.trackSnapshots?.[nextTrack.id]
       if (!snapshot) continue
+      // 快照不再携带 bpmAnalysis；此处仍回写一次以顺带把历史重型快照瘦身。
       playlist.trackSnapshots = {
         ...(playlist.trackSnapshots ?? {}),
-        [nextTrack.id]: toPlaylistTrackSnapshot({
-          ...snapshot,
-          bpmAnalysis: analysis
-        })
+        [nextTrack.id]: toPlaylistTrackSnapshot(snapshot)
       }
       playlistsChanged = true
     }
@@ -1975,7 +1974,9 @@ export function useMusicStore(): {
       return
     }
 
-    const loaded = saved as Playlist[]
+    // 旧版本保存的歌单快照可能携带歌词全文 / bpmAnalysis / metadataMatch，
+    // 加载时统一瘦身，避免数十 MB 载荷随歌单驻留。
+    const loaded = (saved as Playlist[]).map(slimPlaylistLegacySnapshots)
     // Ensure default playlist exists
     if (!loaded.find((p) => p.isDefault)) {
       loaded.unshift(DEFAULT_PLAYLIST)
