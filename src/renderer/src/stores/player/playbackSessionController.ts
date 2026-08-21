@@ -51,11 +51,26 @@ export interface PlaybackSessionControllerOptions {
   getNativePlaybackActive: () => boolean
 }
 
+// 换曲同步 watch 每首触发一次全队列克隆+落盘；快速连切时合并为一次写。
+// 退出路径由 usePlaybackSessionPersistence.savePlaybackSessionForQuit 独立兜底，
+// 不依赖此防抖的即时性。
+const PERSIST_SELECTED_SESSION_DEBOUNCE_MS = 1200
+
 export function createPlaybackSessionController(options: PlaybackSessionControllerOptions) {
-  function persistSelectedTrackSession(): void {
+  let persistSessionDebounceTimer: ReturnType<typeof setTimeout> | null = null
+
+  function cancelPersistSessionDebounce(): void {
+    if (persistSessionDebounceTimer !== null) {
+      clearTimeout(persistSessionDebounceTimer)
+      persistSessionDebounceTimer = null
+    }
+  }
+
+  function writeSelectedTrackSession(): void {
     const mode = options.getAppSettings().value.playbackResumeMode
     if (mode === 'off') return
 
+    // 快照在防抖触发时才构建，连切只保留最新状态的一份克隆。
     const session = createPlaybackSession(mode)
     if (!session) return
 
@@ -68,7 +83,17 @@ export function createPlaybackSessionController(options: PlaybackSessionControll
     })
   }
 
+  function persistSelectedTrackSession(): void {
+    cancelPersistSessionDebounce()
+    persistSessionDebounceTimer = setTimeout(() => {
+      persistSessionDebounceTimer = null
+      writeSelectedTrackSession()
+    }, PERSIST_SELECTED_SESSION_DEBOUNCE_MS)
+  }
+
   function clearPersistedSelectedTrackSession(): void {
+    // 取消挂起的防抖写，否则它会在显式清理之后重新写一份过期会话。
+    cancelPersistSessionDebounce()
     const dataApi = window.api?.data
     if (!dataApi) return
     const write = playbackSessionWriter.clear(dataApi)
