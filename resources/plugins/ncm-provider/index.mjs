@@ -15,6 +15,9 @@ const NCM_PLAYBACK_QUALITY_FALLBACKS = {
 }
 const playlistTrackCache = new Map()
 const streamUrlCache = new Map()
+// CDN 签发地址会过期：无 TTL 的缓存会把 403 回放成多提供方大恢复，20 分钟
+// 内命中即可，超时强制重解析（批量 8.2）。
+const STREAM_URL_CACHE_TTL_MS = 20 * 60_000
 const providerWriteResults = new Map()
 const PROVIDER_WRITE_IDEMPOTENCY_TTL_MS = 5 * 60_000
 const MAX_PROVIDER_WRITE_IDEMPOTENCY_RECORDS = 256
@@ -1549,6 +1552,10 @@ function getUnblockedPlaybackUrl(data) {
   return null
 }
 
+function rememberStreamUrl(cacheKey, url) {
+  streamUrlCache.set(cacheKey, { url, expiresAt: Date.now() + STREAM_URL_CACHE_TTL_MS })
+}
+
 async function getPlaybackUrl(track, options = {}, requestContext) {
   const songId = getSongIdFromTrack(track)
   if (songId == null) throw new Error('Missing NetEase song ID, cannot play')
@@ -1567,7 +1574,11 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
     }
   }
 
-  if (!force && streamUrlCache.has(cacheKey)) return streamUrlCache.get(cacheKey)
+  const cachedStreamEntry = force ? null : streamUrlCache.get(cacheKey)
+  if (cachedStreamEntry) {
+    if (cachedStreamEntry.expiresAt > Date.now()) return cachedStreamEntry.url
+    streamUrlCache.delete(cacheKey)
+  }
 
   let lastFailureMessage = ''
   for (const path of getPlaybackUrlRequestPaths(songId, quality)) {
@@ -1579,7 +1590,7 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
       const url = getOfficialPlaybackUrl(data, streamItem)
       if (url) {
         rememberStreamAudioMeta(songId, streamItem)
-        streamUrlCache.set(cacheKey, url)
+        rememberStreamUrl(cacheKey, url)
         void ncmApi.cacheSong(songId, url, track?.fileName).catch(() => {})
         return url
       }
@@ -1594,7 +1605,7 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
     const data = await requestAuthed(getUnblockedPlaybackUrlPath(songId), requestContext)
     const url = getUnblockedPlaybackUrl(data)
     if (url) {
-      streamUrlCache.set(cacheKey, url)
+      rememberStreamUrl(cacheKey, url)
       void ncmApi.cacheSong(songId, url, track?.fileName).catch(() => {})
       return url
     }

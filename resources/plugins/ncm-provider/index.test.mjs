@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import test, { mock } from 'node:test'
 
 import * as ncmProvider from './index.mjs'
 
@@ -500,6 +500,37 @@ test('prefers a completed disk cache path over a network playback URL', async ()
     )
     assert.equal(networkCalls, 1)
   } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('playback URL memory cache expires after its TTL and re-resolves', async () => {
+  let requestNumber = 0
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    if (url.pathname === '/song/url/v1') {
+      requestNumber += 1
+      return {
+        code: 200,
+        data: [{ id: 91, url: `https://music.example/91.flac?v=${requestNumber}`, code: 200 }]
+      }
+    }
+    throw new Error(`unexpected path: ${url.pathname}`)
+  })
+
+  try {
+    mock.timers.enable({ apis: ['Date'] })
+    const first = await provider.getPlaybackUrl({ id: 'ncm:91' }, { quality: 'standard' })
+    const second = await provider.getPlaybackUrl({ id: 'ncm:91' }, { quality: 'standard' })
+    assert.equal(requestNumber, 1, 'a fresh cache entry must be reused')
+    assert.equal(second, first)
+
+    mock.timers.tick(21 * 60_000)
+    const third = await provider.getPlaybackUrl({ id: 'ncm:91' }, { quality: 'standard' })
+    assert.equal(requestNumber, 2, 'an expired cache entry must trigger a fresh resolve')
+    assert.notEqual(third, first)
+  } finally {
+    mock.timers.reset()
     ncmProvider.deactivate()
   }
 })
