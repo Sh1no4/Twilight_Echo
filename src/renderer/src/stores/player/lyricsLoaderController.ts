@@ -35,6 +35,38 @@ const lyricsRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const lyricsRetryAttemptsByTrackId = new Map<string, number>()
 let lyricsTrackActivation = 0
 
+// Baselines hold full track clones (potentially with full lyric payloads), so
+// they must stay bounded to a small ring around the active track. Generation
+// counters are tiny but had no deletion path at all, so they share the cap.
+const AUTOMATIC_LYRICS_BASELINE_LIMIT = 8
+const LYRICS_TRACK_COUNTER_LIMIT = 32
+
+function pruneMapToLimit<V>(map: Map<string, V>, activeTrackId: string, limit: number): void {
+  for (const key of map.keys()) {
+    if (map.size <= limit) break
+    if (key === activeTrackId) continue
+    map.delete(key)
+  }
+}
+
+function pruneLyricsTrackMemory(activeTrackId: string): void {
+  pruneMapToLimit(automaticLyricsBaselines, activeTrackId, AUTOMATIC_LYRICS_BASELINE_LIMIT)
+  pruneMapToLimit(lyricsLoadGenerationByTrackId, activeTrackId, LYRICS_TRACK_COUNTER_LIMIT)
+  pruneMapToLimit(lyricsRetryAttemptsByTrackId, activeTrackId, LYRICS_TRACK_COUNTER_LIMIT)
+}
+
+export function getLyricsLoaderMemoryUsage(): {
+  baselines: number
+  generations: number
+  retryAttempts: number
+} {
+  return {
+    baselines: automaticLyricsBaselines.size,
+    generations: lyricsLoadGenerationByTrackId.size,
+    retryAttempts: lyricsRetryAttemptsByTrackId.size
+  }
+}
+
 function getAmlSongId(track: Track): number {
   const direct = getNcmSongId(track)
   if (direct != null && (track.source === 'ncm' || track.id.startsWith('ncm:'))) return direct
@@ -437,6 +469,7 @@ export function createLyricsLoader(options: LyricsLoaderOptions) {
     lyricsTrackActivation += 1
     abortInactiveLyricsLoads(trackId)
     clearLyricsRetryTimersExcept(trackId)
+    pruneLyricsTrackMemory(trackId)
     if (!trackId) {
       options.lyricsLoadState.value = { trackId: '', status: 'idle' }
       return
