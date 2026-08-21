@@ -2043,3 +2043,12 @@ test('applyAudioProcessingState replaces processing locally without engine IPC',
   assert.doesNotMatch(body, /window\.api/)
   assert.match(dspSource, /applyAudioProcessingState: player\.applyAudioProcessingState/)
 })
+
+test('visualizationData uses shallowRef so 200ms replacements skip deep proxying', () => {
+  const storeSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  assert.match(
+    storeSource,
+    /const visualizationData = shallowRef<NativeVisualizationData>\(createInactiveVisualizationData\(\)\)/
+  )
+  assert.doesNotMatch(storeSource, /const visualizationData = ref</)
+})

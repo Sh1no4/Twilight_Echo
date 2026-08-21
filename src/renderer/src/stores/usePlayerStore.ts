@@ -331,7 +331,8 @@ const playbackInfo = ref<NativePlaybackInfo | null>(null)
 const loudnormStatus = ref<'idle' | 'measuring' | 'cached' | 'fallback' | 'unavailable'>('idle')
 const loudnormStatusSource = ref<string | null>(null)
 const outputInfo = computed<NativeOutputInfo | null>(() => playbackInfo.value?.outputInfo ?? null)
-const visualizationData = ref<NativeVisualizationData>(createInactiveVisualizationData())
+// 高频（200ms）整体替换的可视化载荷不值得一层层深度代理，消费方只读快照。
+const visualizationData = shallowRef<NativeVisualizationData>(createInactiveVisualizationData())
 const { settings: appSettings, updateSettings } = useSettingsStore()
 const lyricsManagement = useLyricsManagement()
 let playbackAudio: HTMLAudioElement | null = null
