@@ -74,7 +74,10 @@ test('cloneTrackForPlaybackSession strips lyrics and transient fields but preser
   assert.equal(cloned.bitrate, track.bitrate)
   assert.equal(cloned.bitDepth, track.bitDepth)
   assert.equal(cloned.bpm, track.bpm)
-  assert.equal(cloned.bpmAnalysis, track.bpmAnalysis)
+  // bpmAnalysis carries the multi-hundred-segment tempoMap; session clones must
+  // never persist it (re-resolved on demand when the track actually plays).
+  assert.equal(cloned.bpmAnalysis, undefined)
+  assert.equal('bpmAnalysis' in cloned, false)
   assert.equal(cloned.replayGainTrackGainDb, track.replayGainTrackGainDb)
   assert.equal(cloned.replayGainAlbumGainDb, track.replayGainAlbumGainDb)
   assert.equal(cloned.replayGainTrackPeak, track.replayGainTrackPeak)

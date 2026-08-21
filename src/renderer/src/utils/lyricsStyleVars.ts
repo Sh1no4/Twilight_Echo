@@ -58,8 +58,13 @@ export function resolveLyricsBackgroundImage(style: LyricsTextStyle): string {
   return `linear-gradient(135deg, ${tint}, transparent)`
 }
 
-export function resolveLyricsBackdropFilter(style: LyricsTextStyle): string {
-  return style.backgroundStyle === 'glass' ? 'blur(16px) saturate(130%)' : 'none'
+export function resolveLyricsBackdropFilter(
+  style: LyricsTextStyle,
+  target: LyricsStyleTarget = 'active'
+): string {
+  return style.backgroundStyle === 'glass' && target === 'active'
+    ? 'blur(16px) saturate(130%)'
+    : 'none'
 }
 
 /**
@@ -103,7 +108,7 @@ export function lyricsStyleVars(
     '--lyric-style-opacity': String(style.opacity / 100),
     '--lyric-style-background': resolveLyricsBackground(style, target),
     '--lyric-style-background-image': resolveLyricsBackgroundImage(style),
-    '--lyric-style-backdrop-filter': resolveLyricsBackdropFilter(style),
+    '--lyric-style-backdrop-filter': resolveLyricsBackdropFilter(style, target),
     '--lyric-style-highlight': resolveLyricsTextShadow(style),
     '--lyric-style-stroke': resolveLyricsTextStroke(style)
   }

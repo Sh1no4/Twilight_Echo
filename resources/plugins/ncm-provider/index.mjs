@@ -15,6 +15,9 @@ const NCM_PLAYBACK_QUALITY_FALLBACKS = {
 }
 const playlistTrackCache = new Map()
 const streamUrlCache = new Map()
+// CDN 签发地址会过期：无 TTL 的缓存会把 403 回放成多提供方大恢复，20 分钟
+// 内命中即可，超时强制重解析（批量 8.2）。
+const STREAM_URL_CACHE_TTL_MS = 20 * 60_000
 const providerWriteResults = new Map()
 const PROVIDER_WRITE_IDEMPOTENCY_TTL_MS = 5 * 60_000
 const MAX_PROVIDER_WRITE_IDEMPOTENCY_RECORDS = 256
@@ -215,6 +218,9 @@ function resetCaches() {
   ownedPlaylistIds = new Set()
   providerWriteRecordsLoaded = false
   providerWritePersistenceTail = Promise.resolve()
+  // 令牌桶随会话一起重置：排队中的 acquire 取的是新桶令牌，语义不受影响。
+  requestTokenCount = REQUEST_TOKEN_BUCKET_CAPACITY
+  requestTokenRefillAt = Date.now()
 }
 
 function runIdempotentProviderWrite(scope, args, requestContext, operation, replaySuccess) {
@@ -369,8 +375,59 @@ function throwIfRequestAborted(requestContext) {
   throw reason instanceof Error ? reason : new Error('Provider request was cancelled')
 }
 
+// 全局请求令牌桶（批量 8.6）：所有上游请求统一经 request() 出口，突发容量
+// 5、回灌速率 ~5 req/s。为批次 9 的并行化配安全带，同时降低风控触发概率。
+const REQUEST_TOKEN_BUCKET_CAPACITY = 5
+const REQUEST_TOKEN_REFILL_PER_MS = 5 / 1000
+let requestTokenCount = REQUEST_TOKEN_BUCKET_CAPACITY
+let requestTokenRefillAt = Date.now()
+let requestTokenTail = Promise.resolve()
+
+function acquireRequestToken(signal) {
+  const acquire = requestTokenTail.then(
+    () =>
+      new Promise((resolve, reject) => {
+        const attempt = () => {
+          if (signal?.aborted) {
+            reject(
+              signal.reason instanceof Error
+                ? signal.reason
+                : new Error('Provider request was cancelled')
+            )
+            return
+          }
+          const now = Date.now()
+          if (now < requestTokenRefillAt) {
+            // 系统时钟回拨（NTP 校时）：原地重置回灌基准，令牌不增不减，避免
+            // 回灌窗口永不可达导致全部请求挂死。
+            requestTokenRefillAt = now
+          } else {
+            requestTokenCount = Math.min(
+              REQUEST_TOKEN_BUCKET_CAPACITY,
+              requestTokenCount + (now - requestTokenRefillAt) * REQUEST_TOKEN_REFILL_PER_MS
+            )
+            requestTokenRefillAt = now
+          }
+          if (requestTokenCount >= 1) {
+            requestTokenCount -= 1
+            resolve()
+            return
+          }
+          setTimeout(
+            attempt,
+            Math.max(5, Math.ceil((1 - requestTokenCount) / REQUEST_TOKEN_REFILL_PER_MS))
+          )
+        }
+        attempt()
+      })
+  )
+  requestTokenTail = acquire.catch(() => undefined)
+  return acquire
+}
+
 async function request(path, cookie, requestContext) {
   throwIfRequestAborted(requestContext)
+  await acquireRequestToken(requestContext?.signal)
   const data = await ncmApi.request(shouldUsePcUa(path) ? withPcUa(path) : path, cookie, {
     signal: requestContext?.signal,
     idempotencyKey: requestContext?.idempotencyKey
@@ -1549,6 +1606,10 @@ function getUnblockedPlaybackUrl(data) {
   return null
 }
 
+function rememberStreamUrl(cacheKey, url) {
+  streamUrlCache.set(cacheKey, { url, expiresAt: Date.now() + STREAM_URL_CACHE_TTL_MS })
+}
+
 async function getPlaybackUrl(track, options = {}, requestContext) {
   const songId = getSongIdFromTrack(track)
   if (songId == null) throw new Error('Missing NetEase song ID, cannot play')
@@ -1567,10 +1628,22 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
     }
   }
 
-  if (!force && streamUrlCache.has(cacheKey)) return streamUrlCache.get(cacheKey)
+  const cachedStreamEntry = force ? null : streamUrlCache.get(cacheKey)
+  if (cachedStreamEntry) {
+    if (cachedStreamEntry.expiresAt > Date.now()) return cachedStreamEntry.url
+    streamUrlCache.delete(cacheKey)
+  }
 
   let lastFailureMessage = ''
-  for (const path of getPlaybackUrlRequestPaths(songId, quality)) {
+  let riskControlMessage = ''
+  const requestPaths = getPlaybackUrlRequestPaths(songId, quality)
+  for (let attempt = 0; attempt < requestPaths.length; attempt += 1) {
+    // 回退阶梯步间退避（250ms 起步、封顶 500ms）：连续失败的连打既放大风控
+    // 概率也让低级音质的响应无意义地挤占带宽（批量 8.5）。
+    if (attempt > 0) {
+      await waitWithAbort(Math.min(500, 250 * attempt), requestContext?.signal)
+    }
+    const path = requestPaths[attempt]
     try {
       const data = await requestAuthed(path, requestContext)
       const streamItems = getPlaybackStreamItems(data)
@@ -1579,7 +1652,7 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
       const url = getOfficialPlaybackUrl(data, streamItem)
       if (url) {
         rememberStreamAudioMeta(songId, streamItem)
-        streamUrlCache.set(cacheKey, url)
+        rememberStreamUrl(cacheKey, url)
         void ncmApi.cacheSong(songId, url, track?.fileName).catch(() => {})
         return url
       }
@@ -1588,24 +1661,36 @@ async function getPlaybackUrl(track, options = {}, requestContext) {
       throwIfRequestAborted(requestContext)
       lastFailureMessage = getErrorMessage(error)
     }
-  }
-
-  try {
-    const data = await requestAuthed(getUnblockedPlaybackUrlPath(songId), requestContext)
-    const url = getUnblockedPlaybackUrl(data)
-    if (url) {
-      streamUrlCache.set(cacheKey, url)
-      void ncmApi.cacheSong(songId, url, track?.fileName).catch(() => {})
-      return url
+    // 风控提示命中即终止整条阶梯：继续连打只会加深风控（批量 8.5）。
+    if (isRiskControlMessage(lastFailureMessage)) {
+      riskControlMessage = lastFailureMessage
+      break
     }
-    lastFailureMessage =
-      getPlaybackFailureMessage(data, {}) || '灰色歌曲解锁响应缺少有效的 HTTP(S) URL'
-  } catch (error) {
-    throwIfRequestAborted(requestContext)
-    lastFailureMessage = getErrorMessage(error)
   }
 
-  if (lastFailureMessage) getContext().logger.warn(`网易云播放地址解析失败：${lastFailureMessage}`)
+  // 风控命中后连灰色解锁也不再试——它同样是上游请求，会把风控窗口越拉越长。
+  if (!riskControlMessage) {
+    try {
+      const data = await requestAuthed(getUnblockedPlaybackUrlPath(songId), requestContext)
+      const url = getUnblockedPlaybackUrl(data)
+      if (url) {
+        rememberStreamUrl(cacheKey, url)
+        void ncmApi.cacheSong(songId, url, track?.fileName).catch(() => {})
+        return url
+      }
+      lastFailureMessage =
+        getPlaybackFailureMessage(data, {}) || '灰色歌曲解锁响应缺少有效的 HTTP(S) URL'
+    } catch (error) {
+      throwIfRequestAborted(requestContext)
+      lastFailureMessage = getErrorMessage(error)
+    }
+  }
+
+  if (riskControlMessage) {
+    getContext().logger.warn(`网易云播放地址解析命中风控，已提前终止回退：${riskControlMessage}`)
+  } else if (lastFailureMessage) {
+    getContext().logger.warn(`网易云播放地址解析失败：${lastFailureMessage}`)
+  }
   return null
 }
 

@@ -28,6 +28,8 @@ export function useSongListVirtualScroll({
   onRowPointerMove: (event: PointerEvent) => void
   updateViewportHeight: () => void
   resetScrollAndMeasure: () => void
+  scrollTop: Ref<number>
+  viewportHeight: Ref<number>
 } {
   const containerRef = ref<HTMLElement | null>(null)
   const tbodyRef = ref<HTMLElement | null>(null)
@@ -129,6 +131,8 @@ export function useSongListVirtualScroll({
     onScroll,
     onRowPointerMove,
     updateViewportHeight,
-    resetScrollAndMeasure
+    resetScrollAndMeasure,
+    scrollTop,
+    viewportHeight
   }
 }

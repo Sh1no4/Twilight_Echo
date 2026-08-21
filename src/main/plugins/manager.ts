@@ -1,7 +1,7 @@
 import { app, dialog, shell, utilityProcess, type UtilityProcess } from 'electron'
 import { randomUUID } from 'crypto'
 import { existsSync, mkdirSync } from 'fs'
-import { cp, readdir, readFile, rm, stat, writeFile } from 'fs/promises'
+import { cp, readdir, readFile, rename, rm, stat, writeFile } from 'fs/promises'
 import { basename, dirname, extname, join, resolve } from 'path'
 import { EventEmitter } from 'events'
 import { planPluginStartup } from './dependencies'
@@ -173,6 +173,8 @@ const PLAYER_EVENTS = new Set([
   'player:playback-info'
 ])
 const PLUGIN_EVENT_NAME_PATTERN = /^[a-z][a-zA-Z0-9]*(?::[a-zA-Z0-9-]+)+$/
+/** 单插件日志文件上限；超出后轮转到 .log.1（current+prev 两档，与 audioDiagnostics 一致）。 */
+const PLUGIN_LOG_MAX_BYTES = 1024 * 1024
 
 export class TwilightPluginManager extends EventEmitter {
   private readonly appVersion: string
@@ -184,6 +186,8 @@ export class TwilightPluginManager extends EventEmitter {
   private readonly player: TwilightPluginManagerOptions['player']
   private readonly getProxyEnv: TwilightPluginManagerOptions['getProxyEnv']
   private readonly running = new Map<string, RunningPlugin>()
+  private readonly logWriteChains = new Map<string, Promise<void>>()
+  private readonly logSizes = new Map<string, number>()
   private readonly providerHealth = new Map<string, ProviderHealthRecord>()
   private readonly stopOperations = new Map<string, Promise<void>>()
   private readonly internalNcmRequests = new Map<string, AbortController>()
@@ -1661,9 +1665,33 @@ export class TwilightPluginManager extends EventEmitter {
   }
 
   private appendLog(descriptor: TwilightPluginDescriptor, level: string, message: string): void {
-    ensureParent(descriptor.paths.logPath)
+    const logPath = descriptor.paths.logPath
+    ensureParent(logPath)
     const line = `[${new Date().toISOString()}] [${level}] ${redactSensitiveText(message).trim()}\n`
-    void writeFile(descriptor.paths.logPath, line, { flag: 'a', encoding: 'utf-8' })
+    const lineBytes = Buffer.byteLength(line)
+    // 每插件日志带尺寸轮转（current + .1 两档，仿 audioDiagnostics），同时把逐行
+    // 追加串进 per-path 写链，避免高并发日志乱序与无界增长。
+    const chain = this.logWriteChains.get(logPath) ?? Promise.resolve()
+    const next = chain.then(async () => {
+      let size = this.logSizes.get(logPath)
+      if (size === undefined) {
+        size = await stat(logPath)
+          .then((info) => info.size)
+          .catch(() => 0)
+      }
+      if (size + lineBytes > PLUGIN_LOG_MAX_BYTES) {
+        const previousLogPath = `${logPath}.1`
+        await rm(previousLogPath, { force: true }).catch(() => undefined)
+        await rename(logPath, previousLogPath).catch(() => undefined)
+        size = 0
+      }
+      await writeFile(logPath, line, { flag: 'a', encoding: 'utf-8' })
+      this.logSizes.set(logPath, size + lineBytes)
+    })
+    this.logWriteChains.set(
+      logPath,
+      next.catch(() => undefined)
+    )
   }
 
   private pathsFor(id: string, version: string): TwilightPluginPaths {

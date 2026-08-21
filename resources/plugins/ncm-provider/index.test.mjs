@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import test, { mock } from 'node:test'
 
 import * as ncmProvider from './index.mjs'
 
@@ -90,6 +90,71 @@ test('personal FM requests a 30-track roaming batch', async () => {
     )
     assert.equal(requests.length, 1)
   } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('upstream requests are rate limited by a global token bucket', async () => {
+  const requestTimes = []
+  const provider = await activateProvider(async (path) => {
+    requestTimes.push(Date.now())
+    const url = parseRequest(path)
+    assert.equal(url.pathname, '/cloudsearch')
+    return { result: { songs: [], songCount: 0 } }
+  })
+
+  try {
+    mock.timers.enable({ apis: ['Date', 'setTimeout'] })
+    const pending = Promise.all(Array.from({ length: 6 }, (_, index) => provider.searchSongs(`k${index}`)))
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(requestTimes.length, 5, 'burst capacity admits five requests immediately')
+    mock.timers.tick(200)
+    await pending
+    assert.equal(requestTimes.length, 6)
+    const origin = requestTimes[0]
+    assert.deepEqual(
+      requestTimes.map((time) => time - origin),
+      [0, 0, 0, 0, 0, 200],
+      'the sixth request must wait one 200ms refill step'
+    )
+  } finally {
+    mock.timers.reset()
+    ncmProvider.deactivate()
+  }
+})
+
+test('token bucket survives a system clock rollback without wedging requests', async () => {
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    assert.equal(url.pathname, '/cloudsearch')
+    return { result: { songs: [], songCount: 0 } }
+  })
+
+  try {
+    mock.timers.enable({ apis: ['Date', 'setTimeout'] })
+    // 先消耗空突发容量，再把时钟回拨到过去：回拨后第一个请求必须仍能通过
+    // （原地重置回灌基准），而不是等一个永远到不了的回灌窗口。
+    mock.timers.setTime(1_000_000)
+    await Promise.all(Array.from({ length: 5 }, (_, index) => provider.searchSongs(`a${index}`)))
+    mock.timers.setTime(500_000)
+    const secondWave = Promise.all(
+      Array.from({ length: 5 }, (_, index) => provider.searchSongs(`b${index}`))
+    )
+    // tick 是同步推进：先排空 microtask，让第二波请求的等待计时器完成登记。
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    // 回拨不凭空增发令牌：第二波按 ~200ms/个 的正常速率放行。
+    mock.timers.tick(1_000)
+    await secondWave
+    mock.timers.tick(200)
+    const thirdRequest = provider.searchSongs('c')
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    mock.timers.tick(200)
+    await thirdRequest
+  } finally {
+    mock.timers.reset()
     ncmProvider.deactivate()
   }
 })
@@ -499,6 +564,99 @@ test('prefers a completed disk cache path over a network playback URL', async ()
       'https://music.example/90.flac'
     )
     assert.equal(networkCalls, 1)
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('playback URL memory cache expires after its TTL and re-resolves', async () => {
+  let requestNumber = 0
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    if (url.pathname === '/song/url/v1') {
+      requestNumber += 1
+      return {
+        code: 200,
+        data: [{ id: 91, url: `https://music.example/91.flac?v=${requestNumber}`, code: 200 }]
+      }
+    }
+    throw new Error(`unexpected path: ${url.pathname}`)
+  })
+
+  try {
+    mock.timers.enable({ apis: ['Date'] })
+    const first = await provider.getPlaybackUrl({ id: 'ncm:91' }, { quality: 'standard' })
+    const second = await provider.getPlaybackUrl({ id: 'ncm:91' }, { quality: 'standard' })
+    assert.equal(requestNumber, 1, 'a fresh cache entry must be reused')
+    assert.equal(second, first)
+
+    mock.timers.tick(21 * 60_000)
+    const third = await provider.getPlaybackUrl({ id: 'ncm:91' }, { quality: 'standard' })
+    assert.equal(requestNumber, 2, 'an expired cache entry must trigger a fresh resolve')
+    assert.notEqual(third, first)
+  } finally {
+    mock.timers.reset()
+    ncmProvider.deactivate()
+  }
+})
+
+test('playback fallback ladder backs off between steps instead of bursting', async () => {
+  const requestTimes = []
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    if (url.pathname !== '/song/url/v1') throw new Error(`unexpected path: ${url.pathname}`)
+    requestTimes.push(Date.now())
+    const level = url.searchParams.get('level')
+    if (level === 'exhigh') {
+      return {
+        code: 200,
+        data: [{ id: 92, url: 'https://music.example/92.mp3', code: 200, level: 'exhigh' }]
+      }
+    }
+    return { code: 200, data: [{ id: 92, url: null, code: 404, msg: 'unavailable' }] }
+  })
+
+  try {
+    mock.timers.enable({ apis: ['Date', 'setTimeout'] })
+    const pending = provider.getPlaybackUrl({ id: 'ncm:92' }, { quality: 'hires' })
+    // 第一级请求立即发出（无前缀等待）。
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(requestTimes.length, 1)
+    mock.timers.tick(250)
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(requestTimes.length, 2)
+    mock.timers.tick(500)
+    assert.equal(await pending, 'https://music.example/92.mp3')
+    assert.deepEqual(
+      requestTimes.slice(1).map((time, index) => time - requestTimes[index]),
+      [250, 500],
+      'fallback steps must be spaced by a 250→500ms backoff'
+    )
+  } finally {
+    mock.timers.reset()
+    ncmProvider.deactivate()
+  }
+})
+
+test('risk control messages stop the whole playback fallback ladder early', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    return {
+      code: 200,
+      data: [{ id: 93, url: null, code: 460, msg: '操作已拦截，存在安全风险' }]
+    }
+  })
+
+  try {
+    assert.equal(await provider.getPlaybackUrl({ id: 'ncm:93' }, { quality: 'hires' }), null)
+    assert.deepEqual(
+      requests.map((path) => parseRequest(path).pathname),
+      ['/song/url/v1'],
+      'a risk-control response must stop both the level ladder and the gray-track match'
+    )
   } finally {
     ncmProvider.deactivate()
   }

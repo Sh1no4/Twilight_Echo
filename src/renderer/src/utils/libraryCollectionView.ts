@@ -99,6 +99,24 @@ export function firstCollectionIndexForLetter(
   return items.findIndex((item) => collectionIndexLetter(item.name) === normalized)
 }
 
+/** Derive the A-Z highlight from scroll position instead of walking mounted cards. */
+export function collectionLetterAtScroll(
+  items: readonly LibraryCollectionItem[],
+  scrollTop: number,
+  gridOffsetTop: number,
+  columns: number,
+  rowStride: number,
+  scanOffset = 104
+): string | null {
+  if (items.length === 0) return null
+  const safeColumns = Math.max(1, Math.floor(columns))
+  const safeStride = Math.max(1, rowStride)
+  const yInGrid = scrollTop + scanOffset - gridOffsetTop
+  const row = Math.max(0, Math.floor(yInGrid / safeStride))
+  const index = Math.min(items.length - 1, row * safeColumns)
+  return collectionIndexLetter(items[index]?.name ?? '')
+}
+
 export class LibraryCollectionViewPreferences {
   private readonly storage: Storage | null
   private readonly storageKey: string

@@ -285,3 +285,70 @@ test('keeps CUE tracks on the referenced file while preserving distinct native r
     [first.cueRange, second.cueRange]
   )
 })
+
+test('prefetched NetEase stream URLs survive only inside their freshness window', async () => {
+  const { stripStaleNcmStreamUrls, NCM_STREAM_URL_MAX_AGE_MS } = await import(
+    new URL('./nativeQueuePreparation.ts', import.meta.url).href
+  )
+  const now = 1_000_000
+  const fresh = createTrack({
+    id: 'ncm:fresh',
+    source: 'ncm',
+    filePath: 'ncm:fresh',
+    streamUrl: 'https://cdn.example/fresh.flac'
+  })
+  const expired = createTrack({
+    id: 'ncm:expired',
+    source: 'ncm',
+    filePath: 'ncm:expired',
+    streamUrl: 'https://cdn.example/expired.flac'
+  })
+  const untracked = createTrack({
+    id: 'ncm:untracked',
+    source: 'ncm',
+    filePath: 'ncm:untracked',
+    streamUrl: 'https://cdn.example/untracked.flac'
+  })
+  const local = createTrack({ id: 'local:keep' })
+  const committedAt = new Map<string, number>([
+    ['ncm:fresh', now - NCM_STREAM_URL_MAX_AGE_MS + 1_000],
+    ['ncm:expired', now - NCM_STREAM_URL_MAX_AGE_MS - 1_000]
+  ])
+
+  const stripped = stripStaleNcmStreamUrls([fresh, expired, untracked, local], {
+    committedAtByTrackId: committedAt,
+    nowMs: now
+  })
+
+  assert.equal(stripped[0].streamUrl, 'https://cdn.example/fresh.flac')
+  assert.equal(stripped[1].streamUrl, '', 'expired prefetched URLs must not enter the native queue')
+  assert.equal(stripped[2].streamUrl, '', 'untracked URLs are untrusted and must re-resolve')
+  assert.equal(stripped[3], local, 'non-NCM tracks pass through by identity')
+})
+
+test('provider-managed local cache paths never get freshness-stripped', async () => {
+  const { stripStaleNcmStreamUrls } = await import(
+    new URL('./nativeQueuePreparation.ts', import.meta.url).href
+  )
+  const cached = createTrack({
+    id: 'ncm:cached',
+    source: 'ncm',
+    filePath: 'ncm:cached',
+    streamUrl: 'D:\\Cache\\ncm-cache\\42.flac'
+  })
+  const stripped = stripStaleNcmStreamUrls([cached], {
+    committedAtByTrackId: new Map(),
+    nowMs: Date.now()
+  })
+  assert.equal(stripped[0], cached, 'local cache targets are provider-owned and never expire here')
+})
+
+test('stripStaleNcmStreamUrls returns an equal copy when nothing is stripped', async () => {
+  const { stripStaleNcmStreamUrls } = await import(
+    new URL('./nativeQueuePreparation.ts', import.meta.url).href
+  )
+  const queue = [createTrack(), createTrack({ id: 'local:two', filePath: 'D:\\Music\\two.flac' })]
+  const stripped = stripStaleNcmStreamUrls(queue, { committedAtByTrackId: new Map() })
+  assert.deepEqual(stripped, queue)
+  assert.notEqual(stripped, queue, 'callers receive a defensive copy')
+})

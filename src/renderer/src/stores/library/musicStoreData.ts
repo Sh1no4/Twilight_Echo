@@ -1,4 +1,5 @@
 import type { Track } from '../../types/music'
+import { getTrackSource } from '../../utils/playerTrackUtils.ts'
 import type { DerivedTrackGroup, Playlist } from '../useMusicStore.ts'
 
 export function getAlbumIdentity(track: Track): string {
@@ -138,14 +139,104 @@ export function isTrackUnderLibraryRoot(filePath: string, normalizedRoot: string
   )
 }
 
+/**
+ * 歌单驻留快照只保留身份、展示与播放路由字段。歌词全文、翻译/罗马音、
+ * bpmAnalysis（tempoMap 数百段/轨）与 metadataMatch 全部剥离——5000 轨流式
+ * 歌单的完整快照曾驻留 25-50MB，还会在每次保存时被整体克隆。歌词在曲目激活
+ * 时经歌词解析链按需重取（toPlaybackQueueSnapshot 的紧凑形态已验证该路径），
+ * bpm/metadata 匹配结果可从库内同轨对象或重新分析取回。
+ */
 export function toPlaylistTrackSnapshot(track: Track): Track {
-  if (track.source && track.source !== 'local') {
-    const { streamUrl: _streamUrl, ...snapshot } = track
-    return snapshot
-  }
+  const source = getTrackSource(track)
+  // 可选键一律条件展开：快照键集合与源轨保持一致（只剥离重载荷键），避免
+  // undefined 值键改变持久化 JSON 形状与深比较语义。
   return {
-    ...track
+    id: track.id,
+    ...(track.queueEntryId !== undefined ? { queueEntryId: track.queueEntryId } : {}),
+    title: track.title,
+    artist: track.artist,
+    album: track.album,
+    ...(track.genre !== undefined ? { genre: track.genre } : {}),
+    ...(track.albumArtist !== undefined ? { albumArtist: track.albumArtist } : {}),
+    ...(track.albumId !== undefined ? { albumId: track.albumId } : {}),
+    ...(track.discNumber !== undefined ? { discNumber: track.discNumber } : {}),
+    ...(track.trackNumber !== undefined ? { trackNumber: track.trackNumber } : {}),
+    filePath: track.filePath,
+    fileName: track.fileName,
+    ...(track.dir !== undefined ? { dir: track.dir } : {}),
+    ...(track.subTrack !== undefined ? { subTrack: track.subTrack } : {}),
+    ...(track.cueRange !== undefined ? { cueRange: { ...track.cueRange } } : {}),
+    ...(track.cueSheetPath !== undefined ? { cueSheetPath: track.cueSheetPath } : {}),
+    ...(track.cueEncoding !== undefined ? { cueEncoding: track.cueEncoding } : {}),
+    duration: track.duration,
+    size: track.size,
+    cover: track.cover,
+    ...(track.coverSmall !== undefined ? { coverSmall: track.coverSmall } : {}),
+    ...(track.coverSmallSource !== undefined ? { coverSmallSource: track.coverSmallSource } : {}),
+    ...(track.coverSource !== undefined ? { coverSource: track.coverSource } : {}),
+    lyrics: null,
+    ...(track.source !== undefined ? { source: track.source } : {}),
+    ...(track.ncmSongId !== undefined ? { ncmSongId: track.ncmSongId } : {}),
+    ...(track.networkSource !== undefined ? { networkSource: track.networkSource } : {}),
+    ...(track.audioFingerprint !== undefined
+      ? { audioFingerprint: { ...track.audioFingerprint } }
+      : {}),
+    ...(source === 'local' && track.streamUrl !== undefined
+      ? { streamUrl: track.streamUrl }
+      : {}),
+    ...(track.streamQuality !== undefined ? { streamQuality: track.streamQuality } : {}),
+    ...(track.format !== undefined ? { format: track.format } : {}),
+    ...(track.sampleRate !== undefined ? { sampleRate: track.sampleRate } : {}),
+    ...(track.bitrate !== undefined ? { bitrate: track.bitrate } : {}),
+    ...(track.bitDepth !== undefined ? { bitDepth: track.bitDepth } : {}),
+    ...(track.bpm !== undefined ? { bpm: track.bpm } : {}),
+    ...(track.addedAt !== undefined ? { addedAt: track.addedAt } : {}),
+    ...(track.replayGainTrackGainDb !== undefined
+      ? { replayGainTrackGainDb: track.replayGainTrackGainDb }
+      : {}),
+    ...(track.replayGainAlbumGainDb !== undefined
+      ? { replayGainAlbumGainDb: track.replayGainAlbumGainDb }
+      : {}),
+    ...(track.replayGainTrackPeak !== undefined
+      ? { replayGainTrackPeak: track.replayGainTrackPeak }
+      : {}),
+    ...(track.replayGainAlbumPeak !== undefined
+      ? { replayGainAlbumPeak: track.replayGainAlbumPeak }
+      : {}),
+    ...(track.r128TrackGainDb !== undefined ? { r128TrackGainDb: track.r128TrackGainDb } : {}),
+    ...(track.r128AlbumGainDb !== undefined ? { r128AlbumGainDb: track.r128AlbumGainDb } : {})
   }
+}
+
+/** 快照中需要剥离的重型载荷字段（非空才算脏）。 */
+function hasHeavySnapshotPayload(track: Track): boolean {
+  return !!(
+    track.lyrics ||
+    track.translatedLyrics ||
+    track.romanizedLyrics ||
+    track.bpmAnalysis ||
+    track.metadataMatch
+  )
+}
+
+/**
+ * 加载历史歌单文档时把旧格式的重型快照就地替换为紧凑形态，残留的歌词全文
+ * 不再随歌单驻留与保存。已是紧凑形态的歌单原样返回。
+ */
+export function slimPlaylistLegacySnapshots(playlist: Playlist): Playlist {
+  const snapshots = playlist.trackSnapshots
+  if (!snapshots) return playlist
+  let changed = false
+  const next: Record<string, Track> = {}
+  for (const [trackId, snapshot] of Object.entries(snapshots)) {
+    if (hasHeavySnapshotPayload(snapshot)) {
+      next[trackId] = toPlaylistTrackSnapshot(snapshot)
+      changed = true
+    } else {
+      next[trackId] = snapshot
+    }
+  }
+  return changed ? { ...playlist, trackSnapshots: next } : playlist
 }
 
 /**

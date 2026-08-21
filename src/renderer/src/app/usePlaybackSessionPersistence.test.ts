@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { nextTick, ref } from 'vue'
 import type { PlaybackSession, Track } from '../types/music.ts'
@@ -800,3 +801,20 @@ test('failed restore leaves autosave available to replace the unusable old sessi
 async function waitForTimers(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 5))
 }
+
+test('player-store session saves are debounced and coalesce rapid track changes', () => {
+  const controllerSource = readFileSync(
+    new URL('../stores/player/playbackSessionController.ts', import.meta.url),
+    'utf8'
+  )
+  assert.match(controllerSource, /const PERSIST_SELECTED_SESSION_DEBOUNCE_MS = \d+/)
+  // The debounced path must snapshot at fire time, not at schedule time.
+  assert.match(controllerSource, /setTimeout\(\(\) => \{[\s\S]*writeSelectedTrackSession\(\)/)
+  // An explicit clear must cancel a pending debounced save, or the cleared
+  // session would be resurrected by the deferred write.
+  const clearBody = controllerSource.match(
+    /function clearPersistedSelectedTrackSession\(\): void \{([\s\S]*?)\n  \}/
+  )
+  assert.ok(clearBody, 'clearPersistedSelectedTrackSession should exist')
+  assert.match(clearBody[1], /cancelPersistSessionDebounce\(\)/)
+})

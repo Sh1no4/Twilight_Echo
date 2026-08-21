@@ -6,6 +6,7 @@
     :alt="alt"
     :class="$attrs.class"
     decoding="async"
+    :loading="loading"
     @error="onImageError"
   />
   <slot v-else name="placeholder">
@@ -36,6 +37,7 @@ const props = defineProps<{
   identity?: string | null | undefined
   alt?: string
   fallback?: string
+  loading?: 'lazy' | 'eager'
 }>()
 
 const emit = defineEmits<{ error: [event: Event] }>()

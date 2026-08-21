@@ -7,6 +7,7 @@ import {
   availableCollectionLetters,
   collectionAddedAt,
   collectionIndexLetter,
+  collectionLetterAtScroll,
   firstCollectionIndexForLetter,
   LibraryCollectionViewPreferences,
   type LibraryCollectionItem
@@ -103,6 +104,27 @@ test('builds an A-Z index, disables absent letters, and finds jump targets', () 
   assert.deepEqual([...availableCollectionLetters(items)].sort(), ['A', 'B'])
   assert.equal(firstCollectionIndexForLetter(items, 'B'), 1)
   assert.equal(firstCollectionIndexForLetter(items, 'Z'), -1)
+  assert.equal(
+    collectionLetterAtScroll(
+      [item('Alpha', []), item('Beta', []), item('Mango', [])],
+      0,
+      0,
+      1,
+      200
+    ),
+    'A'
+  )
+  assert.equal(
+    collectionLetterAtScroll(
+      [item('Alpha', []), item('Beta', []), item('Mango', [])],
+      400,
+      0,
+      1,
+      200,
+      0
+    ),
+    'M'
+  )
 })
 
 test('persists independent artist and album collection preferences', () => {

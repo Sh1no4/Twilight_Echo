@@ -736,6 +736,11 @@
   padding: 2px 2px 8px;
 }
 
+.grid-virtual-spacer {
+  grid-column: 1 / -1;
+  pointer-events: none;
+}
+
 /* Narrow-window adaptation: shrink card columns and inner text so cards
    stay usable without overflowing or becoming oversized. */
 @media (max-width: 900px) {
@@ -772,8 +777,6 @@
     border-color 0.26s;
   border: 1px solid rgba(255, 255, 255, 0.62);
   box-shadow: 0 18px 50px rgba(86, 70, 160, 0.1);
-  backdrop-filter: blur(20px) saturate(150%);
-  -webkit-backdrop-filter: blur(20px) saturate(150%);
   overflow: hidden;
   position: relative;
 }
@@ -813,7 +816,10 @@
 
 .artist-card:hover,
 .album-card:hover,
-.playlist-card:hover {
+.playlist-card:hover,
+.artist-card:focus-visible,
+.album-card:focus-visible,
+.playlist-card:focus-visible {
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.7), rgba(247, 242, 255, 0.48)),
     rgba(255, 255, 255, 0.46);
@@ -822,6 +828,8 @@
     0 24px 70px rgba(86, 70, 160, 0.18),
     0 0 0 1px rgba(124, 77, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
 }
 
 .artist-card:hover::before,
@@ -1169,8 +1177,6 @@
       rgba(255, 126, 182, 0.02),
       rgba(34, 211, 238, 0.03)
     );
-  backdrop-filter: blur(18px) saturate(160%);
-  -webkit-backdrop-filter: blur(18px) saturate(160%);
 }
 
 .track-row::after {
@@ -1255,6 +1261,8 @@
 
 .track-playing::before {
   opacity: 1;
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
 }
 
 .track-playing::after {

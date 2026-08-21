@@ -360,3 +360,18 @@ test('provider results replace approved remote media URLs before returning to th
   )
   assert.match(managerSource, /value: protectProviderMedia\(message\.value, metadata\.method\)/)
 })
+
+test('plugin host logs rotate at a bounded size and append through a serialized write chain', () => {
+  assert.match(managerSource, /const PLUGIN_LOG_MAX_BYTES = \d+/)
+  assert.match(managerSource, /logWriteChains = new Map<string, Promise<void>>/)
+  assert.match(managerSource, /logSizes = new Map<string, number>/)
+  const appendLog = managerSource.match(
+    /private appendLog\(descriptor: TwilightPluginDescriptor, level: string, message: string\): void \{([\s\S]*?)\n  \}/
+  )
+  assert.ok(appendLog, 'appendLog should exist')
+  const body = appendLog[1]
+  assert.match(body, /size \+ lineBytes > PLUGIN_LOG_MAX_BYTES/)
+  assert.match(body, /await rm\(previousLogPath, \{ force: true \}\)/)
+  assert.match(body, /await rename\(logPath, previousLogPath\)/)
+  assert.match(body, /this\.logWriteChains\.get\(logPath\) \?\? Promise\.resolve\(\)/)
+})
