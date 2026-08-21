@@ -387,7 +387,10 @@ bool CoreAudioExclusiveBackend::open(const std::string& deviceId, const AudioFor
   const bool formatMatched = sampleRateMatched &&
                              effectivePcmBitDepth(requestedFormat) == effectivePcmBitDepth(actualFormat) &&
                              requestedFormat.channelCount == actualFormat.channelCount &&
-                             requestedFormat.sampleFormat == actualFormat.sampleFormat;
+                             (requestedFormat.sampleFormat == actualFormat.sampleFormat ||
+                              sampleFormatsSameIntegerPayload(
+                                  requestedFormat.sampleFormat,
+                                  actualFormat.sampleFormat));
   const bool supportsPerfect = impl_->hogAcquired && sampleRateMatched;
 
   const uint32_t bufferFrames =

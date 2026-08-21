@@ -243,6 +243,54 @@ void testLosslessIntegerDecodedConversionBlocksOutputPerfect() {
   assert(result.perfectReason.find("Lossless PCM decoded through non-identical PCM format") != std::string::npos);
 }
 
+void testInt24SourceStaysExactThroughInt24In32Output() {
+  const AudioFormat int24 = pcm(48000, 24, 2, AudioSampleFormat::Int24Interleaved);
+  const AudioFormat int24In32 = pcm(48000, 24, 2, AudioSampleFormat::Int24In32Interleaved);
+  const AudioFormat int32 = pcm(48000, 32, 2, AudioSampleFormat::Int32Interleaved);
+  const AudioFormat int16 = pcm(48000, 16, 2, AudioSampleFormat::Int16Interleaved);
+  const AudioFormat float32 = pcm(48000, 32, 2, AudioSampleFormat::Float32Interleaved);
+
+  // Same payload, different container: interchangeable in value, not in bytes.
+  assert(sampleFormatsSameIntegerPayload(
+      AudioSampleFormat::Int24Interleaved, AudioSampleFormat::Int24In32Interleaved));
+  assert(!sampleFormatsSameIntegerPayload(
+      AudioSampleFormat::Int24Interleaved, AudioSampleFormat::Int32Interleaved));
+  assert(!sampleFormatsSameIntegerPayload(
+      AudioSampleFormat::Int24Interleaved, AudioSampleFormat::Float32Interleaved));
+  assert(pcmFormatsSemanticallyMatch(int24, int24In32));
+  assert(pcmFormatsSemanticallyMatch(int24, int24));
+  assert(pcmFormatsSemanticallyMatch(float32, float32));
+  assert(!pcmFormatsSemanticallyMatch(int24, int32));
+  assert(!pcmFormatsSemanticallyMatch(int24, int16));
+  assert(!pcmFormatsSemanticallyMatch(int24, float32));
+  assert(!pcmFormatsExactMatch(int24, int24In32));
+
+  // A device that only accepts the 32-bit container still gets every source bit,
+  // so the 24-bit track must stay bit perfect instead of falling back to Float32.
+  auto evaluation = baseEvaluation();
+  evaluation.sourceFormat = int24;
+  evaluation.decodedFormat = int24In32;
+  evaluation.outputFormat = int24In32;
+  const PerfectResult result = evaluatePerfect(evaluation);
+  assert(result.sourceFormatMatched);
+  assert(result.pcmPassthrough);
+  assert(result.outputPerfect);
+  assert(result.sourceExact);
+  assert(!result.resampled);
+  assert(result.perfectReasonCode.empty());
+  assert(result.perfectReason.empty());
+
+  // Widening the container is fine; changing the payload is not.
+  auto toInt32 = baseEvaluation();
+  toInt32.sourceFormat = int24;
+  toInt32.decodedFormat = int32;
+  toInt32.outputFormat = int32;
+  const PerfectResult int32Result = evaluatePerfect(toInt32);
+  assert(!int32Result.sourceExact);
+  assert(!int32Result.outputPerfect);
+  assert(int32Result.perfectReasonCode == "integer_passthrough_unavailable");
+}
+
 void testBackendSupport() {
   auto shared = baseEvaluation();
   shared.supportsOutputPerfect = false;
@@ -742,6 +790,7 @@ int main() {
   testLosslessSourceExact();
   testLossyOutputPerfect();
   testLosslessIntegerDecodedConversionBlocksOutputPerfect();
+  testInt24SourceStaysExactThroughInt24In32Output();
   testBackendSupport();
   testBackendReasonFallback();
   testPassthroughRequired();
