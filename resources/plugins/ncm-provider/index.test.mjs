@@ -94,6 +94,71 @@ test('personal FM requests a 30-track roaming batch', async () => {
   }
 })
 
+test('upstream requests are rate limited by a global token bucket', async () => {
+  const requestTimes = []
+  const provider = await activateProvider(async (path) => {
+    requestTimes.push(Date.now())
+    const url = parseRequest(path)
+    assert.equal(url.pathname, '/cloudsearch')
+    return { result: { songs: [], songCount: 0 } }
+  })
+
+  try {
+    mock.timers.enable({ apis: ['Date', 'setTimeout'] })
+    const pending = Promise.all(Array.from({ length: 6 }, (_, index) => provider.searchSongs(`k${index}`)))
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(requestTimes.length, 5, 'burst capacity admits five requests immediately')
+    mock.timers.tick(200)
+    await pending
+    assert.equal(requestTimes.length, 6)
+    const origin = requestTimes[0]
+    assert.deepEqual(
+      requestTimes.map((time) => time - origin),
+      [0, 0, 0, 0, 0, 200],
+      'the sixth request must wait one 200ms refill step'
+    )
+  } finally {
+    mock.timers.reset()
+    ncmProvider.deactivate()
+  }
+})
+
+test('token bucket survives a system clock rollback without wedging requests', async () => {
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    assert.equal(url.pathname, '/cloudsearch')
+    return { result: { songs: [], songCount: 0 } }
+  })
+
+  try {
+    mock.timers.enable({ apis: ['Date', 'setTimeout'] })
+    // 先消耗空突发容量，再把时钟回拨到过去：回拨后第一个请求必须仍能通过
+    // （原地重置回灌基准），而不是等一个永远到不了的回灌窗口。
+    mock.timers.setTime(1_000_000)
+    await Promise.all(Array.from({ length: 5 }, (_, index) => provider.searchSongs(`a${index}`)))
+    mock.timers.setTime(500_000)
+    const secondWave = Promise.all(
+      Array.from({ length: 5 }, (_, index) => provider.searchSongs(`b${index}`))
+    )
+    // tick 是同步推进：先排空 microtask，让第二波请求的等待计时器完成登记。
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    // 回拨不凭空增发令牌：第二波按 ~200ms/个 的正常速率放行。
+    mock.timers.tick(1_000)
+    await secondWave
+    mock.timers.tick(200)
+    const thirdRequest = provider.searchSongs('c')
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    mock.timers.tick(200)
+    await thirdRequest
+  } finally {
+    mock.timers.reset()
+    ncmProvider.deactivate()
+  }
+})
+
 test('personal FM returns fresh session tracks across repeated roaming requests', async () => {
   let requestNumber = 0
   const provider = await activateProvider(async (path) => {
