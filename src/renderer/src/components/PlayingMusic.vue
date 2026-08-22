@@ -718,7 +718,7 @@ onBeforeUnmount(() => {
             <div v-if="hasLyrics" class="lyrics-list">
               <button
                 v-for="item in renderedLyricLines"
-                :key="item.line.rowKey ?? `${item.line.time}-${item.index}`"
+                :key="(item.line.rowKey ? item.line.rowKey : `${item.line.time}-${item.index}`)"
                 v-memo="[
                   item.index === highlightedLyricIndex,
                   item.singing,
