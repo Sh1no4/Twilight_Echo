@@ -4193,6 +4193,12 @@ html[data-theme='dark']
   background: var(--te-flat-bar-dark-lift);
 }
 
+html[data-theme='dark']
+  .player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar.player-bar-compact.player-bar-compact.player-bar-compact:not(.player-bar-glass) {
+  background: var(--te-flat-bar-dark-lift);
+}
+
 /* PlayingMusic supplies `glass=true` even when the app theme is light. Mini
    still needs the playing-page dark surface; otherwise the flat mini rule's
    card token wins and turns the bar white. No border here either: the fill is
@@ -4216,6 +4222,14 @@ html[data-theme='dark']
   .player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini
   .player-right
   .mode-btn-right {
+  color: var(--te-flat-bar-control);
+}
+
+/* Keep a direct descendant form for the shared strip contract. The shell-scoped
+   selectors above carry the stronger geometry specificity; these declarations
+   make the control colour invariant explicit for both flat shapes. */
+.player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini .player-right .icon-btn,
+.player-bar.player-bar-glass.player-bar-compact.player-bar-compact.player-bar-compact .player-right .icon-btn {
   color: var(--te-flat-bar-control);
 }
 
