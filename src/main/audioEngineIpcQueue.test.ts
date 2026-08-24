@@ -58,7 +58,7 @@ test('audio engine cold start passes persisted software volume into the manager'
 })
 
 test('audioEngine IPC normalizes untrusted renderer parameters', () => {
-  assert.match(source, /const MAX_AUDIO_QUEUE_ITEMS = 5000/)
+  assert.match(source, /const MAX_AUDIO_QUEUE_ITEMS = MAX_NATIVE_QUEUE_ITEMS/)
   assert.match(
     source,
     /normalizeIpcArray\(items, 'audio queue', MAX_AUDIO_QUEUE_ITEMS, toQueueItem\)/
@@ -84,6 +84,39 @@ test('audioEngine IPC normalizes untrusted renderer parameters', () => {
   })
   assert.equal(normalizeCueRange({ startSeconds: 20, endSeconds: 10 }), null)
   assert.equal(normalizeCueRange({ startSeconds: 0, endSeconds: 10, pregapSeconds: -1 }), null)
+})
+
+test('the native queue ceiling is one shared constant on both sides of the IPC', () => {
+  const sharedSource = readFileSync(new URL('../shared/nativeQueue.ts', import.meta.url), 'utf8')
+  const preparationSource = readFileSync(
+    new URL('../renderer/src/utils/nativeQueuePreparation.ts', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(sharedSource, /export const MAX_NATIVE_QUEUE_ITEMS = 5000/)
+  assert.match(
+    source,
+    /import \{ MAX_NATIVE_QUEUE_ITEMS \} from '\.\.\/\.\.\/shared\/nativeQueue\.ts'/
+  )
+  // The renderer must degrade to a current-only native queue rather than issue a
+  // request this handler rejects: the rejection happens before audioEngine:play,
+  // so playback dies on every backend and every output device.
+  assert.match(
+    preparationSource,
+    /import \{ MAX_NATIVE_QUEUE_ITEMS \} from '\.\.\/\.\.\/\.\.\/shared\/nativeQueue\.ts'/
+  )
+  assert.match(
+    preparationSource,
+    /if \(options\.queue\.length > MAX_NATIVE_QUEUE_ITEMS\) return asCurrentOnly\(currentItem\)/
+  )
+})
+
+test('loadQueue outcomes reach the audio diagnostics log', () => {
+  assert.match(source, /const requestedItemCount = Array\.isArray\(items\) \? items\.length : -1/)
+  assert.match(source, /audioDiagnosticRecorder\?\.record\('queue-loaded', \{/)
+  assert.match(source, /audioDiagnosticRecorder\?\.record\(\s*'queue-load-failed',/)
+  assert.match(source, /requestedItems: requestedItemCount/)
+  assert.match(source, /limit: MAX_AUDIO_QUEUE_ITEMS/)
 })
 
 test('config-applied crosses the manager, IPC, and preload boundary', () => {

@@ -41,6 +41,7 @@ export const IPC = {
     previous: 'audioEngine:previous',
     propertyChange: 'audioEngine:property-change',
     ready: 'audioEngine:ready',
+    restartService: 'audioEngine:restartService',
     scanVst3Plugins: 'audioEngine:scanVst3Plugins',
     seek: 'audioEngine:seek',
     selectImpulseResponse: 'audioEngine:selectImpulseResponse',

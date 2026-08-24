@@ -80,6 +80,10 @@ export interface AudioEngineServiceNativeBinding extends NativeAudioBinding {
   applyDspGraph: (json: string) => Promise<DspGraphStatus>
   getDspGraphStatusAsync: () => Promise<DspGraphStatus>
   destroy: () => void
+  // Present on the real service binding: the fatal-startup latch and its manual
+  // release. Optional so lightweight test doubles need not implement them.
+  restartAfterFatal?: () => boolean
+  readonly fatalStartupError?: string
   on: (
     event: 'crash' | 'error-log' | 'log' | 'ready',
     listener: (...args: any[]) => void

@@ -771,7 +771,8 @@ interface AudioEngineAPI {
   onLoudnormStatus: (cb: (event: LoudnormStatusEvent) => void) => () => void
   onConfigApplied: (cb: (event: AudioEngineConfigAppliedEvent) => void) => () => void
   onDeviceOptionsChanged: (cb: (event: { reason: string }) => void) => () => void
-  onServiceCrash: (cb: (event: { reason: string }) => void) => () => void
+  onServiceCrash: (cb: (event: { reason: string; fatal?: boolean }) => void) => () => void
+  restartService: () => Promise<{ restarted: boolean; error: string }>
   onServiceReady: (
     cb: (event: {
       manualResumeRequired: boolean
@@ -858,6 +859,7 @@ interface WindowAPI {
     readAudioFile: (filePath: string) => Promise<{ buffer: ArrayBuffer; mimeType: string }>
     getAudioFileUrl: (filePath: string) => Promise<string>
     isAudioFileAuthorized: (filePath: string) => Promise<boolean>
+    areAudioFilesAuthorized: (filePaths: string[]) => Promise<boolean[]>
     onScanProgress: (cb: (progress: { current: number; total: number }) => void) => () => void
   }
   audioEngine: AudioEngineAPI
@@ -1200,6 +1202,8 @@ interface WindowAPI {
     toggle: () => Promise<boolean>
     show: () => Promise<void>
     hide: () => Promise<void>
+    setInteractive: (interactive: boolean) => void
+    listInstalledFonts: () => Promise<string[]>
     updateTrack: (data: {
       lyrics: string | null
       translatedLyrics?: string | null
@@ -1216,7 +1220,7 @@ interface WindowAPI {
       artist?: string
     }) => void
     updateTime: (time: number) => void
-    updateSettings: (settings: DesktopLyricsSettings) => void
+    updateSettings: (settings: Partial<DesktopLyricsSettings>) => void
     onToggle: (cb: (enabled: boolean) => void) => () => void
     onInitSettings: (cb: (settings: DesktopLyricsSettings) => void) => () => void
     onTrackUpdate: (

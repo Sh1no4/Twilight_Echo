@@ -176,7 +176,19 @@ pnpm run test:audio-engine:mingw
 ```
 
 The staged release must include the matching `twilight-audio-engine.dll` and
-`twilight_audio_node.node` under packaged `resources/audio-engine`.
+`twilight_audio_node.node` under packaged `resources/audio-engine`, plus the GNU toolchain runtime
+DLLs both of them import. The `windows-mingw-static` preset is only statically linked with respect to
+the vcpkg triplet — libstdc++, libgcc and mcfgthread stay dynamic — so a release without
+`libstdc++-6.dll`, `libgcc_s_seh-1.dll` and `libmcfgthread-2.dll` beside the addon fails to `dlopen`
+on any machine that does not already have that exact toolchain, and the app can only report
+`未加载 twilight_audio_node.node`.
+
+`pnpm run stage:audio-engine` copies them automatically: it reads the import tables of the staged
+binaries and resolves each non-system dependency against the compiler recorded in the build
+directory's `CMakeCache.txt`, then `W64DEVKIT_ROOT`/`TAE_W64DEVKIT_ROOT`. Use `--runtime-dir <bin>`
+or `TAE_MINGW_RUNTIME_DIR` to point it elsewhere. Staging fails rather than shipping a partial set.
+Take the DLLs from the toolchain that actually built the artifacts — an unrelated MinGW earlier on
+`PATH` ships a different libstdc++ and produces `The specified procedure could not be found`.
 
 ## Unsigned Release Artifact Gate
 
@@ -209,7 +221,11 @@ SHA-256 in the GitHub Release body.
 
 The gate checks every shipped DLL/EXE/NODE file under the packaged audio-engine directory for a
 non-zero size and a size budget. It additionally checks each required self-built native runtime
-binary for stripped PE debug/COFF metadata. The audio DLL and Node addon are always required; the
+binary for stripped PE debug/COFF metadata, and walks the import tables of those binaries to prove
+every non-system dependency they need is present in the same directory (transitively — a DLL's own
+imports are followed). Runtime dependencies supplied by the toolchain are verified for presence and
+size only: they are not our build output, so they are neither stripped nor given a named budget.
+The audio DLL and Node addon are always required; the
 VST3 helper executables are optional and are stripped and checked only when a release staged them
 (the app disables the VST3 host at runtime when they are absent). Windows development and release packaging invoke GNU/LLVM
 `strip --strip-all` only on the copied package payload at

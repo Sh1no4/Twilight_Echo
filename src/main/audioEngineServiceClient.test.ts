@@ -1447,8 +1447,10 @@ test('fatal audio service startup errors terminate the failed utility process wi
   })()
 
   let crashReason = ''
-  binding.on('crash', (reason) => {
+  const crashEvents: Array<{ fatal?: boolean }> = []
+  binding.on('crash', (reason, options) => {
     crashReason = reason
+    crashEvents.push(options ?? {})
   })
 
   child.emit('message', {
@@ -1459,8 +1461,54 @@ test('fatal audio service startup errors terminate the failed utility process wi
   assert.equal(child.killCount, 1)
   assert.equal(crashReason, 'native addon failed to load')
   assert.match(binding.GetLastError(), /native addon failed to load/)
+  assert.deepEqual(crashEvents, [{ fatal: true }])
   await new Promise((resolve) => setTimeout(resolve, 20))
   assert.equal(children.length, 1)
+
+  // The device-options poll keeps calling into the binding roughly once a
+  // second. call()'s lazy start must not resurrect a child that fails
+  // identically every time, or handleFatal's no-restart contract is void and
+  // every poll re-emits 'crash' at the renderer.
+  binding.GetPlaybackInfo()
+  binding.EnumerateDevices()
+  binding.GetDspGraphStatus()
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(children.length, 1)
+  assert.equal(crashEvents.length, 1)
+  assert.equal(binding.fatalStartupError, 'native addon failed to load')
+
+  binding.destroy()
+})
+
+test('a fatal audio service latch only reopens through an explicit restart', async () => {
+  const children: ManualUtilityProcess[] = []
+  const binding = new AudioEngineServiceBinding({
+    serviceEntry: 'audioEngineService.js',
+    requestTimeoutMs: 100,
+    restartDelayMs: 5,
+    electron: {
+      utilityProcess: {
+        fork: () => {
+          const child = new ManualUtilityProcess()
+          children.push(child)
+          return child
+        }
+      }
+    }
+  })
+
+  binding.GetPlaybackInfo()
+  children[0].emit('message', { kind: 'fatal', error: '未加载 twilight_audio_node.node' })
+  await assert.rejects(binding.callAsync('GetPlaybackInfo', []), /未加载 twilight_audio_node\.node/)
+  assert.equal(children.length, 1)
+
+  assert.equal(binding.restartAfterFatal(), true)
+  assert.equal(children.length, 2)
+  assert.equal(binding.fatalStartupError, '')
+
+  // A second release is a no-op while the replacement child is alive.
+  assert.equal(binding.restartAfterFatal(), false)
+  assert.equal(children.length, 2)
 
   binding.destroy()
 })

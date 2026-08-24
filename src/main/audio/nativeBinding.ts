@@ -40,17 +40,63 @@ export function rendererFallbackAllowed(): boolean {
   return process.env.TWILIGHT_ENABLE_HTMLAUDIO_FALLBACK === '1'
 }
 
-export function loadNativeBinding(
+export type NativeBindingLoadAttempt = { candidate: string; error: string }
+
+export type NativeBindingLoadResult = {
+  binding: NativeAudioBinding | null
+  /** Candidates that existed on disk but could not be required. */
+  attempts: NativeBindingLoadAttempt[]
+  candidateCount: number
+}
+
+const MAX_NATIVE_FAILURE_DETAIL = 240
+
+export function loadNativeBindingWithDiagnostics(
   getCandidates: () => string[] = getNativeAddonCandidates
-): NativeAudioBinding | null {
-  for (const candidate of getCandidates()) {
+): NativeBindingLoadResult {
+  const candidates = getCandidates()
+  const attempts: NativeBindingLoadAttempt[] = []
+  for (const candidate of candidates) {
     if (!existsSync(candidate)) continue
     try {
       // Native addons must be loaded dynamically because the file is produced by CMake.
-      return require(candidate) as NativeAudioBinding
+      return {
+        binding: require(candidate) as NativeAudioBinding,
+        attempts,
+        candidateCount: candidates.length
+      }
     } catch (err) {
+      attempts.push({ candidate, error: err instanceof Error ? err.message : String(err) })
       console.warn('原生音频模块加载失败：', candidate, err)
     }
   }
-  return null
+  return { binding: null, attempts, candidateCount: candidates.length }
+}
+
+export function loadNativeBinding(
+  getCandidates: () => string[] = getNativeAddonCandidates
+): NativeAudioBinding | null {
+  return loadNativeBindingWithDiagnostics(getCandidates).binding
+}
+
+/**
+ * Why the addon is unavailable, phrased for the crash notice the user sees.
+ * A file that is absent and a file that fails to dlopen (on Windows, almost
+ * always a runtime DLL missing beside it) need completely different repairs, so
+ * the reason carries the real loader error instead of collapsing both cases into
+ * a bare "未加载 twilight_audio_node.node".
+ */
+export function describeNativeBindingFailure(result: NativeBindingLoadResult): string {
+  if (result.binding) return ''
+  const prefix = '未加载 twilight_audio_node.node'
+  const [firstAttempt] = result.attempts
+  if (!firstAttempt) {
+    if (result.candidateCount === 0) return `${prefix}（没有可用的模块路径）`
+    return `${prefix}（${result.candidateCount} 个候选路径均不存在）`
+  }
+  // The Windows loader puts its description on the first line and the module
+  // path on the next, so keep the line that names the actual failure.
+  const reason = firstAttempt.error.split('\n')[0].trim() || '未知错误'
+  const detail = `${firstAttempt.candidate}：${reason}`
+  return `${prefix}（${detail.length > MAX_NATIVE_FAILURE_DETAIL ? `${detail.slice(0, MAX_NATIVE_FAILURE_DETAIL)}…` : detail}）`
 }

@@ -1,5 +1,4 @@
 import { EventEmitter } from 'events'
-import { existsSync } from 'fs'
 import { join } from 'path'
 import { AudioEngineServiceBinding, canUseAudioEngineService } from './audioEngineServiceClient.ts'
 import { isBpmAnalysisResult, type BpmAnalysisResult } from './bpm/bpmCache.ts'
@@ -51,8 +50,9 @@ import {
   parseNativeJson
 } from './audio/audioEngineHelpers.ts'
 import {
+  describeNativeBindingFailure,
   getNativeAddonCandidates,
-  loadNativeBinding,
+  loadNativeBindingWithDiagnostics,
   rendererFallbackAllowed
 } from './audio/nativeBinding.ts'
 import { DspOrchestrator } from './audio/dspOrchestrator.ts'
@@ -136,6 +136,9 @@ export class AudioEngineManager extends EventEmitter {
   private nativeVolumeSynced = false
   private audioServiceReadyRestoreSerial = 0
   private lastNativeError = ''
+  // Why the in-process addon is unavailable, kept so every later "原生音频…失败"
+  // quotes the real loader error instead of a bare "未加载".
+  private nativeUnavailableReason = '未加载 twilight_audio_node.node'
   private pendingNativeSource: string | null = null
   private directModePlaybackRateRestore: number | null = null
 
@@ -395,7 +398,9 @@ export class AudioEngineManager extends EventEmitter {
         new AudioEngineServiceBinding({
           serviceEntry: dependencies.audioServiceEntry ?? join(__dirname, 'audioEngineService.js')
         })
-      service.on('crash', (reason: string) => this.handleAudioServiceCrash(reason))
+      service.on('crash', (reason: string, options?: { fatal?: boolean }) =>
+        this.handleAudioServiceCrash(reason, options)
+      )
       service.on('ready', () => this.handleAudioServiceReady())
       service.on('error-log', (message: string) => {
         const normalized = message.trim()
@@ -412,14 +417,18 @@ export class AudioEngineManager extends EventEmitter {
     }
 
     const nativeAddonCandidates = dependencies.nativeAddonCandidates ?? getNativeAddonCandidates
-    if (!nativeAddonCandidates().some((candidate) => existsSync(candidate))) {
-      this.lastNativeError = '未加载 twilight_audio_node.node'
+    const nativeLoad = loadNativeBindingWithDiagnostics(nativeAddonCandidates)
+    const native = nativeLoad.binding
+    if (!native) {
+      // Carries the real loader error (missing file vs. failed dlopen), which is
+      // what every downstream "原生音频…失败：" message ends up quoting.
+      this.nativeUnavailableReason = describeNativeBindingFailure(nativeLoad)
+      this.lastNativeError = this.nativeUnavailableReason
       return null
     }
-    const native = loadNativeBinding(nativeAddonCandidates)
     if (
-      native &&
-      (typeof native.ApplyDspState !== 'function' || typeof native.GetDspGraphStatus !== 'function')
+      typeof native.ApplyDspState !== 'function' ||
+      typeof native.GetDspGraphStatus !== 'function'
     ) {
       this.lastNativeError =
         'native audio binding is missing required DSP methods: ApplyDspState, GetDspGraphStatus'
@@ -429,7 +438,7 @@ export class AudioEngineManager extends EventEmitter {
     return native
   }
 
-  private handleAudioServiceCrash(reason: string): void {
+  private handleAudioServiceCrash(reason: string, options?: { fatal?: boolean }): void {
     this.outputConfigServiceGeneration += 1
     this.nativeVolumeSynced = false
     if (this.outputConfigApplyStatus.state === 'pending') {
@@ -476,8 +485,23 @@ export class AudioEngineManager extends EventEmitter {
       },
       recoveryCount: this.playbackInfo.recoveryCount + 1
     }
-    this.emit('audio-service-crash', { reason })
+    this.emit('audio-service-crash', { reason, fatal: options?.fatal === true })
     this.publishPlaybackInfo()
+  }
+
+  /**
+   * Release the audio service's fatal-startup latch and try once more. Fatal
+   * startup failures (a missing native addon) do not self-heal, so recovery is
+   * user-driven: nothing else re-forks the child.
+   */
+  restartAudioService(): { restarted: boolean; error: string } {
+    const binding = this.audioServiceBinding
+    if (!binding) return { restarted: false, error: '当前未启用隔离音频服务' }
+    const fatalError = binding.fatalStartupError ?? ''
+    if (!fatalError) return { restarted: true, error: '' }
+    const restarted = binding.restartAfterFatal?.() === true
+    if (restarted) this.lastNativeError = ''
+    return { restarted, error: restarted ? '' : fatalError }
   }
 
   private handleAudioServiceReady(): void {
@@ -1242,7 +1266,7 @@ export class AudioEngineManager extends EventEmitter {
     logFailure = true
   ): boolean {
     if (!this.native) {
-      this.lastNativeError = '未加载 twilight_audio_node.node'
+      this.lastNativeError = this.nativeUnavailableReason
       return false
     }
     try {
@@ -1267,7 +1291,7 @@ export class AudioEngineManager extends EventEmitter {
     ...args: unknown[]
   ): Promise<boolean> {
     if (!this.native) {
-      this.lastNativeError = '未加载 twilight_audio_node.node'
+      this.lastNativeError = this.nativeUnavailableReason
       return false
     }
     if (typeof this.native.callAsync === 'function') {

@@ -68,6 +68,8 @@ export interface AudioDiagnosticReport {
   schemaVersion: 1
   generatedAt: string
   sessionId: string
+  /** Locale the human-readable companion report was rendered in. */
+  locale?: string
   privacy: {
     audioPayloadCaptured: false
     fullLocalPathsCaptured: false
@@ -129,12 +131,25 @@ export class AudioDiagnosticRecorder {
       .catch(() => undefined)
   }
 
-  async exportReport(filePath: string, snapshot: AudioDiagnosticSnapshot): Promise<void> {
+  /**
+   * Assemble the report without writing it.
+   *
+   * Split out from {@link exportReport} so the human-readable renderer can work
+   * from the same object the JSON is serialized from — the prose report and the
+   * machine report must never describe different states. The renderer lives in
+   * `diagnosticReport.ts`, which imports these types, so composing the two
+   * happens at the call site rather than here (a direct import would be a cycle).
+   */
+  async buildReport(
+    snapshot: AudioDiagnosticSnapshot,
+    locale?: string
+  ): Promise<AudioDiagnosticReport> {
     await this.flush()
-    const report: AudioDiagnosticReport = {
+    return {
       schemaVersion: 1,
       generatedAt: new Date().toISOString(),
       sessionId: this.sessionId,
+      ...(locale ? { locale } : {}),
       privacy: {
         audioPayloadCaptured: false,
         fullLocalPathsCaptured: false,
@@ -145,7 +160,16 @@ export class AudioDiagnosticRecorder {
       snapshot: redactAudioDiagnosticValue(snapshot) as AudioDiagnosticSnapshot,
       events: await this.readEvents()
     }
+  }
+
+  async exportReport(
+    filePath: string,
+    snapshot: AudioDiagnosticSnapshot,
+    locale?: string
+  ): Promise<AudioDiagnosticReport> {
+    const report = await this.buildReport(snapshot, locale)
     await writeFile(filePath, `${JSON.stringify(report, null, 2)}\n`, 'utf8')
+    return report
   }
 
   async flush(): Promise<void> {

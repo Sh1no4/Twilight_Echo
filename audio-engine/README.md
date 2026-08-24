@@ -69,7 +69,12 @@ $env:TAE_MINGW_BUILD_DIR/twilight-audio-engine.dll
 $env:TAE_MINGW_BUILD_DIR/twilight_audio_node.node
 resources/audio-engine/twilight-audio-engine.dll
 resources/audio-engine/twilight_audio_node.node
+resources/audio-engine/libstdc++-6.dll
+resources/audio-engine/libgcc_s_seh-1.dll
+resources/audio-engine/libmcfgthread-2.dll
 ```
+
+`windows-mingw-static` 的 static 只针对 vcpkg triplet，libstdc++ / libgcc / mcfgthread 仍是动态链接，所以那三个运行时 DLL 必须和 `.node` 放在同一目录，否则任何没有装同款工具链的机器都会 dlopen 失败（表现为「未加载 twilight_audio_node.node」）。`stage:audio-engine` 会解析产物的 import table 自动补齐它们，来源优先取构建目录 `CMakeCache.txt` 里记录的编译器所在目录（必须与产物同源：PATH 上另一套 MinGW 的 libstdc++ 会导致 `The specified procedure could not be found`），其次是 `W64DEVKIT_ROOT`；也可用 `--runtime-dir` 或 `TAE_MINGW_RUNTIME_DIR` 指定。缺任何一个都会直接失败而不是暂存出一份不完整的运行时。
 
 ## 接口语义
 

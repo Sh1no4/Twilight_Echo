@@ -35,6 +35,7 @@ import {
   withPrecomputedVisualizerBars
 } from './audioEngineHelpers.ts'
 import { playModeWrapsAtQueueEnd } from '../../shared/playbackModes.ts'
+import { audioEngineError, nativeAudioError } from './engineErrors.ts'
 import { rendererFallbackAllowed } from './nativeBinding.ts'
 import type { DspGraphConfig } from '../../shared/dspGraph.ts'
 
@@ -312,7 +313,7 @@ export class PlaybackController {
   }
 
   async play(source: string, startTime = 0): Promise<AudioEnginePlayResult> {
-    if (!source) throw new Error('音频地址为空')
+    if (!source) throw audioEngineError('audio.source_empty', 'playback source is empty')
     this.invalidateUpcomingTrackCache()
     await this.prepareLoudnormForPlay(source)
     const current = this.queue[this.playbackInfo.queueIndex]
@@ -385,8 +386,8 @@ export class PlaybackController {
       const detail =
         this.lastNativeError ||
         parseNativeJson(this.native?.GetLastError?.(), { message: '' }).message ||
-        '原生音频引擎不可用'
-      throw new Error(`原生音频播放失败：${detail}`)
+        ''
+      throw nativeAudioError('audio.play_failed', 'native playback failed', detail)
     }
     this.nativePlaybackActive = nativeStarted
     this.pendingNativeSource = nativeStarted ? source : null
@@ -606,7 +607,7 @@ export class PlaybackController {
         const nativeInfo = await this.readNativePlaybackInfoAsync()
         if (nativeInfo) this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
         this.publishPlaybackInfo()
-        throw new Error(`原生音频停止失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+        throw nativeAudioError('audio.stop_failed', 'native stop failed', this.lastNativeError)
       }
     } else {
       this.tryNative('停止', (native) => native.Stop())
@@ -640,7 +641,11 @@ export class PlaybackController {
         nextQueueIndex
       )
       if (!queueLoaded) {
-        throw new Error(`原生音频队列加载失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+        throw nativeAudioError(
+          'audio.queue_load_failed',
+          'native queue load failed',
+          this.lastNativeError
+        )
       }
       const playModeSynced = await this.callNativeMaybeAsync(
         '加载队列后同步播放模式',
@@ -648,7 +653,11 @@ export class PlaybackController {
         nativePlayMode(this.playbackInfo.playMode)
       )
       if (!playModeSynced) {
-        throw new Error(`原生播放模式同步失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+        throw nativeAudioError(
+          'audio.play_mode_sync_failed',
+          'native play-mode sync failed',
+          this.lastNativeError
+        )
       }
     } catch (error) {
       // In service mode a rejected LoadQueue does not prove the native side
@@ -776,7 +785,11 @@ export class PlaybackController {
       nativePlayMode(mode)
     )
     if (!playModeSynced) {
-      throw new Error(`原生播放模式切换失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+      throw nativeAudioError(
+        'audio.play_mode_switch_failed',
+        'native play-mode switch failed',
+        this.lastNativeError
+      )
     }
     this.playbackInfo.playMode = mode
     this.invalidateUpcomingTrackCache()

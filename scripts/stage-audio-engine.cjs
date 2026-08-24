@@ -1,17 +1,25 @@
-const { copyFileSync, existsSync, mkdirSync, statSync } = require('node:fs')
-const { join, resolve } = require('node:path')
+const { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } = require('node:fs')
+const { dirname, join, resolve } = require('node:path')
+const { collectImportClosure } = require('./pe-imports.cjs')
 
 const root = join(__dirname, '..')
 const outputDir = join(root, 'resources', 'audio-engine')
-const buildDirOptionIndex = process.argv.indexOf('--build-dir')
-const selectedBuildDir =
-  buildDirOptionIndex === -1
-    ? ''
-    : process.argv[buildDirOptionIndex + 1]
-      ? resolve(process.argv[buildDirOptionIndex + 1])
-      : ''
-if (buildDirOptionIndex !== -1 && !selectedBuildDir) {
-  console.error('Usage: node scripts/stage-audio-engine.cjs [--build-dir <path>]')
+function optionValue(flag) {
+  const index = process.argv.indexOf(flag)
+  if (index === -1) return { provided: false, value: '' }
+  const raw = process.argv[index + 1]
+  return { provided: true, value: raw ? resolve(raw) : '' }
+}
+const buildDirOption = optionValue('--build-dir')
+const runtimeDirOption = optionValue('--runtime-dir')
+const selectedBuildDir = buildDirOption.value
+if (
+  (buildDirOption.provided && !selectedBuildDir) ||
+  (runtimeDirOption.provided && !runtimeDirOption.value)
+) {
+  console.error(
+    'Usage: node scripts/stage-audio-engine.cjs [--build-dir <path>] [--runtime-dir <toolchain bin>]'
+  )
   process.exit(1)
 }
 const defaultMingwBuildDir = join(root, 'audio-engine', 'build', 'mingw-static')
@@ -55,8 +63,7 @@ if (!buildDir) {
 
 mkdirSync(outputDir, { recursive: true })
 
-for (const file of runtimeFiles) {
-  const source = join(buildDir, file)
+function stageFile(source, file) {
   const target = join(outputDir, file)
   try {
     copyFileSync(source, target)
@@ -69,4 +76,68 @@ for (const file of runtimeFiles) {
   }
   const sizeMiB = (statSync(target).size / 1024 / 1024).toFixed(1)
   console.log(`已暂存原生音频文件：${file}（${sizeMiB} MiB）`)
+  return target
 }
+
+for (const file of runtimeFiles) {
+  stageFile(join(buildDir, file), file)
+}
+
+/**
+ * Directories that may hold the GNU toolchain runtime DLLs. The compiler
+ * recorded in CMakeCache comes first because it is the toolchain that actually
+ * produced the artifacts — an unrelated MinGW earlier on PATH ships a different
+ * libstdc++ and the addon then fails to load with "The specified procedure could
+ * not be found".
+ */
+function toolchainRuntimeDirs() {
+  const candidates = []
+  if (runtimeDirOption.value) candidates.push(runtimeDirOption.value)
+  if (process.env.TAE_MINGW_RUNTIME_DIR) candidates.push(resolve(process.env.TAE_MINGW_RUNTIME_DIR))
+  const cache = join(buildDir, 'CMakeCache.txt')
+  if (existsSync(cache)) {
+    const compiler = readFileSync(cache, 'utf8').match(/^CMAKE_CXX_COMPILER(?::[^=]*)?=(.+)$/m)?.[1]
+    if (compiler) candidates.push(dirname(resolve(compiler.trim())))
+  }
+  for (const devkitRoot of [process.env.TAE_W64DEVKIT_ROOT, process.env.W64DEVKIT_ROOT]) {
+    if (devkitRoot) candidates.push(join(resolve(devkitRoot), 'bin'))
+  }
+  candidates.push(buildDir)
+  return candidates.filter((dir, index, dirs) => dirs.indexOf(dir) === index && existsSync(dir))
+}
+
+/**
+ * The MinGW build links libstdc++/libgcc/mcfgthread dynamically (the "static" in
+ * the windows-mingw-static preset is only the vcpkg triplet), so those DLLs have
+ * to sit beside the addon or nothing can dlopen it. Deriving them from the import
+ * table keeps staging correct when the toolchain changes its threading model.
+ */
+function stageWindowsRuntimeDependencies() {
+  const searchDirs = toolchainRuntimeDirs()
+  const closure = collectImportClosure(
+    runtimeFiles.map((file) => join(outputDir, file)),
+    (name) => {
+      const staged = join(outputDir, name)
+      if (existsSync(staged)) return staged
+      for (const dir of searchDirs) {
+        const candidate = join(dir, name)
+        if (existsSync(candidate)) return stageFile(candidate, name)
+      }
+      return null
+    }
+  )
+  if (closure.missing.length > 0) {
+    console.error(
+      [
+        '暂存原生音频运行时依赖失败，以下 DLL 在工具链目录里找不到：',
+        ...closure.missing.map((entry) => `  ${entry.name}`),
+        '已查找：',
+        ...searchDirs.map((dir) => `  ${dir}`),
+        '设置 W64DEVKIT_ROOT 或 --runtime-dir 指向构建所用工具链的 bin 目录后重试。'
+      ].join('\n')
+    )
+    process.exit(1)
+  }
+}
+
+if (process.platform === 'win32') stageWindowsRuntimeDependencies()

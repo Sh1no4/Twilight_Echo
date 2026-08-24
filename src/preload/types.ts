@@ -70,6 +70,7 @@ export type {
   CardAppearanceSettings,
   WindowTransparencyEffectSettings,
   DesktopLyricsLayout,
+  DesktopLyricsPresentation,
   DesktopLyricsSettings,
   MusicCachePolicySettings,
   AudioEqPreset,
@@ -225,7 +226,7 @@ export interface AudioEngineConfigAppliedEvent {
 }
 export type AudioEngineConfigAppliedCallback = (event: AudioEngineConfigAppliedEvent) => void
 export type AudioEngineDeviceOptionsChangedCallback = (event: { reason: string }) => void
-export type AudioEngineServiceCrashCallback = (event: { reason: string }) => void
+export type AudioEngineServiceCrashCallback = (event: { reason: string; fatal?: boolean }) => void
 export interface AudioEngineServiceReadyEvent {
   manualResumeRequired: boolean
   outputRouteSynced: boolean

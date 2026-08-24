@@ -29,6 +29,8 @@ import {
   parseNativeJson,
   supportsAudioExclusive
 } from './audioEngineHelpers.ts'
+import { deviceOptionsForOutput } from '../../shared/audioDeviceRouting.ts'
+import { audioEngineError, nativeAudioError } from './engineErrors.ts'
 
 export interface OutputRouterHost {
   getNative(): NativeAudioBinding | null
@@ -82,6 +84,8 @@ export class OutputRouter {
   lastAudioDeviceOptionsProbeAt = Number.NEGATIVE_INFINITY
   lastFollowedDefaultDeviceId = ''
   autoDeviceRebindInFlight: Promise<void> | null = null
+  /** Last explicit device per backend, so a backend switch is not a device reset. */
+  private readonly lastDeviceByOutput = new Map<AudioOutputId, string>()
 
   private readonly host: OutputRouterHost
 
@@ -250,7 +254,11 @@ export class OutputRouter {
 
   async setExclusiveMode(enabled: boolean): Promise<AudioOutputState> {
     if (enabled && !supportsAudioExclusive(this.output)) {
-      throw new Error(`${this.output} 不支持独占模式`)
+      throw audioEngineError(
+        'audio.exclusive_unsupported',
+        `${this.output} does not support exclusive mode`,
+        { backend: this.output }
+      )
     }
     if (this.nativeOutputRouteSynced && enabled === this.exclusiveMode) {
       return await this.getAudioOutputState()
@@ -268,7 +276,11 @@ export class OutputRouter {
     if (!backendSynced) {
       this.exclusiveMode = previousExclusiveMode
       this.invalidateAudioDeviceOptionsCache('exclusive-mode-restore-after-failure')
-      throw new Error(`原生音频独占模式切换失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+      throw nativeAudioError(
+        'audio.exclusive_switch_failed',
+        'exclusive mode switch failed',
+        this.lastNativeError
+      )
     }
     const configSynced = await this.callNativeMaybeAsync(
       '切换输出配置',
@@ -278,8 +290,10 @@ export class OutputRouter {
     if (!configSynced) {
       this.exclusiveMode = previousExclusiveMode
       this.invalidateAudioDeviceOptionsCache('exclusive-mode-restore-after-failure')
-      throw new Error(
-        `原生音频独占模式配置应用失败：${this.lastNativeError || '原生音频引擎不可用'}`
+      throw nativeAudioError(
+        'audio.exclusive_config_failed',
+        'exclusive mode output config apply failed',
+        this.lastNativeError
       )
     }
     this.nativeOutputRouteSynced = true
@@ -295,9 +309,15 @@ export class OutputRouter {
   async setAudioOutput(output: AudioOutputId, device?: string): Promise<AudioOutputState> {
     const nextOutput = normalizeAudioOutput(output)
     const outputChanged = nextOutput !== this.output
+    // Switching backend used to hard-reset the device to 'auto', discarding an
+    // explicit pick every time the user compared two backends. Remember the
+    // outgoing selection per backend and restore it on the way back.
+    if (outputChanged) this.lastDeviceByOutput.set(this.output, this.device)
+    const requestedDevice =
+      device ?? (outputChanged ? (this.lastDeviceByOutput.get(nextOutput) ?? 'auto') : this.device)
     const nextDevice = this.resolveCompatibleDevice(
       nextOutput,
-      normalizeAudioDevice(device ?? (outputChanged ? 'auto' : this.device))
+      normalizeAudioDevice(requestedDevice)
     )
     const nextExclusiveMode = supportsAudioExclusive(nextOutput) ? this.exclusiveMode : false
     if (
@@ -338,7 +358,11 @@ export class OutputRouter {
     if (!deviceSynced) {
       this.device = previousDevice
       this.invalidateAudioDeviceOptionsCache('audio-device-restore-after-failure')
-      throw new Error(`原生音频输出设备切换失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+      throw nativeAudioError(
+        'audio.device_switch_failed',
+        'audio output device switch failed',
+        this.lastNativeError
+      )
     }
     this.nativeOutputRouteSynced = true
     this.refreshOutputInfoFromNative(true)
@@ -362,12 +386,18 @@ export class OutputRouter {
       const serviceGeneration = this.outputConfigServiceGeneration
       const changed = await this.applyOutputConfigDirect(config)
       if (serviceGeneration !== this.outputConfigServiceGeneration) {
-        throw new Error('音频服务在输出拓扑更新期间重启')
+        throw audioEngineError(
+          'audio.service_restarted_during_topology',
+          'audio service restarted while updating the output topology'
+        )
       }
       if (changed) {
         const nativeInfo = await this.readNativePlaybackInfoAsync()
         if (serviceGeneration !== this.outputConfigServiceGeneration) {
-          throw new Error('音频服务在读取输出拓扑 ACK 时重启')
+          throw audioEngineError(
+            'audio.service_restarted_during_ack',
+            'audio service restarted while reading the output topology ACK'
+          )
         }
         if (nativeInfo) {
           this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
@@ -424,7 +454,11 @@ export class OutputRouter {
     )
     if (!applied) {
       this.directRoutingOverride = previousOverride
-      throw new Error(`直通声道路由应用失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+      throw nativeAudioError(
+        'audio.direct_routing_failed',
+        'direct channel routing apply failed',
+        this.lastNativeError
+      )
     }
     this.nativeOutputRouteSynced = true
     this.playbackInfo.outputInfo.channelRoutingMode = this.getEffectiveOutputConfig().routingMode
@@ -452,7 +486,11 @@ export class OutputRouter {
       )
       if (!reopened) {
         this.outputConfig = previousConfig
-        throw new Error(`原生音频输出配置重开失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+        throw nativeAudioError(
+          'audio.output_reopen_failed',
+          'output config reopen failed',
+          this.lastNativeError
+        )
       }
     }
     const configSynced = await this.callNativeMaybeAsync(
@@ -462,7 +500,11 @@ export class OutputRouter {
     )
     if (!configSynced) {
       this.outputConfig = previousConfig
-      throw new Error(`原生音频输出配置应用失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+      throw nativeAudioError(
+        'audio.output_config_failed',
+        'output config apply failed',
+        this.lastNativeError
+      )
     }
     this.outputConfig = nextConfig
     this.nativeOutputRouteSynced = true
@@ -508,18 +550,34 @@ export class OutputRouter {
   resolveCompatibleDevice(output: AudioOutputId, device: string): string {
     const normalized = normalizeAudioDevice(device)
     const options = this.getAudioDeviceOptions()
-    if (output === 'asio' && normalized.startsWith('asio:')) {
-      if (options.some((option) => option.id === normalized && option.backend === 'asio')) {
-        return normalized
-      }
-      const legacyName = normalized.slice('asio:'.length)
-      const matches = options.filter(
-        (option) => option.backend === 'asio' && option.label === legacyName
-      )
-      if (matches.length === 1) return matches[0].id
-      return 'auto'
-    }
+    if (output === 'asio') return this.resolveCompatibleAsioDevice(normalized, options)
     return deviceCompatibleWithOutput(output, normalized, options) ? normalized : 'auto'
+  }
+
+  private resolveCompatibleAsioDevice(normalized: string, options: AudioDeviceOption[]): string {
+    const asioOptions = deviceOptionsForOutput('asio', options)
+    // Nothing is known about the catalog yet. This runs from the manager
+    // constructor too, before the audio service is up, so rewriting the selection
+    // here silently discarded a persisted ASIO driver on every launch.
+    if (asioOptions.length === 0) return normalized
+
+    if (normalized.startsWith('asio:')) {
+      if (asioOptions.some((option) => option.id === normalized)) return normalized
+      const legacyName = normalized.slice('asio:'.length)
+      const matches = asioOptions.filter((option) => option.label === legacyName)
+      if (matches.length === 1) return matches[0].id
+      // An ambiguous legacy display name must not be resolved to one of its
+      // candidates. Keep it unresolved so the backend reports it by name.
+      if (matches.length > 1) return normalized
+    }
+
+    // Either no explicit pick, or a driver that is genuinely gone from a catalog
+    // we can read. ASIO has no system-default endpoint, so leaving 'auto' here
+    // lets whichever driver enumerates first win while the picker shows an inert
+    // "系统默认" row — on a machine with FL Studio / Voicemeeter / ASIO4ALL
+    // registered that is essentially never the user's DAC. Bind an explicit
+    // driver instead, so the selection is visible and one click from correction.
+    return asioOptions[0]?.id ?? normalized
   }
 
   shouldFallbackFromAsio(output: AudioOutputId): boolean {
@@ -654,11 +712,34 @@ export class OutputRouter {
     if (!this.native || !this.nativeOutputRouteSynced) return
     if (this.autoDeviceRebindInFlight) return
 
+    // ASIO has no OS-default endpoint to follow. A selection still sitting on
+    // 'auto' means the driver catalog was unreadable when it was resolved (the
+    // manager resolves this in its constructor, before the audio service is up),
+    // and 'auto' then lets whichever driver enumerates first win. Promote it to
+    // an explicit driver now that the catalog can be read.
+    if (this.output === 'asio') {
+      this.autoDeviceRebindInFlight = this.promoteAutoAsioDevice(reason).finally(() => {
+        this.autoDeviceRebindInFlight = null
+      })
+      return
+    }
+
     // Always follow OS default while selection is `auto`. When idle, SetOutputDevice only
     // updates the preferred endpoint; when playing/paused the native path rebinds in place.
     this.autoDeviceRebindInFlight = this.rebindAutoOutputDevice(reason).finally(() => {
       this.autoDeviceRebindInFlight = null
     })
+  }
+
+  private async promoteAutoAsioDevice(reason: string): Promise<void> {
+    if (this.destroyed || this.output !== 'asio' || this.device !== 'auto') return
+    const explicit = this.resolveCompatibleAsioDevice('auto', this.readNativeAudioDeviceOptions())
+    if (explicit === 'auto') return
+    try {
+      await this.setAudioDevice(explicit)
+    } catch (error) {
+      console.warn(`绑定 ASIO 输出驱动失败（${reason}）：`, error)
+    }
   }
 
   private async rebindAutoOutputDevice(reason: string): Promise<void> {

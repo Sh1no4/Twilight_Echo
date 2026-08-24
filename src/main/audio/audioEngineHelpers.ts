@@ -32,6 +32,7 @@ import {
 } from '../../shared/audioProcessingOptions.ts'
 import { tryParseJsonWithNestingLimit } from '../security/jsonSafety.ts'
 import { toNativePlayMode, type NativePlayMode } from '../../shared/playbackModes.ts'
+import { deviceOptionIsAsio } from '../../shared/audioDeviceRouting.ts'
 
 export const AUDIO_OUTPUT_OPTIONS: AudioOutputOption[] = [
   {
@@ -433,12 +434,7 @@ export function looksLikeWasapiEndpointId(device: string): boolean {
 }
 
 export function deviceOptionBelongsToAsio(option: AudioDeviceOption | undefined): boolean {
-  if (!option) return false
-  return (
-    option.backend === 'asio' ||
-    option.pathKind === 'asio' ||
-    option.id.toLowerCase().startsWith('asio:')
-  )
+  return deviceOptionIsAsio(option)
 }
 
 export function deviceCompatibleWithOutput(

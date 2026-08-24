@@ -1,6 +1,6 @@
 import { IPC } from '../../shared/ipcChannels.ts'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import { readFile, stat } from 'node:fs/promises'
+import { readFile, stat, writeFile } from 'node:fs/promises'
 import { release } from 'node:os'
 import { join } from 'path'
 import { runtime } from '../core/runtime'
@@ -13,6 +13,10 @@ import {
   writeAppSettings
 } from '../core/settings'
 import { DEFAULT_SOFTWARE_VOLUME } from '../../shared/audioProcessingOptions.ts'
+import { encodeAppError, ipcError } from '../../shared/errors/appError.ts'
+import { translate } from '../../shared/i18n/translate.ts'
+import { mainLocale } from '../core/locale.ts'
+import { renderAudioDiagnosticMarkdown } from './diagnosticReport.ts'
 import {
   AudioEngineManager,
   normalizeAudioProcessingSettings,
@@ -26,6 +30,7 @@ import {
 } from '../audioEngineManager'
 import { normalizeDspScenes, type DspAssetKind } from '../../shared/dspGraph.ts'
 import { normalizeCueRange } from '../../shared/cue.ts'
+import { MAX_NATIVE_QUEUE_ITEMS } from '../../shared/nativeQueue.ts'
 import { DspAssetLibrary } from '../dsp/dspAssetLibrary.ts'
 import {
   importCorrectionProfileFile,
@@ -72,7 +77,9 @@ import {
   resolveAuthorizedVst3SearchPaths
 } from '../security/localPaths.ts'
 
-const MAX_AUDIO_QUEUE_ITEMS = 5000
+// Shared with the renderer so a queue it prepares can never exceed what this
+// handler accepts; see src/shared/nativeQueue.ts.
+const MAX_AUDIO_QUEUE_ITEMS = MAX_NATIVE_QUEUE_ITEMS
 const MAX_AUDIO_SOURCE_LENGTH = 8192
 const MAX_AUDIO_DEVICE_LENGTH = 512
 let audioDiagnosticRecorder: AudioDiagnosticRecorder | null = null
@@ -129,17 +136,23 @@ const DSP_ASSET_KINDS: DspAssetKind[] = [
 ]
 
 export function requireAudioEngine(): AudioEngineManager {
-  if (!runtime.audioEngineManager) throw new Error('原生音频引擎尚未初始化')
+  if (!runtime.audioEngineManager) {
+    throw audioEngineError('audio.engine_not_initialized', 'native audio engine not initialised')
+  }
   return runtime.audioEngineManager
 }
 
 function requireDspAssets(): DspAssetLibrary {
-  if (!runtime.dspAssetLibrary) throw new Error('DSP 资料库尚未初始化')
+  if (!runtime.dspAssetLibrary) {
+    throw audioEngineError('audio.dsp_library_not_initialized', 'DSP asset library not initialised')
+  }
   return runtime.dspAssetLibrary
 }
 
 function requireVst3Catalog(): Vst3CatalogService {
-  if (!runtime.vst3Catalog) throw new Error('VST3 目录尚未初始化')
+  if (!runtime.vst3Catalog) {
+    throw audioEngineError('audio.vst3_catalog_not_initialized', 'VST3 catalog not initialised')
+  }
   return runtime.vst3Catalog
 }
 
@@ -243,7 +256,7 @@ function normalizeDspAssetKind(value: unknown): DspAssetKind {
   if (typeof value === 'string' && DSP_ASSET_KINDS.includes(value as DspAssetKind)) {
     return value as DspAssetKind
   }
-  throw new Error('DSP 资料类型无效')
+  throw audioEngineError('audio.dsp_asset_kind_invalid', 'invalid DSP asset kind')
 }
 
 function assetDialogOptions(kind: DspAssetKind): Electron.OpenDialogOptions {
@@ -548,11 +561,25 @@ async function initializeAudioEngineRuntime(): Promise<void> {
     runtime.mainWindow?.webContents.send(IPC.audioEngine.error, err.message)
   })
 
-  runtime.audioEngineManager.on('audio-service-crash', ({ reason }) => {
-    audioDiagnosticRecorder?.record('audio-service-crash', { reason }, 'error')
+  runtime.audioEngineManager.on('audio-service-crash', ({ reason, fatal }) => {
+    audioDiagnosticRecorder?.record('audio-service-crash', { reason, fatal }, 'error')
     console.error('[音频服务]', reason)
-    runtime.mainWindow?.webContents.send(IPC.audioEngine.serviceCrash, { reason })
-    runtime.mainWindow?.webContents.send(IPC.audioEngine.error, `音频服务已重启：${reason}`)
+    runtime.mainWindow?.webContents.send(IPC.audioEngine.serviceCrash, { reason, fatal })
+    // A fatal startup failure is not a restart: the service will not come back
+    // on its own, so do not promise recovery in the error channel either.
+    //
+    // The sentinel carries the classification. The renderer used to recover it by
+    // substring-matching the Chinese prose, which made the wording load-bearing:
+    // translating this string would have downgraded a fatal startup failure to a
+    // generic error toast.
+    runtime.mainWindow?.webContents.send(
+      IPC.audioEngine.error,
+      encodeAppError(
+        fatal ? 'audio.service_fatal' : 'audio.service_crashed',
+        fatal ? `audio service cannot start: ${reason}` : `audio service restarted: ${reason}`,
+        { reason }
+      )
+    )
     void runtime.pluginManager?.handleNativeDspHostCrash(reason)
     void quarantineActiveVst3Nodes(reason)
   })
@@ -611,27 +638,48 @@ export function setupAudioEngineIpc(): void {
 function registerAudioEngineIpcHandlers(): void {
   ipcMain.handle(IPC.audioEngine.loadQueue, async (_event, items: unknown, startIndex?: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
-    if (!Array.isArray(items) || items.length > MAX_AUDIO_QUEUE_ITEMS) {
-      throw new Error('Audio queue is invalid or too large')
+    // Recorded even when the request is rejected below: a queue that never
+    // reaches the engine also never reaches audioEngine:play, so without this
+    // the diagnostic export shows an idle engine with no reason why.
+    const requestedItemCount = Array.isArray(items) ? items.length : -1
+    try {
+      if (!Array.isArray(items) || items.length > MAX_AUDIO_QUEUE_ITEMS) {
+        throw new Error('Audio queue is invalid or too large')
+      }
+      const queue = normalizeIpcArray(items, 'audio queue', MAX_AUDIO_QUEUE_ITEMS, toQueueItem)
+      if (queue.length !== items.length) {
+        throw new Error('Audio queue contains an invalid item')
+      }
+      const authorizedQueue = await Promise.all(
+        queue.map(async (item) => ({
+          ...item,
+          source: await resolveAuthorizedPlaybackSource(item.source)
+        }))
+      )
+      const normalizedStartIndex = normalizeInteger(
+        startIndex,
+        'queue start index',
+        0,
+        0,
+        Math.max(0, authorizedQueue.length - 1)
+      )
+      ;(await ensureAudioEngineRuntime()).loadQueue(authorizedQueue, normalizedStartIndex)
+      audioDiagnosticRecorder?.record('queue-loaded', {
+        items: authorizedQueue.length,
+        startIndex: normalizedStartIndex
+      })
+    } catch (error) {
+      audioDiagnosticRecorder?.record(
+        'queue-load-failed',
+        {
+          requestedItems: requestedItemCount,
+          limit: MAX_AUDIO_QUEUE_ITEMS,
+          message: error instanceof Error ? error.message : String(error)
+        },
+        'error'
+      )
+      throw error
     }
-    const queue = normalizeIpcArray(items, 'audio queue', MAX_AUDIO_QUEUE_ITEMS, toQueueItem)
-    if (queue.length !== items.length) {
-      throw new Error('Audio queue contains an invalid item')
-    }
-    const authorizedQueue = await Promise.all(
-      queue.map(async (item) => ({
-        ...item,
-        source: await resolveAuthorizedPlaybackSource(item.source)
-      }))
-    )
-    const normalizedStartIndex = normalizeInteger(
-      startIndex,
-      'queue start index',
-      0,
-      0,
-      Math.max(0, authorizedQueue.length - 1)
-    )
-    ;(await ensureAudioEngineRuntime()).loadQueue(authorizedQueue, normalizedStartIndex)
   })
 
   ipcMain.handle(IPC.audioEngine.play, async (_event, source: string, startTime?: number) => {
@@ -976,11 +1024,16 @@ function registerAudioEngineIpcHandlers(): void {
     await ensureAudioEngineRuntime()
     const id = normalizeIpcString(assetId, 'DSP correction asset id', 160)
     if (!/^correctionProfile:[a-f0-9]{64}$/.test(id)) {
-      throw new Error('DSP 校正资料标识无效')
+      throw audioEngineError(
+        'audio.correction_profile_id_invalid',
+        'invalid DSP correction asset id'
+      )
     }
     const assets = requireDspAssets()
     const asset = await assets.get(id)
-    if (!asset || asset.kind !== 'correctionProfile') throw new Error('DSP 校正资料不存在')
+    if (!asset || asset.kind !== 'correctionProfile') {
+      throw audioEngineError('audio.correction_profile_missing', 'DSP correction asset not found')
+    }
     return await parseCorrectionProfileFile(await assets.getPath(id))
   })
 
@@ -988,7 +1041,9 @@ function registerAudioEngineIpcHandlers(): void {
     assertTrustedIpcSender(event, 'audio engine IPC')
     await ensureAudioEngineRuntime()
     const id = normalizeIpcString(assetId, 'DSP asset id', 160)
-    if (!/^[a-zA-Z]+:[a-f0-9]{64}$/.test(id)) throw new Error('DSP 资料标识无效')
+    if (!/^[a-zA-Z]+:[a-f0-9]{64}$/.test(id)) {
+      throw audioEngineError('audio.dsp_asset_id_invalid', 'invalid DSP asset id')
+    }
     await requireDspAssets().remove(id)
     return await requireDspAssets().list()
   })
@@ -1262,25 +1317,59 @@ function registerAudioEngineIpcHandlers(): void {
     return await (await ensureAudioEngineRuntime()).getPlaybackInfo()
   })
 
+  ipcMain.handle(IPC.audioEngine.restartService, async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
+    const result = (await ensureAudioEngineRuntime()).restartAudioService()
+    audioDiagnosticRecorder?.record(
+      'audio-service-restart-requested',
+      result,
+      result.restarted ? 'info' : 'warning'
+    )
+    return result
+  })
+
   ipcMain.handle(IPC.audioEngine.exportDiagnostics, async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     const recorder = audioDiagnosticRecorder
-    if (!recorder) throw new Error('音频诊断记录器尚未初始化')
+    if (!recorder) {
+      throw ipcError(
+        'audio.diagnostics_recorder_unavailable',
+        'audio diagnostic recorder is not initialised'
+      )
+    }
+    const locale = mainLocale()
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
     const win = BrowserWindow.getFocusedWindow() ?? runtime.mainWindow
+    // The report the user is asked to send is now the readable one, so it is
+    // what the save dialog offers. The JSON lands beside it automatically —
+    // developers still get the full machine state without the user having to
+    // understand which of two files to attach.
     const options: Electron.SaveDialogOptions = {
-      title: '导出音频诊断日志',
-      defaultPath: `TwilightEcho-audio-diagnostics-${timestamp}.json`,
-      filters: [{ name: 'Twilight Echo Audio Diagnostics', extensions: ['json'] }]
+      title: translate(locale, 'diagnostics.export.dialogTitle'),
+      defaultPath: `TwilightEcho-audio-diagnostics-${timestamp}.md`,
+      filters: [
+        { name: 'Markdown', extensions: ['md'] },
+        { name: 'JSON', extensions: ['json'] }
+      ]
     }
     const result = win
       ? await dialog.showSaveDialog(win, options)
       : await dialog.showSaveDialog(options)
     if (result.canceled || !result.filePath) return { filePath: null }
-    recorder.record('diagnostic-export-requested')
+    recorder.record('diagnostic-export-requested', { locale })
     const snapshot = await captureAudioDiagnosticSnapshot()
-    await recorder.exportReport(result.filePath, snapshot)
-    return { filePath: result.filePath }
+    const report = await recorder.buildReport(snapshot, locale)
+
+    const chosen = result.filePath
+    const wantsJson = chosen.toLowerCase().endsWith('.json')
+    const base = chosen.replace(/\.(?:md|json)$/i, '')
+    const markdownPath = wantsJson ? `${base}.md` : chosen
+    const jsonPath = wantsJson ? chosen : `${base}.json`
+
+    await writeFile(markdownPath, renderAudioDiagnosticMarkdown(locale, report), 'utf8')
+    await writeFile(jsonPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8')
+    // Return the readable one: it is what the notice offers to reveal.
+    return { filePath: markdownPath }
   })
 
   ipcMain.handle(IPC.audioEngine.getSpectrumData, async (_event, points?: number) => {

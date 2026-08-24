@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
+const { collectImportClosure } = require('./pe-imports.cjs')
 
 const MIB = 1024 * 1024
 const DEFAULT_BUDGETS = Object.freeze({
@@ -124,6 +125,36 @@ function listShippedBinaries(nativeDir) {
   return binaries
 }
 
+/**
+ * Every non-system DLL the shipped binaries import has to sit beside them. The
+ * MinGW build links libstdc++/libgcc/mcfgthread dynamically (the "static" in the
+ * windows-mingw-static preset is only the vcpkg triplet), and a release that
+ * omits them dlopen-fails on any machine without that exact toolchain installed
+ * — reported to the user as an opaque "未加载 twilight_audio_node.node".
+ *
+ * These runtime dependencies are checked for presence only: they are toolchain
+ * output rather than our own build product, so they are not stripped and must
+ * stay out of DEFAULT_BUDGETS (a name listed there joins listNativeBinaries'
+ * optional set, and assertStrippedPe would then fail over the COFF symbol tables
+ * that libstdc++-6.dll and libgcc_s_seh-1.dll ship with). listShippedBinaries
+ * still holds them to the per-file size budget.
+ */
+function listRuntimeDependencies(nativeDir, entryFiles) {
+  const closure = collectImportClosure(entryFiles, (name) => {
+    const candidate = path.resolve(nativeDir, name)
+    return fs.existsSync(candidate) ? candidate : null
+  })
+  for (const entry of closure.missing) {
+    const importers = entry.importers.map((importer) => path.basename(importer)).join(', ')
+    assert.fail(
+      `Missing runtime dependency beside the native binaries: ${entry.name} (imported by ${importers}) in ${nativeDir}`
+    )
+  }
+  return closure.dependencies
+    .map((dependency) => dependency.path)
+    .filter((dependencyPath) => !entryFiles.includes(dependencyPath))
+}
+
 function findInstaller(options) {
   if (options.installer) {
     const installer = path.resolve(options.installer)
@@ -143,6 +174,7 @@ function findInstaller(options) {
 function verifyReleaseArtifacts(options) {
   const nativeBinaries = listNativeBinaries(options.nativeDir)
   const shippedBinaries = listShippedBinaries(options.nativeDir)
+  const runtimeDependencies = listRuntimeDependencies(options.nativeDir, nativeBinaries)
   const installer = findInstaller(options)
   const sizes = {}
   for (const filePath of shippedBinaries) {
@@ -153,12 +185,14 @@ function verifyReleaseArtifacts(options) {
     assertStrippedPe(filePath)
   }
   sizes.installer = assertBudget(installer, DEFAULT_BUDGETS.installer, 'NSIS installer')
-  return { nativeBinaries, shippedBinaries, installer, sizes }
+  return { nativeBinaries, shippedBinaries, runtimeDependencies, installer, sizes }
 }
 
 function main() {
   const result = verifyReleaseArtifacts(parseArgs(process.argv.slice(2)))
-  console.log(`Release artifacts verified: ${result.nativeBinaries.length} native binaries, installer=${result.installer}`)
+  console.log(
+    `Release artifacts verified: ${result.nativeBinaries.length} native binaries, ${result.runtimeDependencies.length} runtime dependencies, installer=${result.installer}`
+  )
 }
 
 if (require.main === module) {
@@ -178,6 +212,7 @@ module.exports = {
   assertStrippedPe,
   findInstaller,
   listNativeBinaries,
+  listRuntimeDependencies,
   listShippedBinaries,
   parseArgs,
   readPeHeader,

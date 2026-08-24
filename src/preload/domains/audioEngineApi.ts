@@ -128,11 +128,14 @@ export function bindAudioEngineIpcEvents(): void {
     }
   })
 
-  ipcRenderer.on(IPC.audioEngine.serviceCrash, (_event, event: { reason: string }) => {
-    for (const cb of audioEngineServiceCrashCallbacks) {
-      cb(event)
+  ipcRenderer.on(
+    IPC.audioEngine.serviceCrash,
+    (_event, event: { reason: string; fatal?: boolean }) => {
+      for (const cb of audioEngineServiceCrashCallbacks) {
+        cb(event)
+      }
     }
-  })
+  )
 
   ipcRenderer.on(
     IPC.audioEngine.serviceReady,
@@ -313,6 +316,8 @@ export const audioEngineApi = {
       audioEngineServiceCrashCallbacks.add(cb)
       return () => audioEngineServiceCrashCallbacks.delete(cb)
     },
+    restartService: (): Promise<{ restarted: boolean; error: string }> =>
+      ipcRenderer.invoke(IPC.audioEngine.restartService),
     onServiceReady: (cb: AudioEngineServiceReadyCallback): (() => void) => {
       audioEngineServiceReadyCallbacks.add(cb)
       return () => audioEngineServiceReadyCallbacks.delete(cb)
