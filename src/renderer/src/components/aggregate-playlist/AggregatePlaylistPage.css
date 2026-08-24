@@ -1,0 +1,823 @@
+/*
+ * 聚合歌单页样式。整份文件刻意不写任何颜色字面量——颜色全部走主题 token，
+ * 这样它在任何主题/暗色下都跟随，也不会撞 themeColorAudit 的硬编码基线。
+ */
+
+.aggregate-page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  /* The title bar is a fixed 32px strip in the classic shell. Keep the page
+     content below it instead of letting the heading sit against the chrome. */
+  padding: calc(32px + 20px) 28px 20px;
+  box-sizing: border-box;
+  font-family: var(--te-font-sans);
+  color: var(--te-neutral-900);
+  overflow: hidden;
+}
+
+.aggregate-surface-streaming {
+  padding-top: calc(32px + 20px);
+}
+
+.aggregate-page.has-player {
+  padding-bottom: calc(20px + var(--te-player-bar-height, 96px));
+}
+
+/* ── 头部 ─────────────────────────────────────────────────────────────── */
+
+.aggregate-header {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-shrink: 0;
+  margin-bottom: 18px;
+}
+
+.aggregate-detail-header {
+  position: relative;
+  align-items: center;
+  padding-inline-start: 60px;
+}
+
+.aggregate-heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.aggregate-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-family: var(--te-font-rounded, var(--te-font-sans));
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  color: var(--te-neutral-900);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.aggregate-subtitle {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--te-neutral-500);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.aggregate-pin-mark {
+  font-size: 0.72em;
+  color: var(--te-primary-500);
+  transform: rotate(30deg);
+}
+
+.aggregate-primary-action,
+.aggregate-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 16px;
+  border: 1px solid var(--te-card-border);
+  border-radius: var(--te-radius-global);
+  background: var(--te-card-bg);
+  color: var(--te-neutral-900);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background var(--te-motion-hover, 0.18s) var(--te-ease-enter, ease),
+    border-color 0.18s,
+    transform 0.18s;
+}
+
+.aggregate-back {
+  width: 38px;
+  padding: 0;
+}
+
+.aggregate-detail-header .aggregate-back {
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+}
+
+.aggregate-primary-action:hover,
+.aggregate-back:hover {
+  background: var(--te-hover-bg);
+  border-color: color-mix(in srgb, var(--te-primary-500) 34%, var(--te-card-border));
+}
+
+.aggregate-primary-action:active,
+.aggregate-back:active {
+  transform: scale(0.97);
+}
+
+.aggregate-primary-action:focus-visible,
+.aggregate-back:focus-visible,
+.aggregate-card:focus-visible,
+.aggregate-source-chip:focus-visible,
+.aggregate-variant-btn:focus-visible,
+.aggregate-dialog-btn:focus-visible {
+  outline: 2px solid var(--te-primary-500);
+  outline-offset: 2px;
+}
+
+.aggregate-detail-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.aggregate-search {
+  width: clamp(140px, 22vw, 240px);
+}
+
+/* ── 歌单网格 ─────────────────────────────────────────────────────────── */
+
+.aggregate-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 16px;
+  align-content: start;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 2px 12px;
+}
+
+.aggregate-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 13px 13px 15px;
+  min-width: 0;
+  border: var(--te-card-border-width, 1px) solid var(--te-card-border);
+  border-radius: var(--te-card-radius, 18px);
+  background: var(--te-card-bg);
+  box-shadow: var(--te-card-shadow);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  overflow: hidden;
+  transition:
+    transform 0.26s var(--te-ease-soft, ease),
+    background 0.26s,
+    box-shadow 0.26s,
+    border-color 0.26s;
+}
+
+.aggregate-card:hover {
+  background: var(--te-hover-bg);
+  box-shadow: var(--te-card-hover-shadow, var(--te-card-shadow));
+  transform: var(--te-card-hover-transform, translateY(-2px));
+}
+
+.aggregate-card.is-pinned {
+  border-color: color-mix(in srgb, var(--te-primary-500) 42%, var(--te-card-border));
+}
+
+.aggregate-cover {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: calc(var(--te-library-cover-radius, 12px) + 2px);
+  margin-bottom: 13px;
+  flex-shrink: 0;
+}
+
+.aggregate-cover-placeholder,
+.aggregate-cover-create {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--te-primary-500) 26%, transparent),
+    color-mix(in srgb, var(--te-primary-300, var(--te-primary-500)) 16%, transparent)
+  );
+}
+
+.aggregate-cover-create {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--te-primary-500) 14%, transparent),
+    transparent
+  );
+  border: 1px dashed color-mix(in srgb, var(--te-primary-500) 46%, transparent);
+  box-sizing: border-box;
+}
+
+.aggregate-cover-icon {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+  color: color-mix(in srgb, var(--te-neutral-900) 62%, transparent);
+}
+
+.aggregate-create-card {
+  border-style: dashed;
+}
+
+.aggregate-card-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--te-font-rounded, var(--te-font-sans));
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--te-neutral-900);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 3px;
+  padding: 0 3px;
+}
+
+.aggregate-card-meta {
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--te-neutral-500);
+  padding: 0 3px;
+}
+
+.aggregate-card-sources {
+  margin-top: 4px;
+  padding: 0 3px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--te-neutral-500);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.aggregate-card-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.aggregate-card:hover .aggregate-card-actions,
+.aggregate-card:focus-within .aggregate-card-actions {
+  opacity: 1;
+}
+
+.aggregate-card-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  min-width: 26px;
+  padding: 0 7px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 999px;
+  background: var(--te-card-bg);
+  color: var(--te-neutral-700, var(--te-neutral-900));
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.18s,
+    color 0.18s,
+    border-color 0.18s;
+}
+
+.aggregate-card-btn:hover {
+  background: var(--te-hover-bg);
+  color: var(--te-primary-500);
+}
+
+.aggregate-card-btn-danger:hover,
+.aggregate-card-btn-danger.is-confirming {
+  background: var(--te-danger-soft-bg);
+  color: var(--te-danger-soft-fg);
+  border-color: color-mix(in srgb, var(--te-danger-soft-fg) 40%, transparent);
+}
+
+.aggregate-empty {
+  margin: 24px auto;
+  max-width: 460px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--te-neutral-500);
+}
+
+/* ── 音源筛选 ─────────────────────────────────────────────────────────── */
+
+.aggregate-source-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-bottom: 12px;
+}
+
+.aggregate-source-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  max-width: min(100%, 240px);
+  border: 1px solid color-mix(in srgb, var(--te-primary-500) 30%, var(--te-card-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--te-primary-500) 10%, transparent);
+  color: var(--te-neutral-900);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition:
+    background 0.18s,
+    border-color 0.18s,
+    color 0.18s,
+    opacity 0.18s;
+}
+
+.aggregate-source-chip:hover {
+  background: color-mix(in srgb, var(--te-primary-500) 18%, transparent);
+}
+
+.aggregate-source-chip.is-hidden {
+  background: transparent;
+  border-color: var(--te-card-border);
+  border-style: dashed;
+  color: var(--te-neutral-500);
+  opacity: 0.72;
+}
+
+.aggregate-detail-header .aggregate-back:hover {
+  transform: translate(-2px, -50%);
+}
+
+.aggregate-source-chip > span:first-of-type {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aggregate-source-count {
+  padding-left: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--te-neutral-500);
+  flex-shrink: 0;
+}
+
+.aggregate-notice {
+  flex-shrink: 0;
+  margin: 0 0 10px;
+  padding: 7px 12px;
+  border-radius: var(--te-radius-global);
+  background: var(--te-danger-soft-bg);
+  color: var(--te-danger-soft-fg);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ── 曲目表 ───────────────────────────────────────────────────────────── */
+
+.aggregate-table-wrapper {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid var(--te-library-table-border, var(--te-card-border));
+  border-radius: var(--te-card-radius, 16px);
+  background: var(--te-card-bg);
+}
+
+.aggregate-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.aggregate-table thead {
+  display: block;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--te-card-bg);
+  border-bottom: 1px solid var(--te-library-table-border, var(--te-card-border));
+}
+
+.aggregate-table thead tr {
+  display: flex;
+}
+
+.aggregate-table th {
+  padding: 10px 8px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: left;
+  color: var(--te-neutral-500);
+}
+
+.aggregate-row {
+  align-items: center;
+  border-bottom: 1px solid
+    color-mix(in srgb, var(--te-library-table-border, var(--te-card-border)) 60%, transparent);
+  cursor: pointer;
+  transition: background 0.16s ease;
+}
+
+.aggregate-row:hover {
+  background: var(--te-library-row-hover, var(--te-hover-bg));
+}
+
+.aggregate-row.is-playing {
+  background: var(--te-active-bg);
+}
+
+.aggregate-row td {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--te-library-row-text, var(--te-neutral-900));
+  overflow: hidden;
+}
+
+.aggregate-spacer td {
+  padding: 0;
+  border: 0;
+}
+
+.col-index {
+  width: 48px;
+  flex: 0 0 48px;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--te-neutral-500);
+}
+
+.col-cover {
+  width: 56px;
+  flex: 0 0 56px;
+}
+
+.col-info {
+  flex: 1 1 34%;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+/* `.aggregate-row td` is intentionally a flex container and has higher
+   specificity than `.col-info`; repeat the alignment on the combined
+   selector so title/artist text starts under the table header. */
+.aggregate-row td.col-info {
+  align-items: flex-start;
+}
+
+.col-source {
+  position: relative;
+  width: 148px;
+  flex: 0 0 148px;
+}
+
+.col-album {
+  flex: 1 1 22%;
+  color: var(--te-neutral-500);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.col-duration {
+  width: 72px;
+  flex: 0 0 72px;
+  justify-content: flex-end;
+  font-variant-numeric: tabular-nums;
+  color: var(--te-neutral-500);
+}
+
+.col-actions {
+  width: 44px;
+  flex: 0 0 44px;
+  justify-content: center;
+}
+
+.aggregate-playing-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--te-primary-500);
+}
+
+.aggregate-row-cover {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--te-library-cover-radius, 8px);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.aggregate-row-cover-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--te-primary-500) 12%, transparent);
+  color: var(--te-neutral-500);
+  font-size: 15px;
+}
+
+.aggregate-row-title,
+.aggregate-row-artist {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.aggregate-row-title {
+  font-weight: 600;
+}
+
+.aggregate-row-artist {
+  font-size: 11.5px;
+  color: var(--te-neutral-500);
+}
+
+/* ── 行内音源切换 ─────────────────────────────────────────────────────── */
+
+.aggregate-variant-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--te-neutral-700, var(--te-neutral-900));
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  box-sizing: border-box;
+  white-space: nowrap;
+  overflow: hidden;
+  transition:
+    background 0.16s,
+    border-color 0.16s,
+    color 0.16s;
+}
+
+.aggregate-variant-btn > span,
+.aggregate-variant-option > span:not(.aggregate-variant-tag) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aggregate-variant-btn > span {
+  flex: 1 1 auto;
+}
+
+.aggregate-variant-btn:hover {
+  background: color-mix(in srgb, var(--te-primary-500) 12%, transparent);
+  border-color: color-mix(in srgb, var(--te-primary-500) 38%, var(--te-card-border));
+}
+
+/* 用户为这一行显式钉过音源，和"跟随默认优先级"要能一眼分开。 */
+.aggregate-variant-btn.is-pinned {
+  border-color: color-mix(in srgb, var(--te-primary-500) 52%, transparent);
+  background: color-mix(in srgb, var(--te-primary-500) 16%, transparent);
+  color: var(--te-primary-500);
+}
+
+.aggregate-variant-caret {
+  font-size: 10px;
+  opacity: 0.75;
+}
+
+.aggregate-variant-menu {
+  position: absolute;
+  top: calc(100% - 6px);
+  left: 8px;
+  z-index: 30;
+  min-width: 168px;
+  padding: 5px;
+  border: 1px solid var(--te-card-border);
+  border-radius: var(--te-radius-global);
+  background: var(--te-card-bg);
+  box-shadow: var(--te-card-hover-shadow, var(--te-card-shadow));
+  backdrop-filter: blur(var(--te-card-blur, 12px));
+  -webkit-backdrop-filter: blur(var(--te-card-blur, 12px));
+}
+
+.aggregate-variant-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: calc(var(--te-radius-global) - 2px);
+  background: transparent;
+  color: var(--te-neutral-900);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.aggregate-variant-option:hover {
+  background: var(--te-hover-bg);
+}
+
+.aggregate-variant-option.is-selected {
+  color: var(--te-primary-500);
+}
+
+.aggregate-variant-tag {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--te-primary-500) 16%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--te-primary-500);
+}
+
+.aggregate-variant-check {
+  margin-left: auto;
+  font-size: 11px;
+}
+
+.aggregate-variant-option.is-selected .aggregate-variant-tag {
+  margin-left: 0;
+}
+
+.aggregate-row-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--te-neutral-500);
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.16s,
+    background 0.16s,
+    color 0.16s;
+}
+
+.aggregate-row:hover .aggregate-row-remove,
+.aggregate-row-remove:focus-visible {
+  opacity: 1;
+}
+
+.aggregate-row-remove:hover {
+  background: var(--te-danger-soft-bg);
+  color: var(--te-danger-soft-fg);
+}
+
+/* ── 新建对话框 ───────────────────────────────────────────────────────── */
+
+.aggregate-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--te-neutral-900) 44%, transparent);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.aggregate-dialog {
+  width: min(400px, calc(100vw - 48px));
+  padding: 22px;
+  border: 1px solid var(--te-card-border);
+  border-radius: var(--te-dialog-radius, 18px);
+  background: var(--te-card-bg);
+  box-shadow: var(--te-card-hover-shadow, var(--te-card-shadow));
+  color: var(--te-neutral-900);
+  font-family: var(--te-font-sans);
+}
+
+.aggregate-dialog-title {
+  margin: 0 0 16px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.aggregate-dialog-input {
+  width: 100%;
+}
+
+.aggregate-dialog-error {
+  margin: 10px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--te-danger-soft-fg);
+}
+
+.aggregate-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.aggregate-dialog-btn {
+  height: 34px;
+  padding: 0 18px;
+  border: 1px solid var(--te-card-border);
+  border-radius: var(--te-radius-global);
+  background: transparent;
+  color: var(--te-neutral-900);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.18s,
+    border-color 0.18s;
+}
+
+.aggregate-dialog-btn:hover {
+  background: var(--te-hover-bg);
+}
+
+.aggregate-dialog-btn-primary {
+  border-color: transparent;
+  background: var(--te-primary-500);
+  color: var(--te-neutral-50);
+}
+
+.aggregate-dialog-btn-primary:hover {
+  background: color-mix(in srgb, var(--te-primary-500) 86%, var(--te-neutral-900));
+}
+
+@media (max-width: 900px) {
+  .aggregate-page {
+    padding: calc(32px + 12px) 16px 16px;
+  }
+
+  .aggregate-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 12px;
+  }
+
+  .col-album {
+    display: none;
+  }
+
+  .col-source {
+    width: 120px;
+    flex: 0 0 120px;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .aggregate-variant-menu,
+  .aggregate-dialog-overlay {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}

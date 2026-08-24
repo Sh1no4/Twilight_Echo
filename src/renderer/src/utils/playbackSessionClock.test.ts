@@ -174,6 +174,33 @@ test('lagging samples still count as heartbeats so interpolation does not stall'
   assert.ok((estimated?.position ?? 0) > 6.5)
 })
 
+test('a delayed but advancing sample never pulls the lyric clock backward', () => {
+  const { clock, advance } = makeClock()
+  clock.begin({ trackId: 'track', position: 30, duration: 180, state: 'playing' })
+
+  // This models a renderer that has continued to interpolate while a backlog
+  // delays native progress events by more than the former 500ms allowance.
+  advance(1_200)
+  assert.equal(clock.estimate()?.position, 31.2)
+
+  const delayed = clock.ingest({
+    trackId: 'track',
+    epoch: clock.epoch(),
+    position: 30.35,
+    sampledAt: 1_200,
+    state: 'playing',
+    source: 'native-time-pos'
+  })
+  assert.equal(delayed.accepted, true)
+  assert.equal(delayed.advanced, false)
+  assert.equal(clock.snapshot().position, 31.2)
+
+  // The delayed event is a heartbeat, so the clock stays live rather than
+  // entering the stalled/resync path while the transport catches up.
+  advance(1_000)
+  assert.equal(clock.estimate()?.position, 32.2)
+})
+
 test('an expected rewind may still jump the presentation clock backward', () => {
   const { clock, advance } = makeClock()
   clock.begin({ trackId: 'track', position: 10, duration: 180, state: 'playing' })

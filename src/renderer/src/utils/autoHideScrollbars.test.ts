@@ -74,3 +74,23 @@ test('all renderer back controls opt in to the shared minimal style', () => {
 
   for (const source of componentSources) assert.match(source, /data-te-back-button=/)
 })
+
+test('primary page back controls use the separate navigation rail treatment', () => {
+  const componentSources = [
+    '../components/SongList.vue',
+    '../components/NetworkSourcesPage.vue',
+    '../components/RadioPodcastPage.vue',
+    '../components/LoginPage.vue',
+    '../components/PluginExtensionPage.vue',
+    '../components/ThemeStudioPage.vue',
+    '../components/DspRackPage.vue',
+    '../components/EqualizerPage.vue',
+    '../components/aggregate-playlist/AggregatePlaylistPage.vue',
+    '../components/streaming-page/StreamingContentHeader.vue'
+  ].map((path) => readFileSync(new URL(path, import.meta.url), 'utf8'))
+
+  for (const source of componentSources) assert.match(source, /data-te-page-back-button=/)
+  assert.match(baseStyles, /\[data-te-page-back-button='icon'\]/)
+  assert.match(baseStyles, /min-width:\s*44px/)
+  assert.match(baseStyles, /min-height:\s*44px/)
+})

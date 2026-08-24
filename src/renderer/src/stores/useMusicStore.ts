@@ -1,4 +1,4 @@
-import { ref, shallowRef, toRaw, triggerRef, type Ref } from 'vue'
+import { computed, ref, shallowRef, toRaw, triggerRef, type ComputedRef, type Ref } from 'vue'
 import type { Track } from '../types/music'
 import type {
   LocalLibraryExclusion,
@@ -24,6 +24,7 @@ import {
   type LibraryMetadataEnrichmentTrackUpdate
 } from '../utils/libraryMetadataEnrichment.ts'
 import { getLogicalTrackKey } from '../utils/logicalTrackIdentity.ts'
+import { isAggregatePlaylist, sortAggregatePlaylists } from '../utils/aggregatePlaylistView.ts'
 import {
   buildLogicalTracks,
   canShareTrackIdentity,
@@ -73,6 +74,17 @@ export interface Playlist {
   isDefault?: boolean
   createdAt: string
   updatedAt?: string
+  /**
+   * 聚合歌单：跨音源收歌，同一首歌的多个音源在视图里合并成一行。缺省即普通本地
+   * 歌单，所以旧的 playlists.json 无需迁移。
+   */
+  kind?: 'aggregate'
+  /** 非空表示置顶，按时间倒序排在列表最前。 */
+  pinnedAt?: string | null
+  /** 该聚合歌单里被隐藏的音源 id。 */
+  hiddenSources?: string[]
+  /** 行锚点 trackId → 用户为这一行选定的音源 id。 */
+  variantPreferences?: Record<string, string>
 }
 
 interface LibraryItem {
@@ -143,6 +155,14 @@ const folders = shallowRef<LibraryItem[]>([])
 // 歌单内含完整 trackSnapshots，深度代理代价高。所有变更（替换与就地修改）都
 // 汇入 queuePlaylistPersistence，统一在那里 triggerRef，见下。
 const playlists = shallowRef<Playlist[]>([])
+// 聚合歌单与普通歌单共用 playlists.json，靠 kind 分流；这两个视图让消费方不必
+// 各自过滤，也保证普通"歌单"页永远看不到聚合歌单。
+const aggregatePlaylists = computed(() =>
+  sortAggregatePlaylists(playlists.value.filter(isAggregatePlaylist))
+)
+const localPlaylists = computed(() =>
+  playlists.value.filter((playlist) => !isAggregatePlaylist(playlist))
+)
 const playlistPersistenceStatus = ref<PlaylistPersistenceStatus>({
   state: 'idle',
   dirty: false,
@@ -283,6 +303,21 @@ export function useMusicStore(): {
   setFavoriteTracks: (favoriteTracks: Track[], favorite: boolean) => number
   deletePlaylist: (playlistId: string) => void
   getPlaylistTracks: (playlistName: string) => Track[]
+  /** 聚合歌单，置顶优先排序。 */
+  aggregatePlaylists: ComputedRef<Playlist[]>
+  /** 普通本地歌单（不含聚合歌单）。 */
+  localPlaylists: ComputedRef<Playlist[]>
+  createAggregatePlaylist: (name: string) => string
+  setPlaylistPinned: (playlistId: string, pinned: boolean) => boolean
+  setPlaylistHiddenSources: (playlistId: string, sources: string[]) => boolean
+  setPlaylistVariantPreference: (
+    playlistId: string,
+    anchorTrackId: string,
+    source: string | null
+  ) => boolean
+  addTracksToPlaylistById: (playlistId: string, playlistTracks: Track[]) => number
+  removeTracksFromPlaylistById: (playlistId: string, trackIds: Iterable<string>) => number
+  getPlaylistTracksById: (playlistId: string) => Track[]
   savePlaylists: () => Promise<void>
   flushPlaylists: () => Promise<boolean>
   loadPlaylists: () => Promise<void>
@@ -1201,8 +1236,26 @@ export function useMusicStore(): {
     getPlaylistPersistence().enqueue(clonePlaylistSnapshot(), base)
   }
 
+  /**
+   * 按名字查找歌单时一律排除聚合歌单。聚合歌单只能通过 id 访问，所以它和普通
+   * 歌单可以同名，而所有既有的 by-name API 都不会被它劫持。
+   */
+  function findLocalPlaylistByName(name: string): Playlist | undefined {
+    return playlists.value.find((item) => !isAggregatePlaylist(item) && item.name === name)
+  }
+
+  /** 重名校验只在同一类歌单内进行——两类是两个命名空间。 */
+  function hasSiblingPlaylistName(playlist: Playlist, name: string): boolean {
+    return playlists.value.some(
+      (item) =>
+        item.id !== playlist.id &&
+        isAggregatePlaylist(item) === isAggregatePlaylist(playlist) &&
+        item.name === name
+    )
+  }
+
   function ensurePlaylist(name: string, options: { isDefault?: boolean } = {}): Playlist {
-    const existing = playlists.value.find((playlist) => playlist.name === name)
+    const existing = findLocalPlaylistByName(name)
     if (existing) return existing
     const playlist: Playlist = {
       id: `pl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -1216,7 +1269,7 @@ export function useMusicStore(): {
   }
 
   function createPlaylist(name: string): string {
-    const existing = playlists.value.find((playlist) => playlist.name === name)
+    const existing = findLocalPlaylistByName(name)
     if (existing) return existing.id
     const base = clonePlaylistSnapshot()
     const playlist = ensurePlaylist(name)
@@ -1226,7 +1279,7 @@ export function useMusicStore(): {
 
   function createPlaylistWithTracks(name: string, playlistTracks: Track[]): string {
     const base = clonePlaylistSnapshot()
-    const existing = playlists.value.find((playlist) => playlist.name === name)
+    const existing = findLocalPlaylistByName(name)
     const playlist = existing ?? ensurePlaylist(name)
     const changed = appendTracksToPlaylist(playlist, playlistTracks)
     if (!existing || changed) queuePlaylistPersistence(base)
@@ -1249,7 +1302,7 @@ export function useMusicStore(): {
     if (!playlist) return false
     const normalizedName = normalizePlaylistName(name)
     if (playlist.name === normalizedName) return false
-    if (playlists.value.some((item) => item.id !== playlistId && item.name === normalizedName)) {
+    if (hasSiblingPlaylistName(playlist, normalizedName)) {
       throw new Error('已存在同名歌单')
     }
     const base = clonePlaylistSnapshot()
@@ -1281,7 +1334,7 @@ export function useMusicStore(): {
     const source = playlists.value.find((item) => item.id === playlistId)
     if (!source) return null
     const normalizedName = normalizePlaylistName(name)
-    if (playlists.value.some((item) => item.name === normalizedName)) {
+    if (hasSiblingPlaylistName(source, normalizedName)) {
       throw new Error('已存在同名歌单')
     }
     const base = clonePlaylistSnapshot()
@@ -1304,7 +1357,7 @@ export function useMusicStore(): {
     trackIds: Iterable<string>,
     targetIndex: number
   ): boolean {
-    const playlist = playlists.value.find((item) => item.name === playlistName)
+    const playlist = findLocalPlaylistByName(playlistName)
     if (!playlist || !Number.isInteger(targetIndex)) return false
     const nextTrackIds = reorderStableIds(playlist.trackIds, trackIds, targetIndex)
     if (playlistDataEqual(nextTrackIds, playlist.trackIds)) return false
@@ -1320,8 +1373,8 @@ export function useMusicStore(): {
     targetPlaylistName: string,
     trackIds: Iterable<string>
   ): PlaylistBatchMoveResult {
-    const source = playlists.value.find((item) => item.name === sourcePlaylistName)
-    const target = playlists.value.find((item) => item.name === targetPlaylistName)
+    const source = findLocalPlaylistByName(sourcePlaylistName)
+    const target = findLocalPlaylistByName(targetPlaylistName)
     if (!source || !target || source === target) return { moved: 0, sourceRemoved: 0 }
     const selected = new Set(trackIds)
     if (selected.size === 0) return { moved: 0, sourceRemoved: 0 }
@@ -1384,7 +1437,7 @@ export function useMusicStore(): {
       else unresolvedEntries++
     }
     const base = clonePlaylistSnapshot()
-    const existing = playlists.value.find((item) => item.name === normalizedName)
+    const existing = findLocalPlaylistByName(normalizedName)
     const playlist = existing ?? ensurePlaylist(normalizedName)
     const changed = appendTracksToPlaylist(playlist, imported)
     if (changed || !existing) {
@@ -1403,7 +1456,7 @@ export function useMusicStore(): {
     playlistName: string,
     format: PlaylistFileFormat
   ): string | null {
-    const playlist = playlists.value.find((item) => item.name === playlistName)
+    const playlist = findLocalPlaylistByName(playlistName)
     if (!playlist) return null
     return exportPlaylistDocument(getPlaylistTracks(playlistName), format)
   }
@@ -1412,7 +1465,7 @@ export function useMusicStore(): {
     playlistName: string,
     candidates: Track[]
   ): PlaylistRelocationResult {
-    const playlist = playlists.value.find((item) => item.name === playlistName)
+    const playlist = findLocalPlaylistByName(playlistName)
     if (!playlist) return { relocations: [], unresolvedTrackIds: [], ambiguousTrackIds: [] }
     const missing = playlist.trackIds
       .filter((id) => !trackById.has(id))
@@ -1457,7 +1510,7 @@ export function useMusicStore(): {
       addTracksToPlaylist(playlistName, [track])
       return
     }
-    const playlist = playlists.value.find((item) => item.name === playlistName)
+    const playlist = findLocalPlaylistByName(playlistName)
     if (!playlist || playlist.trackIds.includes(trackId)) return
     const base = clonePlaylistSnapshot()
     playlist.trackIds = [...playlist.trackIds, trackId]
@@ -1487,14 +1540,23 @@ export function useMusicStore(): {
     return true
   }
 
-  function addTracksToPlaylist(playlistName: string, playlistTracks: Track[]): number {
-    const playlist = playlists.value.find((item) => item.name === playlistName)
-    if (!playlist || playlistTracks.length === 0) return 0
+  function addTracksToPlaylistRecord(playlist: Playlist, playlistTracks: Track[]): number {
+    if (playlistTracks.length === 0) return 0
     const base = clonePlaylistSnapshot()
     const beforeCount = playlist.trackIds.length
     const changed = appendTracksToPlaylist(playlist, playlistTracks)
     if (changed) queuePlaylistPersistence(base)
     return playlist.trackIds.length - beforeCount
+  }
+
+  function addTracksToPlaylist(playlistName: string, playlistTracks: Track[]): number {
+    const playlist = findLocalPlaylistByName(playlistName)
+    return playlist ? addTracksToPlaylistRecord(playlist, playlistTracks) : 0
+  }
+
+  function addTracksToPlaylistById(playlistId: string, playlistTracks: Track[]): number {
+    const playlist = playlists.value.find((item) => item.id === playlistId)
+    return playlist ? addTracksToPlaylistRecord(playlist, playlistTracks) : 0
   }
 
   function getLibraryMetadataEnrichmentQueue(): LibraryMetadataEnrichmentQueue {
@@ -1589,9 +1651,7 @@ export function useMusicStore(): {
     removeTracksFromPlaylist(playlistName, [trackId])
   }
 
-  function removeTracksFromPlaylist(playlistName: string, trackIds: Iterable<string>): number {
-    const playlist = playlists.value.find((item) => item.name === playlistName)
-    if (!playlist) return 0
+  function removeTracksFromPlaylistRecord(playlist: Playlist, trackIds: Iterable<string>): number {
     const removedIds = new Set(trackIds)
     if (removedIds.size === 0) return 0
     const nextTrackIds = playlist.trackIds.filter((trackId) => !removedIds.has(trackId))
@@ -1608,10 +1668,20 @@ export function useMusicStore(): {
     return removedCount
   }
 
+  function removeTracksFromPlaylist(playlistName: string, trackIds: Iterable<string>): number {
+    const playlist = findLocalPlaylistByName(playlistName)
+    return playlist ? removeTracksFromPlaylistRecord(playlist, trackIds) : 0
+  }
+
+  function removeTracksFromPlaylistById(playlistId: string, trackIds: Iterable<string>): number {
+    const playlist = playlists.value.find((item) => item.id === playlistId)
+    return playlist ? removeTracksFromPlaylistRecord(playlist, trackIds) : 0
+  }
+
   function getDefaultFavoritePlaylist(): Playlist | null {
     return (
       playlists.value.find((playlist) => playlist.isDefault) ??
-      playlists.value.find((playlist) => playlist.name === DEFAULT_FAVORITE_PLAYLIST_NAME) ??
+      findLocalPlaylistByName(DEFAULT_FAVORITE_PLAYLIST_NAME) ??
       null
     )
   }
@@ -1903,9 +1973,7 @@ export function useMusicStore(): {
     return libraryChanged || playlistsChanged
   }
 
-  function getPlaylistTracks(playlistName: string): Track[] {
-    const pl = playlists.value.find((p) => p.name === playlistName)
-    if (!pl) return []
+  function resolvePlaylistTracks(pl: Playlist): Track[] {
     let localLogicalTracks: Map<string, LogicalTrack> | null = null
     const getLocalLogicalTracks = (): Map<string, LogicalTrack> => {
       localLogicalTracks ??= getLocalLogicalTrackMap()
@@ -1914,6 +1982,119 @@ export function useMusicStore(): {
     return pl.trackIds
       .map((trackId) => resolvePlaylistTrack(pl, trackId, getLocalLogicalTracks))
       .filter((track): track is Track => !!track)
+  }
+
+  function getPlaylistTracks(playlistName: string): Track[] {
+    const pl = findLocalPlaylistByName(playlistName)
+    return pl ? resolvePlaylistTracks(pl) : []
+  }
+
+  /**
+   * 聚合歌单的曲目解析：保住每条记录原本的音源身份。
+   *
+   * 普通歌单走 resolvePlaylistTrack，它会把流媒体快照替换成同一录音的本地文件
+   * ——对"把这首歌放出来"是对的，但聚合歌单的全部意义就是让用户看见并挑选音源，
+   * 那个替换会让同一首歌的多路音源在到达视图之前就塌成一路。
+   */
+  function resolveAggregatePlaylistTracks(pl: Playlist): Track[] {
+    let localLogicalTracks: Map<string, LogicalTrack> | null = null
+    const getLocalLogicalTracks = (): Map<string, LogicalTrack> => {
+      localLogicalTracks ??= getLocalLogicalTrackMap()
+      return localLogicalTracks
+    }
+    const resolved: Track[] = []
+    for (const trackId of pl.trackIds) {
+      const exact = trackById.get(trackId)
+      if (exact) {
+        resolved.push(exact)
+        continue
+      }
+      const snapshot = pl.trackSnapshots?.[trackId]
+      if (!snapshot) continue
+      if (getTrackSource(snapshot) !== 'local') {
+        resolved.push(snapshot)
+        continue
+      }
+      // 本地条目可以换成同一段录音的另一个本地文件（文件被移动过），但换不到
+      // 就得丢掉——否则会给出一个点了放不出来的本地音源。
+      const relocated = getLocalLogicalTracks()
+        .get(getLogicalTrackKey(snapshot))
+        ?.variants.find((variant) => canShareTrackIdentity(snapshot, variant.track))?.track
+      if (relocated) resolved.push(relocated)
+    }
+    return resolved
+  }
+
+  function getPlaylistTracksById(playlistId: string): Track[] {
+    const pl = playlists.value.find((p) => p.id === playlistId)
+    if (!pl) return []
+    return isAggregatePlaylist(pl) ? resolveAggregatePlaylistTracks(pl) : resolvePlaylistTracks(pl)
+  }
+
+  function createAggregatePlaylist(name: string): string {
+    const normalizedName = normalizePlaylistName(name)
+    // 聚合歌单与普通歌单是两个命名空间，所以只在聚合歌单里查重——用户不该因为
+    // 某个普通歌单占了名字而没法这么叫自己的聚合歌单。
+    const existing = playlists.value.find(
+      (playlist) => isAggregatePlaylist(playlist) && playlist.name === normalizedName
+    )
+    if (existing) return existing.id
+    const base = clonePlaylistSnapshot()
+    const playlist: Playlist = {
+      id: `pl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      name: normalizedName,
+      trackIds: [],
+      kind: 'aggregate',
+      createdAt: new Date().toISOString()
+    }
+    playlists.value = [...playlists.value, playlist]
+    queuePlaylistPersistence(base)
+    return playlist.id
+  }
+
+  function setPlaylistPinned(playlistId: string, pinned: boolean): boolean {
+    const playlist = playlists.value.find((item) => item.id === playlistId)
+    if (!playlist) return false
+    // 重复置顶不刷新时间戳，否则同一个按钮点两下会让列表无意义地重排。
+    if (pinned === !!playlist.pinnedAt) return false
+    const base = clonePlaylistSnapshot()
+    playlist.pinnedAt = pinned ? new Date().toISOString() : null
+    touchPlaylist(playlist)
+    queuePlaylistPersistence(base)
+    return true
+  }
+
+  function setPlaylistHiddenSources(playlistId: string, sources: string[]): boolean {
+    const playlist = playlists.value.find((item) => item.id === playlistId)
+    if (!playlist) return false
+    const normalized = Array.from(new Set(sources.map((source) => source.trim()).filter(Boolean)))
+    const nextValue = normalized.length > 0 ? normalized : undefined
+    if (playlistDataEqual(playlist.hiddenSources, nextValue)) return false
+    const base = clonePlaylistSnapshot()
+    playlist.hiddenSources = nextValue
+    touchPlaylist(playlist)
+    queuePlaylistPersistence(base)
+    return true
+  }
+
+  function setPlaylistVariantPreference(
+    playlistId: string,
+    anchorTrackId: string,
+    source: string | null
+  ): boolean {
+    const playlist = playlists.value.find((item) => item.id === playlistId)
+    if (!playlist || !anchorTrackId) return false
+    const current = playlist.variantPreferences ?? {}
+    const normalizedSource = source?.trim() || null
+    if ((current[anchorTrackId] ?? null) === normalizedSource) return false
+    const next = { ...current }
+    if (normalizedSource) next[anchorTrackId] = normalizedSource
+    else delete next[anchorTrackId]
+    const base = clonePlaylistSnapshot()
+    playlist.variantPreferences = Object.keys(next).length > 0 ? next : undefined
+    touchPlaylist(playlist)
+    queuePlaylistPersistence(base)
+    return true
   }
 
   function isPlaylistData(value: unknown): value is Playlist[] {
@@ -2068,6 +2249,15 @@ export function useMusicStore(): {
     setFavoriteTracks,
     deletePlaylist,
     getPlaylistTracks,
+    aggregatePlaylists,
+    localPlaylists,
+    createAggregatePlaylist,
+    setPlaylistPinned,
+    setPlaylistHiddenSources,
+    setPlaylistVariantPreference,
+    addTracksToPlaylistById,
+    removeTracksFromPlaylistById,
+    getPlaylistTracksById,
     savePlaylists,
     flushPlaylists,
     loadPlaylists,

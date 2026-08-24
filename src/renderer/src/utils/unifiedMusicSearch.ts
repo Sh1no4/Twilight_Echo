@@ -10,6 +10,7 @@ import {
   type LogicalTrack,
   type SourceVariant
 } from './logicalTrackModel.ts'
+import { getTrackSearchBlob, normalizeSearchText as normalizeLocalSearchText } from './localLibrarySearch.ts'
 
 export interface UnifiedSearchProvider {
   id: string
@@ -178,13 +179,12 @@ function buildLogicalMusicItemsFromSearchItems(
 
 function searchLocalTracks(tracks: Track[], query: string): Track[] {
   if (!query) return []
-  const normalizedQuery = normalizeSearchText(query)
+  const q = normalizeLocalSearchText(query.trim())
+  if (!q) return []
   return tracks.filter(
     (track) =>
-      normalizedTrackFieldIncludes(track.title, normalizedQuery) ||
-      normalizedTrackFieldIncludes(track.artist, normalizedQuery) ||
-      normalizedTrackFieldIncludes(track.album, normalizedQuery) ||
-      normalizedTrackFieldIncludes(track.fileName, normalizedQuery)
+      getTrackSearchBlob(track).includes(q) ||
+      normalizeLocalSearchText(track.fileName).includes(q)
   )
 }
 

@@ -91,6 +91,7 @@
 
 .song-list-header {
   display: flex;
+  position: relative;
   align-items: flex-end;
   justify-content: space-between;
   gap: 24px;
@@ -122,6 +123,10 @@
   gap: 14px;
   min-width: 250px;
   flex: 1 1 0;
+}
+
+.song-list-header.has-page-back .header-left {
+  padding-inline-start: 46px;
 }
 
 .title-group {
@@ -254,6 +259,10 @@
 }
 
 .btn-back {
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block-end: 4px;
+  z-index: 1;
   width: 32px;
   height: 32px;
   cursor: pointer;
@@ -685,7 +694,11 @@
   padding: 6px 3px;
   border: 1px solid color-mix(in srgb, var(--te-neutral-300) 72%, transparent);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--te-library-bg) 84%, transparent);
+  /* `--te-library-bg` is a gradient, and a gradient inside `color-mix()` makes the
+     whole declaration invalid, so this rail used to paint no fill at all — just a
+     border over a blur. `--te-card-bg` is a real colour and, unlike that gradient
+     (hardcoded white in both tones), it darkens with the theme. */
+  background: color-mix(in srgb, var(--te-card-bg) 84%, transparent);
   box-shadow: 0 12px 32px rgba(34, 42, 68, 0.12);
   backdrop-filter: blur(16px) saturate(140%);
 }
@@ -1651,7 +1664,16 @@
   }
   .song-list-header {
     gap: 16px;
-    padding: 0 10px;
+    padding: 52px 10px 0;
+  }
+
+  .btn-back {
+    inset-block: 0 auto;
+    inset-inline-start: 0;
+  }
+
+  .song-list-header.has-page-back .header-left {
+    padding-inline-start: 0;
   }
 
   .library-play-actions {

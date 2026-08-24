@@ -1,4 +1,5 @@
 import type { Track, TrackSource } from '../types/music'
+import { MAX_NATIVE_QUEUE_ITEMS } from '../../../shared/nativeQueue.ts'
 import { isTwilightMediaGrantTarget, shouldUseNativePlaybackTarget } from './playbackRouting.ts'
 
 const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[a-zA-Z]:[\\/]/
@@ -34,6 +35,12 @@ export interface PrepareNativeQueueOptions {
   currentTarget: string
   currentIndex: number
   isAudioFileAuthorized: (filePath: string) => Promise<boolean>
+  /**
+   * Authorizes a whole queue in one IPC round-trip. Optional so the per-file
+   * boundary above remains the contract; this falls back to it when absent or
+   * when the batch answer does not line up with the request.
+   */
+  areAudioFilesAuthorized?: (filePaths: string[]) => Promise<boolean[]>
 }
 
 export type PreparePlayerNativeQueueOptions = Omit<
@@ -43,6 +50,7 @@ export type PreparePlayerNativeQueueOptions = Omit<
 
 export interface PlayerNativeQueueBoundary {
   isAudioFileAuthorized: PrepareNativeQueueOptions['isAudioFileAuthorized']
+  areAudioFilesAuthorized?: PrepareNativeQueueOptions['areAudioFilesAuthorized']
 }
 
 /** Actual PlayerStore boundary: renderer identities cross preload once, while
@@ -67,17 +75,31 @@ export async function prepareNativeQueue(
   const currentIndex = findCurrentQueueIndex(options)
   if (currentIndex < 0) return asCurrentOnly(currentItem)
 
+  // A whole-library queue can exceed what one loadQueue IPC accepts. Delegating
+  // it would be rejected by main before playback ever starts, so hand the engine
+  // the current track only and let the renderer drive advancement. Checked ahead
+  // of the authorization fan-out below, which costs one IPC round-trip per track.
+  if (options.queue.length > MAX_NATIVE_QUEUE_ITEMS) return asCurrentOnly(currentItem)
+
   const items = options.queue.map((track, index) =>
     index === currentIndex
       ? currentItem
       : toQueueItem(track, getTrackTarget(track))
   )
-  const available = await Promise.all(
-    options.queue.map((track, index) =>
-      isNativeTargetAvailable(track, items[index].source, options)
-    )
+  // Routing is decided locally; only the local-file entries need the authorization
+  // boundary, and they are resolved together. Doing it per track cost one IPC
+  // round-trip per queue entry before playback could start.
+  const kinds = options.queue.map((track, index) =>
+    classifyNativeTarget(track, items[index].source)
   )
-  if (available.every(Boolean)) {
+  const authorized = await authorizeLocalTargets(
+    kinds.flatMap((kind, index) => (kind === 'local' ? [items[index].source] : [])),
+    options
+  )
+  const available = kinds.every((kind, index) =>
+    kind === 'local' ? authorized.get(items[index].source) === true : kind === 'remote'
+  )
+  if (available) {
     return { items, startIndex: currentIndex, delegated: true }
   }
   return asCurrentOnly(currentItem)
@@ -162,17 +184,58 @@ function toQueueItem(track: Track, source: string): NativeQueueLoadItem {
   return item
 }
 
+/**
+ * Where a native target has to be checked: nowhere (unroutable), the authorized
+ * remote-URL rules, or the main process's filesystem authorization boundary.
+ * Mirrors the order isNativeTargetAvailable applies to a single target.
+ */
+type NativeTargetKind = 'unavailable' | 'remote' | 'local'
+
+function classifyNativeTarget(track: Track, target: string): NativeTargetKind {
+  if (!shouldUseNativePlaybackTarget(getTrackSource(track), target)) return 'unavailable'
+  const trimmed = target.trim()
+  if (WINDOWS_ABSOLUTE_PATH_PATTERN.test(trimmed)) return 'local'
+  if (isAuthorizedRemoteUrl(target)) return 'remote'
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) return 'unavailable'
+  return 'local'
+}
+
+async function authorizeLocalTargets(
+  targets: readonly string[],
+  options: PrepareNativeQueueOptions
+): Promise<Map<string, boolean>> {
+  const verdicts = new Map<string, boolean>()
+  const unique = [...new Set(targets)]
+  if (unique.length === 0) return verdicts
+
+  const batch = options.areAudioFilesAuthorized
+  if (batch) {
+    try {
+      const results = await batch(unique)
+      if (Array.isArray(results) && results.length === unique.length) {
+        unique.forEach((target, index) => verdicts.set(target, results[index] === true))
+        return verdicts
+      }
+    } catch {
+      // Fall through to the per-file boundary rather than failing the queue.
+    }
+  }
+
+  const results = await Promise.all(
+    unique.map((target) => isAuthorizedLocalFile(target, options))
+  )
+  unique.forEach((target, index) => verdicts.set(target, results[index]))
+  return verdicts
+}
+
 async function isNativeTargetAvailable(
   track: Track,
   target: string,
   options: PrepareNativeQueueOptions
 ): Promise<boolean> {
-  if (!shouldUseNativePlaybackTarget(getTrackSource(track), target)) return false
-  if (WINDOWS_ABSOLUTE_PATH_PATTERN.test(target.trim())) {
-    return await isAuthorizedLocalFile(target, options)
-  }
-  if (isAuthorizedRemoteUrl(target)) return true
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(target.trim())) return false
+  const kind = classifyNativeTarget(track, target)
+  if (kind === 'unavailable') return false
+  if (kind === 'remote') return true
   return await isAuthorizedLocalFile(target, options)
 }
 

@@ -35,6 +35,7 @@ const menuItems: MenuItem[] = [
   { key: 'albums', label: '专辑', icon: 'navigation.albums' },
   { key: 'genres', label: '流派', icon: 'navigation.genres' },
   { key: 'playlists', label: '歌单', icon: 'navigation.playlists' },
+  { key: 'aggregate', label: '聚合歌单', icon: 'navigation.playlists' },
   { key: 'folders', label: '文件夹', icon: 'navigation.folders' },
   { key: 'recent', label: '最近播放', icon: 'navigation.recent' }
 ]
@@ -188,7 +189,11 @@ function handleImportClick(): void {
   flex-direction: column;
   top: 32px;
   left: 0;
-  bottom: 0;
+  /* App.vue measures how much of the bottom edge the playbar covers and publishes
+     it on `.app-shell-navigation`; the menu ends above the bar instead of running
+     underneath it. A custom property rather than an inline `bottom` so the custom
+     shell layout's `inset: auto !important` still wins. */
+  bottom: var(--te-side-menu-bottom, 0px);
   width: var(--te-menu-width);
   /* Frosted surface: the bottom-most global background shows through. */
   background: transparent;

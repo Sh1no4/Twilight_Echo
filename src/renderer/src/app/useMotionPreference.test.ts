@@ -9,6 +9,9 @@ const PASSIVE_CLICK_STOP_CLASSES = [
   'playlist-row-actions',
   'context-menu',
   'create-playlist-dialog',
+  'create-aggregate-dialog',
+  'aggregate-dialog',
+  'aggregate-variant-menu',
   'excluded-tracks-dialog',
   'streaming-context-menu'
 ]

@@ -1,4 +1,5 @@
 import type { Track } from '../types/music'
+import { getPinyinInitials } from './pinyinInitials.ts'
 
 export interface LocalGridSearchItem {
   name: string
@@ -23,10 +24,19 @@ const searchBlobByTrack = new WeakMap<Track, string>()
 export function getTrackSearchBlob(track: Track): string {
   let blob = searchBlobByTrack.get(track)
   if (blob === undefined) {
+    const title = normalizeSearchText(track.title)
+    const artist = normalizeSearchText(track.artist)
+    const album = normalizeSearchText(track.album)
+    const titleInitials = getPinyinInitials(track.title)
+    const artistInitials = getPinyinInitials(track.artist)
+    const albumInitials = getPinyinInitials(track.album)
     blob = [
-      normalizeSearchText(track.title),
-      normalizeSearchText(track.artist),
-      normalizeSearchText(track.album)
+      title,
+      artist,
+      album,
+      titleInitials,
+      artistInitials,
+      albumInitials
     ].join('\u0000')
     searchBlobByTrack.set(track, blob)
   }
@@ -56,9 +66,7 @@ export function filterLocalGridItems<T extends LocalGridSearchItem>(
     return (
       item.tracks?.some(
         (track) =>
-          includesQuery(track.title, q) ||
-          includesQuery(track.artist, q) ||
-          includesQuery(track.album, q) ||
+          getTrackSearchBlob(track).includes(q) ||
           includesQuery(track.fileName, q) ||
           includesQuery(track.filePath, q)
       ) === true
