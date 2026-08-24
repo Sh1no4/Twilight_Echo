@@ -208,3 +208,37 @@ test('a late search response cannot overwrite a newer source and page snapshot',
   assert.equal(search.searchOffset.value, 30)
   assert.equal(search.searchLoading.value, false)
 })
+
+test('a superseded provider search cancels its request without surfacing an error', async () => {
+  let firstSignal!: AbortSignal
+  let secondSignal!: AbortSignal | undefined
+  const search = useStreamingSearch({
+    searchSongs: async () => ({ tracks: [], total: 0 }),
+    searchPlaylists: async () => ({ playlists: [], total: 0 }),
+    searchArtists: async () => ({ artists: [], total: 0 }),
+    searchProviderSongs: async (_providerId, _keywords, _limit, _offset, options) => {
+      if (!firstSignal) {
+        firstSignal = options!.signal!
+        return new Promise((_resolve, reject) => {
+          firstSignal.addEventListener('abort', () => reject(firstSignal.reason))
+        })
+      }
+      secondSignal = options?.signal
+      return { tracks: [{ ...providerTrack, id: 'ncm:new' }], total: 1 }
+    },
+    searchSources: defaultSources,
+    playTrack: () => {}
+  })
+  search.searchSource.value = 'ncm'
+
+  const superseded = search.performSearch('moon')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const newest = search.performSearch('moonlight')
+  await superseded
+  await newest
+
+  assert.equal(firstSignal.aborted, true)
+  assert.equal(secondSignal?.aborted, false)
+  assert.equal(search.searchError.value, '')
+  assert.equal(search.searchResults.value[0]?.id, 'ncm:new')
+})

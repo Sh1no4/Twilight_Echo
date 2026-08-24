@@ -32,7 +32,8 @@ const avatarLoadFailed = ref(false)
     class="streaming-content-header"
     :class="{
       'is-detail': isDetail,
-      'is-searching': isSearching
+      'is-searching': isSearching,
+      'has-page-back': isDetail || isSearching
     }"
   >
     <div class="streaming-header-left">
@@ -41,6 +42,7 @@ const avatarLoadFailed = ref(false)
         type="button"
         class="btn-back"
         data-te-back-button="icon"
+        data-te-page-back-button="icon"
         title="返回"
         @click="emit('back')"
       >

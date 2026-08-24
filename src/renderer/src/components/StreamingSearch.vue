@@ -343,7 +343,8 @@ function emitPage(first: number): void {
 
 .track-table-wrapper {
   overflow-x: auto;
-  border-radius: 8px;
+  overflow-y: hidden;
+  border-radius: 12px;
   border: 1px solid #eef1f6;
   background: var(--te-card-bg);
   box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);

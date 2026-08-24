@@ -43,6 +43,11 @@ let likedSongIds = new Set()
 let ownedPlaylistIds = new Set()
 let providerWriteRecordsLoaded = false
 let providerWritePersistenceTail = Promise.resolve()
+const PROFILE_CACHE_TTL_MS = 90 * 1000
+const LYRICS_CACHE_CAPACITY = 200
+const DETAIL_REQUEST_CONCURRENCY = 3
+let profileCache = null
+const lyricsCache = new Map()
 
 export async function activate(context) {
   contextRef = context
@@ -213,6 +218,8 @@ function resetCaches() {
   likedIdsRefreshInFlight = null
   likedIdsRefreshRetryAt = 0
   likedIdsRevision += 1
+  profileCache = null
+  lyricsCache.clear()
   personalFmSeenSongIds = new Set()
   likedSongIds = new Set()
   ownedPlaylistIds = new Set()
@@ -362,6 +369,7 @@ async function getCookie() {
 }
 
 async function saveCookie(cookie) {
+  profileCache = null
   if (cookie) {
     await getContext().settings.set(COOKIE_KEY, cookie)
   } else {
@@ -507,6 +515,47 @@ async function ensureProfile() {
   const login = await checkLogin()
   if (!login.loggedIn || !login.profile) throw new Error('请先登录网易云音乐')
   return login.profile
+}
+
+function getCachedProfile() {
+  if (!profileCache) return null
+  if (Date.now() - profileCache.at >= PROFILE_CACHE_TTL_MS) {
+    profileCache = null
+    return null
+  }
+  return profileCache.profile
+}
+
+function cacheProfile(profile) {
+  profileCache = { profile, at: Date.now() }
+}
+
+function getPagedTotal(data) {
+  const candidates = [
+    data?.total,
+    data?.count,
+    data?.data?.total,
+    data?.data?.count,
+    data?.artist?.songCount,
+    data?.artist?.albumCount
+  ]
+  const total = Number(candidates.find((candidate) => Number.isFinite(Number(candidate))))
+  return Number.isFinite(total) && total >= 0 ? total : null
+}
+
+async function mapWithConcurrency(values, limit, operation) {
+  if (values.length === 0) return []
+  const results = new Array(values.length)
+  let nextIndex = 0
+  await Promise.all(
+    Array.from({ length: Math.min(limit, values.length) }, async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex++
+        results[index] = await operation(values[index], index)
+      }
+    })
+  )
+  return results
 }
 
 function formatDuration(rawDuration) {
@@ -784,26 +833,84 @@ function getPagedMoreFlag(data) {
 async function fetchPagedItems({ makePath, getItems, limit = 100, maxPages = 100 }) {
   const items = []
   const seen = new Set()
-  let offset = 0
 
-  for (let page = 0; page < maxPages; page += 1) {
-    const data = await requestAuthed(makePath(limit, offset))
-    const pageItems = getItems(data)
-    if (!Array.isArray(pageItems) || pageItems.length === 0) break
-
+  const appendPage = (pageItems, pageOffset) => {
     let added = 0
     for (const item of pageItems) {
-      const key = String(item?.id ?? `${offset}:${added}`)
+      const key = String(item?.id ?? `${pageOffset}:${added}`)
       if (seen.has(key)) continue
       seen.add(key)
       items.push(item)
       added += 1
     }
+    return added
+  }
 
-    const hasMore = getPagedMoreFlag(data)
-    if (added === 0 || hasMore === false) break
-    if (pageItems.length < limit && hasMore !== true) break
-    offset += pageItems.length || limit
+  const firstData = await requestAuthed(makePath(limit, 0))
+  const firstItems = getItems(firstData)
+  if (!Array.isArray(firstItems) || firstItems.length === 0 || appendPage(firstItems, 0) === 0) {
+    return items
+  }
+
+  const firstHasMore = getPagedMoreFlag(firstData)
+  if (firstHasMore === false || (firstItems.length < limit && firstHasMore !== true)) {
+    return items
+  }
+
+  const pageSize = firstItems.length || limit
+  const declaredTotal = getPagedTotal(firstData)
+  const declaredPages = Math.min(maxPages, Math.ceil(declaredTotal / pageSize))
+  const offsets = []
+  for (
+    let offset = pageSize;
+    offsets.length < (declaredPages ?? maxPages) - 1;
+    offset += pageSize
+  ) {
+    offsets.push(offset)
+  }
+
+  const fetchPage = async (offset) => {
+    const data = await requestAuthed(makePath(limit, offset))
+    const pageItems = getItems(data)
+    return {
+      offset,
+      items: Array.isArray(pageItems) ? pageItems : [],
+      hasMore: getPagedMoreFlag(data)
+    }
+  }
+
+  if (declaredTotal == null) {
+    let offset = pageSize
+    while (offset < pageSize * maxPages) {
+      const page = await fetchPage(offset)
+      if (
+        page.items.length === 0 ||
+        appendPage(page.items, page.offset) === 0 ||
+        page.hasMore === false ||
+        (page.items.length < limit && page.hasMore !== true)
+      ) break
+      offset += pageSize
+    }
+    return items
+  }
+
+  for (let index = 0; index < offsets.length; index += DETAIL_REQUEST_CONCURRENCY) {
+    const wave = offsets.slice(index, index + DETAIL_REQUEST_CONCURRENCY)
+    const pages = (await Promise.all(wave.map(fetchPage))).sort(
+      (left, right) => left.offset - right.offset
+    )
+    let shouldContinue = true
+    for (const page of pages) {
+      if (page.items.length === 0 || appendPage(page.items, page.offset) === 0) {
+        shouldContinue = false
+        break
+      }
+      if (page.hasMore === false || (page.items.length < limit && page.hasMore !== true)) {
+        shouldContinue = false
+        break
+      }
+    }
+    if (!shouldContinue) break
   }
 
   return items
@@ -901,6 +1008,8 @@ async function checkLogin() {
       resetCaches()
       return { loggedIn: false, profile: null }
     }
+    const cachedProfile = getCachedProfile()
+    if (cachedProfile) return { loggedIn: true, profile: cachedProfile }
     const data = await request(`/login/status?timestamp=${Date.now()}`, cookie)
     const profileData = data.data?.profile || data.profile
     if ((data.data?.code === 200 || data.code === 200) && profileData) {
@@ -911,6 +1020,7 @@ async function checkLogin() {
         signature: profileData.signature
       })
       cachedUserId = profileData.userId
+      cacheProfile(profile)
       return { loggedIn: true, profile }
     }
     await saveCookie('')
@@ -924,6 +1034,14 @@ async function checkLogin() {
 
 async function getProfile() {
   return (await checkLogin()).profile
+}
+
+function cacheLyrics(songId, lyrics) {
+  lyricsCache.delete(songId)
+  lyricsCache.set(songId, lyrics)
+  if (lyricsCache.size > LYRICS_CACHE_CAPACITY) {
+    lyricsCache.delete(lyricsCache.keys().next().value)
+  }
 }
 
 async function logout() {
@@ -1075,15 +1193,17 @@ async function fetchUserLibrary(force = false) {
 }
 
 async function fetchSongDetailsByIds(ids, label) {
-  const songs = []
   const chunkSize = 100
+  const chunks = []
   for (let index = 0; index < ids.length; index += chunkSize) {
-    const chunk = ids.slice(index, index + chunkSize)
-    songs.push(
-      ...(await fetchSongDetailChunk(chunk, `${label} ${index}-${index + chunk.length - 1}`))
-    )
+    chunks.push(ids.slice(index, index + chunkSize))
   }
-  return songs
+  const songs = await mapWithConcurrency(chunks, DETAIL_REQUEST_CONCURRENCY, (chunk, index) => {
+    const startIndex = index * chunkSize
+    const endIndex = startIndex + chunk.length - 1
+    return fetchSongDetailChunk(chunk, `${label} ${startIndex}-${endIndex}`)
+  })
+  return songs.flat()
 }
 
 async function fetchSongDetailChunk(ids, label) {
@@ -1941,6 +2061,8 @@ async function getLegacyLyrics(songId, requestContext) {
 async function getLyrics(track, requestContext) {
   const songId = getSongIdFromTrack(track)
   if (songId == null) return { lyrics: null, translatedLyrics: null, wordLyrics: null }
+  const cachedLyrics = lyricsCache.get(songId)
+  if (cachedLyrics) return cachedLyrics
   let data
   try {
     data = await requestOptionalAuthRead(`/lyric/new?id=${songId}`, {
@@ -1958,11 +2080,13 @@ async function getLyrics(track, requestContext) {
   const translatedLyrics = extractLyricText(data, 'tlyric')
   // Prefer YRC as the timed display payload when available (word-level timings).
   if (yrc || lrc || translatedLyrics) {
-    return {
+    const lyrics = {
       lyrics: yrc || lrc,
       translatedLyrics,
       wordLyrics: yrc || null
     }
+    cacheLyrics(songId, lyrics)
+    return lyrics
   }
   return getLegacyLyrics(songId, requestContext)
 }
@@ -2094,16 +2218,13 @@ async function fetchArtistPlaylists(artistId) {
     // Some artists do not expose a linked user account.
   }
 
-  const playlistGroups = []
-  for (const uid of candidateUserIds) {
-    try {
-      const playlists = await fetchUserPlaylistsByUid(uid, true)
-      if (playlists.length > 0) playlistGroups.push(playlists)
-    } catch {
-      // Try the next candidate account id.
-    }
-  }
-  return mergePlaylists(...playlistGroups)
+  const playlistGroups = await Promise.allSettled(
+    [...candidateUserIds].map((uid) => fetchUserPlaylistsByUid(uid, true))
+  )
+  const successfulGroups = playlistGroups.flatMap((group) =>
+    group.status === 'fulfilled' && group.value.length > 0 ? [group.value] : []
+  )
+  return mergePlaylists(...successfulGroups)
 }
 
 async function fetchUserPlaylistsByUid(uid, createdOnly = false) {

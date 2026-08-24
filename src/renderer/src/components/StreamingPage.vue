@@ -35,6 +35,8 @@ import StreamingPlaceholder from './streaming-page/StreamingPlaceholder.vue'
 import StreamingSocialStage from './streaming-page/StreamingSocialStage.vue'
 import StreamingLoadingStage from './streaming-page/StreamingLoadingStage.vue'
 import ProviderSidebar from './streaming-page/ProviderSidebar.vue'
+import AggregatePlaylistPage from './aggregate-playlist/AggregatePlaylistPage.vue'
+import CreateAggregatePlaylistDialog from './aggregate-playlist/CreateAggregatePlaylistDialog.vue'
 import NcmPlaylistDialogs from './streaming-page/NcmPlaylistDialogs.vue'
 import ProviderDownloadsPanel from './streaming-page/ProviderDownloadsPanel.vue'
 import StreamingContextMenu from './streaming-page/StreamingContextMenu.vue'
@@ -563,13 +565,15 @@ function playHomeTrack(track: Track, trackQueue: Track[]): void {
 async function searchUnifiedSongs(
   keywords: string,
   limit?: number,
-  offset?: number
+  offset?: number,
+  options?: { signal?: AbortSignal }
 ): Promise<{ tracks: Track[]; total: number }> {
   const result = await mediaProviders.searchAllSongs({
     query: keywords,
     localTracks: musicStore.tracks.value,
     limit,
-    offset
+    offset,
+    signal: options?.signal
   })
   return {
     tracks: result.logicalItems.map((item) => item.preferredTrack),
@@ -583,9 +587,16 @@ async function searchProviderSongs(
   providerId: string,
   keywords: string,
   limit?: number,
-  offset?: number
+  offset?: number,
+  options?: { signal?: AbortSignal }
 ): Promise<{ tracks: Track[]; total: number }> {
-  const result = await mediaProviders.searchSongs(providerId, keywords, limit, offset)
+  const result = await mediaProviders.searchSongs(
+    providerId,
+    keywords,
+    limit,
+    offset,
+    options
+  )
   return { tracks: result.items, total: result.total }
 }
 
@@ -593,9 +604,16 @@ async function searchProviderPlaylists(
   providerId: string,
   keywords: string,
   limit?: number,
-  offset?: number
+  offset?: number,
+  options?: { signal?: AbortSignal }
 ): Promise<{ playlists: MediaProviderPlaylistSummary[]; total: number }> {
-  const result = await mediaProviders.searchPlaylists(providerId, keywords, limit, offset)
+  const result = await mediaProviders.searchPlaylists(
+    providerId,
+    keywords,
+    limit,
+    offset,
+    options
+  )
   return { playlists: result.items, total: result.total }
 }
 
@@ -603,9 +621,16 @@ async function searchProviderArtists(
   providerId: string,
   keywords: string,
   limit?: number,
-  offset?: number
+  offset?: number,
+  options?: { signal?: AbortSignal }
 ): Promise<{ artists: MediaProviderArtistSummary[]; total: number }> {
-  const result = await mediaProviders.searchArtists(providerId, keywords, limit, offset)
+  const result = await mediaProviders.searchArtists(
+    providerId,
+    keywords,
+    limit,
+    offset,
+    options
+  )
   return { artists: result.items, total: result.total }
 }
 
@@ -622,7 +647,7 @@ async function searchLocalPlaylists(
   limit: number = 30,
   offset: number = 0
 ): Promise<{ playlists: MediaProviderPlaylistSummary[]; total: number }> {
-  return searchLocalStreamingPlaylists(musicStore.playlists.value, keywords, limit, offset)
+  return searchLocalStreamingPlaylists(musicStore.localPlaylists.value, keywords, limit, offset)
 }
 
 async function searchLocalArtists(
@@ -1031,6 +1056,7 @@ function selectProvider(provider: string, persist = true): void {
 }
 
 function isSidebarItemActive(item: SidebarItem): boolean {
+  if (showAggregatePanel.value) return false
   if (item.tab === 'library') {
     return (
       activeTab.value === 'library' &&
@@ -1045,7 +1071,16 @@ function isSidebarItemActive(item: SidebarItem): boolean {
   })
 }
 
+// 聚合歌单在流媒体壳里就地渲染，刻意不走 activeTab —— 它不是某个 provider 的
+// 在线导航条目，掺进去会连带改动 buildStreamingSidebarItems 的语义和加载流程。
+const showAggregatePanel = ref(false)
+
+function selectAggregatePanel(): void {
+  showAggregatePanel.value = true
+}
+
 function selectSidebarItem(item: SidebarItem, options: { persistProvider?: boolean } = {}): void {
+  showAggregatePanel.value = false
   const persistProvider = options.persistProvider !== false
   if (item.tab === 'recent') {
     selectTab('recent')
@@ -1788,7 +1823,48 @@ const streamingContextAllFavorited = computed(() => {
 function closeStreamingContextMenu(): void {
   showStreamingContextMenu.value = false
   showStreamingPlaylistSubmenu.value = false
+  showStreamingAggregateSubmenu.value = false
   streamingContextMenuTrack.value = null
+}
+
+// ─── 添加到聚合歌单 ────────────────────────────────────────────────────────
+const showStreamingAggregateSubmenu = ref(false)
+const showCreateAggregateDialog = ref(false)
+const createAggregateTracks = ref<Track[]>([])
+
+const aggregatePlaylistOptions = computed(() =>
+  musicStore.aggregatePlaylists.value.map((playlist) => ({
+    id: playlist.id,
+    name: playlist.name
+  }))
+)
+
+function handleContextAddToAggregatePlaylist(playlistId: string): void {
+  const tracks = streamingContextActionTracks.value
+  const playlistName =
+    musicStore.aggregatePlaylists.value.find((playlist) => playlist.id === playlistId)?.name ?? ''
+  closeStreamingContextMenu()
+  if (tracks.length === 0) return
+  const added = musicStore.addTracksToPlaylistById(playlistId, tracks)
+  pushNotice({
+    kind: added > 0 ? 'success' : 'info',
+    message:
+      added > 0 ? `已加入「${playlistName}」${added} 首` : `「${playlistName}」里已经有这些歌了`
+  })
+}
+
+function handleContextCreateAggregatePlaylist(): void {
+  createAggregateTracks.value = streamingContextActionTracks.value
+  closeStreamingContextMenu()
+  showCreateAggregateDialog.value = true
+}
+
+function onAggregatePlaylistCreated(_playlistId: string, addedCount: number): void {
+  createAggregateTracks.value = []
+  pushNotice({
+    kind: 'success',
+    message: addedCount > 0 ? `已创建聚合歌单并加入 ${addedCount} 首` : '已创建聚合歌单'
+  })
 }
 
 useEscapeToClose(showStreamingContextMenu, closeStreamingContextMenu)
@@ -1800,6 +1876,7 @@ function onStreamingTrackContextMenu(track: Track, _index: number, event: MouseE
   streamingContextMenuX.value = event.clientX
   streamingContextMenuY.value = event.clientY
   showStreamingPlaylistSubmenu.value = false
+  showStreamingAggregateSubmenu.value = false
   showStreamingContextMenu.value = true
   void nextTick(() => {
     const menu = document.querySelector('.streaming-context-menu') as HTMLElement | null
@@ -2786,11 +2863,24 @@ onMounted(async () => {
       :menu-open="menuOpen"
       :items="sidebarItems"
       :is-active="isSidebarItemActive"
+      :aggregate-active="showAggregatePanel"
       @select="selectSidebarItem"
+      @select-aggregate="selectAggregatePanel"
       @back-to-local="emit('backToLocal')"
     />
 
-    <div ref="streamingContentRef" class="streaming-content" @scroll="onStreamingContentScroll">
+    <!-- 聚合歌单就地占据内容区。保留 streaming-content 类名，侧边栏那条相邻兄弟
+         规则（.streaming-sidebar.open + .streaming-content）才能继续给出偏移。 -->
+    <div v-if="showAggregatePanel" class="streaming-content">
+      <AggregatePlaylistPage :has-player="hasPlayer" surface="streaming" />
+    </div>
+
+    <div
+      v-show="!showAggregatePanel"
+      ref="streamingContentRef"
+      class="streaming-content"
+      @scroll="onStreamingContentScroll"
+    >
       <StreamingContentHeader
         :is-detail="!!currentDetail"
         :is-searching="isSearching && !currentDetail"
@@ -3143,6 +3233,8 @@ onMounted(async () => {
       :can-remove-from-playlist="canMutateCurrentNcmPlaylist"
       :can-download="contextMenuCanDownload"
       :show-download-quality-menu="downloadQualityMenuOpen"
+      :aggregate-playlists="aggregatePlaylistOptions"
+      :show-aggregate-submenu="showStreamingAggregateSubmenu"
       @play="handleContextPlayTrack"
       @favorite="handleContextFavorite"
       @like="handleContextLikeTrack"
@@ -3154,6 +3246,16 @@ onMounted(async () => {
       @close="closeStreamingContextMenu"
       @toggle-playlist-submenu="showStreamingPlaylistSubmenu = $event"
       @toggle-download-quality-menu="downloadQualityMenuOpen = $event"
+      @add-to-aggregate-playlist="handleContextAddToAggregatePlaylist"
+      @create-aggregate-playlist="handleContextCreateAggregatePlaylist"
+      @toggle-aggregate-submenu="showStreamingAggregateSubmenu = $event"
+    />
+
+    <CreateAggregatePlaylistDialog
+      :show="showCreateAggregateDialog"
+      :tracks="createAggregateTracks"
+      @close="showCreateAggregateDialog = false"
+      @created="onAggregatePlaylistCreated"
     />
 
     <NcmPlaylistDialogs

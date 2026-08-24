@@ -34,6 +34,8 @@ export interface PodcastSubscription {
   coverUrl?: string
   homepage?: string
   lastRefreshedAt?: string
+  feedEtag?: string | null
+  feedLastModified?: string | null
   lastError?: string | null
   episodes: PodcastEpisode[]
   createdAt: string
@@ -120,6 +122,16 @@ export function isPodcastSubscription(value: unknown): value is PodcastSubscript
     if (typeof record.homepage !== 'string' || !isHttpOrHttpsUrl(record.homepage)) return false
   }
   if (record.lastRefreshedAt !== undefined && record.lastRefreshedAt !== null && typeof record.lastRefreshedAt !== 'string') {
+    return false
+  }
+  if (record.feedEtag !== undefined && record.feedEtag !== null && typeof record.feedEtag !== 'string') {
+    return false
+  }
+  if (
+    record.feedLastModified !== undefined &&
+    record.feedLastModified !== null &&
+    typeof record.feedLastModified !== 'string'
+  ) {
     return false
   }
   if (record.lastError !== undefined && record.lastError !== null && typeof record.lastError !== 'string') {

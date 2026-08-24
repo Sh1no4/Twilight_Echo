@@ -5,10 +5,12 @@ defineProps<{
   menuOpen: boolean
   items: StreamingSidebarItem[]
   isActive: (item: StreamingSidebarItem) => boolean
+  aggregateActive: boolean
 }>()
 
 const emit = defineEmits<{
   select: [item: StreamingSidebarItem]
+  selectAggregate: []
   backToLocal: []
 }>()
 </script>
@@ -38,6 +40,19 @@ const emit = defineEmits<{
       </nav>
       <div class="streaming-sidebar-bottom">
         <div class="streaming-menu-separator"></div>
+        <div
+          class="streaming-menu-item"
+          role="button"
+          tabindex="0"
+          data-te-interactive
+          :class="{ active: aggregateActive }"
+          @click="emit('selectAggregate')"
+          @keydown.enter.prevent="emit('selectAggregate')"
+          @keydown.space.prevent="emit('selectAggregate')"
+        >
+          <i class="streaming-menu-icon pi pi-sitemap"></i>
+          <span class="streaming-menu-label">聚合歌单</span>
+        </div>
         <div
           class="streaming-menu-item streaming-local-btn"
           role="button"

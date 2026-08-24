@@ -217,7 +217,13 @@ function formatDuration(seconds: number): string {
 <template>
   <div class="radio-podcast-page">
     <header class="page-header">
-      <button type="button" class="back-btn" data-te-back-button="pill" @click="emit('back')">
+      <button
+        type="button"
+        class="back-btn"
+        data-te-back-button="pill"
+        data-te-page-back-button="pill"
+        @click="emit('back')"
+      >
         <i class="pi pi-arrow-left"></i>
         <span>返回</span>
       </button>
@@ -546,8 +552,10 @@ function formatDuration(seconds: number): string {
 
 .page-header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  position: relative;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 20px;
+  padding-inline-start: 88px;
   align-items: center;
   margin-bottom: 28px;
 }
@@ -583,10 +591,14 @@ function formatDuration(seconds: number): string {
 }
 
 .back-btn {
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block-start: 50%;
   padding-inline: 11px 14px;
+  transform: translateY(-50%);
 }
 .back-btn:hover {
-  transform: translateX(-2px);
+  transform: translate(-2px, -50%);
 }
 button:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--te-primary-500) 38%, transparent);
@@ -1093,6 +1105,14 @@ button.primary {
   }
   .page-header {
     gap: 14px;
+    padding: 52px 0 0;
+  }
+  .back-btn {
+    inset-block: 0 auto;
+    transform: none;
+  }
+  .back-btn:hover {
+    transform: translateX(-2px);
   }
   .page-heading {
     grid-column: 1 / -1;

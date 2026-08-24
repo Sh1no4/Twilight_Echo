@@ -16,6 +16,8 @@ defineProps<{
   canRemoveFromPlaylist: boolean
   canDownload: boolean
   showDownloadQualityMenu: boolean
+  aggregatePlaylists: Array<{ id: string; name: string }>
+  showAggregateSubmenu: boolean
 }>()
 
 const emit = defineEmits<{
@@ -30,6 +32,9 @@ const emit = defineEmits<{
   close: []
   togglePlaylistSubmenu: [value: boolean]
   toggleDownloadQualityMenu: [value: boolean]
+  addToAggregatePlaylist: [playlistId: string]
+  createAggregatePlaylist: []
+  toggleAggregateSubmenu: [value: boolean]
 }>()
 </script>
 
@@ -125,6 +130,43 @@ const emit = defineEmits<{
           >
             <i class="pi pi-list"></i>
             <span>选择歌单…</span>
+          </div>
+        </div>
+      </div>
+      <div
+        class="menu-item"
+        @mouseenter="emit('toggleAggregateSubmenu', true)"
+        @mouseleave="emit('toggleAggregateSubmenu', false)"
+      >
+        <i class="pi pi-sitemap"></i>
+        <span>添加到聚合歌单{{ actionLabel }}</span>
+        <i class="pi pi-chevron-right submenu-icon"></i>
+        <div v-if="showAggregateSubmenu" class="submenu">
+          <div
+            class="menu-item create-playlist-menu-item"
+            role="menuitem"
+            tabindex="0"
+            data-te-interactive
+            @click="emit('createAggregatePlaylist')"
+            @keydown.enter.prevent="emit('createAggregatePlaylist')"
+            @keydown.space.prevent="emit('createAggregatePlaylist')"
+          >
+            <i class="pi pi-plus"></i>
+            <span>新建聚合歌单…</span>
+          </div>
+          <div v-if="aggregatePlaylists.length === 0" class="menu-item disabled">暂无聚合歌单</div>
+          <div
+            v-for="playlist in aggregatePlaylists"
+            :key="playlist.id"
+            class="menu-item"
+            role="menuitem"
+            tabindex="0"
+            data-te-interactive
+            @click="emit('addToAggregatePlaylist', playlist.id)"
+            @keydown.enter.prevent="emit('addToAggregatePlaylist', playlist.id)"
+            @keydown.space.prevent="emit('addToAggregatePlaylist', playlist.id)"
+          >
+            {{ playlist.name }}
           </div>
         </div>
       </div>
