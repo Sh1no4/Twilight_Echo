@@ -11,6 +11,8 @@ import {
   type DsdRouteSettings
 } from '../../../../shared/audioProcessingOptions.ts'
 import { isDsdProxyDevice } from '../../../../shared/dsdProxyDrivers.ts'
+import { resolveReasonCode } from '../../../../shared/audio/reasonCodes.ts'
+import { useLocale } from '../../app/useLocale.ts'
 import {
   type AudioCapabilitySupportState,
   type AudioDeviceOption,
@@ -35,6 +37,7 @@ import {
 } from './types.ts'
 
 const { settings, updateSettings } = useSettingsStore()
+const { locale, t } = useLocale()
 const audioOutputDspStore = useAudioOutputDspStore()
 const playbackQueueStore = usePlayerStore()
 const {
@@ -43,6 +46,7 @@ const {
   audioDevice,
   audioOutputOptions,
   audioDeviceOptions,
+  audioOutputDeviceOptions,
   audioProcessing,
   audioOutputConfig,
   audioOutputConfigApplyStatus,
@@ -118,6 +122,56 @@ const outputDiagnosticsText = computed(() => {
   const diagnostics = outputInfo.value?.diagnostics ?? playbackInfo.value?.diagnostics
   if (!diagnostics) return 'Underrun 0 · Drop 0'
   return `Underrun ${diagnostics.sessionUnderrunCount} · Drop ${diagnostics.sessionBufferDropCount}`
+})
+
+/**
+ * Why the output chain is not bit-perfect, in prose.
+ *
+ * The panel used to render `outputDiagnosticsText` twice — once as the status and
+ * again under a warning triangle — so it showed underrun counters twice and never
+ * said why passthrough was not achieved. The engine has always reported a reason
+ * code; nothing resolved it into an explanation the user could act on.
+ */
+const outputReason = computed(() => {
+  const code = outputInfo.value?.perfectReasonCode || playbackInfo.value?.perfectReasonCode || ''
+  if (!code) return null
+  const resolved = resolveReasonCode(locale.value, code)
+  return resolved.known ? resolved : null
+})
+
+/** Free-text capability note from the driver, when there is no code to resolve. */
+const outputReasonFallback = computed(() => {
+  if (outputReason.value) return ''
+  return (
+    outputInfo.value?.capabilityReason?.trim() ||
+    outputInfo.value?.perfectReason?.trim() ||
+    playbackInfo.value?.perfectReason?.trim() ||
+    ''
+  )
+})
+
+const outputIsPerfect = computed(
+  () => outputInfo.value?.sourceExact === true && outputInfo.value?.outputPerfect === true
+)
+
+/**
+ * The headline verdict: "verified bit-exact" or the single reason it is not.
+ *
+ * This replaces the underrun counters that used to sit here. Counters still show
+ * in the meta row below, where they belong — a stream health statistic is not an
+ * answer to "is my audio bit-perfect".
+ */
+const outputVerdictText = computed(() => {
+  if (outputIsPerfect.value) return t('diagnostics.panel.perfect')
+  if (outputReason.value) return outputReason.value.label
+  if (outputReasonFallback.value) return outputReasonFallback.value
+  return t('diagnostics.panel.noBlockers')
+})
+
+const outputVerdictTone = computed(() => {
+  if (outputIsPerfect.value) return 'success'
+  if (!outputReason.value) return 'muted'
+  return outputReason.value.severity === 'info' ? 'muted' : 'warning'
 })
 
 function compactRate(rate: number): string {
@@ -354,13 +408,34 @@ function setCrossfadeSeconds(event: Event): void {
 
     <div v-if="playbackInfo" class="output-diagnostic-panel">
       <div class="diagnostic-head">
-        <span class="diagnostic-label">输出状态诊断</span>
-        <span class="diagnostic-status">{{ outputDiagnosticsText }}</span>
+        <span class="diagnostic-label">{{ t('diagnostics.panel.title') }}</span>
+        <span class="diagnostic-status" :data-tone="outputVerdictTone">
+          {{ outputVerdictText }}
+        </span>
       </div>
       <div class="diagnostic-chain">{{ outputChainText }}</div>
+
+      <!-- The reason the chain is not bit-perfect, with what is happening and
+           what to do. This panel previously printed the underrun counters twice
+           and never showed the reason at all. -->
+      <div v-if="outputReason" class="diagnostic-reason">
+        <p class="diagnostic-reason-label">
+          <span class="diagnostic-severity" :data-severity="outputReason.severity">
+            {{ t(`diagnostics.severity.${outputReason.severity}`) }}
+          </span>
+          {{ outputReason.label }}
+        </p>
+        <p v-if="outputReason.explain" class="diagnostic-reason-explain">
+          {{ outputReason.explain }}
+        </p>
+        <p v-if="outputReason.fix" class="diagnostic-reason-fix">
+          <i class="pi pi-wrench" aria-hidden="true"></i> {{ outputReason.fix }}
+        </p>
+      </div>
+
       <div class="diagnostic-meta">
         <span v-if="outputLatencyText"><i class="pi pi-clock"></i> {{ outputLatencyText }}</span>
-        <span><i class="pi pi-exclamation-triangle"></i> {{ outputDiagnosticsText }}</span>
+        <span><i class="pi pi-chart-bar"></i> {{ outputDiagnosticsText }}</span>
       </div>
     </div>
 
@@ -397,7 +472,7 @@ function setCrossfadeSeconds(event: Event): void {
       >
         <div class="device-grid">
           <button
-            v-for="device in audioDeviceOptions"
+            v-for="device in audioOutputDeviceOptions"
             :key="device.id"
             type="button"
             class="device-card"

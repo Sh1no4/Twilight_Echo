@@ -76,6 +76,7 @@ watch(
         class="plugin-extension-back"
         type="button"
         data-te-back-button="icon"
+        data-te-page-back-button="icon"
         title="返回"
         @click="emit('back')"
       >
@@ -144,19 +145,29 @@ watch(
 
 .plugin-extension-header {
   display: grid;
-  grid-template-columns: 36px 54px minmax(0, 1fr) auto;
+  position: relative;
+  grid-template-columns: 54px minmax(0, 1fr) auto;
   align-items: center;
   gap: 16px;
+  padding-inline-start: 52px;
   max-width: 960px;
   margin: 0 auto 20px;
 }
 
 .plugin-extension-back {
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block-start: 50%;
   width: 34px;
   height: 34px;
   display: grid;
   place-items: center;
   cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.plugin-extension-back:hover {
+  transform: translate(-1px, -50%);
 }
 
 .plugin-extension-icon {

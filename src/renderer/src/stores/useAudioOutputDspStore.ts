@@ -18,6 +18,8 @@ export const useAudioOutputDspStore = defineStore('audio-output-dsp', () => {
     audioDevice: player.audioDevice,
     audioOutputOptions: player.audioOutputOptions,
     audioDeviceOptions: player.audioDeviceOptions,
+    // Narrowed to the selected backend; the DSD route picker uses the merged list.
+    audioOutputDeviceOptions: player.audioOutputDeviceOptions,
     audioProcessing: player.audioProcessing,
     audioOutputConfig: player.audioOutputConfig,
     audioOutputConfigApplyStatus: player.audioOutputConfigApplyStatus,

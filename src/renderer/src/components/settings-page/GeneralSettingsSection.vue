@@ -12,8 +12,20 @@ import type {
   TrackActivationMode
 } from '../../types/settings'
 import type { BooleanSettingKey, PluginSettingsForm } from './types'
+import { APP_LOCALES, normalizeLanguagePreference } from '../../../../shared/i18n/locale.ts'
+import { useLocale } from '../../app/useLocale.ts'
 
-const { settings } = useSettingsStore()
+const { settings, updateSettings: persistSettings } = useSettingsStore()
+const { t } = useLocale()
+
+/**
+ * Switching language takes effect immediately: the locale is a computed off this
+ * setting, so every surface re-renders without a restart.
+ */
+function setLanguage(event: Event): void {
+  const value = normalizeLanguagePreference((event.target as HTMLSelectElement).value)
+  void persistSettings({ language: value })
+}
 
 defineProps<{
   libraryWatcherStatus: LibraryWatcherStatusSnapshot | null
@@ -393,6 +405,19 @@ const emit = defineEmits<{
             :aria-checked="settings.launchAtLogin"
             @click="toggleSetting('launchAtLogin')"
           ></span>
+        </div>
+        <hr />
+        <div class="setting-item">
+          <div class="setting-copy">
+            <strong>{{ t('settings.language.title') }}</strong>
+            <span>{{ t('settings.language.description') }}</span>
+          </div>
+          <select class="preview-select" :value="settings.language" @change="setLanguage">
+            <option value="system">{{ t('settings.language.system') }}</option>
+            <option v-for="option in APP_LOCALES" :key="option" :value="option">
+              {{ t(`settings.language.${option}`) }}
+            </option>
+          </select>
         </div>
         <hr />
         <div class="setting-item">

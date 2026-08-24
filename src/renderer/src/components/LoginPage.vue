@@ -678,7 +678,13 @@ onUnmounted(() => {
       <div class="sky-halo"></div>
     </div>
 
-    <button class="lp-close" data-te-back-button="pill" title="返回" @click="handleBack">
+    <button
+      class="lp-close"
+      data-te-back-button="pill"
+      data-te-page-back-button="pill"
+      title="返回"
+      @click="handleBack"
+    >
       <svg
         width="17"
         height="17"

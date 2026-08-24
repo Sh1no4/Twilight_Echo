@@ -870,6 +870,7 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
       type="button"
       class="eq-back-button"
       data-te-back-button="icon"
+      data-te-page-back-button="icon"
       aria-label="返回"
       @click="emit('back')"
     >

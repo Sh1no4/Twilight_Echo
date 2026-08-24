@@ -8,7 +8,7 @@ const props = defineProps<{ audioExclusiveMode: boolean }>()
 const emit = defineEmits<{ 'update:audioExclusiveMode': [value: boolean] }>()
 
 const audioStore = useAudioOutputDspStore()
-const { audioDevice, audioDeviceOptions, audioOutput, audioOutputOptions, audioProcessing } =
+const { audioDevice, audioOutputDeviceOptions, audioOutput, audioOutputOptions, audioProcessing } =
   storeToRefs(audioStore)
 const { setAudioDevice, refreshAudioOutputState, setReplayGainMode } = audioStore
 
@@ -76,7 +76,7 @@ function deviceBadges(device: AudioDeviceOption): string[] {
     </p>
     <div class="onb-panel onb-device-panel" role="radiogroup" aria-label="输出设备">
       <button
-        v-for="device in audioDeviceOptions"
+        v-for="device in audioOutputDeviceOptions"
         :key="device.id"
         type="button"
         class="onb-device-row"

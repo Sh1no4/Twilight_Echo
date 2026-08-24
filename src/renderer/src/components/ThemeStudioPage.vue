@@ -126,6 +126,7 @@ void previewViewportRef.value
         type="button"
         class="studio-icon-button"
         data-te-back-button="icon"
+        data-te-page-back-button="icon"
         title="返回"
         aria-label="返回"
         @click="closeStudio"

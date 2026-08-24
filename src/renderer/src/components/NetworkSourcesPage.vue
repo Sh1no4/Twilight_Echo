@@ -420,6 +420,7 @@ onMounted(() => {
         type="button"
         class="soft-button network-back"
         data-te-back-button="pill"
+        data-te-page-back-button="pill"
         @click="$emit('back')"
       >
         <i class="pi pi-arrow-left"></i><span>返回</span>
@@ -799,8 +800,10 @@ onMounted(() => {
 }
 .network-page-heading {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  position: relative;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 20px;
+  padding-inline-start: 88px;
   align-items: center;
   margin-bottom: 28px;
 }
@@ -843,6 +846,15 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   gap: 7px;
+}
+.network-back {
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+}
+.network-back:hover {
+  transform: translate(-2px, -50%);
 }
 .network-view-toggle {
   display: inline-flex;
@@ -1281,6 +1293,14 @@ onMounted(() => {
   .network-page-heading {
     grid-template-columns: auto minmax(0, 1fr);
     gap: 12px;
+    padding: 52px 0 0;
+  }
+  .network-back {
+    inset-block: 0 auto;
+    transform: none;
+  }
+  .network-back:hover {
+    transform: translateX(-2px);
   }
   .network-heading-copy {
     grid-column: 1 / -1;

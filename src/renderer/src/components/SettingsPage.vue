@@ -28,6 +28,7 @@ import {
 import { useAudioOutputDspStore } from '../stores/useAudioOutputDspStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useAppNoticeStore } from '../stores/useAppNoticeStore'
+import { useLocale } from '../app/useLocale.ts'
 import { useThemeStore } from '../stores/useThemeStore'
 import { useMusicStore } from '../stores/useMusicStore'
 import { useExtensionRegistry, type UiContribution } from '../extensions/registry'
@@ -360,6 +361,7 @@ function toggleSetting(key: BooleanSettingKey): void {
 }
 
 const { pushNotice } = useAppNoticeStore()
+const { t, errorText } = useLocale()
 watch(lastSettingsError, (error) => {
   if (!error) return
   settingsError.value = error
@@ -899,13 +901,28 @@ function openReleasePage(): void {
   void window.api?.shell?.openExternal?.(url)
 }
 
+/**
+ * The export now writes a readable Markdown report next to the raw JSON, so the
+ * notice offers to reveal it instead of telling the user to find and forward a
+ * file they cannot read. A blocking `window.alert` was also the only modal in
+ * this flow; the toast host already handles this kind of confirmation.
+ */
 async function exportAudioDiagnostics(): Promise<void> {
   try {
     const result = await window.api.audioEngine.exportDiagnostics()
     if (!result.filePath) return
-    window.alert(`音频诊断日志已导出：\n${result.filePath}\n\n请将此 JSON 文件发给开发者。`)
+    const savedPath = result.filePath
+    pushNotice({
+      kind: 'success',
+      message: `${t('diagnostics.export.savedNotice')}\n${savedPath}`,
+      action: {
+        label: t('action.openFolder'),
+        run: () => void window.api.shell.showItemInFolder(savedPath)
+      },
+      durationMs: 12000
+    })
   } catch (error) {
-    window.alert(error instanceof Error ? error.message : '导出音频诊断日志失败')
+    pushNotice({ kind: 'error', message: errorText(error, 'diagnostics.export.failed') })
   }
 }
 
@@ -1434,8 +1451,6 @@ html[data-theme='dark'] .settings-preview-page .number-input,
 html[data-theme='dark'] .settings-preview-page .path-control input,
 html[data-theme='dark'] .settings-preview-page .plugin-empty,
 html[data-theme='dark'] .settings-preview-page .range-pill,
-html[data-theme='dark'] .settings-preview-page .shortcut-grid,
-html[data-theme='dark'] .settings-preview-page .shortcut-grid kbd,
 html[data-theme='dark'] .settings-preview-page .update-card,
 html[data-theme='dark'] .settings-preview-page .about-links button,
 html[data-theme='dark'] .settings-preview-page .output-diagnostic-panel,
@@ -1450,7 +1465,6 @@ html[data-theme='dark'] .settings-preview-page .inherit-toggle,
 html[data-theme='dark'] .settings-preview-page .pill-action.ghost,
 html[data-theme='dark'] .settings-preview-page .settings-search-box,
 html[data-theme='dark'] .settings-preview-page .settings-nav-search,
-html[data-theme='dark'] .settings-preview-page .shortcut-status-row,
 html[data-theme='dark'] .settings-preview-page .read-only-pill {
   border-color: var(--te-card-border);
   background: var(--te-card-bg);
@@ -1588,13 +1602,11 @@ html[data-theme='dark'] .settings-preview-page .device-card span,
 html[data-theme='dark'] .settings-preview-page .dsp-meter strong,
 html[data-theme='dark'] .settings-preview-page .mini-setting strong,
 html[data-theme='dark'] .settings-preview-page .plugin-empty strong,
-html[data-theme='dark'] .settings-preview-page .shortcut-grid span,
 html[data-theme='dark'] .settings-preview-page .about-copy h3,
 html[data-theme='dark'] .settings-preview-page .update-card strong,
 html[data-theme='dark'] .settings-preview-page .background-editor-head strong,
 html[data-theme='dark'] .settings-preview-page .page-background-copy strong,
-html[data-theme='dark'] .settings-preview-page .signal-node.active .signal-node-name,
-html[data-theme='dark'] .settings-preview-page .shortcut-status-row span {
+html[data-theme='dark'] .settings-preview-page .signal-node.active .signal-node-name {
   color: var(--te-text);
 }
 
@@ -1610,7 +1622,6 @@ html[data-theme='dark'] .settings-preview-page .folder-empty-hint,
 html[data-theme='dark'] .settings-preview-page .device-card small,
 html[data-theme='dark'] .settings-preview-page .plugin-empty,
 html[data-theme='dark'] .settings-preview-page .range-pill span,
-html[data-theme='dark'] .settings-preview-page .shortcut-grid kbd,
 html[data-theme='dark'] .settings-preview-page .about-copy p,
 html[data-theme='dark'] .settings-preview-page .update-card span,
 html[data-theme='dark'] .settings-preview-page .background-editor-head span,
@@ -1624,8 +1635,7 @@ html[data-theme='dark'] .settings-preview-page .crossfade-group,
 html[data-theme='dark'] .settings-preview-page .crossfeed-percent,
 html[data-theme='dark'] .settings-preview-page .diagnostic-chain,
 html[data-theme='dark'] .settings-preview-page .diagnostic-meta,
-html[data-theme='dark'] .settings-preview-page .mini-highres small,
-html[data-theme='dark'] .settings-preview-page .shortcut-status-row small {
+html[data-theme='dark'] .settings-preview-page .mini-highres small {
   color: rgba(148, 163, 184, 0.82);
 }
 
