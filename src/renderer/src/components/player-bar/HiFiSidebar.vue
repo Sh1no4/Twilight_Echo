@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   DSD_OUTPUT_MODE_OPTIONS,
   gaplessRuntimeStatusCopy,
@@ -61,6 +61,10 @@ const props = defineProps<{
   statusChips: HiFiStatusChip[]
   nonPerfectReason: string
   perfectReasonCode?: string
+  /** What is happening to the samples, from the shared reason registry. */
+  perfectReasonExplain?: string
+  /** The concrete next action; empty when nothing is user-actionable. */
+  perfectReasonFix?: string
   volume: number
   gaplessActive?: boolean
   preloadReady?: boolean
@@ -153,6 +157,7 @@ const emit = defineEmits<{
   updateRenameDraft: [value: string]
   cancelRenameBookmark: []
   deleteBookmark: [id: string]
+  lyricsCustomizing: [open: boolean]
 }>()
 
 const isVolumeUnity = computed(() => props.volume >= 0.999)
@@ -198,6 +203,17 @@ const loudnormStatusTone = computed(() => {
 
 const activeSection = ref<'console' | 'output' | 'dsp' | 'tools' | 'lyrics'>('console')
 const lyricsCustomizerOpen = ref(false)
+
+/*
+ * The customizer is a left-edge drawer whose whole purpose is watching the
+ * lyrics react underneath, and this deck covers the right side of the same
+ * window. Tell the PlayerBar to stand the overlay down while it is open.
+ *
+ * Note the panel is Teleported from inside this component, so the deck can only
+ * be *hidden*, never unmounted — dropping `v-if="moreOpen"` on the overlay would
+ * take the customizer down with it.
+ */
+watch(lyricsCustomizerOpen, (open) => emit('lyricsCustomizing', open))
 
 const bufferSizeOptions = [
   { value: 0, label: 'Auto' },
@@ -645,6 +661,10 @@ const deckAccentVars = computed(() => {
                 {{ outputChainText }}
               </p>
               <p v-if="nonPerfectReason" class="deck-note warn">{{ nonPerfectReason }}</p>
+              <p v-if="perfectReasonExplain" class="deck-note">{{ perfectReasonExplain }}</p>
+              <p v-if="perfectReasonFix" class="deck-note fix">
+                <i class="pi pi-wrench" aria-hidden="true"></i> {{ perfectReasonFix }}
+              </p>
 
               <div v-if="showUnityVolumeCta" class="deck-unity">
                 <div class="deck-unity-copy">

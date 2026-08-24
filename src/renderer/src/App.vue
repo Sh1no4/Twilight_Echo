@@ -13,6 +13,9 @@ import SideMenu from './components/SideMenu.vue'
 const PlayerBar = defineAsyncComponent(() => import('./components/PlayerBar.vue'))
 const LocalDashboard = defineAsyncComponent(() => import('./components/LocalDashboard.vue'))
 const SongList = defineAsyncComponent(() => import('./components/SongList.vue'))
+const AggregatePlaylistPage = defineAsyncComponent(
+  () => import('./components/aggregate-playlist/AggregatePlaylistPage.vue')
+)
 const PlayingMusic = defineAsyncComponent(() => import('./components/PlayingMusic.vue'))
 const StreamingPage = defineAsyncComponent(() => import('./components/StreamingPage.vue'))
 const RadioPodcastPage = defineAsyncComponent(() => import('./components/RadioPodcastPage.vue'))
@@ -45,6 +48,7 @@ import { useSideMenuClearance } from './app/useSideMenuClearance'
 import { useMiniPlayerSync } from './app/useMiniPlayerSync'
 import { useFavoriteButton } from './components/player-bar/useFavoriteButton'
 import { useMotionPreference } from './app/useMotionPreference'
+import { useLanguagePreference } from './app/useLocale'
 import { useLiquidGlassEnvironment } from './composables/useLiquidGlassEnvironment'
 import { useAppNoticeStore } from './stores/useAppNoticeStore'
 import { getTrackSource } from './utils/logicalTrackModel'
@@ -314,7 +318,7 @@ function handlePlayerBarArtistClick(): void {
 const { favoriteButtonVisible, favoriteButtonLiked, favoriteButtonLoading, toggleFavorite } =
   useFavoriteButton({
     currentTrack,
-    playlists: musicStore.playlists,
+    playlists: musicStore.localPlaylists,
     mediaProviders,
     addToPlaylist: musicStore.addToPlaylist,
     removeFromPlaylist: musicStore.removeFromPlaylist,
@@ -357,6 +361,7 @@ useMiniPlayerSync({
 })
 const { loadSettings, hydrateStartupSnapshot, settings, updateSettings } = useSettingsStore()
 useMotionPreference(computed(() => settings.value.motionPreference))
+useLanguagePreference(computed(() => settings.value.language))
 const { uiContributions, syncExtensions } = useExtensionRegistry()
 const STREAMING_ACCOUNT_PAGE_KEYS = new Set(['com.twilightecho.provider.ytmusic:ytmusic-account'])
 const sidebarPages = computed(() =>
@@ -410,6 +415,13 @@ const sideMenuActiveKey = computed(() =>
 )
 const mainContentMinHeight = computed(() => '100vh')
 
+const sidebarMenuOpen = computed(() => {
+  // PlayingMusic hides the local sidebar, so its preserved open state must not
+  // shift the full-width compact bar and leave a blank gutter on the left.
+  if (showPlayingPage.value) return false
+  return showStreamingPage.value ? streamingMenuOpen.value : menuOpen.value
+})
+
 const playbackSessionPersistence = createPlaybackSessionPersistence({
   settings,
   currentTrack,
@@ -428,11 +440,16 @@ const playbackSessionPersistence = createPlaybackSessionPersistence({
 })
 const {
   sideMenuBottomOffset,
+  sideMenuInlineEnd,
   startSideMenuMonitor,
   stopSideMenuMonitor,
   resetSideMenuClearance,
   dispose: disposeSideMenuClearance
-} = useSideMenuClearance({ showLocalSidebar, hasPlayerBar, menuOpen })
+} = useSideMenuClearance({
+  showLocalSidebar,
+  hasPlayerBar,
+  menuOpen
+})
 
 let removePlaybackSessionSaveListener: (() => void) | null = null
 let removeAppNavigationListener: (() => void) | null = null
@@ -727,7 +744,7 @@ useLiquidGlassEnvironment({
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :style="{ '--te-side-menu-bottom': `${sideMenuBottomOffset}px` }">
     <LiquidGlassDefs
       :active="liquidGlassActive"
       :follow-pointer="settings.liquidGlass.followPointer"
@@ -782,6 +799,12 @@ useLiquidGlassEnvironment({
             key="local-dashboard"
             @select-view="onSelectView"
             @open-library-settings="openSettingsPage('general')"
+          />
+          <AggregatePlaylistPage
+            v-else-if="localViewVisible && activeCategory === 'aggregate'"
+            key="local-aggregate"
+            :has-player="hasPlayerBar"
+            surface="local"
           />
           <SongList
             v-else-if="localViewVisible"
@@ -851,10 +874,20 @@ useLiquidGlassEnvironment({
         </Transition>
       </div>
     </div>
-    <div class="app-shell-player">
+    <!-- Where the open side menu's right edge actually lands, measured rather than
+         derived: `--te-menu-width` is only the menu's width, and a preset layout
+         may float the menu inward as an island (aurora-reference insets it ~21px),
+         which leaves a width-based `left` short by that inset. The edge-to-edge
+         shapes start after this so they never cover the menu. -->
+    <div
+      class="app-shell-player"
+      :style="{ '--te-side-menu-inline-end': `${sideMenuInlineEnd}px` }"
+    >
       <PlayerBar
         v-if="hasPlayerBar"
         :glass="showPlayingPage"
+        :visualizer-visible="showPlayingPage"
+        :menu-open="sidebarMenuOpen"
         :mode="playerBarPresentation.mode"
         :auto-hide="playerBarPresentation.autoHide"
         :hidden-bar="playerBarPresentation.hidden"

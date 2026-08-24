@@ -43,6 +43,7 @@ export type {
   CardAppearanceSettings,
   WindowTransparencyEffectSettings,
   DesktopLyricsLayout,
+  DesktopLyricsPresentation,
   DesktopLyricsSettings,
   MusicCachePolicySettings,
   AudioEqPreset,

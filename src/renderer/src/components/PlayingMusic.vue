@@ -475,6 +475,14 @@ const renderedLyricLines = computed(() =>
   }))
 )
 
+/**
+ * Kept out of the template because `v-memo` inlines the key expression into a
+ * `&&` chain, and a bare `??` there is a syntax error esbuild refuses to build.
+ */
+function lyricRowKey(item: { line: LyricLine; index: number }): string {
+  return item.line.rowKey ?? `${item.line.time}-${item.index}`
+}
+
 function setLyricLineRef(index: number, el: Element | ComponentPublicInstance | null): void {
   const element = el instanceof HTMLElement ? el : null
   const previous = lyricRowElements.get(index)
@@ -718,7 +726,7 @@ onBeforeUnmount(() => {
             <div v-if="hasLyrics" class="lyrics-list">
               <button
                 v-for="item in renderedLyricLines"
-                :key="item.line.rowKey ?? `${item.line.time}-${item.index}`"
+                :key="lyricRowKey(item)"
                 v-memo="[
                   item.index === highlightedLyricIndex,
                   item.singing,
@@ -993,8 +1001,11 @@ onBeforeUnmount(() => {
   }
 }
 
-:global(html[data-te-motion='reduced']) .backdrop-fluid::before,
-:global(html[data-te-motion='off']) .backdrop-fluid::before {
+/* Ancestors stay unwrapped so Vue's scoped transform attaches the scope
+   attribute to `.backdrop-fluid` — wrapping them in `:global()` drops the scope
+   from the descendant and pauses every matching element on the page. */
+html[data-te-motion='reduced'] .backdrop-fluid::before,
+html[data-te-motion='off'] .backdrop-fluid::before {
   animation-play-state: paused;
 }
 

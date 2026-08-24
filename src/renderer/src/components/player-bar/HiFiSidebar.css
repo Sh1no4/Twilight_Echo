@@ -591,6 +591,20 @@ html[data-theme='dark'] .deck .deck-card {
   color: var(--d-success);
 }
 
+/* The actionable half of a diagnostic: reads as guidance, not as another
+   warning, so it takes the accent rather than the warn colour. */
+.deck-note.fix {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--d-accent);
+}
+
+.deck-note.fix > .pi {
+  flex: none;
+  font-size: 10px;
+}
+
 /* ===== Unity ===== */
 .deck-unity {
   display: flex;

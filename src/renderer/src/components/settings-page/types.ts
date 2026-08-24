@@ -8,6 +8,7 @@ import type {
   PlayerBarPageVisibility,
   PlayerBarVisibility
 } from '../../../../shared/playerBar.ts'
+import type { PlayerBarControlId, PlayerBarRegionName } from '../../../../shared/playerBarLayout.ts'
 import type {
   AppTheme,
   AppBackgroundPage,
@@ -219,13 +220,59 @@ export const streamingAudioCachePolicyOptions: {
 
 export const playerBarModeOptions: { value: PlayerBarMode; label: string; icon: string }[] = [
   { value: 'standard', label: '标准', icon: 'pi pi-window-maximize' },
-  { value: 'mini', label: '迷你', icon: 'pi pi-window-minimize' }
+  { value: 'mini', label: '迷你', icon: 'pi pi-window-minimize' },
+  { value: 'compact', label: '紧凑', icon: 'pi pi-minus' }
 ]
 
 export const playerBarPageModeOptions: { value: PlayerBarPageMode; label: string }[] = [
   { value: 'inherit', label: '跟随全局形态' },
   { value: 'standard', label: '标准' },
-  { value: 'mini', label: '迷你（可自动隐藏）' }
+  { value: 'mini', label: '迷你（可自动隐藏）' },
+  { value: 'compact', label: '紧凑（可自动隐藏）' }
+]
+
+/**
+ * Labels for the controls the playbar layout can place. Lives here rather than in
+ * the shared contract for the same reason the mode options do: `src/shared` holds
+ * the structure, the renderer holds the copy.
+ */
+export const playerBarControlOptions: {
+  value: PlayerBarControlId
+  label: string
+  icon: string
+  /** Why this control may render nothing even when it is placed. */
+  hint?: string
+}[] = [
+  { value: 'cover', label: '封面', icon: 'pi pi-image' },
+  { value: 'trackInfo', label: '曲目信息', icon: 'pi pi-align-left' },
+  { value: 'transport', label: '上一首 / 播放 / 下一首', icon: 'pi pi-play-circle' },
+  { value: 'playPause', label: '单独的播放按钮', icon: 'pi pi-play' },
+  { value: 'time', label: '时间读数', icon: 'pi pi-clock' },
+  {
+    value: 'favorite',
+    label: '收藏',
+    icon: 'pi pi-heart',
+    hint: '仅在当前来源支持收藏时出现'
+  },
+  { value: 'playMode', label: '播放顺序', icon: 'pi pi-refresh' },
+  { value: 'volume', label: '音量', icon: 'pi pi-volume-up' },
+  { value: 'queue', label: '播放列表', icon: 'pi pi-list' },
+  { value: 'hifi', label: 'HiFi 控制台', icon: 'ph ph-faders' },
+  { value: 'equalizer', label: '均衡器', icon: 'ph ph-sliders' },
+  { value: 'desktopLyrics', label: '桌面歌词', icon: 'pi pi-window-maximize' },
+  { value: 'miniPlayer', label: '迷你播放器', icon: 'ph ph-picture-in-picture' },
+  {
+    value: 'exitPlayingPage',
+    label: '退出播放页',
+    icon: 'ph ph-arrows-out-simple',
+    hint: '仅在播放页出现'
+  }
+]
+
+export const playerBarRegionOptions: { value: PlayerBarRegionName; label: string }[] = [
+  { value: 'left', label: '左侧' },
+  { value: 'center', label: '中间' },
+  { value: 'right', label: '右侧' }
 ]
 
 export const playerBarVisibilityOptions: {
@@ -241,7 +288,7 @@ export const playerBarVisibilityOptions: {
 export const playerBarPageVisibilityOptions: { value: PlayerBarPageVisibility; label: string }[] = [
   { value: 'inherit', label: '跟随全局可见性' },
   { value: 'visible', label: '常显' },
-  { value: 'autoHide', label: '自动隐藏（需迷你形态）' },
+  { value: 'autoHide', label: '自动隐藏（需迷你或紧凑形态）' },
   { value: 'hidden', label: '完全隐藏' }
 ]
 
@@ -479,12 +526,18 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = (
     {
       section: 'appearance',
       title: '播放条形态',
-      terms: '播放条 播放栏 playbar 迷你 mini 标准 形态 大小'
+      terms: '播放条 播放栏 playbar 迷你 mini 标准 紧凑 compact 形态 大小 贴底 全宽'
     },
     {
       section: 'appearance',
       title: '播放页形态',
-      terms: '播放页 播放条 playbar 迷你 mini 形态 now playing'
+      terms: '播放页 播放条 playbar 迷你 mini 紧凑 compact 形态 now playing'
+    },
+    {
+      section: 'appearance',
+      title: '播放条按钮编排',
+      terms:
+        '按钮 编排 排列 顺序 布局 槽位 自定义 增删 左侧 中间 右侧 播放条 播放栏 playbar layout 收藏 音量 均衡器 时间 封面'
     },
     {
       section: 'appearance',
@@ -634,6 +687,16 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = (
       terms: '全局 快捷键 系统 媒体键 后台 注册'
     },
     { section: 'shortcuts', title: '快捷键状态', terms: '快捷键 状态 注册 冲突 检测 失败' },
+    {
+      section: 'shortcuts',
+      title: '自定义组合键',
+      terms: '自定义 组合键 修改 绑定 录制 恢复默认 上一首 下一首 播放 暂停 桌面歌词'
+    },
+    {
+      section: 'shortcuts',
+      title: '系统媒体键',
+      terms: '媒体键 media key 键盘 耳机 播放键 停止'
+    },
 
     // ── 关于 ──────────────────────────────────────────────
     {
@@ -679,6 +742,7 @@ export const RESET_DESKTOP_LYRICS: DesktopLyricsSettings = {
   align: 'center',
   showTranslation: true,
   layout: 'bilingual',
+  presentation: 'netease',
   lineSpacing: 1.6,
   shadow: true,
   shadowBlur: 8,
@@ -688,6 +752,7 @@ export const RESET_DESKTOP_LYRICS: DesktopLyricsSettings = {
   windowX: -1,
   windowY: -1,
   alwaysOnTop: true,
+  locked: false,
   clickThrough: false,
   maxLines: 2,
   lineOffset: 0
