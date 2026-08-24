@@ -788,6 +788,15 @@ watch(
   background: transparent;
 }
 .lyrics-customizer {
+  /*
+   * `--te-neutral-900` and `--te-neutral-50` trade places between the two tones
+   * (near-black / near-white under pureWhite, the reverse under dark). These two
+   * locals pin the ends of that ramp, so the handful of things here that must
+   * stay dark — or stay light — in *both* tones can say so. Without them the
+   * drop shadow below becomes a white glow in dark mode.
+   */
+  --customizer-tone-dark: var(--te-neutral-900);
+  --customizer-tone-light: var(--te-neutral-50);
   width: min(460px, 100vw);
   height: 100%;
   display: flex;
@@ -795,7 +804,11 @@ watch(
   color: var(--te-neutral-900);
   border-right: 1px solid color-mix(in srgb, var(--te-card-border) 86%, transparent);
   background: var(--te-settings-bg);
-  box-shadow: 24px 0 70px color-mix(in srgb, var(--te-neutral-900) 34%, transparent);
+  box-shadow: 24px 0 70px color-mix(in srgb, var(--customizer-tone-dark) 34%, transparent);
+}
+html[data-theme='dark'] .lyrics-customizer {
+  --customizer-tone-dark: var(--te-neutral-50);
+  --customizer-tone-light: var(--te-neutral-900);
 }
 .customizer-header {
   display: flex;
@@ -893,6 +906,17 @@ watch(
   margin-top: 3px;
   font-size: 10px;
 }
+/*
+ * Every value in this shorthand has to be a real colour. The previous revision
+ * fed `--te-playback-fluid-bg` — itself a `linear-gradient(...)` — into a colour
+ * stop, which made the whole `background` invalid, so Chromium dropped *both*
+ * layers and the box painted nothing in either tone.
+ *
+ * The stage stays dark whichever tone is active, because the lines inside are
+ * previewed through `lyricsPreviewStyle`, whose theme colours resolve to the
+ * now-playing page's `--te-playback-lyric-*` tokens — white in both tones.
+ * A light stage in dark mode would render white text on white.
+ */
 .live-preview {
   margin: 0 24px 16px;
   padding: 16px;
@@ -902,13 +926,17 @@ watch(
   background:
     radial-gradient(
       circle at 80% 10%,
-      color-mix(in srgb, var(--te-primary-500) 22%, transparent),
+      color-mix(in srgb, var(--te-primary-500) 26%, transparent),
       transparent 34%
     ),
-    linear-gradient(145deg, var(--te-playback-fluid-bg), var(--te-neutral-100));
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--customizer-tone-dark) 88%, var(--te-primary-500)),
+      var(--customizer-tone-dark)
+    );
 }
 .preview-label {
-  color: color-mix(in srgb, var(--te-neutral-50) 46%, transparent);
+  color: color-mix(in srgb, var(--customizer-tone-light) 46%, transparent);
   font-size: 10px;
   letter-spacing: 0.12em;
   text-transform: uppercase;

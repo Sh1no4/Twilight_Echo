@@ -5,6 +5,10 @@ import { stat, readdir } from 'fs/promises'
 import { join, resolve } from 'path'
 import { createLegacyDspGraph, normalizeDspScenes } from '../../shared/dspGraph'
 import {
+  DEFAULT_LANGUAGE_PREFERENCE,
+  normalizeLanguagePreference
+} from '../../shared/i18n/locale.ts'
+import {
   DEFAULT_AUDIO_PROCESSING,
   normalizeAudioOutput,
   normalizeAudioProcessingSettings,
@@ -97,6 +101,7 @@ export const DEFAULT_DESKTOP_LYRICS: DesktopLyricsSettings = {
   align: 'center',
   showTranslation: true,
   layout: 'bilingual',
+  presentation: 'netease',
   lineSpacing: 1.6,
   shadow: true,
   shadowBlur: 8,
@@ -106,6 +111,7 @@ export const DEFAULT_DESKTOP_LYRICS: DesktopLyricsSettings = {
   windowX: -1,
   windowY: -1,
   alwaysOnTop: true,
+  locked: false,
   clickThrough: false,
   maxLines: 2,
   lineOffset: 0
@@ -142,6 +148,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   developerMode: false,
   startupHomePage: 'local',
   trackActivationMode: 'singleClick',
+  language: DEFAULT_LANGUAGE_PREFERENCE,
   theme: 'system',
   pluginThemeId: null,
   activeTheme: { kind: 'builtin', id: 'builtin:twilight-echo-default' },
@@ -653,6 +660,10 @@ export function normalizeDesktopLyrics(raw: unknown): DesktopLyricsSettings {
         : d.layout === 'bilingual'
           ? 'bilingual'
           : DEFAULT_DESKTOP_LYRICS.layout,
+    presentation:
+      d.presentation === 'classic' || d.presentation === 'netease'
+        ? d.presentation
+        : DEFAULT_DESKTOP_LYRICS.presentation,
     lineSpacing: clampNumber(d.lineSpacing, 1.0, 3.0, DEFAULT_DESKTOP_LYRICS.lineSpacing),
     shadow: d.shadow !== false,
     shadowBlur: clampNumber(d.shadowBlur, 0, 30, DEFAULT_DESKTOP_LYRICS.shadowBlur),
@@ -663,7 +674,8 @@ export function normalizeDesktopLyrics(raw: unknown): DesktopLyricsSettings {
     windowX: typeof d.windowX === 'number' ? d.windowX : -1,
     windowY: typeof d.windowY === 'number' ? d.windowY : -1,
     alwaysOnTop: d.alwaysOnTop !== false,
-    clickThrough: d.clickThrough === true,
+    locked: typeof d.locked === 'boolean' ? d.locked : d.clickThrough === true || d.locked === true,
+    clickThrough: typeof d.locked === 'boolean' ? d.locked : d.clickThrough === true,
     maxLines: clampNumber(d.maxLines, 1, 5, DEFAULT_DESKTOP_LYRICS.maxLines),
     lineOffset: clampNumber(d.lineOffset, -200, 200, DEFAULT_DESKTOP_LYRICS.lineOffset)
   }
@@ -734,6 +746,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     developerMode: settings.developerMode === true,
     startupHomePage: normalizeStartupHomePage(settings.startupHomePage),
     trackActivationMode: normalizeTrackActivationMode(settings.trackActivationMode),
+    language: normalizeLanguagePreference(settings.language),
     theme: normalizeAppTheme(settings.theme),
     pluginThemeId:
       activeTheme.kind === 'plugin' ? `${activeTheme.pluginId}:${activeTheme.themeId}` : null,
