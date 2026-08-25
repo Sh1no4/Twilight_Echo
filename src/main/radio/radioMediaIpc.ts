@@ -1,5 +1,8 @@
 import { ipcMain } from 'electron'
-import { isRadioStationsDocument, type RadioStationsDocument } from '../../shared/radioStations.ts'
+import {
+  isRadioStationsDocument,
+  type RadioStationsDocument
+} from '../../shared/radioStations.ts'
 import {
   isPodcastSubscriptionsDocument,
   type PodcastSubscriptionsDocument
@@ -20,9 +23,7 @@ const MAX_FEED_URL_LENGTH = 2048
 
 let service: RadioMediaService | null = null
 
-export function setupRadioMediaIpc(
-  options?: ConstructorParameters<typeof RadioMediaService>[0]
-): RadioMediaService {
+export function setupRadioMediaIpc(options?: ConstructorParameters<typeof RadioMediaService>[0]): RadioMediaService {
   if (service) return service
   service = new RadioMediaService(options)
   service.startScheduledRefresh()
@@ -125,9 +126,7 @@ export function destroyRadioMediaIpc(): void {
   service = null
 }
 
-async function saveVersioned<T>(
-  promise: Promise<T>
-): Promise<T | ReturnType<typeof createPersistentDataRevisionConflictResponse>> {
+async function saveVersioned<T>(promise: Promise<T>): Promise<T | ReturnType<typeof createPersistentDataRevisionConflictResponse>> {
   try {
     return await promise
   } catch (error) {

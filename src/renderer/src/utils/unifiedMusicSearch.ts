@@ -10,10 +10,7 @@ import {
   type LogicalTrack,
   type SourceVariant
 } from './logicalTrackModel.ts'
-import {
-  getTrackSearchBlob,
-  normalizeSearchText as normalizeLocalSearchText
-} from './localLibrarySearch.ts'
+import { getTrackSearchBlob, normalizeSearchText as normalizeLocalSearchText } from './localLibrarySearch.ts'
 
 export interface UnifiedSearchProvider {
   id: string
@@ -186,7 +183,8 @@ function searchLocalTracks(tracks: Track[], query: string): Track[] {
   if (!q) return []
   return tracks.filter(
     (track) =>
-      getTrackSearchBlob(track).includes(q) || normalizeLocalSearchText(track.fileName).includes(q)
+      getTrackSearchBlob(track).includes(q) ||
+      normalizeLocalSearchText(track.fileName).includes(q)
   )
 }
 

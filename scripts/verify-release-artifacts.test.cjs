@@ -33,10 +33,7 @@ test('PE inspection finds stripped and retained debug metadata', () => {
     fs.writeFileSync(clean, createMinimalPe())
     fs.writeFileSync(debug, createMinimalPe({ debugDirectoryRva: 1, debugDirectorySize: 28 }))
     assert.equal(readPeHeader(clean).symbolCount, 0)
-    assert.throws(
-      () => require('./verify-release-artifacts.cjs').assertStrippedPe(debug),
-      /debug directory/
-    )
+    assert.throws(() => require('./verify-release-artifacts.cjs').assertStrippedPe(debug), /debug directory/)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
@@ -61,9 +58,7 @@ test('all shipped native DLL/EXE/NODE files receive a size budget while strip ch
     fs.writeFileSync(path.join(dir, 'msvcp140.dll'), Buffer.alloc(32))
     fs.writeFileSync(path.join(dir, 'notice.txt'), 'not a binary')
     assert.deepEqual(
-      listShippedBinaries(dir)
-        .map((filePath) => path.basename(filePath))
-        .sort(),
+      listShippedBinaries(dir).map((filePath) => path.basename(filePath)).sort(),
       ['msvcp140.dll', 'twilight-audio-engine.dll']
     )
   } finally {
@@ -116,9 +111,7 @@ test('native binary verification requires the core runtime and verifies optional
       fs.writeFileSync(path.join(dir, name), createMinimalPe())
     }
     assert.deepEqual(
-      listNativeBinaries(dir)
-        .map((filePath) => path.basename(filePath))
-        .sort(),
+      listNativeBinaries(dir).map((filePath) => path.basename(filePath)).sort(),
       [...REQUIRED_NATIVE_BINARIES].sort()
     )
     fs.writeFileSync(path.join(dir, 'twilight-vst3-host.exe'), createMinimalPe())

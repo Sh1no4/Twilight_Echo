@@ -3,7 +3,10 @@ import { PassThrough } from 'node:stream'
 import { buildNetworkEntryId, normalizeRemotePath } from '../networkPath.ts'
 import { NetworkSourceFailure } from '../errors.ts'
 import { entryKind } from '../entryKinds.ts'
-import type { NetworkEntry, NetworkSourceProfile } from '../../../shared/networkSources.ts'
+import type {
+  NetworkEntry,
+  NetworkSourceProfile
+} from '../../../shared/networkSources.ts'
 import type { NetworkAuth, NetworkSourceAdapter, NetworkSourceSession } from './types.ts'
 
 function toFailure(err: unknown): NetworkSourceFailure {
@@ -37,9 +40,7 @@ export function createFtpAdapter(): NetworkSourceAdapter {
         if (connected) return
         const secure = profile.protocol === 'ftps'
         const user =
-          auth.kind === 'password'
-            ? (auth.username ?? profile.username ?? 'anonymous')
-            : 'anonymous'
+          auth.kind === 'password' ? (auth.username ?? profile.username ?? 'anonymous') : 'anonymous'
         const password = auth.kind === 'password' ? auth.password : ''
         try {
           await client.access({
@@ -57,7 +58,8 @@ export function createFtpAdapter(): NetworkSourceAdapter {
 
       function toEntry(info: FileInfo, parentPath: string): NetworkEntry {
         const name = info.name
-        const path = parentPath === '/' ? `/${name}` : `${normalizeRemotePath(parentPath)}/${name}`
+        const path =
+          parentPath === '/' ? `/${name}` : `${normalizeRemotePath(parentPath)}/${name}`
         const normalized = normalizeRemotePath(path)
         const directory = info.type === FileType.Directory
         return {
@@ -123,7 +125,11 @@ export function createFtpAdapter(): NetworkSourceAdapter {
           }
           signal?.addEventListener('abort', onAbort, { once: true })
           try {
-            await client.downloadTo(stream, normalizeRemotePath(remotePath), options?.start ?? 0)
+            await client.downloadTo(
+              stream,
+              normalizeRemotePath(remotePath),
+              options?.start ?? 0
+            )
           } catch (err) {
             stream.destroy()
             if (signal?.aborted) throw new NetworkSourceFailure('timeout', '网络文件读取已取消')

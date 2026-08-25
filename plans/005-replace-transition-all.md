@@ -25,19 +25,19 @@
 
 ### 完整位置清单（45 个生效点）
 
-| 文件                                                                     | 行号                                                                                                                     |
-| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| `src/renderer/src/components/player-bar/HiFiSidebar.css`                 | 300, 784, 849, 860, 885, 944, 979, 1297, 1333, 1434, 1545（11 处）                                                       |
-| `src/renderer/src/components/StreamingLibrary.vue`                       | 406, 502, 624, 698, 715, 829, 867, 891, 960, 976, 1014, 1039（12 处）                                                    |
-| `src/renderer/src/components/EqualizerPage.vue`                          | 1148, 1198, 1277, 1306（4 处。`:1382`/`:1404`/`:1611` 的 `var(--transition)` 是悬空引用，当前无任何过渡，归 017 号方案） |
-| `src/renderer/src/components/PluginPage.vue`                             | 939, 1034, 1074, 1168, 1374（5 处）                                                                                      |
-| `src/renderer/src/components/song-list/SongList.css`                     | 440, 579, 2187（3 处）                                                                                                   |
-| `src/renderer/src/components/streaming-page/StreamingPage.css`           | 607, 646, 728（3 处）                                                                                                    |
-| `src/renderer/src/components/streaming-page/StreamingSearchControls.css` | 24, 62（2 处）                                                                                                           |
-| `src/renderer/src/components/settings-page/SettingsPage.css`             | 3803, 3876（2 处）                                                                                                       |
-| `src/renderer/src/components/ImportDialog.vue`                           | 270（1 处）                                                                                                              |
-| `src/renderer/src/components/LyricsAppearanceCustomizer.vue`             | 957（1 处）                                                                                                              |
-| `resources/audio-visualizer/index.html`                                  | 759（1 处）                                                                                                              |
+| 文件 | 行号 |
+| --- | --- |
+| `src/renderer/src/components/player-bar/HiFiSidebar.css` | 300, 784, 849, 860, 885, 944, 979, 1297, 1333, 1434, 1545（11 处） |
+| `src/renderer/src/components/StreamingLibrary.vue` | 406, 502, 624, 698, 715, 829, 867, 891, 960, 976, 1014, 1039（12 处） |
+| `src/renderer/src/components/EqualizerPage.vue` | 1148, 1198, 1277, 1306（4 处。`:1382`/`:1404`/`:1611` 的 `var(--transition)` 是悬空引用，当前无任何过渡，归 017 号方案） |
+| `src/renderer/src/components/PluginPage.vue` | 939, 1034, 1074, 1168, 1374（5 处） |
+| `src/renderer/src/components/song-list/SongList.css` | 440, 579, 2187（3 处） |
+| `src/renderer/src/components/streaming-page/StreamingPage.css` | 607, 646, 728（3 处） |
+| `src/renderer/src/components/streaming-page/StreamingSearchControls.css` | 24, 62（2 处） |
+| `src/renderer/src/components/settings-page/SettingsPage.css` | 3803, 3876（2 处） |
+| `src/renderer/src/components/ImportDialog.vue` | 270（1 处） |
+| `src/renderer/src/components/LyricsAppearanceCustomizer.vue` | 957（1 处） |
+| `resources/audio-visualizer/index.html` | 759（1 处） |
 
 ### 证据一：`all` 把 `backdrop-filter` 拖进逐帧过渡
 
@@ -152,10 +152,10 @@ AUDIT 第 5 节 Performance 两条直接命中：
 1. **`SettingsPage.css` 的 `.toggle-switch::after { left }` 不在 `all` 集合里。** 该规则在 `SettingsPage.css:1122-1136`，它自己写了显式清单，不是 `all`：
    ```css
    /* src/renderer/src/components/settings-page/SettingsPage.css:1132-1135 — 当前，已经是显式清单 */
-   transition:
-     left var(--te-motion-panel) var(--te-ease-soft),
-     box-shadow var(--te-motion-panel) var(--te-ease-soft),
-     scale var(--te-motion-panel) var(--te-ease-soft);
+     transition:
+       left var(--te-motion-panel) var(--te-ease-soft),
+       box-shadow var(--te-motion-panel) var(--te-ease-soft),
+       scale var(--te-motion-panel) var(--te-ease-soft);
    ```
    它确实在过渡 `left`（`:1143` 的 `.toggle-switch.active::after { left: 22px; }`），是一个真实的 layout 过渡问题，但**不属于本方案**——本方案只处理 `transition: all`。不要在本方案里改它。`SettingsPage.css` 在本方案里只有 `:3803`（`.signal-line`）与 `:3876`（`.preset-btn`）两处。
 2. **`StreamingPage.css` 的 `.streaming-content-title { width/height }` 不存在。** `.streaming-content-title` 在该文件的 4 处定义（`:52`、`:1299`、`:1618`、`:2086`）**都没有任何 `transition` 声明**，也没有 `width`/`height`。`StreamingPage.css` 的三处 `all` 分别属于 `.search-tab-pill`（`:598`）、`.search-source-trigger`（`:634`）、`.recent-source-trigger`（`:716`），它们的状态差异只有 `background` / `color` / `box-shadow` / `border-color` / `opacity`，**没有布局属性**。
@@ -240,7 +240,6 @@ AUDIT 第 5 节 Performance 两条直接命中：
    - `:852-861` 的 `.deck-switch-knob` 规则里，`left: 2px;` 保持不变（它是静止位置，不再参与动画），在 `border-radius: 50%;` 之后、`background:` 之前加一行 `transform: translateX(0);`。
    - `:869-873` 的 `.deck-switch.active .deck-switch-knob` 规则里，把 `left: 20px;` **删掉**，换成 `transform: translateX(18px);`。`18px` 是原位移量：`20px - 2px = 18px`。
    - 改完后这两条规则应当是：
-
      ```css
      .deck-switch-knob {
        position: absolute;
@@ -262,7 +261,6 @@ AUDIT 第 5 节 Performance 两条直接命中：
        box-shadow: 0 0 8px var(--d-glow);
      }
      ```
-
 4. **`src/renderer/src/components/StreamingLibrary.vue`，12 处。**
    - `:406`（`.glass-card`，带 `backdrop-filter: blur(24px)`；hover 改 `transform` + `box-shadow`）→ `transition: transform 0.3s var(--te-ease-enter);`
    - `:502`（`.provider-switch-btn`；状态改 `background` 纯色 + `border-color` + `color`）→

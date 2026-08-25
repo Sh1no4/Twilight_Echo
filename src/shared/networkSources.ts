@@ -3,7 +3,15 @@
  * 详见 docs/network-music-sources.md。
  */
 
-export type NetworkProtocol = 'webdav' | 'ftp' | 'ftps' | 'sftp' | 'scp' | 'smb' | 'nfs' | 'dlna'
+export type NetworkProtocol =
+  | 'webdav'
+  | 'ftp'
+  | 'ftps'
+  | 'sftp'
+  | 'scp'
+  | 'smb'
+  | 'nfs'
+  | 'dlna'
 
 export type NetworkCredentialKind = 'anonymous' | 'password' | 'privateKey'
 
@@ -123,9 +131,4 @@ export interface NetworkSourceError {
 
 export type NetworkSourceEvent =
   | { type: 'profiles-changed' }
-  | {
-      type: 'connection-state'
-      profileId: string
-      state: 'connecting' | 'connected' | 'failed'
-      error?: NetworkSourceError
-    }
+  | { type: 'connection-state'; profileId: string; state: 'connecting' | 'connected' | 'failed'; error?: NetworkSourceError }

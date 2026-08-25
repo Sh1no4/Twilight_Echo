@@ -40,8 +40,8 @@ html[data-te-motion='full']
 
 ```css
 /* src/renderer/src/assets/base.css:32 与 :39 — 当前 */
---te-motion-press: 90ms;
---te-motion-press-scale: 0.96;
+  --te-motion-press: 90ms;
+  --te-motion-press-scale: 0.96;
 ```
 
 覆盖面极大：`data-te-interactive` 在 `.vue` 里 97 处（另有 5 处在 css 里），`role="button"` 26 处，再加上全部原生 `<button>`。默认设置是 `motionPreference: 'system'`（`src/main/core/settings.ts:156`），而 `resolveMotionMode`（`src/shared/motion.ts:10-16`）在无系统减弱偏好时解析为 `'full'`，所以 `html[data-te-motion='full']` 就是绝大多数用户的默认状态。这是全应用最高频的交互路径。
@@ -173,7 +173,7 @@ html[data-te-motion='full']
 
 ```css
 /* target — src/renderer/src/assets/base.css:39 */
---te-motion-press-scale: 0.97;
+  --te-motion-press-scale: 0.97;
 ```
 
 `@keyframes te-interactive-press`（现 `base.css:401-410`）**整块删除**。
@@ -231,7 +231,6 @@ html[data-te-motion='full']
    ```
 
    替换成 Target 段给出的两条规则（带注释的基础 transition 规则 + `:active` 规则）。注意 `:active` 规则里的 `transition-duration: var(--te-motion-hover), var(--te-motion-press);` 是两个值，按 `transition` 简写里 `translate, transform` 的顺序对应，逗号和顺序都不要动。
-
 3. 同一文件，删除第 401-410 行整个 `@keyframes te-interactive-press { … }` 块（含 `0%, 100% { scale: 1; }` 和 `48% { scale: var(--te-motion-press-scale); }`）。删完检查上下不要留下连续两个空行。已核查全仓没有任何测试断言 `te-interactive-press`，可以安全删除。
 4. 打开 `src/renderer/src/components/player-bar/PlayerBar.css`，第 1270-1273 行 `.ctrl-btn:active { transform: scale(0.88); transition-duration: 0.1s; }`：删掉 `transform: scale(0.88);` 这一行，保留 `transition-duration: 0.1s;`，并在规则上方加 Target 段给出的三行注释。
 5. 同一文件第 1810-1813 行 `.mode-btn-right:active`：同样只删 `transform: scale(0.88);`，保留 `transition-duration: 0.1s;`。不需要重复加注释。
@@ -247,19 +246,17 @@ html[data-te-motion='full']
    ```
 
    这三个选择器都是 `<button>`（`src/renderer/src/mini-player/MiniPlayerApp.vue:398/408/418/428/437` 是 `.mini-tool-button`，`:556/569` 是 `.mini-control-button`，`:579` 是 `.mini-play-button`），会被 base.css 的全局 `:where(button, …)` 规则覆盖到。**注意**：小窗走的是同一个 `src/renderer/index.html` + `src/main.ts`（`src/main.ts:1` 就 `import './assets/main.css'`，而 `src/renderer/src/assets/main.css:3` `@import './base.css'`），所以 base.css 在小窗里同样生效。
-
 8. 打开 `src/renderer/src/components/TitleBar.vue`，第 340-343 行 `.control-btn:active`：只删 `transform: scale(0.88);`，保留 `transition-duration: 0.1s;`。**不要动第 432-435 行的 `.title-bar-liquid :is(.menu-btn, .settings-btn, .plugins-btn, .login-btn, .control-btn):active { transform: scale(0.94); transition-duration: 90ms; }`**——它是 liquid glass 皮肤下的独立表现，`0.94` 也在别处成对出现，属于后续方案。
 9. 打开 `src/renderer/src/components/onboarding/OnboardingWizard.css`，删除第 855-857 行整条规则 `.onb-swatch:active { transform: scale(0.94); }`。
 10. 打开 `src/renderer/src/app/useMotionPreference.test.ts`，找到第 61 行 `assert.match(baseCss, /transition: translate var\(--te-motion-hover\)/)`。Target 的基础规则里 `transition:` 后换行了，这条正则要求 `transition: translate var(--te-motion-hover)` 在同一行——而 `base.css:367-370` 那条既有规则**仍然是单行写法且没被本方案改动**，所以这条断言仍然通过，**不需要改**。但要**新增**一条断言按压走 transition 而非 keyframes，插在第 63 行 `assert.match(baseCss, /\[aria-disabled='true'\]/)` 之后：
 
     ```ts
-    // Press feedback must retarget mid-flight: a transition, never a keyframe.
-    assert.match(baseCss, /transform: scale\(var\(--te-motion-press-scale\)\)/)
-    assert.doesNotMatch(baseCss, /te-interactive-press/)
+      // Press feedback must retarget mid-flight: a transition, never a keyframe.
+      assert.match(baseCss, /transform: scale\(var\(--te-motion-press-scale\)\)/)
+      assert.doesNotMatch(baseCss, /te-interactive-press/)
     ```
 
     该文件已登记在 `package.json` 的 `test:app` 脚本里（无需新增登记）。同文件第 62 行 `assert.match(baseCss, /--te-ease-spring/)` 仍然通过（`base.css:29` 还在定义它）；第 68 行 `assert.match(miniPlayerCss, /html\[data-te-motion='reduced'\] .mini-player-root/)` 也仍然通过（第 7 步只删了 `:active` 规则，没碰 `MiniPlayer.css:1036`）。
-
 11. 全仓搜索 `scale(0.88)`，确认只剩你没动的地方；再搜 `te-interactive-press`，应当 0 命中。
 
 ## Boundaries

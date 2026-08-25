@@ -297,7 +297,10 @@ function nextRequestId(session: ActiveCastSession): number {
   return session.requestId
 }
 
-export async function chromecastLoad(device: CastDevice, request: CastLoadRequest): Promise<void> {
+export async function chromecastLoad(
+  device: CastDevice,
+  request: CastLoadRequest
+): Promise<void> {
   const host = device.host
   const port = device.port ?? CAST_DEFAULT_PORT
   if (!host) throw new Error('Chromecast device host is missing')
@@ -441,16 +444,10 @@ function openCastSession(host: string, port: number): Promise<ActiveCastSession>
           closed: false
         }
         // Platform connection handshake
-        void sendJson(
-          session,
-          'sender-0',
-          'receiver-0',
-          'urn:x-cast:com.google.cast.tp.connection',
-          {
-            type: 'CONNECT',
-            origin: {}
-          }
-        )
+        void sendJson(session, 'sender-0', 'receiver-0', 'urn:x-cast:com.google.cast.tp.connection', {
+          type: 'CONNECT',
+          origin: {}
+        })
           .then(() =>
             sendJson(session, 'sender-0', 'receiver-0', 'urn:x-cast:com.google.cast.tp.heartbeat', {
               type: 'PING'
@@ -465,15 +462,9 @@ function openCastSession(host: string, port: number): Promise<ActiveCastSession>
             clearInterval(heartbeat)
             return
           }
-          void sendJson(
-            session,
-            'sender-0',
-            'receiver-0',
-            'urn:x-cast:com.google.cast.tp.heartbeat',
-            {
-              type: 'PING'
-            }
-          ).catch(() => {
+          void sendJson(session, 'sender-0', 'receiver-0', 'urn:x-cast:com.google.cast.tp.heartbeat', {
+            type: 'PING'
+          }).catch(() => {
             clearInterval(heartbeat)
           })
         }, 5000)
@@ -517,9 +508,7 @@ function handleCastFrame(session: ActiveCastSession, frame: Buffer): void {
     const payload = parseJsonWithNestingLimit(msg.payloadUtf8) as Record<string, unknown>
     if (payload.type === 'PONG') return
     if (payload.type === 'RECEIVER_STATUS') {
-      const status = payload.status as
-        | { applications?: Array<{ transportId?: string }> }
-        | undefined
+      const status = payload.status as { applications?: Array<{ transportId?: string }> } | undefined
       const app = status?.applications?.[0]
       if (app?.transportId) session.transportId = app.transportId
     }

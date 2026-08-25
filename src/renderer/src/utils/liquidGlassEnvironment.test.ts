@@ -65,11 +65,7 @@ test('transparent or unreadable pixels use deterministic tone fallbacks', () => 
 })
 
 test('adaptive tone flips light glass over a bright backdrop only', () => {
-  assert.equal(
-    resolveAdaptiveGlassTone(0.9, 'light'),
-    'dark',
-    'bright backdrop darkens light glass'
-  )
+  assert.equal(resolveAdaptiveGlassTone(0.9, 'light'), 'dark', 'bright backdrop darkens light glass')
   assert.equal(
     resolveAdaptiveGlassTone(ADAPTIVE_TONE_LUMINANCE_THRESHOLD, 'light'),
     'dark',

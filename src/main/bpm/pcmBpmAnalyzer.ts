@@ -24,11 +24,7 @@ const WINDOW_SECONDS = 16
 const WINDOW_STEP_SECONDS = 8
 
 export function analyzePcmBpm(input: AnalyzePcmBpmInput): BpmAnalysisResult | null {
-  if (
-    !Number.isFinite(input.sampleRate) ||
-    input.sampleRate <= 0 ||
-    input.samples.length < FRAME_SIZE
-  ) {
+  if (!Number.isFinite(input.sampleRate) || input.sampleRate <= 0 || input.samples.length < FRAME_SIZE) {
     return null
   }
 
@@ -39,10 +35,9 @@ export function analyzePcmBpm(input: AnalyzePcmBpmInput): BpmAnalysisResult | nu
   const tempoMap = estimateTempoMap(envelope.values, envelope.hopMs, input.referenceBpm)
   const stableSegments = tempoMap.filter((segment) => segment.confidence >= 0.45)
   const bpmValues = stableSegments.map((segment) => segment.bpm)
-  const bpmRange =
-    bpmValues.length >= 2
-      ? ([roundBpm(Math.min(...bpmValues)), roundBpm(Math.max(...bpmValues))] as [number, number])
-      : undefined
+  const bpmRange = bpmValues.length >= 2
+    ? [roundBpm(Math.min(...bpmValues)), roundBpm(Math.max(...bpmValues))] as [number, number]
+    : undefined
   const variableTempo = Boolean(bpmRange && bpmRange[1] - bpmRange[0] >= 18)
 
   return {
@@ -57,10 +52,7 @@ export function analyzePcmBpm(input: AnalyzePcmBpmInput): BpmAnalysisResult | nu
   }
 }
 
-function buildOnsetEnvelope(
-  samples: ArrayLike<number>,
-  sampleRate: number
-): { values: number[]; hopMs: number } {
+function buildOnsetEnvelope(samples: ArrayLike<number>, sampleRate: number): { values: number[]; hopMs: number } {
   const values: number[] = []
   let previousEnergy = 0
   for (let offset = 0; offset + FRAME_SIZE <= samples.length; offset += HOP_SIZE) {
@@ -76,11 +68,7 @@ function buildOnsetEnvelope(
   return { values, hopMs: (HOP_SIZE / sampleRate) * 1000 }
 }
 
-function estimateTempo(
-  values: number[],
-  hopMs: number,
-  referenceBpm?: number
-): TempoCandidate | null {
+function estimateTempo(values: number[], hopMs: number, referenceBpm?: number): TempoCandidate | null {
   const fromPeaks = estimateTempoFromPeaks(values, hopMs, referenceBpm)
   const fromCorrelation = estimateTempoFromCorrelation(values, hopMs, referenceBpm)
   if (fromPeaks && fromCorrelation) {
@@ -89,11 +77,7 @@ function estimateTempo(
   return fromPeaks ?? fromCorrelation
 }
 
-function estimateTempoFromPeaks(
-  values: number[],
-  hopMs: number,
-  referenceBpm?: number
-): TempoCandidate | null {
+function estimateTempoFromPeaks(values: number[], hopMs: number, referenceBpm?: number): TempoCandidate | null {
   const max = Math.max(...values)
   if (max <= 0.000001) return null
   const mean = values.reduce((sum, value) => sum + value, 0) / values.length
@@ -135,19 +119,11 @@ function estimateTempoFromPeaks(
   const rawBpm = 60000 / average
   return {
     bpm: alignBpmToReference(rawBpm, referenceBpm),
-    confidence: clamp(
-      (consistent.length / Math.max(6, intervals.length)) * (1 - deviation / (average * 0.2)),
-      0,
-      1
-    )
+    confidence: clamp((consistent.length / Math.max(6, intervals.length)) * (1 - deviation / (average * 0.2)), 0, 1)
   }
 }
 
-function estimateTempoFromCorrelation(
-  values: number[],
-  hopMs: number,
-  referenceBpm?: number
-): TempoCandidate | null {
+function estimateTempoFromCorrelation(values: number[], hopMs: number, referenceBpm?: number): TempoCandidate | null {
   const energy = values.reduce((sum, value) => sum + value * value, 0)
   if (energy <= 0.000001) return null
   const minLag = Math.max(1, Math.round(60000 / MAX_BPM / hopMs))
@@ -198,11 +174,7 @@ function findFasterTempoCandidate(
   return null
 }
 
-function estimateTempoMap(
-  values: number[],
-  hopMs: number,
-  referenceBpm?: number
-): BpmTempoSegment[] {
+function estimateTempoMap(values: number[], hopMs: number, referenceBpm?: number): BpmTempoSegment[] {
   const windowSize = Math.max(8, Math.round((WINDOW_SECONDS * 1000) / hopMs))
   const stepSize = Math.max(1, Math.round((WINDOW_STEP_SECONDS * 1000) / hopMs))
   const segments: BpmTempoSegment[] = []
@@ -244,9 +216,7 @@ function scoreLag(values: number[], lag: number): number {
 
 function alignBpmToReference(bpm: number, referenceBpm: number | undefined): number {
   if (!Number.isFinite(referenceBpm) || !referenceBpm) return bpm
-  const candidates = [bpm, bpm / 2, bpm * 2].filter(
-    (candidate) => candidate >= MIN_BPM && candidate <= MAX_BPM
-  )
+  const candidates = [bpm, bpm / 2, bpm * 2].filter((candidate) => candidate >= MIN_BPM && candidate <= MAX_BPM)
   let bestDistance = Infinity
   for (const candidate of candidates) {
     const distance = Math.abs(candidate - referenceBpm)

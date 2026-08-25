@@ -83,11 +83,7 @@ function validateThemeContributions(raw, type, apiVersion) {
     let hasStructured = false
     if (structured != null) {
       if (!isRecord(structured)) throw new Error('theme contribution structured must be an object')
-      if (
-        structured.schemaVersion !== 1 &&
-        structured.schemaVersion !== 2 &&
-        structured.schemaVersion !== 3
-      ) {
+      if (structured.schemaVersion !== 1 && structured.schemaVersion !== 2 && structured.schemaVersion !== 3) {
         throw new Error('theme contribution structured schemaVersion must be 1, 2, or 3')
       }
       if (structured.schemaVersion === 2 && apiVersion < 2) {

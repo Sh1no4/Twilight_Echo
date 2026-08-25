@@ -134,26 +134,28 @@ html[data-te-motion='full'] .toggle-switch.active::after {
 
 ```html
 <!-- src/renderer/src/components/settings-page/BackgroundEditorSettings.vue:171-187 — 当前 -->
-<div class="background-accordion">
-  <button
-    type="button"
-    class="background-accordion-trigger"
-    :class="{ active: customBackgroundOpen }"
-    @click="customBackgroundOpen = !customBackgroundOpen"
-  >
-    <span>
-      {{ settings.appBackground.global.kind === 'image' && settings.appBackground.global.image ?
-      '图片背景' : '纯色背景' }}
-    </span>
-    <i class="pi pi-chevron-down"></i>
-  </button>
-  <div v-if="customBackgroundOpen" class="background-accordion-panel"></div>
-</div>
+    <div class="background-accordion">
+      <button
+        type="button"
+        class="background-accordion-trigger"
+        :class="{ active: customBackgroundOpen }"
+        @click="customBackgroundOpen = !customBackgroundOpen"
+      >
+        <span>
+          {{
+            settings.appBackground.global.kind === 'image' && settings.appBackground.global.image
+              ? '图片背景'
+              : '纯色背景'
+          }}
+        </span>
+        <i class="pi pi-chevron-down"></i>
+      </button>
+      <div v-if="customBackgroundOpen" class="background-accordion-panel">
 ```
 
 ```html
 <!-- src/renderer/src/components/settings-page/BackgroundEditorSettings.vue:293 — 当前 -->
-<div v-if="backgroundPageOpen === page.value" class="page-background-controls"></div>
+              <div v-if="backgroundPageOpen === page.value" class="page-background-controls">
 ```
 
 两个后果：
@@ -190,10 +192,10 @@ html[data-te-motion='full'] .toggle-switch:active::after {
 
 ```css
 /* target — src/renderer/src/components/settings-page/SettingsPage.css，替换原 :1132-1135 */
-transition:
-  translate var(--te-motion-panel) var(--te-ease-soft),
-  box-shadow var(--te-motion-panel) var(--te-ease-soft),
-  scale var(--te-motion-hover) var(--te-ease-soft);
+  transition:
+    translate var(--te-motion-panel) var(--te-ease-soft),
+    box-shadow var(--te-motion-panel) var(--te-ease-soft),
+    scale var(--te-motion-hover) var(--te-ease-soft);
 ```
 
 `--te-motion-hover` 是 `160ms`（`base.css:33`），落在 AUDIT 第 2 节「Button press feedback 100–160ms」这一档；`--te-motion-panel` 是 `280ms`（`base.css:34`），位移时长保持不变。
@@ -203,7 +205,7 @@ transition:
 ```css
 /* target — 标准尺寸：原 .toggle-switch.active::after { left: 22px } */
 .toggle-switch.active::after {
-  translate: 20px 0; /* 22px - 2px */
+  translate: 20px 0;   /* 22px - 2px */
 }
 
 /* target — 原 .toggle-switch.inactive::after { left: 2px } */
@@ -213,7 +215,7 @@ transition:
 
 /* target — 大尺寸：原 .toggle-switch.large.active::after { left: 25px } */
 .toggle-switch.large.active::after {
-  translate: 23px 0; /* 25px - 2px */
+  translate: 23px 0;   /* 25px - 2px */
 }
 ```
 
@@ -271,7 +273,6 @@ transition:
 
 - 动效 token 全住在 `src/renderer/src/assets/base.css:26-40`。本方案用到：`--te-motion-hover: 160ms;`（`:33`）、`--te-motion-panel: 280ms;`（`:34`）、`--te-ease-soft: var(--te-ease-out-quint);`（`:28`）。**不新增任何 token。**
 - **`<Transition>` + 四条 class 的仓库样板** —— 同一个 `SettingsPage.css` 里已有一套做对的（赞助对话框），照它的形状写：
-
   ```css
   /* src/renderer/src/components/settings-page/SettingsPage.css:3183-3204 — 现有正确实现 */
   .sponsor-dialog-enter-active,
@@ -297,9 +298,7 @@ transition:
     opacity: 0;
   }
   ```
-
   对应模板侧的写法在 `src/renderer/src/components/settings-page/AboutSettingsSection.vue:331`：`<Transition name="sponsor-dialog">`，内部是 `v-if` 的元素。
-
 - 显式多属性清单的排版：`transition:` 单独一行，每属性一行、缩进两格、除末项外行尾逗号。prettier 会这样格式化。
 - 三档动效模式由 `html[data-te-motion='full'|'reduced'|'off']` 驱动（`src/shared/motion.ts` + `src/renderer/src/app/useMotionPreference.ts`）。`base.css:412-441` 已经统一处理降级：`reduced` 把 `transition-duration` 压到 `0.01ms` 并把 `--te-motion-press-scale` 设为 `1`，`off` 直接 `transition: none !important`。**所以本方案新增的 transition 不需要自己写 `prefers-reduced-motion` 媒体查询**，全局兜底已覆盖。
 - **`html[data-te-motion='full']` 前缀要保留。** 目标一的 `:active` 缩放规则必须继续挂在 `html[data-te-motion='full']` 下面，与原关键帧规则一致 —— `reduced` / `off` 档不应该有这个鼓起反馈。
@@ -310,48 +309,42 @@ transition:
 
 1. **把开关圆点的位移改成 `translate`，并收紧 `scale` 时长。** 打开 `src/renderer/src/components/settings-page/SettingsPage.css`，定位第 1132-1135 行（在 `.toggle-switch::after` 规则块内），把
    ```css
-   transition:
-     left var(--te-motion-panel) var(--te-ease-soft),
-     box-shadow var(--te-motion-panel) var(--te-ease-soft),
-     scale var(--te-motion-panel) var(--te-ease-soft);
+     transition:
+       left var(--te-motion-panel) var(--te-ease-soft),
+       box-shadow var(--te-motion-panel) var(--te-ease-soft),
+       scale var(--te-motion-panel) var(--te-ease-soft);
    ```
    改成：
    ```css
-   transition:
-     translate var(--te-motion-panel) var(--te-ease-soft),
-     box-shadow var(--te-motion-panel) var(--te-ease-soft),
-     scale var(--te-motion-hover) var(--te-ease-soft);
+     transition:
+       translate var(--te-motion-panel) var(--te-ease-soft),
+       box-shadow var(--te-motion-panel) var(--te-ease-soft),
+       scale var(--te-motion-hover) var(--te-ease-soft);
    ```
    `left: 2px` 那一行**保留不动**（它现在是静态起始位置，不再被过渡）。
 
 1b. **改两个尺寸变体的位移端点。** 同一文件：
+   - `.toggle-switch.active::after`（`:1146-1148`）的 `left: 22px;` → `translate: 20px 0;`
+   - `.toggle-switch.inactive::after`（`:1154-1156`）的 `left: 2px;` → `translate: 0 0;`
+   - `.toggle-switch.large.active::after`（`:1176-1178`）的 `left: 25px;` → `translate: 23px 0;`
 
-- `.toggle-switch.active::after`（`:1146-1148`）的 `left: 22px;` → `translate: 20px 0;`
-- `.toggle-switch.inactive::after`（`:1154-1156`）的 `left: 2px;` → `translate: 0 0;`
-- `.toggle-switch.large.active::after`（`:1176-1178`）的 `left: 25px;` → `translate: 23px 0;`
-
-行程算法：新值 = 原 `left` 端点 − 基础 `left: 2px`。`.toggle-switch.large::after`（`:1170-1174`）只改 `top`/`width`/`height`、不含 `left`，继承基础起点，**不需要改**。
+   行程算法：新值 = 原 `left` 端点 − 基础 `left: 2px`。`.toggle-switch.large::after`（`:1170-1174`）只改 `top`/`width`/`height`、不含 `left`，继承基础起点，**不需要改**。
 
 2. **把开关的关键帧反馈改成 `:active` transition。** 同一文件，定位第 1161-1163 行：
-
    ```css
    html[data-te-motion='full'] .toggle-switch.active::after {
      animation: te-settings-toggle-pop var(--te-motion-panel) var(--te-ease-soft);
    }
    ```
-
    整块替换为：
-
    ```css
    html[data-te-motion='full'] .toggle-switch:active::after {
      scale: 1.16;
    }
    ```
-
    **注意选择器从 `.toggle-switch.active::after` 变成了 `.toggle-switch:active::after`** —— 前者是「已开启状态」的类（一直存在），后者是「正在被按下」的伪类（只在指针按住期间存在）。这个改动是有意的：原来关键帧在「变成 active」时播一次，现在改成按下时鼓起、松手回落，全程可 retarget。**不要**写成 `.toggle-switch.active:active::after`（那样只有已开启的开关才有按下反馈，关闭方向就没有了）。
 
 3. **删除开关的关键帧本体。** 同一文件，定位第 3312-3316 行，删除整块：
-
    ```css
    @keyframes te-settings-toggle-pop {
      45% {
@@ -359,11 +352,9 @@ transition:
      }
    }
    ```
-
    删除后上下各保留一个空行（上文是 `@keyframes te-settings-expand` 的收尾 `}`，下文是 `@keyframes te-settings-swatch-select {`）。删完跑 `grep -rn "te-settings-toggle-pop" src/` 确认零命中。
 
 4. **新增折叠面板的 `<Transition>` 样式规则。** 同一文件，在 `.background-accordion-panel` 规则（原第 2064 行）**之前**插入下面这一段（前后各留一个空行）：
-
    ```css
    /* 折叠面板的进出：transition 而非 keyframes，半途反向时从当前位置 retarget；
       离场路径由 <Transition> 提供，收起不再是硬切。 */
@@ -382,23 +373,18 @@ transition:
    ```
 
 5. **去掉 `.background-accordion-panel` 的 `animation`。** 同一文件，定位 `.background-accordion-panel` 规则（原第 2064-2069 行），删除其中的
-
    ```css
-   animation: te-settings-expand var(--te-motion-panel) var(--te-ease-soft) both;
+     animation: te-settings-expand var(--te-motion-panel) var(--te-ease-soft) both;
    ```
-
    这一行。规则块剩下 `display: grid;`、`gap: 12px;`、`padding: 0 12px 12px;` 三条。
 
 6. **去掉 `.page-background-controls` 的 `animation`。** 同一文件，定位 `.page-background-controls` 规则（原第 2334-2339 行），同样删除
-
    ```css
-   animation: te-settings-expand var(--te-motion-panel) var(--te-ease-soft) both;
+     animation: te-settings-expand var(--te-motion-panel) var(--te-ease-soft) both;
    ```
-
    这一行。规则块剩下 `display: grid;`、`gap: 10px;`、`padding: 0 12px 12px;` 三条。
 
 7. **删除折叠面板的关键帧本体。** 同一文件，定位第 3300-3310 行，删除整块：
-
    ```css
    @keyframes te-settings-expand {
      from {
@@ -412,34 +398,27 @@ transition:
      }
    }
    ```
-
    删完跑 `grep -rn "te-settings-expand" src/` 确认零命中。
 
 8. **模板：包裹第一个折叠面板。** 打开 `src/renderer/src/components/settings-page/BackgroundEditorSettings.vue`，定位第 187 行：
-
    ```html
-   <div v-if="customBackgroundOpen" class="background-accordion-panel"></div>
+         <div v-if="customBackgroundOpen" class="background-accordion-panel">
    ```
-
    在它外面包一层 `<Transition>`。改动前后的结构（只贴首尾，中间内容一个字都不要动）：
-
    ```html
    <!-- 改动后 -->
-   <Transition name="settings-accordion">
-     <div v-if="customBackgroundOpen" class="background-accordion-panel">
-       …（原有内容整体向右缩进两格）…
-     </div>
-   </Transition>
+         <Transition name="settings-accordion">
+           <div v-if="customBackgroundOpen" class="background-accordion-panel">
+             …（原有内容整体向右缩进两格）…
+           </div>
+         </Transition>
    ```
-
    这个 `<div>` 的配对 `</div>` 在原文件里是缩进 6 格的那一个 —— 从第 187 行的 `<div>` 开始数配对标签找到它，在其后加 `</Transition>`。**内部所有子元素整体缩进两格**（prettier 会要求这个缩进，`pnpm run lint` 会报出来）。
 
 9. **模板：包裹第二个折叠面板。** 同一文件，定位第 293 行：
-
    ```html
-   <div v-if="backgroundPageOpen === page.value" class="page-background-controls"></div>
+                 <div v-if="backgroundPageOpen === page.value" class="page-background-controls">
    ```
-
    同样在外面包 `<Transition name="settings-accordion">` … `</Transition>`，内部整体缩进两格。这个面板在一个 `v-for`（按页面遍历）里，**`<Transition>` 要放在 `v-for` 元素的内部**（即包住这个 `v-if` 的 `<div>`，而不是包住整个循环项）—— 每个页面各自一个 `<Transition>`，互不干扰。
 
 10. **收尾核对。** 跑 `grep -rn "te-settings-expand\|te-settings-toggle-pop" src/`，应当零命中。跑 `grep -n "settings-accordion" src/renderer/src/components/settings-page/SettingsPage.css src/renderer/src/components/settings-page/BackgroundEditorSettings.vue`，应当能看到 CSS 侧 4 个选择器 + 模板侧 2 个 `<Transition name="settings-accordion">`。

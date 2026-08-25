@@ -84,9 +84,7 @@ function resolvePnpmInvocation(
   }
 
   if (platform === 'win32') {
-    fail(
-      'could not locate Corepack required for pnpm@11.7.0; install Corepack with the active Node runtime or add its install directory to PATH'
-    )
+    fail('could not locate Corepack required for pnpm@11.7.0; install Corepack with the active Node runtime or add its install directory to PATH')
   }
   return { command: 'corepack', prefixArgs: [PNPM_PACKAGE_MANAGER] }
 }

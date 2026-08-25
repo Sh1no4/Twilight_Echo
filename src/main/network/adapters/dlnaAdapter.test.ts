@@ -65,13 +65,11 @@ function makeProfile(overrides: Partial<NetworkSourceProfile> = {}): NetworkSour
   }
 }
 
-function makeTransport(
-  overrides: {
-    browseDirectChildren?: string
-    browseMetadata?: string
-    authFail?: boolean
-  } = {}
-): DlnaTransport & { posts: Array<{ soapAction: string; body: string }> } {
+function makeTransport(overrides: {
+  browseDirectChildren?: string
+  browseMetadata?: string
+  authFail?: boolean
+} = {}): DlnaTransport & { posts: Array<{ soapAction: string; body: string }> } {
   const posts: Array<{ soapAction: string; body: string }> = []
   const transport: DlnaTransport = {
     async get(_url) {
@@ -139,13 +137,10 @@ test('dlna surfaces device description failures as network errors', async () => 
     descriptionPaths: ['/rootDesc.xml']
   })
   const session = await adapter.createSession(makeProfile(), { kind: 'anonymous' })
-  await assert.rejects(
-    async () => session.list('/'),
-    (err: unknown) => {
-      assert.equal((err as { code: string }).code, 'network')
-      return true
-    }
-  )
+  await assert.rejects(async () => session.list('/'), (err: unknown) => {
+    assert.equal((err as { code: string }).code, 'network')
+    return true
+  })
 })
 
 test('dlna transport readStream returns a stream from the body buffer', async () => {

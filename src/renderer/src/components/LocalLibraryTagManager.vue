@@ -174,11 +174,9 @@ function switchView(view: 'edit' | 'duplicates'): void {
 
 function focusableElements(): HTMLElement[] {
   if (!dialogRef.value) return []
-  return [
-    ...dialogRef.value.querySelectorAll<HTMLElement>(
-      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-    )
-  ].filter((element) => !element.hasAttribute('hidden') && element.getClientRects().length > 0)
+  return [...dialogRef.value.querySelectorAll<HTMLElement>(
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  )].filter((element) => !element.hasAttribute('hidden') && element.getClientRects().length > 0)
 }
 
 function restoreTriggerFocus(): void {
@@ -207,12 +205,8 @@ function onDialogKeydown(event: KeyboardEvent): void {
   }
   const currentIndex = focusable.indexOf(document.activeElement as HTMLElement)
   const nextIndex = event.shiftKey
-    ? currentIndex <= 0
-      ? focusable.length - 1
-      : currentIndex - 1
-    : currentIndex === -1 || currentIndex === focusable.length - 1
-      ? 0
-      : currentIndex + 1
+    ? currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1
+    : currentIndex === -1 || currentIndex === focusable.length - 1 ? 0 : currentIndex + 1
   event.preventDefault()
   focusable[nextIndex].focus()
 }

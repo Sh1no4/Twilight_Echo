@@ -165,12 +165,11 @@
 
 ```css
 /* target — src/renderer/src/assets/base.css，插在 --te-ease-out-expo 那一行之后 */
-/* Strong ease-out for UI enter/exit (AUDIT §2). */
---te-ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+  /* Strong ease-out for UI enter/exit (AUDIT §2). */
+  --te-ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
 ```
 
 值一字不差：
-
 - 新 token 名 `--te-ease-out-strong`，值 `cubic-bezier(0.23, 1, 0.32, 1)`
 - 时长 `400ms`
 - 过渡期 filter：`blur(18px) saturate(1.28) brightness(0.34)`
@@ -185,7 +184,6 @@
 **58px 的重模糊正是掩蔽「两张封面同时可见」的东西。** 重叠期用户看到的是两团糊光叠在一起，而不是两张能辨认出内容的封面。把 blur 压到 18px 会改变重叠期的观感 —— 有可能出现两张**可辨认**的封面同屏，那是比性能更严重的视觉缺陷。
 
 这就是为什么目标里同时做了三件事而不只是降 blur：
-
 - 时长从 700ms 砍到 400ms，让重叠窗口本身缩短 43%；
 - `brightness` 从 0.42 压到 0.34，让过渡期整体更暗、细节更不可辨；
 - 18px 仍然在 AUDIT 第 7 节允许的掩蔽范围内（原文「A jarring crossfade that shows two overlapping states can be masked with subtle `filter: blur(2px)` during the transition」—— 18px 远超那个下限，掩蔽力仍然充足）。
@@ -219,22 +217,17 @@
 ## Steps
 
 1. 打开 `src/renderer/src/assets/base.css`，定位到 `:31`：
-
    ```css
-   --te-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+     --te-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
    ```
-
    **先 `grep -n "te-ease-out-strong" src/renderer/src/assets/base.css`。若已命中（013 号方案先落地了），跳到第 2 步。** 否则在 `:31` 后面新增两行（缩进两个空格）：
-
    ```css
-   /* Strong ease-out for UI enter/exit (AUDIT §2). */
-   --te-ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+     /* Strong ease-out for UI enter/exit (AUDIT §2). */
+     --te-ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
    ```
-
    判据：紧邻上方是 `--te-ease-out-expo`，紧邻下方是 `--te-motion-press: 90ms;`。
 
 2. 打开 `src/renderer/src/components/PlayingMusic.vue`，定位到 `:896-901`：
-
    ```css
    .backdrop-cover-fade-enter-active,
    .backdrop-cover-fade-leave-active {
@@ -243,9 +236,7 @@
        transform 0.7s ease;
    }
    ```
-
    改成（同时插入新的过渡期 filter 规则）：
-
    ```css
    .backdrop-cover-fade-enter-active,
    .backdrop-cover-fade-leave-active {
@@ -262,11 +253,9 @@
      filter: blur(18px) saturate(1.28) brightness(0.34) !important;
    }
    ```
-
    `!important` 是必需的：`:887-894` 的两条 `:global(html[data-theme='…'])` 规则特异性更高（带 `html[attr]` 前缀），不加 `!important` 会被它们的 `--te-playback-backdrop-filter` 压回 72–76px。
 
 3. 在同文件把 enter/leave 四个状态类的 `transform` 全部改成 `scale(1.06)`。改动前是 `:903-921`：
-
    ```css
    .backdrop-cover-fade-enter-from {
      opacity: 0;
@@ -288,9 +277,7 @@
      transform: translateY(18px) scale(1.09);
    }
    ```
-
    改成：
-
    ```css
    .backdrop-cover-fade-enter-from {
      opacity: 0;
@@ -312,7 +299,6 @@
      transform: scale(1.06);
    }
    ```
-
    四个 `transform` 值必须**完全相同**（`scale(1.06)`），这样即使有别的规则意外把 `transform` 拉进过渡列表，也不会有实际变化可动画。`opacity` 的 0/1 差异保留 —— 那是这条过渡唯一该动的东西。
 
 4. 不做其他任何修改。本方案只有以上编辑。

@@ -27,14 +27,13 @@
 
 ```html
 <!-- src/renderer/src/components/LocalDashboard.vue:886-893 — 当前 -->
-<button
-  class="hero-progress-track"
-  title="点击跳转播放进度"
-  aria-label="播放进度"
-  @click="handleHeroSeek"
->
-  <span :style="{ width: progressWidth }"></span>
-</button>
+                <button
+                  class="hero-progress-track"
+                  title="点击跳转播放进度"
+                  aria-label="播放进度"
+                  @click="handleHeroSeek"
+                >
+                  <span :style="{ width: progressWidth }"></span>
 ```
 
 播放进度每秒推进一次，每次都启动一条 200ms 的 `width` 过渡——也就是说首页开着、歌在放，这个元素**一直在 layout**。200ms 的过渡窗口占了 1 秒里的 20%，但每次都要重排它所在的整个 flex 容器。
@@ -70,14 +69,14 @@
 
 ```html
 <!-- src/renderer/src/components/equalizer/ParametricEqWorkspace.vue:592-599 — 当前 -->
-<div class="meter-channel" aria-label="左声道">
-  <i class="meter-peak" :style="{ height: peakMeterLevel + '%' }"></i>
-  <i class="meter-rms" :style="{ height: rmsMeterLevel + '%' }"></i>
-</div>
-<div class="meter-channel" aria-label="右声道">
-  <i class="meter-peak" :style="{ height: Math.max(0, peakMeterLevel - 2) + '%' }"></i>
-  <i class="meter-rms" :style="{ height: Math.max(0, rmsMeterLevel - 3) + '%' }"></i>
-</div>
+        <div class="meter-channel" aria-label="左声道">
+          <i class="meter-peak" :style="{ height: peakMeterLevel + '%' }"></i>
+          <i class="meter-rms" :style="{ height: rmsMeterLevel + '%' }"></i>
+        </div>
+        <div class="meter-channel" aria-label="右声道">
+          <i class="meter-peak" :style="{ height: Math.max(0, peakMeterLevel - 2) + '%' }"></i>
+          <i class="meter-rms" :style="{ height: Math.max(0, rmsMeterLevel - 3) + '%' }"></i>
+        </div>
 ```
 
 值来自 `src/renderer/src/components/equalizer/ParametricEqWorkspace.vue:121-122`：
@@ -149,12 +148,12 @@ const rmsMeterLevel = computed(() => meterLevel(props.meterRmsDb))
 
 ```css
 /* resources/audio-visualizer/index.html:1243-1248 — 当前 */
-.metric-bar-fill {
-  height: 100%;
-  background-color: var(--accent-red);
-  width: 0;
-  transition: width 0.1s ease;
-}
+    .metric-bar-fill {
+      height: 100%;
+      background-color: var(--accent-red);
+      width: 0;
+      transition: width 0.1s ease;
+    }
 ```
 
 ### AUDIT 依据
@@ -211,15 +210,15 @@ AUDIT 第 5 节 Performance：
 
 ### 各处的过渡取舍
 
-| 位置                                    | 驱动频率        | 目标 transition                                        |
-| --------------------------------------- | --------------- | ------------------------------------------------------ |
-| `LocalDashboard.css` hero 进度条        | 播放中每秒 1 次 | `transition: none`，JS 每帧写 transform                |
-| `ParametricEqWorkspace.vue` VU 表       | 每帧            | `transition: none`                                     |
-| `SettingsPage.css` 更新进度             | 下载中偶发      | `transform 120ms linear`                               |
-| `ProviderDownloadsPanel.vue` 下载进度   | 下载中偶发      | `transform var(--te-motion-panel) var(--te-ease-soft)` |
-| `ImportDialog.vue` 导入进度             | 导入中偶发      | `transform 0.3s ease`                                  |
-| `NcmCloudPanel.vue` 进度条              | 偶发            | `transform 0.2s linear`                                |
-| `audio-visualizer/index.html` metric 条 | 偶发            | `transform 0.1s ease`                                  |
+| 位置 | 驱动频率 | 目标 transition |
+| --- | --- | --- |
+| `LocalDashboard.css` hero 进度条 | 播放中每秒 1 次 | `transition: none`，JS 每帧写 transform |
+| `ParametricEqWorkspace.vue` VU 表 | 每帧 | `transition: none` |
+| `SettingsPage.css` 更新进度 | 下载中偶发 | `transform 120ms linear` |
+| `ProviderDownloadsPanel.vue` 下载进度 | 下载中偶发 | `transform var(--te-motion-panel) var(--te-ease-soft)` |
+| `ImportDialog.vue` 导入进度 | 导入中偶发 | `transform 0.3s ease` |
+| `NcmCloudPanel.vue` 进度条 | 偶发 | `transform 0.2s linear` |
+| `audio-visualizer/index.html` metric 条 | 偶发 | `transform 0.1s ease` |
 
 低频处保留过渡是对的：过渡 `transform` 走合成器，成本与 `width` 完全不同一个量级。高频处按 `PlayerBar.css:1367-1375` 的样板走 `transition: none`。
 
@@ -277,8 +276,8 @@ AUDIT 第 5 节 Performance：
 找到 `.hero-progress-track` 规则（`::before` 在 `:642`，容器规则在其上方，用 `grep -n "^\.hero-progress-track" src/renderer/src/components/LocalDashboard.css` 定位）。在容器规则里确保有：
 
 ```css
-border-radius: 999px;
-overflow: hidden;
+  border-radius: 999px;
+  overflow: hidden;
 ```
 
 若容器已经有这两条，不要重复添加。**若容器上已有 `overflow: visible` 或其他 overflow 值，停下来报告**——改成 hidden 可能影响 hover 时 `::before` 的 `inset: 4px 0` 效果（见 `LocalDashboard.css:658-659`）。
@@ -314,13 +313,15 @@ const smoothedHeroProgress = useSmoothedValue(heroProgressPercent, {
 然后把模板 `:892` 从
 
 ```html
-<span :style="{ width: progressWidth }"></span>
+                  <span :style="{ width: progressWidth }"></span>
 ```
 
 改成
 
 ```html
-<span :style="{ transform: `scaleX(${smoothedHeroProgress / 100})` }"></span>
+                  <span
+                    :style="{ transform: `scaleX(${smoothedHeroProgress / 100})` }"
+                  ></span>
 ```
 
 `progressWidth` 若在别处仍被使用就保留其定义；若改完后无人引用，删掉它以免 lint 报未使用变量。用 grep 确认。
@@ -353,20 +354,20 @@ const smoothedHeroProgress = useSmoothedValue(heroProgressPercent, {
 把模板 `:592-599` 的四个 `:style` 从 height 百分比改成 scaleY 比例：
 
 ```html
-<div class="meter-channel" aria-label="左声道">
-  <i class="meter-peak" :style="{ transform: `scaleY(${peakMeterLevel / 100})` }"></i>
-  <i class="meter-rms" :style="{ transform: `scaleY(${rmsMeterLevel / 100})` }"></i>
-</div>
-<div class="meter-channel" aria-label="右声道">
-  <i
-    class="meter-peak"
-    :style="{ transform: `scaleY(${Math.max(0, peakMeterLevel - 2) / 100})` }"
-  ></i>
-  <i
-    class="meter-rms"
-    :style="{ transform: `scaleY(${Math.max(0, rmsMeterLevel - 3) / 100})` }"
-  ></i>
-</div>
+        <div class="meter-channel" aria-label="左声道">
+          <i class="meter-peak" :style="{ transform: `scaleY(${peakMeterLevel / 100})` }"></i>
+          <i class="meter-rms" :style="{ transform: `scaleY(${rmsMeterLevel / 100})` }"></i>
+        </div>
+        <div class="meter-channel" aria-label="右声道">
+          <i
+            class="meter-peak"
+            :style="{ transform: `scaleY(${Math.max(0, peakMeterLevel - 2) / 100})` }"
+          ></i>
+          <i
+            class="meter-rms"
+            :style="{ transform: `scaleY(${Math.max(0, rmsMeterLevel - 3) / 100})` }"
+          ></i>
+        </div>
 ```
 
 注意右声道的 `- 2` / `- 3` 是**百分点**的偏移，所以要先减再除 100，顺序不能颠倒。
@@ -454,14 +455,14 @@ const smoothedHeroProgress = useSmoothedValue(heroProgressPercent, {
 把 `:1243-1248` 改成：
 
 ```css
-.metric-bar-fill {
-  width: 100%;
-  height: 100%;
-  background-color: var(--accent-red);
-  transform: scaleX(0);
-  transform-origin: 0 50%;
-  transition: transform 0.1s ease;
-}
+    .metric-bar-fill {
+      width: 100%;
+      height: 100%;
+      background-color: var(--accent-red);
+      transform: scaleX(0);
+      transform-origin: 0 50%;
+      transition: transform 0.1s ease;
+    }
 ```
 
 注意原来是 `width: 0`（不是 100%），所以初始态由 `scaleX(0)` 承担。容器 `.metric-bar-bg`（`:1235-1241`）**没有 `overflow: hidden`**，但它也没有 `border-radius`，所以 scaleX 不会造成圆角变形，不需要补。

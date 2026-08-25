@@ -327,11 +327,7 @@ export function collectDsdPcmBlockers(input: {
   if (input.processing.dsdOutputMode === 'pcm') {
     add({ code: 'dsd_output_mode_pcm', value: 'pcm', origin: 'processing' })
   }
-  if (
-    !directMode &&
-    input.processing.dspEnabled &&
-    input.processing.volumeNormalization !== 'off'
-  ) {
+  if (!directMode && input.processing.dspEnabled && input.processing.volumeNormalization !== 'off') {
     add({
       code:
         input.processing.volumeNormalization === 'loudnorm'

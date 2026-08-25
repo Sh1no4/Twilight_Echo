@@ -219,7 +219,9 @@ function close(): void {
 html[data-theme='dark'] .title-bar,
 html[data-theme='dark'] .title-bar.title-bar-streaming,
 html[data-theme='dark']
-  .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings),
+  .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(
+    .title-bar-settings
+  ),
 html[data-theme='dark'] .title-bar.title-bar-glass {
   background: transparent !important;
 }
@@ -483,7 +485,8 @@ html[data-te-liquid-glass-scrolled='on'] .title-bar-liquid .title-bar-background
     0 6px 18px color-mix(in srgb, var(--te-lg-context-label) 8%, transparent);
 }
 
-.title-bar-liquid :is(.menu-btn, .back-btn, .settings-btn, .plugins-btn, .login-btn, .control-btn) {
+.title-bar-liquid
+  :is(.menu-btn, .back-btn, .settings-btn, .plugins-btn, .login-btn, .control-btn) {
   position: relative;
   overflow: hidden;
   color: inherit;

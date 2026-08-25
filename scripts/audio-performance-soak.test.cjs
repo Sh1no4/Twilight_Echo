@@ -58,6 +58,9 @@ test('audio performance evidence computes only counter deltas', () => {
     totalDeadlineNanoseconds: 2250,
     deadlineMissCount: 2
   })
-  assert.equal(callbackDeadlineLoadPercent(performanceDelta(before, after)), 93.33333333333333)
+  assert.equal(
+    callbackDeadlineLoadPercent(performanceDelta(before, after)),
+    93.33333333333333
+  )
   assert.equal(callbackDeadlineLoadPercent({ totalCallbackNanoseconds: 10 }), 0)
 })

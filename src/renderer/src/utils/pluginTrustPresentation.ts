@@ -48,7 +48,12 @@ export function presentPluginTrust(
   const signatureCurrentlyValid =
     verification.signatureStatus === 'valid' &&
     isBeforeOptionalDeadline(verification.revalidateAt, nowMs)
-  const official = isFreshOfficialVerification(verification, status, nowMs, signatureCurrentlyValid)
+  const official = isFreshOfficialVerification(
+    verification,
+    status,
+    nowMs,
+    signatureCurrentlyValid
+  )
   if (official) {
     return {
       label: '官方验证',
@@ -90,7 +95,9 @@ export function pluginIndexSourceLabel(status: PluginIndexStatusLike | null): st
   if (status.loadedFrom === 'bundled') return '随应用分发的离线发现快照'
   if (status.sourceUrl === OFFICIAL_PLUGIN_INDEX_URL) {
     if (status.loadedFrom === 'cache') {
-      return status.originVerified ? '官方索引缓存（降级）' : '官方 URL 缓存（来源未验证）'
+      return status.originVerified
+        ? '官方索引缓存（降级）'
+        : '官方 URL 缓存（来源未验证）'
     }
     return status.originVerified ? '固定官方索引' : '官方 URL 响应（来源未验证）'
   }
@@ -115,22 +122,22 @@ function isFreshOfficialVerification(
   return Boolean(
     Number.isFinite(nowMs) &&
     status &&
-    verification.level === 'official' &&
-    verification.official &&
-    verification.officialSource &&
-    verification.indexClaimed &&
-    signatureCurrentlyValid &&
-    status.sourceUrl === OFFICIAL_PLUGIN_INDEX_URL &&
-    status.configuredSourceUrl === OFFICIAL_PLUGIN_INDEX_URL &&
-    status.loadedFrom === 'remote' &&
-    status.lastFetchedAt &&
-    status.expiresAt &&
-    isBeforeRequiredDeadline(status.expiresAt, nowMs) &&
-    !status.stale &&
-    !status.expired &&
-    status.originVerified &&
-    status.officialSource &&
-    !status.trustStoreError
+      verification.level === 'official' &&
+      verification.official &&
+      verification.officialSource &&
+      verification.indexClaimed &&
+      signatureCurrentlyValid &&
+      status.sourceUrl === OFFICIAL_PLUGIN_INDEX_URL &&
+      status.configuredSourceUrl === OFFICIAL_PLUGIN_INDEX_URL &&
+      status.loadedFrom === 'remote' &&
+      status.lastFetchedAt &&
+      status.expiresAt &&
+      isBeforeRequiredDeadline(status.expiresAt, nowMs) &&
+      !status.stale &&
+      !status.expired &&
+      status.originVerified &&
+      status.officialSource &&
+      !status.trustStoreError
   )
 }
 

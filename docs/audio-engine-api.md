@@ -90,12 +90,12 @@
 
 `volumeNormalization` / ReplayGain 模式：
 
-| 模式       | 含义                                                | perfect reason      |
-| ---------- | --------------------------------------------------- | ------------------- |
-| `off`      | 不归一                                              | —                   |
-| `track`    | ReplayGain Track 或 R128 track 标签                 | `replaygain_active` |
-| `album`    | ReplayGain Album 或 R128 album 标签                 | `replaygain_active` |
-| `loudnorm` | EBU R128 Loudnorm（独立模式，**不得**映射为 Track） | `loudnorm_active`   |
+| 模式 | 含义 | perfect reason |
+|------|------|----------------|
+| `off` | 不归一 | — |
+| `track` | ReplayGain Track 或 R128 track 标签 | `replaygain_active` |
+| `album` | ReplayGain Album 或 R128 album 标签 | `replaygain_active` |
+| `loudnorm` | EBU R128 Loudnorm（独立模式，**不得**映射为 Track） | `loudnorm_active` |
 
 `loudnorm` 使用离线 EBU R128 测量（`TAE_AnalyzeLoudness` / libebur128 integrated + true peak），缓存键对齐 BPM（path|size|mtime|algo|target|ceiling）。完整解码只在独立 `audioAnalysisService` utility process 中执行，不得通过播放 `audioEngineService` RPC。analysis pool 有独立 watchdog、优先级、并发/队列上限和取消；worker 超时/退出不会重启播放 service。C ABI 的 size probe 会在线程局部保存一次分析结果，紧随其后的 buffer read 只复制 JSON；`TAE_GetAnalysisExecutionCount("bpm"|"loudness")` 可验证 probe/read 没有重复解码。默认目标 **−23.0 LUFS**、True Peak 上限 **−1.0 dBTP**，再叠加 `replayGainPreamp`。缓存命中时增益为 `(targetLufs - measuredIntegratedLufs) + preamp`，超 ceiling 再衰减；无缓存时首播使用 `replayGainFallback` + preamp 并后台测量，状态为 measuring/cached/fallback/unavailable。无 libebur128 时报告 unavailable 并用 fallback，禁止假成功。始终报告 `loudnormActive` / `loudnorm_active`。
 
@@ -173,14 +173,14 @@ main 进程会在输出后端、设备、独占模式、audio service recovery�
 
 ## 后端支持矩阵
 
-| 后端                      | 平台        | 当前状态                                                               | outputPerfect 能力                                                                                                                                                                   |
-| ------------------------- | ----------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| WASAPI shared             | Windows     | 已接入并通过 MinGW 测试矩阵                                            | `supportsOutputPerfect=false`，经过系统混音                                                                                                                                          |
-| WASAPI exclusive          | Windows     | 已接入格式协商和 smoke 覆盖                                            | 独占成功且 actual PCM format 与 decoded PCM 完全匹配后进入 evaluator                                                                                                                 |
-| ASIO                      | Windows x64 | 独立 SDK-free 兼容层；默认枚举已安装驱动，可显式禁用                   | mock 覆盖 Int16/Int24/Int24-in32/Int32/Float32；真实设备 smoke opt-in                                                                                                                |
-| CoreAudio shared          | macOS       | 源码后端存在，需 macOS 工具链验证                                      | `supportsOutputPerfect=false`，经过系统混音                                                                                                                                          |
-| CoreAudio exclusive (Hog) | macOS       | 已实现 Hog Mode + 采样率匹配 + 整数 PCM 直通，需 macOS 工具链/设备验证 | Hog 获取成功且 actual PCM format 与 decoded PCM 完全匹配后进入 evaluator                                                                                                             |
-| ALSA                      | Linux       | 源码后端存在，需 Linux 工具链/设备验证                                 | `default`/`plughw:` 默认 false；仅显式 `hw:` 且格式完全匹配时可为 true。`hw:` 支持 native DSD 直送（`DSD_U8`/`DSD_U16_LE`/`DSD_U32_LE`），`backendCanAttemptNativeDsd("alsa")==true` |
+| 后端 | 平台 | 当前状态 | outputPerfect 能力 |
+| --- | --- | --- | --- |
+| WASAPI shared | Windows | 已接入并通过 MinGW 测试矩阵 | `supportsOutputPerfect=false`，经过系统混音 |
+| WASAPI exclusive | Windows | 已接入格式协商和 smoke 覆盖 | 独占成功且 actual PCM format 与 decoded PCM 完全匹配后进入 evaluator |
+| ASIO | Windows x64 | 独立 SDK-free 兼容层；默认枚举已安装驱动，可显式禁用 | mock 覆盖 Int16/Int24/Int24-in32/Int32/Float32；真实设备 smoke opt-in |
+| CoreAudio shared | macOS | 源码后端存在，需 macOS 工具链验证 | `supportsOutputPerfect=false`，经过系统混音 |
+| CoreAudio exclusive (Hog) | macOS | 已实现 Hog Mode + 采样率匹配 + 整数 PCM 直通，需 macOS 工具链/设备验证 | Hog 获取成功且 actual PCM format 与 decoded PCM 完全匹配后进入 evaluator |
+| ALSA | Linux | 源码后端存在，需 Linux 工具链/设备验证 | `default`/`plughw:` 默认 false；仅显式 `hw:` 且格式完全匹配时可为 true。`hw:` 支持 native DSD 直送（`DSD_U8`/`DSD_U16_LE`/`DSD_U32_LE`），`backendCanAttemptNativeDsd("alsa")==true` |
 
 ## 当前非闭环范围
 

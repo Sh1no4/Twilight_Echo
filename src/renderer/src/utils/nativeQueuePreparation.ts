@@ -82,7 +82,9 @@ export async function prepareNativeQueue(
   if (options.queue.length > MAX_NATIVE_QUEUE_ITEMS) return asCurrentOnly(currentItem)
 
   const items = options.queue.map((track, index) =>
-    index === currentIndex ? currentItem : toQueueItem(track, getTrackTarget(track))
+    index === currentIndex
+      ? currentItem
+      : toQueueItem(track, getTrackTarget(track))
   )
   // Routing is decided locally; only the local-file entries need the authorization
   // boundary, and they are resolved together. Doing it per track cost one IPC
@@ -219,7 +221,9 @@ async function authorizeLocalTargets(
     }
   }
 
-  const results = await Promise.all(unique.map((target) => isAuthorizedLocalFile(target, options)))
+  const results = await Promise.all(
+    unique.map((target) => isAuthorizedLocalFile(target, options))
+  )
   unique.forEach((target, index) => verdicts.set(target, results[index]))
   return verdicts
 }

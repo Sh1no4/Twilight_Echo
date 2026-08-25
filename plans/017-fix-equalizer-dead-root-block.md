@@ -36,8 +36,7 @@
   --te-ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
   --transition: all 0.3s var(--te-ease-soft);
 }
-.nav-item[data-v-deadbee] {
-  transition: var(--transition);
+.nav-item[data-v-deadbee] { transition: var(--transition);
 }
 ```
 
@@ -267,21 +266,21 @@
 
 ```css
 /* target */
-transition:
-  background-color var(--te-motion-hover) var(--te-ease-soft),
-  color var(--te-motion-hover) var(--te-ease-soft),
-  border-color var(--te-motion-hover) var(--te-ease-soft);
+  transition:
+    background-color var(--te-motion-hover) var(--te-ease-soft),
+    color var(--te-motion-hover) var(--te-ease-soft),
+    border-color var(--te-motion-hover) var(--te-ease-soft);
 ```
 
 清单 B（颜色类差异 + `transform` 位移），用于 2 处（`OpraEqPanel.vue` 的 `.opra-action-btn` 与 `.opra-result-item`）：
 
 ```css
 /* target */
-transition:
-  transform var(--te-motion-hover) var(--te-ease-soft),
-  background-color var(--te-motion-hover) var(--te-ease-soft),
-  color var(--te-motion-hover) var(--te-ease-soft),
-  border-color var(--te-motion-hover) var(--te-ease-soft);
+  transition:
+    transform var(--te-motion-hover) var(--te-ease-soft),
+    background-color var(--te-motion-hover) var(--te-ease-soft),
+    color var(--te-motion-hover) var(--te-ease-soft),
+    border-color var(--te-motion-hover) var(--te-ease-soft);
 ```
 
 **不许出现在新清单里的属性**：`all`、`box-shadow`、`filter`、`backdrop-filter`、`width`、`height`、`left`、`right`、`top`、`bottom`、`padding`、`margin`、`gap`、`background`（简写形式）、`font-weight`、`font-size`、`outline`。
@@ -311,7 +310,6 @@ transition:
 一步一个具体编辑。做完一步再做下一步。
 
 1. **删除死块。** 打开 `src/renderer/src/components/EqualizerPage.vue`，定位第 1335-1342 行，删除这 8 行（含 `:root {` 与其配对的 `}`）：
-
    ```css
    :root {
      --te-primary-500: #6366f1;
@@ -322,24 +320,19 @@ transition:
      --transition: all 0.3s var(--te-ease-soft);
    }
    ```
-
    删除后紧邻的上文是 `.preset-create button:disabled { … }` 的收尾 `}`，紧邻的下文是 `* {`。两者之间保留一个空行。**不要**在原位留注释、不要留空的 `:root {}`。
 
 2. **`EqualizerPage.vue` 的 `.nav-item`（原第 1382 行）。** 把
-
    ```css
-   transition: var(--transition);
+     transition: var(--transition);
    ```
-
    替换为清单 A：
-
    ```css
-   transition:
-     background-color var(--te-motion-hover) var(--te-ease-soft),
-     color var(--te-motion-hover) var(--te-ease-soft),
-     border-color var(--te-motion-hover) var(--te-ease-soft);
+     transition:
+       background-color var(--te-motion-hover) var(--te-ease-soft),
+       color var(--te-motion-hover) var(--te-ease-soft),
+       border-color var(--te-motion-hover) var(--te-ease-soft);
    ```
-
    （注意：删除第 1 步的 8 行后，这一行的行号会从 1382 变成 1374。按选择器 `.nav-item` 定位，不要死盯行号。这一条是 `.nav-item` 规则块里、`cursor: pointer;` 之后、`color: var(--te-neutral-500);` 之前的那一行。）
 
 3. **`EqualizerPage.vue` 的 `.nav-item i`（原第 1404 行）。** 同样替换为清单 A。这一条在 `.nav-item i` 规则块里、`border-radius: 10px;` 之后、块收尾 `}` 之前。
@@ -347,15 +340,13 @@ transition:
 4. **`EqualizerPage.vue` 的 `.band-tab`（原第 1611 行）。** 同样替换为清单 A。这一条在 `.band-tab` 规则块里、`cursor: pointer;` 之后、块收尾 `}` 之前。
 
 5. **`OpraEqPanel.vue` 的 `.opra-action-btn`（第 197 行）。** 这一条 hover 会改 `transform: translateY(-2px)`，用清单 B：
-
    ```css
-   transition:
-     transform var(--te-motion-hover) var(--te-ease-soft),
-     background-color var(--te-motion-hover) var(--te-ease-soft),
-     color var(--te-motion-hover) var(--te-ease-soft),
-     border-color var(--te-motion-hover) var(--te-ease-soft);
+     transition:
+       transform var(--te-motion-hover) var(--te-ease-soft),
+       background-color var(--te-motion-hover) var(--te-ease-soft),
+       color var(--te-motion-hover) var(--te-ease-soft),
+       border-color var(--te-motion-hover) var(--te-ease-soft);
    ```
-
    **不要动同规则块下方 `:204` 的 `.opra-action-btn i { transition: transform 0.4s var(--te-ease-soft); }`** —— 那条是箭头旋转，值有效且不在本方案范围。
 
 6. **`OpraEqPanel.vue` 的 `.opra-search-input-wrap input`（第 265 行）。** focus 只改 `border-color` 与 `box-shadow`，用清单 A。

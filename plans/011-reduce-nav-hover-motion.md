@@ -105,12 +105,12 @@
 
 AUDIT 第 1 节频次表：
 
-| Frequency                                                   | Decision                         |
-| ----------------------------------------------------------- | -------------------------------- |
-| 100+ times/day (keyboard shortcuts, command palette toggle) | No animation. Ever.              |
-| **Tens of times/day (hover effects, list navigation)**      | **Remove or drastically reduce** |
-| Occasional (modals, drawers, toasts)                        | Standard animation               |
-| Rare / first-time (onboarding, feedback, celebrations)      | Can add delight                  |
+| Frequency | Decision |
+| --- | --- |
+| 100+ times/day (keyboard shortcuts, command palette toggle) | No animation. Ever. |
+| **Tens of times/day (hover effects, list navigation)** | **Remove or drastically reduce** |
+| Occasional (modals, drawers, toasts) | Standard animation |
+| Rare / first-time (onboarding, feedback, celebrations) | Can add delight |
 
 侧边栏导航正是表里那行「**hover effects, list navigation**」的字面例子，判定是「**Remove or drastically reduce**」。同节的 Hunt 项也直接点名：「decorative motion on list items or hover states hit constantly」，并给出结论「The strongest fix is often **delete the animation**」。
 
@@ -147,9 +147,7 @@ AUDIT 第 6 节给的范式是两个条件都要：
 
 ```css
 @media (hover: hover) and (pointer: fine) {
-  .element:hover {
-    transform: scale(1.05);
-  } /* touch fires false hovers on tap */
+  .element:hover { transform: scale(1.05); } /* touch fires false hovers on tap */
 }
 ```
 
@@ -161,14 +159,14 @@ AUDIT 第 6 节给的范式是两个条件都要：
 
 需要处理的高频卡片面（每个文件的裸 hover-transform 处数，已核对）：
 
-| 文件                                                           | 处数 |
-| -------------------------------------------------------------- | ---- |
-| `src/renderer/src/components/LocalDashboard.css`               | 17   |
-| `src/renderer/src/components/onboarding/OnboardingWizard.css`  | 17   |
-| `src/renderer/src/components/StreamingHome.vue`                | 14   |
-| `src/renderer/src/components/StreamingDiscovery.vue`           | 11   |
-| `src/renderer/src/components/StreamingLibrary.vue`             | 9    |
-| `src/renderer/src/components/streaming-page/StreamingPage.css` | 9    |
+| 文件 | 处数 |
+| --- | --- |
+| `src/renderer/src/components/LocalDashboard.css` | 17 |
+| `src/renderer/src/components/onboarding/OnboardingWizard.css` | 17 |
+| `src/renderer/src/components/StreamingHome.vue` | 14 |
+| `src/renderer/src/components/StreamingDiscovery.vue` | 11 |
+| `src/renderer/src/components/StreamingLibrary.vue` | 9 |
+| `src/renderer/src/components/streaming-page/StreamingPage.css` | 9 |
 
 ## Target
 
@@ -309,16 +307,13 @@ AUDIT 第 6 节给的范式是两个条件都要：
 ### 第一部分：删掉导航 hover 的旋转与缩放
 
 1. 打开 `src/renderer/src/components/SideMenu.vue`，定位 `:375-378`：
-
    ```css
    .menu-item:hover .item-icon {
      transform: translateX(1px) scale(1.12) rotate(-4deg);
      color: var(--te-navigation-hover-text);
    }
    ```
-
    删掉 `transform` 那一整行，只留：
-
    ```css
    .menu-item:hover .item-icon {
      color: var(--te-navigation-hover-text);
@@ -326,23 +321,18 @@ AUDIT 第 6 节给的范式是两个条件都要：
    ```
 
 2. 同一文件定位 `:353-365` 的 `.item-icon` 规则，把
-
    ```css
-   transition:
-     color 0.2s,
-     transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+     transition:
+       color 0.2s,
+       transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
    ```
-
    改成
-
    ```css
-   transition: color 0.2s;
+     transition: color 0.2s;
    ```
-
    注意这一步同时消掉了那条裸 `cubic-bezier(0.34, 1.56, 0.64, 1)`。规则里其他声明（`width` / `height` / `display` / `align-items` / `justify-content` / `flex-shrink` / `color` / `font-size`）全部保持原样。
 
 3. 同一文件定位 `:317-321`：
-
    ```css
    .menu-item:hover {
      background: var(--te-navigation-hover);
@@ -350,33 +340,27 @@ AUDIT 第 6 节给的范式是两个条件都要：
      transform: translateX(3px);
    }
    ```
-
    删掉 `transform: translateX(3px);` 那一行，只留 `background` 与 `color` 两行。
 
 4. 同一文件定位 `:306-309` 的 `.menu-item` transition（在 `:289` 起的规则末尾），把
-
    ```css
-   transition:
-     background var(--te-motion-hover) var(--te-ease-enter),
-     color var(--te-motion-hover) var(--te-ease-enter),
-     transform var(--te-motion-hover) var(--te-ease-enter);
+     transition:
+       background var(--te-motion-hover) var(--te-ease-enter),
+       color var(--te-motion-hover) var(--te-ease-enter),
+       transform var(--te-motion-hover) var(--te-ease-enter);
    ```
-
    改成
-
    ```css
-   transition:
-     background var(--te-motion-hover) var(--te-ease-enter),
-     color var(--te-motion-hover) var(--te-ease-enter);
+     transition:
+       background var(--te-motion-hover) var(--te-ease-enter),
+       color var(--te-motion-hover) var(--te-ease-enter);
    ```
-
    即删掉 `transform` 那一项，并把 `color …` 行末的逗号改成分号。
 
 5. 打开 `src/renderer/src/components/settings-page/SettingsPage.css`，定位 `:452-461` 的 `@media (hover: hover)` 块。做两件事：
    - 把 `@media (hover: hover) {` 改成 `@media (hover: hover) and (pointer: fine) {`。
    - 在 `html[data-te-motion='full'] .preview-nav-item:hover i` 规则里删掉 `rotate: -5deg;` 那一行，保留 `scale: 1.08;`。
-     结果：
-
+   结果：
    ```css
    @media (hover: hover) and (pointer: fine) {
      html[data-te-motion='full'] .preview-nav-item:hover {
@@ -397,40 +381,39 @@ AUDIT 第 6 节给的范式是两个条件都要：
 
 8. 打开 `src/renderer/src/components/LocalDashboard.css`，把下列 17 处 hover 规则各自包进 `@media (hover: hover) and (pointer: fine) { … }`。每处的选择器与它含的 transform 声明（用来核对你找对了地方）：
 
-   | 行号  | 选择器                                            | transform 声明                                  |
-   | ----- | ------------------------------------------------- | ----------------------------------------------- |
-   | :229  | `.masthead-shuffle:hover`                         | `transform: translateY(-2px);`                  |
-   | :253  | `.masthead-shuffle:hover .masthead-shuffle-icon`  | （见文件，含 transform/scale/rotate）           |
-   | :282  | `.masthead-shuffle:hover .masthead-shuffle-arrow` | `transform: translate(2px, -2px);`              |
-   | :432  | `.empty-cta:hover`                                | `transform: translateY(-2px);`                  |
-   | :658  | `.hero-progress-track:hover::before`              | （见文件）                                      |
-   | :694  | `.transport-button:hover`                         | `transform: translateY(-2px);`                  |
-   | :717  | `.transport-play:hover`                           | （见文件）                                      |
-   | :740  | `.hero-ghost-action:hover`                        | （见文件）                                      |
-   | :796  | `.feature-card:hover .hero-art-echo`              | `transform: rotate(8deg) translate(13px, 8px);` |
-   | :842  | `.figure:not(.is-static):hover`                   | （见文件）                                      |
-   | :876  | `.figure:not(.is-static):hover i`                 | `transform: translate(2px, -2px);`              |
-   | :904  | `.signal-card:hover`                              | `transform: translateY(-2px);`                  |
-   | :1025 | `.signal-card:hover .signal-caret`                | `transform: translateX(3px);`                   |
-   | :1224 | `.block-more:hover`                               | `transform: translateX(2px);`                   |
-   | :1274 | `.fresh-tile:hover .fresh-cover`                  | `transform: translateY(-4px);`                  |
-   | :1279 | `.fresh-tile:hover .fresh-cover img`              | `transform: scale(1.06);`                       |
-   | :1318 | `.fresh-tile:hover .fresh-play`                   | `transform: translateY(0) scale(1);`            |
-   | :1407 | `.chart-row:hover`                                | （见文件）                                      |
-   | :1425 | `.chart-row:hover .chart-rank`                    | （见文件）                                      |
-   | :1429 | `.chart-row:hover .chart-rank.is-podium`          | （见文件）                                      |
-   | :1532 | `.cal-nav-btn:hover:not(:disabled)`               | （见文件）                                      |
-   | :1576 | `.cal-cell:not(.is-blank):hover`                  | `transform: scale(1.08);`                       |
-   | :1704 | `.gallery-tile:hover .gallery-cover`              | `transform: translateY(-4px);`                  |
-   | :1709 | `.gallery-tile:hover .gallery-cover img`          | `transform: scale(1.06);`                       |
-   | :1748 | `.gallery-tile:hover .gallery-count`              | `transform: translateY(0);`                     |
-   | :1773 | `.gallery-tile:hover .gallery-play`               | `transform: translateY(0) scale(1);`            |
-   | :1920 | `.dialog-icon-button:hover:not(:disabled)`        | （见文件）                                      |
+   | 行号 | 选择器 | transform 声明 |
+   | --- | --- | --- |
+   | :229 | `.masthead-shuffle:hover` | `transform: translateY(-2px);` |
+   | :253 | `.masthead-shuffle:hover .masthead-shuffle-icon` | （见文件，含 transform/scale/rotate） |
+   | :282 | `.masthead-shuffle:hover .masthead-shuffle-arrow` | `transform: translate(2px, -2px);` |
+   | :432 | `.empty-cta:hover` | `transform: translateY(-2px);` |
+   | :658 | `.hero-progress-track:hover::before` | （见文件） |
+   | :694 | `.transport-button:hover` | `transform: translateY(-2px);` |
+   | :717 | `.transport-play:hover` | （见文件） |
+   | :740 | `.hero-ghost-action:hover` | （见文件） |
+   | :796 | `.feature-card:hover .hero-art-echo` | `transform: rotate(8deg) translate(13px, 8px);` |
+   | :842 | `.figure:not(.is-static):hover` | （见文件） |
+   | :876 | `.figure:not(.is-static):hover i` | `transform: translate(2px, -2px);` |
+   | :904 | `.signal-card:hover` | `transform: translateY(-2px);` |
+   | :1025 | `.signal-card:hover .signal-caret` | `transform: translateX(3px);` |
+   | :1224 | `.block-more:hover` | `transform: translateX(2px);` |
+   | :1274 | `.fresh-tile:hover .fresh-cover` | `transform: translateY(-4px);` |
+   | :1279 | `.fresh-tile:hover .fresh-cover img` | `transform: scale(1.06);` |
+   | :1318 | `.fresh-tile:hover .fresh-play` | `transform: translateY(0) scale(1);` |
+   | :1407 | `.chart-row:hover` | （见文件） |
+   | :1425 | `.chart-row:hover .chart-rank` | （见文件） |
+   | :1429 | `.chart-row:hover .chart-rank.is-podium` | （见文件） |
+   | :1532 | `.cal-nav-btn:hover:not(:disabled)` | （见文件） |
+   | :1576 | `.cal-cell:not(.is-blank):hover` | `transform: scale(1.08);` |
+   | :1704 | `.gallery-tile:hover .gallery-cover` | `transform: translateY(-4px);` |
+   | :1709 | `.gallery-tile:hover .gallery-cover img` | `transform: scale(1.06);` |
+   | :1748 | `.gallery-tile:hover .gallery-count` | `transform: translateY(0);` |
+   | :1773 | `.gallery-tile:hover .gallery-play` | `transform: translateY(0) scale(1);` |
+   | :1920 | `.dialog-icon-button:hover:not(:disabled)` | （见文件） |
 
    **判据（对本步骤及第 9-13 步一律适用）**：只把「规则块内出现 `transform:` / `translate:` / `scale:` / `rotate:`，且值不是 `none` 的 hover 规则」包起来。若某条 hover 规则只改颜色、背景、阴影、opacity，**不要动它**——包进 `@media` 会让触屏上连颜色反馈都没了，那是退化。若某条规则同时有位移和颜色，两种做法都可接受：（a）整条包进 `@media`，或（b）拆成两条，颜色留在外面、位移进 `@media`。**优先选 (a)**，因为它改动小、不易出错；只有当这条 hover 的颜色变化是唯一的状态指示（例如禁用态提示）时才用 (b)。
 
    相邻的多条 hover 规则可以共用一个 `@media` 块，不必一条一个。例如：
-
    ```css
    @media (hover: hover) and (pointer: fine) {
      .fresh-tile:hover .fresh-cover {
@@ -471,7 +454,6 @@ AUDIT 第 6 节给的范式是两个条件都要：
   ```
   第 3 步删掉了 `.menu-item:hover` 的 `transform` 之后，这条覆盖在逻辑上变成冗余，但它无害，且它属于 `html[data-te-navigation-style='rail']` 这一族规则（`:412`、`:422`、`:433`、`:437`），动它会牵连导航样式切换。**留着。**
 - **不要动 `src/renderer/src/components/SideMenu.vue:342-351`**：
-
   ```css
   :global(html[data-te-motion='full'] .menu-item.active::before) {
     animation: side-menu-indicator-in var(--te-motion-press) var(--te-ease-spring) both;
@@ -484,17 +466,15 @@ AUDIT 第 6 节给的范式是两个条件都要：
     }
   }
   ```
-
   这个导航指示条的入场 keyframes 属于 **010 号方案**的同族清单（那里作为「一并点名、判断是否单独跟进」的一项）。本方案不碰它，免得两个方案在同一文件同一区段冲突。
-
 - **不要动 `src/renderer/src/components/SideMenu.vue:204-212` 的抽屉滑入过渡**：
   ```css
-  transform: translate3d(-100%, 0, 0);
-  transform-origin: left center;
-  will-change: transform;
-  transition:
-    transform 0.32s var(--te-ease-soft),
-    box-shadow 0.32s;
+    transform: translate3d(-100%, 0, 0);
+    transform-origin: left center;
+    will-change: transform;
+    transition:
+      transform 0.32s var(--te-ease-soft),
+      box-shadow 0.32s;
   ```
   **`src/renderer/src/components/SideMenu.test.ts:10` 用正则 `/transform 0\.32s var\(--te-ease-soft\),\s*box-shadow 0\.32s;/` 钉死了这条声明的字面量。** 这是抽屉本体的滑入，不是 `.menu-item`，本方案的四处编辑都不在这条规则内——但务必确认你改的是 `.menu-item` / `.item-icon` 的 transition，不是这一条。
 - **不要动 `src/renderer/src/components/SideMenu.vue:510-549` 的 `.side-menu-liquid` 一族**。那里的 hover 已经只改背景（`:514-516`），`:542-545` 的 `:active { transform: scale(0.97); transition-duration: 90ms; }` 是按压反馈，与 **002 号方案**的目标形态一致。
@@ -533,7 +513,7 @@ AUDIT 第 6 节给的范式是两个条件都要：
   - seed：`node scripts/theme-visual-regression.cjs --seed-user-data <dir> --seed-real-files 48`，然后把 `music-library.json` 覆盖成 `{version:2,revision:1,tracks:[],folders:[],exclusions:[]}`（seed 出来的 1 万条会阻塞渲染进程约 3 分钟），并预写 `plugin-state.json` 把 `com.twilightecho.provider.ncm` 设为 `enabled:false`。
   - **优先复制改造 `output/` 下已有的 harness（gitignored）**：`verify-scroll-top.cjs` 最贴近本方案——它已经会点侧边栏项，取法是
     ```js
-    ;[...document.querySelectorAll('.menu-item')].find((i) => i.textContent.includes('所有歌曲'))
+    [...document.querySelectorAll('.menu-item')].find(i => i.textContent.includes('所有歌曲'))
     ```
     正好是本方案要检查的元素。`verify-global-font.cjs` 的做法（**读计算样式而非截图**）也适合本方案，见下。
   - 每个 CDP 调用给 ~45s 超时；`Runtime.evaluate` 没有顶层 await，要包 `(async () => …)()`。
@@ -541,7 +521,7 @@ AUDIT 第 6 节给的范式是两个条件都要：
   - 要确认的观察点：
     - **鼠标划过侧边栏各导航项，图标不再旋转、不再放大。** 用 CDP 派发 `Input.dispatchMouseEvent`（`type: 'mouseMoved'`）把指针移到某个 `.menu-item` 的中心，然后读计算样式：
       ```js
-      ;(() => {
+      (() => {
         const icon = document.querySelector('.menu-item:hover .item-icon')
         return icon ? getComputedStyle(icon).transform : 'no hovered icon'
       })()

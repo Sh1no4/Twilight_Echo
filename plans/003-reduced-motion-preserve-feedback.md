@@ -93,8 +93,8 @@ html[data-te-motion='off'] *::after {
 ```css
 /* src/renderer/src/assets/primeicons.css:34-52 — 当前 */
 .pi-spin {
-  -webkit-animation: fa-spin 2s infinite linear;
-  animation: fa-spin 2s infinite linear;
+    -webkit-animation: fa-spin 2s infinite linear;
+    animation: fa-spin 2s infinite linear;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -280,7 +280,6 @@ html[data-te-motion='reduced'] .pi-spin {
   ```
 
   它之所以有效：特异性 (0,2,1) 打得过通用兜底的 (0,1,1)。**本方案的白名单规则用同样的手法**——`html[data-te-motion='reduced'] :where(button, …)` 里 `:where()` 特异性为 0，所以整体是 (0,1,1)，与通用兜底**相同**；靠**后出现**取胜。因此白名单块**必须写在通用兜底块之后**。这一点不能搞错。
-
 - 可读静态终态的样板：`src/renderer/src/components/streaming-page/StreamingLoadingStage.vue:472-497`（`animation: none` + `.tls-progress-beam { width: 100%; opacity: 0.5; transform: none; }`）。
 - `off` 档的显式手法样板：`src/renderer/src/assets/base.css:435-441`。
 
@@ -301,17 +300,13 @@ html[data-te-motion='reduced'] .pi-spin {
 7. 打开 `src/renderer/src/app/useMotionPreference.test.ts`，在第 64 行 `assert.match(baseCss, /html\[data-te-motion='off'\]/)` 之后新增三条断言：
 
    ```ts
-   // Reduced motion keeps property-scoped feedback instead of nuking everything.
-   assert.match(
-     baseCss,
-     /html\[data-te-motion='reduced'\][\s\S]{0,400}transition-property: opacity, color, background-color, border-color/
-   )
-   assert.match(baseCss, /html\[data-te-motion='reduced'\] \.pi-spin/)
-   assert.doesNotMatch(baseCss, /animation-iteration-count: 1 !important/)
+     // Reduced motion keeps property-scoped feedback instead of nuking everything.
+     assert.match(baseCss, /html\[data-te-motion='reduced'\][\s\S]{0,400}transition-property: opacity, color, background-color, border-color/)
+     assert.match(baseCss, /html\[data-te-motion='reduced'\] \.pi-spin/)
+     assert.doesNotMatch(baseCss, /animation-iteration-count: 1 !important/)
    ```
 
    该文件已登记在 `package.json` 的 `test:app` 脚本里（无需新增登记）。同文件第 68 行 `assert.match(miniPlayerCss, /html\[data-te-motion='reduced'\] .mini-player-root/)` 仍然通过（本方案没碰 `MiniPlayer.css`）。
-
 8. 全仓搜索 `animation-iteration-count: 1 !important`，应当 0 命中。
 
 ## Boundaries

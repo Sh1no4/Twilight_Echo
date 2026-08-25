@@ -80,17 +80,11 @@ test('production audit locates Corepack from PATH when a bundled runtime has no 
     'win32',
     (candidate) => candidate.endsWith('node-install\\node_modules\\corepack\\dist\\corepack.js')
   )
-  assert.match(
-    corepackScript,
-    /node-install[\\/]node_modules[\\/]corepack[\\/]dist[\\/]corepack\.js$/
-  )
-  assert.deepEqual(
-    resolvePnpmInvocation({}, 'win32', 'C:/isolated-runtime/node.exe', corepackScript),
-    {
-      command: 'C:/isolated-runtime/node.exe',
-      prefixArgs: [corepackScript, PNPM_PACKAGE_MANAGER]
-    }
-  )
+  assert.match(corepackScript, /node-install[\\/]node_modules[\\/]corepack[\\/]dist[\\/]corepack\.js$/)
+  assert.deepEqual(resolvePnpmInvocation({}, 'win32', 'C:/isolated-runtime/node.exe', corepackScript), {
+    command: 'C:/isolated-runtime/node.exe',
+    prefixArgs: [corepackScript, PNPM_PACKAGE_MANAGER]
+  })
 })
 
 test('production audit fails explicitly when Windows Corepack cannot be located', () => {

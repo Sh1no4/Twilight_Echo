@@ -3,8 +3,15 @@ import { downloadEntryToCache } from './networkCache.ts'
 import { enrichNetworkEntry } from './networkMetadata.ts'
 import { normalizeRemotePath } from './networkPath.ts'
 import type { NetworkLibraryIndex } from './networkLibrary.ts'
-import type { NetworkSourceAdapter, NetworkSourceSession, NetworkAuth } from './adapters/types.ts'
-import type { NetworkProfileStore, NetworkSourceProfileInput } from './profileStore.ts'
+import type {
+  NetworkSourceAdapter,
+  NetworkSourceSession,
+  NetworkAuth
+} from './adapters/types.ts'
+import type {
+  NetworkProfileStore,
+  NetworkSourceProfileInput
+} from './profileStore.ts'
 import type {
   NetworkEntry,
   NetworkPlaybackPlan,
@@ -21,11 +28,7 @@ export interface NetworkSourcesManager {
     patch: Partial<NetworkSourceProfileInput>
   ): Promise<NetworkSourceProfileSummary>
   deleteProfile(id: string): Promise<void>
-  listDirectory(
-    profileId: string,
-    remotePath: string,
-    signal?: AbortSignal
-  ): Promise<NetworkEntry[]>
+  listDirectory(profileId: string, remotePath: string, signal?: AbortSignal): Promise<NetworkEntry[]>
   testConnection(profileId: string): Promise<{ ok: boolean; errorCode?: NetworkSourceErrorCode }>
   resolvePlayback(
     profileId: string,
@@ -39,7 +42,9 @@ export interface NetworkSourcesManager {
   ): Promise<{ added: number; total: number }>
   listLibrary(profileId: string, query?: string): Promise<NetworkEntry[]>
   removeLibraryEntry(profileId: string, entryId: string): Promise<void>
-  enrichLibrary(profileId: string): Promise<{ enriched: number; failed: number }>
+  enrichLibrary(
+    profileId: string
+  ): Promise<{ enriched: number; failed: number }>
   searchLibrary(
     query?: string
   ): Promise<Array<{ profileId: string; profileName: string; entry: NetworkEntry }>>
@@ -106,9 +111,7 @@ export function createNetworkSourcesManager(deps: {
         }
       } catch (err) {
         const failure =
-          err instanceof NetworkSourceFailure
-            ? err
-            : new NetworkSourceFailure('network', String(err))
+          err instanceof NetworkSourceFailure ? err : new NetworkSourceFailure('network', String(err))
         return { ok: false, errorCode: failure.code }
       }
     },

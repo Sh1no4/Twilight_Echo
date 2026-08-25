@@ -114,15 +114,15 @@ test('local sidebar opening follows the streaming navigation timing', () => {
 
 统计域：`src/renderer/src` 下全部 `.css` 与 `.vue`（`.vue` 只取 `<style>` 块），**先剥掉 `/* */` 注释**。共 122 个样式来源。用的就是本方案第 2 步要写进测试的那几条正则：
 
-| 指标                                                                       | 计数                        |
-| -------------------------------------------------------------------------- | --------------------------- |
+| 指标 | 计数 |
+| --- | --- |
 | `transition`/`animation` 声明中的裸时长字面量（`0.3s` / `160ms` / `.25s`） | **743**（分布在 57 个文件） |
-| 同类声明中的 `var(--te-motion-*)` 引用                                     | **373**                     |
-| 裸时长占比                                                                 | **66.6%**                   |
-| 裸 `cubic-bezier(` 总数                                                    | **34**                      |
-| 其中 `base.css` 的 token 定义（合法）                                      | **4**                       |
-| 其中产品代码里的裸写（应当归并）                                           | **30**，散在 14 个文件      |
-| `transition: all` 生效声明                                                 | **45**                      |
+| 同类声明中的 `var(--te-motion-*)` 引用 | **373** |
+| 裸时长占比 | **66.6%** |
+| 裸 `cubic-bezier(` 总数 | **34** |
+| 其中 `base.css` 的 token 定义（合法） | **4** |
+| 其中产品代码里的裸写（应当归并） | **30**，散在 14 个文件 |
+| `transition: all` 生效声明 | **45** |
 
 裸时长最集中的 10 个文件：
 
@@ -165,35 +165,35 @@ test('local sidebar opening follows the streaming navigation timing', () => {
 
 ```css
 /* src/renderer/src/assets/base.css:26-31 — 当前 */
---te-ease-enter: cubic-bezier(0.4, 0, 0.2, 1);
-/* Soft = out-quint: fast start, long settling tail (osu!lazer-style motion). */
---te-ease-soft: var(--te-ease-out-quint);
---te-ease-spring: cubic-bezier(0.22, 1.14, 0.36, 1);
---te-ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
---te-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --te-ease-enter: cubic-bezier(0.4, 0, 0.2, 1);
+  /* Soft = out-quint: fast start, long settling tail (osu!lazer-style motion). */
+  --te-ease-soft: var(--te-ease-out-quint);
+  --te-ease-spring: cubic-bezier(0.22, 1.14, 0.36, 1);
+  --te-ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --te-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 ```
 
 ```ts
 // src/shared/themeTokens.ts:1697-1706 — 当前
-token(
-  'motion.soft',
-  '--te-ease-soft',
-  '柔和缓动',
-  'motion',
-  'global',
-  'easing',
-  'cubic-bezier(0.2, 0.8, 0.2, 1)',
-  'cubic-bezier(0.2, 0.8, 0.2, 1)'
-)
+  token(
+    'motion.soft',
+    '--te-ease-soft',
+    '柔和缓动',
+    'motion',
+    'global',
+    'easing',
+    'cubic-bezier(0.2, 0.8, 0.2, 1)',
+    'cubic-bezier(0.2, 0.8, 0.2, 1)'
+  )
 ```
 
 base.css 顺着 `--te-ease-out-quint` 解析成 `cubic-bezier(0.22, 1, 0.36, 1)`，themeTokens.ts 的默认值是 `cubic-bezier(0.2, 0.8, 0.2, 1)` —— **不是同一条曲线**。运行时以 themeTokens.ts 胜出，因为主题运行时用 `!important` 注入：
 
 ```ts
 // src/renderer/src/stores/useThemeStore.ts:452-455 — 当前
-const root = Object.entries({ ...themeShellLayoutToCssVariables(shellLayout), ...variables })
-  .map(([name, value]) => `  ${name}: ${value} !important;`)
-  .join('\n')
+  const root = Object.entries({ ...themeShellLayoutToCssVariables(shellLayout), ...variables })
+    .map(([name, value]) => `  ${name}: ${value} !important;`)
+    .join('\n')
 ```
 
 默认主题的 overrides 为空，所以开箱即用状态下 `--te-ease-soft` 的计算值是 themeTokens.ts 那条。`motion.enter` 是对照组：`base.css:26` 与 `themeTokens.ts:1687-1696` 两边都是 `cubic-bezier(0.4, 0, 0.2, 1)`，逐字一致。**说明这类分叉是可以机械检出的，只是没人检。** 001 号方案负责修这一处分叉；本方案负责让它以后不能再分叉。
@@ -249,11 +249,14 @@ allowlist 的形状（比 `theme-color-allowlist.json` 多一层分组，因为�
 
 ```ts
 // target — src/renderer/src/components/SideMenu.test.ts，只改这两条 assert.match
-assert.match(
-  app,
-  /transform 0\.48s var\(--te-ease-out-expo\),\s*filter 0\.42s var\(--te-ease-out-expo\)/
-)
-assert.match(app, /transform 0\.3s var\(--te-ease-enter\),\s*filter 0\.28s var\(--te-ease-enter\)/)
+  assert.match(
+    app,
+    /transform 0\.48s var\(--te-ease-out-expo\),\s*filter 0\.42s var\(--te-ease-out-expo\)/
+  )
+  assert.match(
+    app,
+    /transform 0\.3s var\(--te-ease-enter\),\s*filter 0\.28s var\(--te-ease-enter\)/
+  )
 ```
 
 `:12`（`padding-left`）与 `:23`（`left`）两条**保持原样**。
@@ -352,10 +355,7 @@ writeFileSync(
 console.log('durations total', totalDurations, 'files', Object.keys(durations).length)
 console.log('var(--te-motion-*) refs', totalTokenRefs)
 console.log('bare share', ((totalDurations / (totalDurations + totalTokenRefs)) * 100).toFixed(1))
-console.log(
-  'curves total',
-  Object.values(curves).reduce((a, b) => a + b, 0)
-)
+console.log('curves total', Object.values(curves).reduce((a, b) => a + b, 0))
 console.log('curve files:', Object.keys(curves).length)
 ```
 
@@ -660,34 +660,37 @@ grep -n "cubic-bezier\|var(--te-ease-out-expo)\|var(--te-ease-enter)" src/render
 把这一段（原 `:13-16`）
 
 ```ts
-assert.match(
-  app,
-  /transform 0\.48s cubic-bezier\(0\.16, 1, 0\.3, 1\),\s*filter 0\.42s cubic-bezier\(0\.16, 1, 0\.3, 1\)/
-)
+  assert.match(
+    app,
+    /transform 0\.48s cubic-bezier\(0\.16, 1, 0\.3, 1\),\s*filter 0\.42s cubic-bezier\(0\.16, 1, 0\.3, 1\)/
+  )
 ```
 
 改成
 
 ```ts
-assert.match(
-  app,
-  /transform 0\.48s var\(--te-ease-out-expo\),\s*filter 0\.42s var\(--te-ease-out-expo\)/
-)
+  assert.match(
+    app,
+    /transform 0\.48s var\(--te-ease-out-expo\),\s*filter 0\.42s var\(--te-ease-out-expo\)/
+  )
 ```
 
 把这一段（原 `:18-21`）
 
 ```ts
-assert.match(
-  app,
-  /transform 0\.3s cubic-bezier\(0\.4, 0, 0\.2, 1\),\s*filter 0\.28s cubic-bezier\(0\.4, 0, 0\.2, 1\)/
-)
+  assert.match(
+    app,
+    /transform 0\.3s cubic-bezier\(0\.4, 0, 0\.2, 1\),\s*filter 0\.28s cubic-bezier\(0\.4, 0, 0\.2, 1\)/
+  )
 ```
 
 改成
 
 ```ts
-assert.match(app, /transform 0\.3s var\(--te-ease-enter\),\s*filter 0\.28s var\(--te-ease-enter\)/)
+  assert.match(
+    app,
+    /transform 0\.3s var\(--te-ease-enter\),\s*filter 0\.28s var\(--te-ease-enter\)/
+  )
 ```
 
 **同一文件里这三行一个字都不要动**：`:10`（`sideMenu` 的 `transform 0.32s var(--te-ease-soft)`）、`:12`（`transition: padding-left 0.32s var(--te-ease-soft);`）、`:23`（`transition: left 0.32s var(--te-ease-soft);`）。后两条归 008 号方案。
@@ -720,56 +723,44 @@ assert.match(app, /transform 0\.3s var\(--te-ease-enter\),\s*filter 0\.28s var\(
 按顺序跑，每条都给了判定标准。
 
 1. **新门禁本身**
-
    ```bash
    node --experimental-strip-types --test src/renderer/src/components/themeMotionAudit.test.ts
    ```
-
    判定：输出里有且仅有 3 条 test。预算 1、2 必须 `pass`。预算 3 —— 001 已完成则 `pass`；未完成则 `fail` 且失败信息里**只有 `--te-ease-soft` 的两条**（pureWhite + dark）。**若出现第三条 mismatch，说明有新的 motion token 分叉，报告它，不要自己改值。**
 
 2. **登记生效**
-
    ```bash
    grep -c "themeMotionAudit.test.ts" package.json
    pnpm run test:themes 2>&1 | grep -c "bare cubic-bezier baseline"
    ```
-
    判定：第一条输出 `1`；第二条输出 `≥ 1`。**如果 `test:themes` 的输出里找不到新测试的 test 名，说明第 3 步没生效，回去检查。** 这是验证登记的唯一手段。
 
 3. **测试文件所有权门禁**
-
    ```bash
    node --test scripts/feature-test-gates.test.cjs
    ```
-
    判定：`every repository test file is explicitly owned by a package test script` 与 `theme gate owns contracts, archive preflight, and navigation integration` 两条都 `pass`。前者证明新文件已被某个 `test:*` 拥有，后者证明你没在改 `test:themes` 时弄掉别的路径。
 
 4. **`SideMenu.test.ts` 所属套件**（注意：它归 `test:playback-routing`，**不是** `test:app`）
-
    ```bash
    node --experimental-strip-types --test src/renderer/src/components/SideMenu.test.ts
    ```
-
    判定：`pass`。若红在两条 `assert.match` 上，说明 `App.vue` 还是字面量（004 未落地）—— 按第 5 步的指示回退本方案对该文件的改动。
 
 5. **类型与格式**
-
    ```bash
    pnpm run typecheck
    npx prettier --check src/renderer/src/components/themeMotionAudit.test.ts src/renderer/src/components/theme-motion-allowlist.json
    npx eslint src/renderer/src/components/themeMotionAudit.test.ts
    ```
-
    判定：三条都通过。新测试只用了 `ThemeTokenDefinition` 的 `group` / `cssVariable` / `defaults` 三个既有字段（`src/shared/theme.ts:85-92`），不应有类型错误。`src/renderer/src/**/*` 已被 `tsconfig.web.json` 覆盖，与 `themeColorAudit.test.ts` 同目录同待遇。
 
 6. **相邻套件不受影响**
-
    ```bash
    pnpm run test:themes
    pnpm run test:app
    pnpm run test:playback-routing
    ```
-
    判定：**不要求全绿，要求「不新增失败」。** 跑之前先在干净工作树上记一次基线（`git stash` 前后各跑一次，或用 `git show HEAD:<file>` 取 HEAD 版测试到同目录跑），只对比新增的失败项。本方案**有意**可能新增 1 条失败（预算 3，在 001 未完成时），其余套件的红灯数必须与基线一致。`test:app` 里的 `useMotionPreference.test.ts` 会读 `base.css` 并断言 `--te-ease-spring` 等内容（`:43`、`:61-62`），本方案不碰 base.css，应保持基线。
 
 7. **不需要跑的**：`pnpm run build`。本方案不改任何进产物的代码（只有测试、JSON、`package.json` 的脚本串），构建产物零变化。
@@ -779,23 +770,15 @@ assert.match(app, /transform 0\.3s var\(--te-ease-enter\),\s*filter 0\.28s var\(
 本方案没有渲染影响 —— 它不改任何一条 CSS 声明。所以没有可看的动效变化。**要检查的是门禁本身有效**，用两个人为回归试它，试完必须还原：
 
 1. **试预算 1**：往 `src/renderer/src/components/song-list/SongList.css` 末尾临时加一行
-
    ```css
-   .te-gate-probe {
-     transition: transform 0.3s cubic-bezier(0.1, 0.2, 0.3, 0.4);
-   }
+   .te-gate-probe { transition: transform 0.3s cubic-bezier(0.1, 0.2, 0.3, 0.4); }
    ```
-
    跑第 1 条命令。判定：`bare cubic-bezier baseline` 变红，失败信息含 `song-list/SongList.css: 1 > 0`（或 `N+1 > N`）。**删掉这行**，确认转绿。
 
 2. **试预算 2**：往同一个文件末尾临时加一行
-
    ```css
-   .te-gate-probe-2 {
-     transition: opacity 0.42s ease;
-   }
+   .te-gate-probe-2 { transition: opacity 0.42s ease; }
    ```
-
    跑第 1 条命令。判定：`bare motion duration baseline` 变红，失败信息含该文件的 `count > budget` 与括号里的 `var(--te-motion-*) refs here: N`。**删掉这行**，确认转绿。
 
 3. **试预算 3**（若 001 已完成）：把 `src/shared/themeTokens.ts` 里 `motion.enter` 的 `pureWhite` 默认值临时改成 `'cubic-bezier(0.4, 0, 0.2, 0.9)'`。跑第 1 条命令。判定：报 `--te-ease-enter (motion.enter, pureWhite): base.css resolves to "cubic-bezier(0.4, 0, 0.2, 1)", themeTokens.ts default is "cubic-bezier(0.4, 0, 0.2, 0.9)"`。**改回去**，确认转绿。

@@ -41,9 +41,7 @@ function parseArgs(argv) {
   }
   if (!options.nativeDir) throw new Error('--native-dir is required')
   if (!options.installer && !options.artifactDir) {
-    throw new Error(
-      'Provide --installer or --artifact-dir so the installer size budget can be checked'
-    )
+    throw new Error('Provide --installer or --artifact-dir so the installer size budget can be checked')
   }
   return options
 }
@@ -54,10 +52,7 @@ function readPeHeader(filePath) {
     throw new Error(`${filePath} is not a PE binary`)
   }
   const peOffset = buffer.readUInt32LE(0x3c)
-  if (
-    peOffset + 24 > buffer.length ||
-    buffer.toString('ascii', peOffset, peOffset + 4) !== 'PE\0\0'
-  ) {
+  if (peOffset + 24 > buffer.length || buffer.toString('ascii', peOffset, peOffset + 4) !== 'PE\0\0') {
     throw new Error(`${filePath} has an invalid PE header`)
   }
   const coffOffset = peOffset + 4
@@ -68,10 +63,7 @@ function readPeHeader(filePath) {
   }
   const optionalMagic = buffer.readUInt16LE(optionalOffset)
   const dataDirectoryOffset = optionalMagic === 0x20b ? optionalOffset + 112 : optionalOffset + 96
-  if (
-    ![0x10b, 0x20b].includes(optionalMagic) ||
-    dataDirectoryOffset + 8 * 7 > optionalOffset + optionalSize
-  ) {
+  if (![0x10b, 0x20b].includes(optionalMagic) || dataDirectoryOffset + 8 * 7 > optionalOffset + optionalSize) {
     throw new Error(`${filePath} has an unsupported PE optional header`)
   }
   const sectionCount = buffer.readUInt16LE(coffOffset + 2)

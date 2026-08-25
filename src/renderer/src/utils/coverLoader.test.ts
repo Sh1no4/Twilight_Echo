@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-const { clearCoverCache, clearRemoteCoverGrantCache, resolveCover } = (await import(
+const {
+  clearCoverCache,
+  clearRemoteCoverGrantCache,
+  resolveCover
+} = (await import(
   new URL('./coverLoader.ts', import.meta.url).href
 )) as typeof import('./coverLoader')
 
@@ -40,13 +44,10 @@ test('resolveCover converts Uint8Array IPC responses without base64 IPC payloads
     onload: (() => void) | null = null
     onerror: (() => void) | null = null
     readAsDataURL(blob: Blob): void {
-      void blob.arrayBuffer().then(
-        (bytes) => {
-          this.result = `data:image/jpeg;base64,${new Uint8Array(bytes).join('-')}`
-          this.onload?.()
-        },
-        () => this.onerror?.()
-      )
+      void blob.arrayBuffer().then((bytes) => {
+        this.result = `data:image/jpeg;base64,${new Uint8Array(bytes).join('-')}`
+        this.onload?.()
+      }, () => this.onerror?.())
     }
   }
   globalRecord.FileReader = FakeFileReader
@@ -77,13 +78,10 @@ test('resolveCover caps protocol-fetch fallback cache at 128 entries', async () 
     onload: (() => void) | null = null
     onerror: (() => void) | null = null
     readAsDataURL(blob: Blob): void {
-      void blob.arrayBuffer().then(
-        () => {
-          this.result = `data:image/jpeg;base64,${blob.size}`
-          this.onload?.()
-        },
-        () => this.onerror?.()
-      )
+      void blob.arrayBuffer().then(() => {
+        this.result = `data:image/jpeg;base64,${blob.size}`
+        this.onload?.()
+      }, () => this.onerror?.())
     }
   }
 
@@ -211,7 +209,10 @@ test('resolveCover falls back to a live handle when re-grant fails', async () =>
 
   try {
     assert.equal(
-      await resolveCover('twilight-media://image/still-live', 'https://p1.music.126.net/cover.jpg'),
+      await resolveCover(
+        'twilight-media://image/still-live',
+        'https://p1.music.126.net/cover.jpg'
+      ),
       'twilight-media://image/still-live'
     )
   } finally {

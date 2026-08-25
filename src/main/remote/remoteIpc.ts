@@ -238,10 +238,7 @@ function isPrivateOrLoopbackHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
   if (host === 'localhost' || host.endsWith('.localhost') || host === '::1') return true
   const parts = host.split('.').map(Number)
-  if (
-    parts.length !== 4 ||
-    parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
-  ) {
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
     return false
   }
   const [a, b] = parts
@@ -362,9 +359,12 @@ export function setupRemoteIpc(): void {
     ) => {
       assertTrustedIpcSender(event, 'remote control IPC')
       const usn = normalizeIpcString(payload?.usn, 'DLNA device usn', 512)
-      const title = typeof payload?.title === 'string' ? payload.title.slice(0, 256) : undefined
-      const artist = typeof payload?.artist === 'string' ? payload.artist.slice(0, 256) : undefined
-      const album = typeof payload?.album === 'string' ? payload.album.slice(0, 256) : undefined
+      const title =
+        typeof payload?.title === 'string' ? payload.title.slice(0, 256) : undefined
+      const artist =
+        typeof payload?.artist === 'string' ? payload.artist.slice(0, 256) : undefined
+      const album =
+        typeof payload?.album === 'string' ? payload.album.slice(0, 256) : undefined
       const contentTypeHint =
         typeof payload?.contentType === 'string' ? payload.contentType.slice(0, 128) : undefined
       const positionSeconds =
@@ -384,8 +384,10 @@ export function setupRemoteIpc(): void {
         throw new Error('Chromecast device host is missing')
       }
 
-      const hasFile = typeof payload?.filePath === 'string' && payload.filePath.trim().length > 0
-      const hasRemote = typeof payload?.mediaUrl === 'string' && payload.mediaUrl.trim().length > 0
+      const hasFile =
+        typeof payload?.filePath === 'string' && payload.filePath.trim().length > 0
+      const hasRemote =
+        typeof payload?.mediaUrl === 'string' && payload.mediaUrl.trim().length > 0
       if (hasFile === hasRemote) {
         throw new Error('Cast requires exactly one of filePath or mediaUrl')
       }
@@ -575,3 +577,4 @@ export async function destroyRemoteIpc(): Promise<void> {
   }
   server = null
 }
+

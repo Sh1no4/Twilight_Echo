@@ -3,15 +3,9 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 test('hidden documents pause iframe animation frames and QR polling', () => {
-  const iframe = readFileSync(
-    new URL('../../../../resources/audio-visualizer/index.html', import.meta.url),
-    'utf8'
-  )
+  const iframe = readFileSync(new URL('../../../../resources/audio-visualizer/index.html', import.meta.url), 'utf8')
   const visibilityController = readFileSync(
-    new URL(
-      '../../../../resources/audio-visualizer/visibility-animation-controller.js',
-      import.meta.url
-    ),
+    new URL('../../../../resources/audio-visualizer/visibility-animation-controller.js', import.meta.url),
     'utf8'
   )
   const login = readFileSync(new URL('./LoginPage.vue', import.meta.url), 'utf8')
@@ -26,8 +20,5 @@ test('hidden documents pause iframe animation frames and QR polling', () => {
     /document\.addEventListener\('visibilitychange', \(\) => visibilityAnimationController\.onVisibilityChange\(\)\)/
   )
   assert.match(login, /if \(document\.hidden\) return/)
-  assert.match(
-    login,
-    /document\.addEventListener\('visibilitychange', onDocumentVisibilityChange\)/
-  )
+  assert.match(login, /document\.addEventListener\('visibilitychange', onDocumentVisibilityChange\)/)
 })

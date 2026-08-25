@@ -15,10 +15,11 @@ test('derives progress and track/state events from playback snapshots', () => {
     codec: 'mp3'
   })
 
-  assert.deepEqual(
-    events.map((event) => event.name),
-    ['player:progress', 'player:track-change', 'player:play']
-  )
+  assert.deepEqual(events.map((event) => event.name), [
+    'player:progress',
+    'player:track-change',
+    'player:play'
+  ])
 })
 
 test('derives only changed state events for subsequent snapshots', () => {
@@ -41,8 +42,5 @@ test('derives only changed state events for subsequent snapshots', () => {
     }
   )
 
-  assert.deepEqual(
-    events.map((event) => event.name),
-    ['player:progress', 'player:pause']
-  )
+  assert.deepEqual(events.map((event) => event.name), ['player:progress', 'player:pause'])
 })

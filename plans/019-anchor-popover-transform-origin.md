@@ -35,15 +35,14 @@
 
 ```html
 <!-- src/renderer/src/components/SongList.vue:2218-2225 — 当前 -->
-<!-- Context Menu -->
-<Teleport to="body">
-  <div
-    v-if="showContextMenu"
-    class="context-menu"
-    :style="{ top: menuY + 'px', left: menuX + 'px' }"
-    @click.stop
-  ></div
-></Teleport>
+            <!-- Context Menu -->
+            <Teleport to="body">
+              <div
+                v-if="showContextMenu"
+                class="context-menu"
+                :style="{ top: menuY + 'px', left: menuX + 'px' }"
+                @click.stop
+              >
 ```
 
 于是菜单是**瞬时出现、瞬时消失**：右键之后一整块 160px 宽的毛玻璃面板直接闪现在指针旁边，没有任何东西说明它是从哪儿来的。
@@ -52,28 +51,28 @@
 
 ```ts
 // src/renderer/src/components/song-list/useSongListContextMenu.ts:97-118 — 当前
-function onContextMenu(event: MouseEvent, track: Track): void {
-  event.preventDefault()
-  selectedTrack.value = track
-  menuX.value = event.clientX
-  menuY.value = event.clientY
-  showContextMenu.value = true
-  showPlaylistSubmenu.value = false
-  showAggregateSubmenu.value = false
+  function onContextMenu(event: MouseEvent, track: Track): void {
+    event.preventDefault()
+    selectedTrack.value = track
+    menuX.value = event.clientX
+    menuY.value = event.clientY
+    showContextMenu.value = true
+    showPlaylistSubmenu.value = false
+    showAggregateSubmenu.value = false
 
-  nextTick(() => {
-    const menu = document.querySelector('.context-menu') as HTMLElement
-    if (menu) {
-      const rect = menu.getBoundingClientRect()
-      if (rect.right > window.innerWidth) {
-        menuX.value -= rect.width
+    nextTick(() => {
+      const menu = document.querySelector('.context-menu') as HTMLElement
+      if (menu) {
+        const rect = menu.getBoundingClientRect()
+        if (rect.right > window.innerWidth) {
+          menuX.value -= rect.width
+        }
+        if (rect.bottom > window.innerHeight) {
+          menuY.value -= rect.height
+        }
       }
-      if (rect.bottom > window.innerHeight) {
-        menuY.value -= rect.height
-      }
-    }
-  })
-}
+    })
+  }
 ```
 
 翻转发生时菜单的哪个角贴着指针就变了：默认是左上角（`left: clientX; top: clientY`），横向翻转后是右上角，纵向翻转后是左下角，两者都翻转就是右下角。**这四种情况本来就已经在代码里算出来了**，只是没人把结果喂给 `transform-origin`。
@@ -136,9 +135,8 @@ function onContextMenu(event: MouseEvent, track: Track): void {
 
 ```html
 <!-- src/renderer/src/components/PlayerBar.vue:1866-1867 — 当前 -->
-<Transition name="volume-drawer">
-  <div v-if="volumeOpen" class="volume-drawer" :class="{ 'drawer-glass': glass }"></div
-></Transition>
+            <Transition name="volume-drawer">
+              <div v-if="volumeOpen" class="volume-drawer" :class="{ 'drawer-glass': glass }">
 ```
 
 整个 `volume-drawer-*` 规则族里**没有 `transform-origin`**，默认落到 `center`；入场只有 6px 位移加淡入，**没有任何 scale**。抽屉贴着按钮上边缘，视觉上应当从下边缘（按钮那一侧）长出来，现在却是整块面板同时从中心浮现。
@@ -216,28 +214,28 @@ AUDIT 第 3 节 Physicality & origin 三条直接命中：
 
 ```html
 <!-- target — src/renderer/src/components/SongList.vue -->
-<Teleport to="body">
-  <Transition name="context-menu">
-    <div
-      v-if="showContextMenu"
-      class="context-menu"
-      :style="{
+            <Teleport to="body">
+              <Transition name="context-menu">
+                <div
+                  v-if="showContextMenu"
+                  class="context-menu"
+                  :style="{
                     top: menuY + 'px',
                     left: menuX + 'px',
                     '--te-context-menu-origin': menuTransformOrigin
                   }"
-      @click.stop
-    ></div></Transition
-></Teleport>
+                  @click.stop
+                >
 ```
 
 ```ts
 // target — src/renderer/src/components/song-list/useSongListContextMenu.ts
-const menuFlippedX = ref(false)
-const menuFlippedY = ref(false)
-const menuTransformOrigin = computed(
-  () => `${menuFlippedY.value ? 'bottom' : 'top'} ${menuFlippedX.value ? 'right' : 'left'}`
-)
+  const menuFlippedX = ref(false)
+  const menuFlippedY = ref(false)
+  const menuTransformOrigin = computed(
+    () =>
+      `${menuFlippedY.value ? 'bottom' : 'top'} ${menuFlippedX.value ? 'right' : 'left'}`
+  )
 ```
 
 ### 目标二：流媒体右键菜单
@@ -301,74 +299,74 @@ const menuTransformOrigin = computed(
    b. 在 `:68-69` 的
 
    ```ts
-   const menuX = ref(0)
-   const menuY = ref(0)
+     const menuX = ref(0)
+     const menuY = ref(0)
    ```
 
    之后紧跟着插入两行：
 
    ```ts
-   const menuFlippedX = ref(false)
-   const menuFlippedY = ref(false)
+     const menuFlippedX = ref(false)
+     const menuFlippedY = ref(false)
    ```
 
    c. 在 `:95` 的 `const canPlayNextSelectedTrack = computed(() => !!selectedTrack.value && !!playNext)` 之后、`:97` 的 `function onContextMenu` 之前，插入 origin 计算属性（连注释一起）：
 
    ```ts
-   /**
-    * The corner that sits under the pointer. `onContextMenu` places the menu's
-    * top-left at the click and flips it when it would overflow the viewport, so
-    * after the flip the pointer is at the right and/or bottom corner instead.
-    * Feeding that back as `transform-origin` makes the menu grow out of the
-    * click rather than out of its own centre.
-    */
-   const menuTransformOrigin = computed(
-     () => `${menuFlippedY.value ? 'bottom' : 'top'} ${menuFlippedX.value ? 'right' : 'left'}`
-   )
+     /**
+      * The corner that sits under the pointer. `onContextMenu` places the menu's
+      * top-left at the click and flips it when it would overflow the viewport, so
+      * after the flip the pointer is at the right and/or bottom corner instead.
+      * Feeding that back as `transform-origin` makes the menu grow out of the
+      * click rather than out of its own centre.
+      */
+     const menuTransformOrigin = computed(
+       () => `${menuFlippedY.value ? 'bottom' : 'top'} ${menuFlippedX.value ? 'right' : 'left'}`
+     )
    ```
 
    d. 改 `onContextMenu`（`:97-118`）：进入时把两个标记复位，翻转时置位。改完的完整函数体应当是：
 
    ```ts
-   function onContextMenu(event: MouseEvent, track: Track): void {
-     event.preventDefault()
-     selectedTrack.value = track
-     menuX.value = event.clientX
-     menuY.value = event.clientY
-     menuFlippedX.value = false
-     menuFlippedY.value = false
-     showContextMenu.value = true
-     showPlaylistSubmenu.value = false
-     showAggregateSubmenu.value = false
+     function onContextMenu(event: MouseEvent, track: Track): void {
+       event.preventDefault()
+       selectedTrack.value = track
+       menuX.value = event.clientX
+       menuY.value = event.clientY
+       menuFlippedX.value = false
+       menuFlippedY.value = false
+       showContextMenu.value = true
+       showPlaylistSubmenu.value = false
+       showAggregateSubmenu.value = false
 
-     nextTick(() => {
-       const menu = document.querySelector('.context-menu') as HTMLElement
-       if (menu) {
-         const rect = menu.getBoundingClientRect()
-         if (rect.right > window.innerWidth) {
-           menuX.value -= rect.width
-           menuFlippedX.value = true
+       nextTick(() => {
+         const menu = document.querySelector('.context-menu') as HTMLElement
+         if (menu) {
+           const rect = menu.getBoundingClientRect()
+           if (rect.right > window.innerWidth) {
+             menuX.value -= rect.width
+             menuFlippedX.value = true
+           }
+           if (rect.bottom > window.innerHeight) {
+             menuY.value -= rect.height
+             menuFlippedY.value = true
+           }
          }
-         if (rect.bottom > window.innerHeight) {
-           menuY.value -= rect.height
-           menuFlippedY.value = true
-         }
-       }
-     })
-   }
+       })
+     }
    ```
 
    e. 在返回类型注解里登记新成员。函数签名的返回类型对象在 `:33-66`，其中 `:35-36` 是
 
    ```ts
-   menuX: Ref<number>
-   menuY: Ref<number>
+     menuX: Ref<number>
+     menuY: Ref<number>
    ```
 
    在 `menuY: Ref<number>` 之后插入一行：
 
    ```ts
-   menuTransformOrigin: ComputedRef<string>
+     menuTransformOrigin: ComputedRef<string>
    ```
 
    `ComputedRef` 已经在 `:8` 的 import 里（`type ComputedRef`），不需要改 import。
@@ -393,34 +391,32 @@ const menuTransformOrigin = computed(
 3. **`src/renderer/src/components/SongList.vue` —— 包 `<Transition>` 并传 origin。** 把 `:2218-2225` 的
 
    ```html
-   <!-- Context Menu -->
-   <Teleport to="body">
-     <div
-       v-if="showContextMenu"
-       class="context-menu"
-       :style="{ top: menuY + 'px', left: menuX + 'px' }"
-       @click.stop
-     ></div
-   ></Teleport>
+               <!-- Context Menu -->
+               <Teleport to="body">
+                 <div
+                   v-if="showContextMenu"
+                   class="context-menu"
+                   :style="{ top: menuY + 'px', left: menuX + 'px' }"
+                   @click.stop
+                 >
    ```
 
    改成
 
    ```html
-   <!-- Context Menu -->
-   <Teleport to="body">
-     <Transition name="context-menu">
-       <div
-         v-if="showContextMenu"
-         class="context-menu"
-         :style="{
+               <!-- Context Menu -->
+               <Teleport to="body">
+                 <Transition name="context-menu">
+                   <div
+                     v-if="showContextMenu"
+                     class="context-menu"
+                     :style="{
                        top: menuY + 'px',
                        left: menuX + 'px',
                        '--te-context-menu-origin': menuTransformOrigin
                      }"
-         @click.stop
-       ></div></Transition
-   ></Teleport>
+                     @click.stop
+                   >
    ```
 
    **然后必须补上闭合标签并整体缩进。**这个 `<div>` 从 `:2220` 开始、在 `:2406` 结束（`:2407` 是 `</Teleport>`）。改完后 `:2406` 附近应当是：
@@ -436,7 +432,7 @@ const menuTransformOrigin = computed(
 4. **`src/renderer/src/components/song-list/SongList.css` —— 加 origin 与过渡类。** 在 `:1545-1556` 的 `.context-menu { … }` 规则里，在最后一行 `-webkit-backdrop-filter: blur(20px) saturate(150%);` 之后、闭合花括号之前，插入一行：
 
    ```css
-   transform-origin: var(--te-context-menu-origin, top left);
+     transform-origin: var(--te-context-menu-origin, top left);
    ```
 
    然后在这条规则的闭合花括号之后、`:1557` 的 `.menu-item {` 之前，插入过渡类（连注释）：
@@ -522,21 +518,21 @@ const menuTransformOrigin = computed(
 7. **`src/renderer/src/components/StreamingPage.vue` —— 把 origin 作为 prop 传下去。** `:3222-3237` 是 `<StreamingContextMenu>` 的调用。在 `:3225` 的 `:y="streamingContextMenuY"` 之后插入一行：
 
    ```html
-   :transform-origin="streamingContextMenuOrigin"
+         :transform-origin="streamingContextMenuOrigin"
    ```
 
 8. **`src/renderer/src/components/streaming-page/StreamingContextMenu.vue` —— 收下 prop。** 该文件 `<script setup lang="ts">` 里的 `defineProps<{ … }>()` 有
 
    ```ts
-   show: boolean
-   x: number
-   y: number
+     show: boolean
+     x: number
+     y: number
    ```
 
    在 `y: number` 之后插入一行：
 
    ```ts
-   transformOrigin: string
+     transformOrigin: string
    ```
 
 9. **`src/renderer/src/components/streaming-page/StreamingContextMenu.vue` —— 包 `<Transition>` 并传 origin。** 模板当前是
@@ -549,8 +545,7 @@ const menuTransformOrigin = computed(
          class="streaming-context-menu"
          :style="{ top: `${y}px`, left: `${x}px` }"
          @click.stop
-       ></div></Teleport
-   ></template>
+       >
    ```
 
    改成
@@ -568,8 +563,7 @@ const menuTransformOrigin = computed(
              '--te-streaming-context-menu-origin': transformOrigin
            }"
            @click.stop
-         ></div></Transition></Teleport
-   ></template>
+         >
    ```
 
    同样要补 `</Transition>` 闭合标签（在这个 `<div>` 的 `</div>` 之后、`</Teleport>` 之前），并把 `<div>` 内的全部内容右移 2 个空格。
@@ -577,7 +571,7 @@ const menuTransformOrigin = computed(
 10. **`src/renderer/src/components/streaming-page/StreamingContextMenu.vue` —— 加 origin 与过渡类。** 在 `:242-253` 的 `.streaming-context-menu { … }` 规则里，最后一行 `-webkit-backdrop-filter: blur(20px) saturate(150%);` 之后插入：
 
     ```css
-    transform-origin: var(--te-streaming-context-menu-origin, top left);
+      transform-origin: var(--te-streaming-context-menu-origin, top left);
     ```
 
     然后在这条规则之后、`:255` 的 `.streaming-context-menu .menu-item {` 之前插入：

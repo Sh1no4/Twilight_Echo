@@ -69,10 +69,7 @@ test('parseLsOutput extracts directory and audio entries', () => {
 
 test('system sftp list maps ls output into network entries', async () => {
   const runner = makeRunner()
-  const adapter = createSftpSystemAdapter({
-    runBatch: runner,
-    tempDir: await mkdtemp(join(tmpdir(), 'sftp-'))
-  })
+  const adapter = createSftpSystemAdapter({ runBatch: runner, tempDir: await mkdtemp(join(tmpdir(), 'sftp-')) })
   const session = await adapter.createSession(makeProfile(), {
     kind: 'privateKey',
     username: 'alice',
@@ -106,8 +103,8 @@ test('system sftp rejects password auth and streams downloads to temp files', as
         password: 'x'
       }),
     (err: unknown) => {
-      assert.equal((err as { code: string }).code, 'auth')
-      return true
+    assert.equal((err as { code: string }).code, 'auth')
+    return true
     }
   )
 
@@ -149,13 +146,10 @@ test('system sftp maps permission and missing-path errors', async () => {
     username: 'alice',
     keyPath: 'C:/keys/id_ed25519'
   })
-  await assert.rejects(
-    async () => authSession.list('/music'),
-    (err: unknown) => {
-      assert.equal((err as { code: string }).code, 'auth')
-      return true
-    }
-  )
+  await assert.rejects(async () => authSession.list('/music'), (err: unknown) => {
+    assert.equal((err as { code: string }).code, 'auth')
+    return true
+  })
 
   const missingSession = await createSftpSystemAdapter({
     runBatch: makeRunner({ notFound: true }),
@@ -165,11 +159,8 @@ test('system sftp maps permission and missing-path errors', async () => {
     username: 'alice',
     keyPath: 'C:/keys/id_ed25519'
   })
-  await assert.rejects(
-    async () => missingSession.stat('/music/nope.flac'),
-    (err: unknown) => {
-      assert.equal((err as { code: string }).code, 'notFound')
-      return true
-    }
-  )
+  await assert.rejects(async () => missingSession.stat('/music/nope.flac'), (err: unknown) => {
+    assert.equal((err as { code: string }).code, 'notFound')
+    return true
+  })
 })

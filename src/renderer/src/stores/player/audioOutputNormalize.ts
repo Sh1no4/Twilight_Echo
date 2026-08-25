@@ -63,9 +63,7 @@ export function formatAudioDeviceLabel(device: string): string {
   return device === 'auto' ? DEFAULT_AUDIO_DEVICE_OPTION.label : device
 }
 
-export function normalizeAudioCapabilitySupportState(
-  value: unknown
-): AudioCapabilitySupportState | null {
+export function normalizeAudioCapabilitySupportState(value: unknown): AudioCapabilitySupportState | null {
   return value === 'verified' ||
     value === 'runtime-probed' ||
     value === 'unsupported' ||
@@ -107,9 +105,7 @@ export function getDevicePathKind(option: Partial<AudioDeviceOption>): string {
   return ''
 }
 
-export function deriveDopSupportState(
-  option: Partial<AudioDeviceOption>
-): AudioCapabilitySupportState {
+export function deriveDopSupportState(option: Partial<AudioDeviceOption>): AudioCapabilitySupportState {
   const explicit = normalizeAudioCapabilitySupportState(option.dopSupportState)
   if (explicit) return explicit
   if (
@@ -261,3 +257,4 @@ export function normalizeAudioDeviceOptions(
 
   return normalized
 }
+

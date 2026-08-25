@@ -245,12 +245,11 @@ export function useAppNavigation() {
 
   function openThemeStudioPage(initialDomain: ThemeStudioDomain = 'presets'): void {
     themeStudioInitialDomain.value = initialDomain
-    themeStudioReturnTarget.value =
-      initialDomain === 'presets' || showSettingsPage.value
-        ? 'settings'
-        : showPlayingPage.value
-          ? 'playing'
-          : 'local'
+    themeStudioReturnTarget.value = initialDomain === 'presets' || showSettingsPage.value
+      ? 'settings'
+      : showPlayingPage.value
+        ? 'playing'
+        : 'local'
     menuOpen.value = false
     showPlayingPage.value = false
     showSettingsPage.value = false

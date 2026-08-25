@@ -9,7 +9,11 @@ import {
 
 test('watcher extensions cover all supported scan formats plus cue', () => {
   for (const ext of SUPPORTED_EXTENSIONS) {
-    assert.equal(LIBRARY_WATCH_EXTENSIONS.has(ext), true, `watcher missing scan extension ${ext}`)
+    assert.equal(
+      LIBRARY_WATCH_EXTENSIONS.has(ext),
+      true,
+      `watcher missing scan extension ${ext}`
+    )
   }
   assert.equal(LIBRARY_WATCH_EXTENSIONS.has('.cue'), true)
   assert.equal(isWatchableFileExtension('.aiff'), true)

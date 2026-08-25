@@ -65,6 +65,7 @@ test('cancelled metadata enrichment cannot overwrite a local track or schedule p
   await providerStarted
   assert.equal(store.libraryMetadataEnrichmentStatus.value.state, 'enriching')
   assert.equal(store.cancelLibraryMetadataEnrichment(), true)
+
   ;(resolveProviderSearch as ((value: unknown) => void) | null)?.({
     items: [
       {
@@ -165,6 +166,7 @@ test(
         skippedUnchanged: 0
       }
     })
+
     ;(resolveFirstSearch as ((value: unknown) => void) | null)?.({
       items: [
         {

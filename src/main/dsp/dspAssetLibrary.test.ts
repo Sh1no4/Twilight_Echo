@@ -61,6 +61,7 @@ test('resolves only managed VST3 state-bearing assets for the isolated host', as
   }
 })
 
+
 test('ignores a DSP asset index with excessive unknown nesting', async () => {
   const root = await mkdtemp(join(tmpdir(), 'twilight-dsp-assets-deep-index-'))
   try {

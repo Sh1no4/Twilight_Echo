@@ -14,30 +14,30 @@
 
 ```ts
 // src/renderer/src/components/song-list/useSongListVirtualScroll.ts:65-80 — 当前
-function flushPointerMove(): void {
-  const event = lastPointerEvent
-  pointerMoveRafId = null
-  if (!event) return
-  const row = event.currentTarget as HTMLElement
-  const rect = row.getBoundingClientRect()
-  row.style.setProperty('--track-pointer-x', `${event.clientX - rect.left}px`)
-  row.style.setProperty('--track-pointer-y', `${event.clientY - rect.top}px`)
-}
-
-function onRowPointerMove(event: PointerEvent): void {
-  lastPointerEvent = event
-  if (pointerMoveRafId === null) {
-    pointerMoveRafId = requestAnimationFrame(flushPointerMove)
+  function flushPointerMove(): void {
+    const event = lastPointerEvent
+    pointerMoveRafId = null
+    if (!event) return
+    const row = event.currentTarget as HTMLElement
+    const rect = row.getBoundingClientRect()
+    row.style.setProperty('--track-pointer-x', `${event.clientX - rect.left}px`)
+    row.style.setProperty('--track-pointer-y', `${event.clientY - rect.top}px`)
   }
-}
+
+  function onRowPointerMove(event: PointerEvent): void {
+    lastPointerEvent = event
+    if (pointerMoveRafId === null) {
+      pointerMoveRafId = requestAnimationFrame(flushPointerMove)
+    }
+  }
 ```
 
 配套的模块级状态在同文件 `:40-41`：
 
 ```ts
 // src/renderer/src/components/song-list/useSongListVirtualScroll.ts:40-41 — 当前
-let pointerMoveRafId: number | null = null
-let lastPointerEvent: PointerEvent | null = null
+  let pointerMoveRafId: number | null = null
+  let lastPointerEvent: PointerEvent | null = null
 ```
 
 返回类型签名 `:28`：
@@ -51,10 +51,10 @@ let lastPointerEvent: PointerEvent | null = null
 
 ```ts
 // src/renderer/src/components/song-list/useSongListVirtualScroll.ts:106-109 — 当前
-onUnmounted(() => {
-  window.removeEventListener('resize', updateViewportHeight)
-  if (pointerMoveRafId !== null) cancelAnimationFrame(pointerMoveRafId)
-})
+  onUnmounted(() => {
+    window.removeEventListener('resize', updateViewportHeight)
+    if (pointerMoveRafId !== null) cancelAnimationFrame(pointerMoveRafId)
+  })
 ```
 
 返回对象 `:132`：
@@ -70,41 +70,41 @@ onUnmounted(() => {
 
 ```html
 <!-- src/renderer/src/components/SongList.vue:2118-2137 — 当前（节选） -->
-<tr
-  v-for="(track, index) in visibleTracks"
-  :key="track.id"
-  class="track-row"
-  data-te-interactive
-  :class="{
+                <tr
+                  v-for="(track, index) in visibleTracks"
+                  :key="track.id"
+                  class="track-row"
+                  data-te-interactive
+                  :class="{
                     'track-playing': currentTrack?.id === track.id,
                     'track-selected': isSelected(track.id),
                     'playlist-draggable': isPlaylistDetail
                   }"
-  :style="{ height: rowHeight - 4 + 'px', display: 'flex' }"
-  :draggable="isPlaylistDetail"
-  @click="onRowClick(track, Number(index), $event)"
-  @dblclick="onRowDblClick(track, $event)"
-  @dragstart="handlePlaylistDragStart($event, track)"
-  @dragover.prevent
-  @drop="handlePlaylistDrop($event, track)"
-  @pointermove="onRowPointerMove"
-  @contextmenu="onTrackContextMenu($event, track)"
-></tr>
+                  :style="{ height: rowHeight - 4 + 'px', display: 'flex' }"
+                  :draggable="isPlaylistDetail"
+                  @click="onRowClick(track, Number(index), $event)"
+                  @dblclick="onRowDblClick(track, $event)"
+                  @dragstart="handlePlaylistDragStart($event, track)"
+                  @dragover.prevent
+                  @drop="handlePlaylistDrop($event, track)"
+                  @pointermove="onRowPointerMove"
+                  @contextmenu="onTrackContextMenu($event, track)"
+                >
 ```
 
 ```html
 <!-- src/renderer/src/components/aggregate-playlist/AggregatePlaylistPage.vue:474-484 — 当前 -->
-<tr
-  v-for="(track, index) in visibleTracks"
-  :key="track.id"
-  class="aggregate-row"
-  data-te-interactive
-  :class="{ 'is-playing': currentTrack?.id === track.id }"
-  :style="{ height: rowHeight - 4 + 'px', display: 'flex' }"
-  @click="onRowClick(track)"
-  @dblclick="onRowDoubleClick(track)"
-  @pointermove="onRowPointerMove"
-></tr>
+            <tr
+              v-for="(track, index) in visibleTracks"
+              :key="track.id"
+              class="aggregate-row"
+              data-te-interactive
+              :class="{ 'is-playing': currentTrack?.id === track.id }"
+              :style="{ height: rowHeight - 4 + 'px', display: 'flex' }"
+              @click="onRowClick(track)"
+              @dblclick="onRowDoubleClick(track)"
+              @pointermove="onRowPointerMove"
+            >
 ```
 
 **聚合歌单这一处比 SongList 更彻底地无用**：`AggregatePlaylistPage.vue` 里 `.aggregate-row` **完全没有 `::before` / `::after` 规则**，也没有任何地方读 `--track-pointer-x` / `--track-pointer-y`。这一处 rAF 的产出从写下的第一天起就没有任何消费者。
@@ -163,7 +163,6 @@ onUnmounted(() => {
 把 `.track-row::after` 的所有相关规则按层叠拉齐：
 
 1. **基础态** `SongList.css:1171-1179` —— `opacity: 0`：
-
    ```css
    /* src/renderer/src/components/song-list/SongList.css:1171-1179 — 当前 */
    .track-row::before,
@@ -178,7 +177,6 @@ onUnmounted(() => {
    ```
 
 2. **hover 态** `SongList.css:1235-1240` —— 被显式改回 `0`，注释写明是刻意关掉的：
-
    ```css
    /* src/renderer/src/components/song-list/SongList.css:1235-1240 — 当前 */
    /* U2: 关闭 hover 的玻璃层与动画渐变描边（pointer-border-pulse / border-gradient-flow） */
@@ -190,7 +188,6 @@ onUnmounted(() => {
    ```
 
 3. **选中态** `SongList.css:2029-2034` —— `opacity: 0 !important`：
-
    ```css
    /* src/renderer/src/components/song-list/SongList.css:2029-2034 — 当前 */
    /* Kill pointer/border glow on selected rows (hover + resting) */
@@ -327,9 +324,9 @@ AUDIT 第 1 节 Purpose & frequency 要求每个动效回答「why does this ani
 
 ```ts
 /* target — src/renderer/src/components/song-list/useSongListVirtualScroll.ts */
-onUnmounted(() => {
-  window.removeEventListener('resize', updateViewportHeight)
-})
+  onUnmounted(() => {
+    window.removeEventListener('resize', updateViewportHeight)
+  })
 ```
 
 两个模板不再有 `@pointermove="onRowPointerMove"`，两个解构不再有 `onRowPointerMove`。
@@ -384,30 +381,25 @@ onUnmounted(() => {
 ## Steps
 
 1. 打开 `src/renderer/src/components/song-list/useSongListVirtualScroll.ts`，删掉 `:40-41` 两行局部状态声明：
-
    ```ts
    let pointerMoveRafId: number | null = null
    let lastPointerEvent: PointerEvent | null = null
    ```
-
    （`:39` 的 `const rowHeight = ROW_HEIGHT` 保留。）
 
 2. 同文件，删掉 `:65-80` 的 `flushPointerMove` 与 `onRowPointerMove` 两个函数整体（从 `function flushPointerMove(): void {` 到 `onRowPointerMove` 的收尾 `}`，含中间空行）。删完之后 `:60-63` 的 `onScroll` 与原 `:82` 的 `updateViewportHeight` 直接相邻，中间留一个空行。
 
 3. 同文件，从返回类型签名里删掉 `:28` 这一行：
-
    ```ts
    onRowPointerMove: (event: PointerEvent) => void
    ```
 
 4. 同文件，把 `onUnmounted` 改成只摘 resize 监听：
-
    ```ts
    onUnmounted(() => {
      window.removeEventListener('resize', updateViewportHeight)
    })
    ```
-
    即删掉 `if (pointerMoveRafId !== null) cancelAnimationFrame(pointerMoveRafId)` 这一行。
 
 5. 同文件，从返回对象里删掉 `onRowPointerMove,` 这一行（原 `:132`，在 `onScroll,` 与 `updateViewportHeight,` 之间）。
@@ -419,7 +411,6 @@ onUnmounted(() => {
 8. 打开 `src/renderer/src/components/aggregate-playlist/AggregatePlaylistPage.vue`，删掉 `:483` 的 `@pointermove="onRowPointerMove"` 这一整行。**`data-te-interactive` 必须原样保留。**
 
 9. 同文件，从 `:111-126` 的解构里删掉 `onRowPointerMove` —— 注意它是列表最后一项、**没有尾逗号**，所以要把上一行 `onScroll,` 的逗号一起去掉：
-
    ```ts
    const {
      containerRef,
@@ -434,12 +425,10 @@ onUnmounted(() => {
    ```
 
 10. 打开 `src/renderer/src/components/song-list/SongList.css`，从 `.track-row`（`:1145`）里删掉 `:1146-1147` 两行：
-
     ```css
     --track-pointer-x: 50%;
     --track-pointer-y: 50%;
     ```
-
     该规则的其余声明（`position` / `cursor` / `transition` / `width` / `border-radius` / `margin` / `isolation` / `transform-origin` / `z-index`）全部保留不动。
 
 11. 同文件，删掉 `:1195-1214` 的 `.track-row::after { … }` 整条规则（从 `.track-row::after {` 到它的收尾 `}`）。判据：这条规则里含 `circle 92px at var(--track-pointer-x)`。**不要删 `:1171-1179` 那条 `.track-row::before, .track-row::after` 共享块**，也不要删 `:1181-1193` 的 `.track-row::before` 规则。
@@ -449,12 +438,10 @@ onUnmounted(() => {
 13. 同文件，删掉 `:1628-1638` 的 `@keyframes pointer-border-pulse { … }` 整条。
 
 14. 同文件，从 `.track-playing::after`（`:1281`）里删掉最后两行声明：
-
     ```css
     background-size: 260% 100%;
     animation: border-gradient-flow 3.4s linear infinite;
     ```
-
     保留 `opacity: 1;` 与整个 `background: linear-gradient(…)`（四个色标一字不改）。
 
 15. 同文件，删掉 `:1614-1618` 的 `@keyframes border-gradient-flow { … }` 整条（第 14 步之后它已无引用；执行前先 `grep -n "border-gradient-flow" src/renderer/src/components/song-list/SongList.css` 确认只剩 `:1235` 注释里那一处提及和这条定义本身）。
@@ -507,14 +494,13 @@ onUnmounted(() => {
     - **正在播放的行仍然有彩色渐变描边，但它不再流动。** 盯住那一行看 5 秒以上（动画周期是 3.4s），确认渐变完全静止。颜色应当与改动前的某一帧一致。
     - 用 CDP 读计算样式确认属性已消失，而不是靠截图判断：
       ```js
-      ;(async () => {
+      (async () => {
         const row = document.querySelector('.track-row')
         const cs = getComputedStyle(row)
         return {
           px: cs.getPropertyValue('--track-pointer-x'),
           py: cs.getPropertyValue('--track-pointer-y'),
-          afterAnim: getComputedStyle(document.querySelector('.track-playing'), '::after')
-            .animationName
+          afterAnim: getComputedStyle(document.querySelector('.track-playing'), '::after').animationName
         }
       })()
       ```

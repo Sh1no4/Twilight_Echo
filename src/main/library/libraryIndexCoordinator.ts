@@ -145,15 +145,13 @@ export class LocalLibraryIndexCoordinator extends EventEmitter {
   private scheduleWatcherQueue(): void {
     if (this.destroyed || this.watcherScanQueued || this.watcherChanges.size === 0) return
     this.watcherScanQueued = true
-    const operation = this.chain
-      .catch(() => {})
-      .then(async () => {
-        if (this.destroyed || this.watcherChanges.size === 0) return
-        const pending = Array.from(this.watcherChanges.values())
-        this.watcherChanges.clear()
-        const result = await this.execute('watch', pending)
-        this.emit('watch-result', result)
-      })
+    const operation = this.chain.catch(() => {}).then(async () => {
+      if (this.destroyed || this.watcherChanges.size === 0) return
+      const pending = Array.from(this.watcherChanges.values())
+      this.watcherChanges.clear()
+      const result = await this.execute('watch', pending)
+      this.emit('watch-result', result)
+    })
     this.chain = operation.then(
       () => {},
       () => {}
@@ -406,9 +404,7 @@ function applyWorkerResult(
   removedFilePaths: string[]
   changed: boolean
 } {
-  const excluded = new Set(
-    document.exclusions.map((entry) => normalizeLibraryFilePath(entry.filePath))
-  )
+  const excluded = new Set(document.exclusions.map((entry) => normalizeLibraryFilePath(entry.filePath)))
   const parsedByPath = new Map<string, Record<string, unknown>[]>()
   for (const track of workerResult.parsedTracks) {
     if (!isTrackRecord(track) || typeof track.filePath !== 'string' || !track.filePath) continue
@@ -440,10 +436,7 @@ function applyWorkerResult(
   let changed = retained.length !== document.tracks.length
 
   for (const path of replacePaths) {
-    const parsed = preserveTrackIdentifiers(
-      previousByPath.get(path) ?? [],
-      parsedByPath.get(path) ?? []
-    )
+    const parsed = preserveTrackIdentifiers(previousByPath.get(path) ?? [], parsedByPath.get(path) ?? [])
     const previous = previousByPath.get(path) ?? []
     if (parsed.length > 0) {
       if (previous.length === 0) addedTracks.push(...parsed)
@@ -511,15 +504,10 @@ function cueTrackIdentity(track: Record<string, unknown>): string {
   if (!cueSheetPath || !range || typeof range !== 'object') return ''
   const start = Number((range as { startSeconds?: unknown }).startSeconds)
   const end = Number((range as { endSeconds?: unknown }).endSeconds)
-  return Number.isFinite(start) && Number.isFinite(end)
-    ? `${cueSheetPath}\u0000${start}\u0000${end}`
-    : ''
+  return Number.isFinite(start) && Number.isFinite(end) ? `${cueSheetPath}\u0000${start}\u0000${end}` : ''
 }
 
-function sameTrackCollection(
-  left: Record<string, unknown>[],
-  right: Record<string, unknown>[]
-): boolean {
+function sameTrackCollection(left: Record<string, unknown>[], right: Record<string, unknown>[]): boolean {
   if (left.length !== right.length) return false
   return left.every((track, index) => JSON.stringify(track) === JSON.stringify(right[index]))
 }
@@ -546,9 +534,7 @@ function mergeFileIndex(
 
 function collectTrackPaths(document: LocalMusicLibraryDocument): string[] {
   return document.tracks.flatMap((track) =>
-    isTrackRecord(track) && typeof track.filePath === 'string' && track.filePath
-      ? [track.filePath]
-      : []
+    isTrackRecord(track) && typeof track.filePath === 'string' && track.filePath ? [track.filePath] : []
   )
 }
 
@@ -584,11 +570,7 @@ function completeCancelledResult(
 function isWithinRoot(filePath: string, root: string): boolean {
   const file = normalizeLibraryFilePath(filePath)
   const normalizedRoot = normalizeLibraryFilePath(root).replace(/[\\/]+$/, '')
-  return (
-    file === normalizedRoot ||
-    file.startsWith(`${normalizedRoot}\\`) ||
-    file.startsWith(`${normalizedRoot}/`)
-  )
+  return file === normalizedRoot || file.startsWith(`${normalizedRoot}\\`) || file.startsWith(`${normalizedRoot}/`)
 }
 
 function sameRootSet(left: string[], right: string[]): boolean {

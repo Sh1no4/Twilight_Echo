@@ -105,12 +105,11 @@
 
 ```css
 /* target — src/renderer/src/assets/base.css，插在 --te-ease-out-expo 那一行之后 */
-/* Strong ease-out for UI enter/exit (AUDIT §2). */
---te-ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+  /* Strong ease-out for UI enter/exit (AUDIT §2). */
+  --te-ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
 ```
 
 三个值一字不差：
-
 - 新 token 名：`--te-ease-out-strong`
 - 新 token 值：`cubic-bezier(0.23, 1, 0.32, 1)`
 - 时长：`160ms`（不变）
@@ -135,36 +134,28 @@
 ## Steps
 
 1. 打开 `src/renderer/src/assets/base.css`，定位到 `:31` 那一行：
-
    ```css
-   --te-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+     --te-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
    ```
-
    在它**后面**新增两行（缩进两个空格，与相邻 token 一致）：
-
    ```css
-   /* Strong ease-out for UI enter/exit (AUDIT §2). */
-   --te-ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+     /* Strong ease-out for UI enter/exit (AUDIT §2). */
+     --te-ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
    ```
-
    注意：这是 `:root { … }` 块内（该块从 `:1` 开始）。不要放到文件里其他的 `:root` 或 `[data-theme]` 块里 —— 判据是紧邻上方就是 `--te-ease-out-expo`、紧邻下方就是 `--te-motion-press: 90ms;`。
 
 2. 打开 `src/renderer/src/components/AppNoticeHost.vue`，定位到 `:156-158` 的两行 `ease-in`：
-
    ```css
-   transition:
-     opacity 160ms ease-in,
-     transform 160ms ease-in;
+     transition:
+       opacity 160ms ease-in,
+       transform 160ms ease-in;
    ```
-
    改成：
-
    ```css
-   transition:
-     opacity 160ms var(--te-ease-out-strong),
-     transform 160ms var(--te-ease-out-strong);
+     transition:
+       opacity 160ms var(--te-ease-out-strong),
+       transform 160ms var(--te-ease-out-strong);
    ```
-
    判据：这条声明属于 `.app-notice-leave-active` 规则，紧邻上方三行是 `position: absolute;` / `right: 0;` / `width: 100%;`。
 
 3. 不做其他任何修改。本方案只有这两处编辑。
@@ -176,7 +167,7 @@
   - `scale(0.97)` 落在 AUDIT 第 3 节的 0.9–0.97 区间内，没有 `scale(0)`；
   - 离场 `position: absolute` 让剩余吐司靠 `.app-notice-move` 过渡收拢而不是跳变；
   - 入场 220ms / 离场 160ms 的非对称时长。
-    这些**全部保持原样**。
+  这些**全部保持原样**。
 - **不要动 `:144-148` 的 `.app-notice-enter-active`，也不要动 `:171-173` 的 `.app-notice-move`。** 那两处的裸 `cubic-bezier(0.22, 1, 0.36, 1)` 该换成 `var(--te-ease-out-quint)`，但那归 **004 号方案**（token 整合），不在本方案范围。本方案只碰 `.app-notice-leave-active`。
 - **不要动 `:175-186` 的 `@media (prefers-reduced-motion: reduce)` 块。** 本文件缺 `data-te-motion` 三档分支，那归 **015 号方案**。
 - **不要改 `--te-toast-motion-duration`，也不要给它补定义。** 这个变量全仓从未定义过（只在 `AppNoticeHost.vue:146`、`:147`、`:172` 作为 `var(..., 220ms)` 的第一参数出现），fallback 220ms 一直生效，这是有意的可覆盖点。

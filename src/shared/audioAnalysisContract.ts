@@ -26,4 +26,6 @@ export type AudioAnalysisWorkerEvent =
     }
   | { kind: 'fatal'; error: string }
 
-export type AudioAnalysisWorkerMessage = AudioAnalysisWorkerResponse | AudioAnalysisWorkerEvent
+export type AudioAnalysisWorkerMessage =
+  | AudioAnalysisWorkerResponse
+  | AudioAnalysisWorkerEvent

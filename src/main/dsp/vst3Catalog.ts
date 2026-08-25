@@ -41,11 +41,7 @@ export class Vst3CatalogService {
   ) {
     this.root = root
     this.scanner = scanner
-    this.state = {
-      enabled: process.platform === 'win32',
-      searchPaths: uniquePaths(standardSearchPaths),
-      entries: []
-    }
+    this.state = { enabled: process.platform === 'win32', searchPaths: uniquePaths(standardSearchPaths), entries: [] }
   }
 
   async initialize(): Promise<void> {
@@ -147,13 +143,7 @@ export class Vst3CatalogService {
   async find(id: string): Promise<Vst3CatalogEntry | null> {
     await this.initialize()
     const entry = this.state.entries.find((candidate) => candidate.id === id)
-    return entry
-      ? {
-          ...entry,
-          parameters: [...entry.parameters],
-          supportedLayouts: [...entry.supportedLayouts]
-        }
-      : null
+    return entry ? { ...entry, parameters: [...entry.parameters], supportedLayouts: [...entry.supportedLayouts] } : null
   }
 
   /**
@@ -164,29 +154,17 @@ export class Vst3CatalogService {
     const normalizedId = typeof catalogId === 'string' ? catalogId.trim() : ''
     const normalizedClassId = typeof classId === 'string' ? classId.trim() : ''
     if (!this.initialized) {
-      return {
-        modulePath: null,
-        classId: normalizedClassId,
-        reason: 'VST3 catalog is not initialized'
-      }
+      return { modulePath: null, classId: normalizedClassId, reason: 'VST3 catalog is not initialized' }
     }
     if (process.platform !== 'win32') {
-      return {
-        modulePath: null,
-        classId: normalizedClassId,
-        reason: 'VST3 hosting is available only on Windows x64'
-      }
+      return { modulePath: null, classId: normalizedClassId, reason: 'VST3 hosting is available only on Windows x64' }
     }
     if (!this.state.enabled) {
       return { modulePath: null, classId: normalizedClassId, reason: 'VST3 hosting is disabled' }
     }
     const entry = this.state.entries.find((candidate) => candidate.id === normalizedId)
     if (!entry) {
-      return {
-        modulePath: null,
-        classId: normalizedClassId,
-        reason: 'The selected VST3 module is not in the managed catalog'
-      }
+      return { modulePath: null, classId: normalizedClassId, reason: 'The selected VST3 module is not in the managed catalog' }
     }
     if (entry.status !== 'available') {
       return {
@@ -196,26 +174,15 @@ export class Vst3CatalogService {
       }
     }
     if (!normalizedClassId || entry.classId.toUpperCase() !== normalizedClassId.toUpperCase()) {
-      return {
-        modulePath: null,
-        classId: normalizedClassId,
-        reason: 'The VST3 class ID no longer matches its catalog entry'
-      }
+      return { modulePath: null, classId: normalizedClassId, reason: 'The VST3 class ID no longer matches its catalog entry' }
     }
     if (!existsSync(entry.modulePath)) {
-      return {
-        modulePath: null,
-        classId: normalizedClassId,
-        reason: 'The managed VST3 module is no longer on disk'
-      }
+      return { modulePath: null, classId: normalizedClassId, reason: 'The managed VST3 module is no longer on disk' }
     }
     return { modulePath: entry.modulePath, classId: entry.classId, reason: '' }
   }
 
-  private async scanModule(
-    modulePath: string,
-    moduleFingerprint: string
-  ): Promise<Vst3CatalogEntry> {
+  private async scanModule(modulePath: string, moduleFingerprint: string): Promise<Vst3CatalogEntry> {
     const scannedAt = new Date().toISOString()
     try {
       const descriptor = await this.scanner.scan(modulePath)
@@ -340,12 +307,7 @@ async function fingerprintModule(modulePath: string): Promise<string> {
   return hash.digest('hex')
 }
 
-async function hashDirectory(
-  root: string,
-  directory: string,
-  hash: ReturnType<typeof createHash>,
-  depth: number
-): Promise<void> {
+async function hashDirectory(root: string, directory: string, hash: ReturnType<typeof createHash>, depth: number): Promise<void> {
   if (depth > MAX_SCAN_DEPTH) return
   const entries = await readdir(directory)
   for (const entry of entries.sort()) {
@@ -385,15 +347,12 @@ function uniquePaths(paths: string[]): string[] {
 function normalizeLayouts(layouts: DspChannelLayout[] | undefined): DspChannelLayout[] {
   const supported = new Set<DspChannelLayout>()
   for (const layout of layouts ?? []) {
-    if (layout === 'mono' || layout === 'stereo' || layout === '5.1' || layout === '7.1')
-      supported.add(layout)
+    if (layout === 'mono' || layout === 'stereo' || layout === '5.1' || layout === '7.1') supported.add(layout)
   }
   return [...supported]
 }
 
-function normalizeParameters(
-  parameters: Vst3ParameterDescriptor[] | undefined
-): Vst3ParameterDescriptor[] {
+function normalizeParameters(parameters: Vst3ParameterDescriptor[] | undefined): Vst3ParameterDescriptor[] {
   return (parameters ?? [])
     .filter((parameter) => Number.isInteger(parameter.id) && typeof parameter.title === 'string')
     .slice(0, 2048)
@@ -401,10 +360,7 @@ function normalizeParameters(
       id: parameter.id,
       title: parameter.title.slice(0, 256),
       unit: typeof parameter.unit === 'string' ? parameter.unit.slice(0, 64) : '',
-      defaultNormalizedValue: Math.max(
-        0,
-        Math.min(1, Number(parameter.defaultNormalizedValue) || 0)
-      ),
+      defaultNormalizedValue: Math.max(0, Math.min(1, Number(parameter.defaultNormalizedValue) || 0)),
       stepCount: Math.max(0, Math.min(1_000_000, Math.trunc(Number(parameter.stepCount) || 0))),
       flags: Math.max(0, Math.trunc(Number(parameter.flags) || 0))
     }))
@@ -446,11 +402,7 @@ function cloneState(state: Vst3CatalogState): Vst3CatalogState {
 function isCatalogState(value: unknown): value is Vst3CatalogState {
   if (!value || typeof value !== 'object') return false
   const state = value as Partial<Vst3CatalogState>
-  return (
-    typeof state.enabled === 'boolean' &&
-    Array.isArray(state.searchPaths) &&
-    Array.isArray(state.entries)
-  )
+  return typeof state.enabled === 'boolean' && Array.isArray(state.searchPaths) && Array.isArray(state.entries)
 }
 
 function isCatalogEntry(value: unknown): value is Vst3CatalogEntry {
@@ -467,10 +419,7 @@ function isCatalogEntry(value: unknown): value is Vst3CatalogEntry {
     typeof entry.category === 'string' &&
     Array.isArray(entry.supportedLayouts) &&
     Array.isArray(entry.parameters) &&
-    (entry.status === 'available' ||
-      entry.status === 'incompatible' ||
-      entry.status === 'quarantined' ||
-      entry.status === 'failed') &&
+    (entry.status === 'available' || entry.status === 'incompatible' || entry.status === 'quarantined' || entry.status === 'failed') &&
     (typeof entry.error === 'string' || entry.error === null) &&
     typeof entry.scannedAt === 'string'
   )

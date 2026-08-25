@@ -56,7 +56,9 @@ function median(values: number[]): number {
   if (values.length === 0) return 0
   const sorted = [...values].sort((left, right) => left - right)
   const midpoint = Math.floor(sorted.length / 2)
-  return sorted.length % 2 === 0 ? (sorted[midpoint - 1] + sorted[midpoint]) / 2 : sorted[midpoint]
+  return sorted.length % 2 === 0
+    ? (sorted[midpoint - 1] + sorted[midpoint]) / 2
+    : sorted[midpoint]
 }
 
 export class AudioTempoEstimator {
@@ -95,10 +97,7 @@ export class AudioTempoEstimator {
       this.reset()
       return this.getState()
     }
-    if (
-      this.previousTimestamp !== null &&
-      input.timestamp - this.previousTimestamp > RESET_GAP_MS
-    ) {
+    if (this.previousTimestamp !== null && input.timestamp - this.previousTimestamp > RESET_GAP_MS) {
       this.reset()
     }
 
@@ -353,8 +352,10 @@ export class AudioTempoEstimator {
     const averageInterval =
       consistentIntervals.reduce((sum, interval) => sum + interval, 0) / consistentIntervals.length
     const averageDeviation =
-      consistentIntervals.reduce((sum, interval) => sum + Math.abs(interval - averageInterval), 0) /
-      consistentIntervals.length
+      consistentIntervals.reduce(
+        (sum, interval) => sum + Math.abs(interval - averageInterval),
+        0
+      ) / consistentIntervals.length
     const bpm = 60000 / averageInterval
     const confidence =
       clamp(consistentIntervals.length / 12, 0, 1) *
