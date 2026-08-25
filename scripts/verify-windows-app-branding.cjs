@@ -37,10 +37,26 @@ function assertWindowsExecutableBranding(filePath, readMetadata = readWindowsExe
   assert.ok(fs.existsSync(executable), `Windows executable does not exist: ${executable}`)
   assert.equal(path.basename(executable), DEFAULT_EXECUTABLE_NAME)
   const metadata = readMetadata(executable)
-  assert.equal(metadata.fileDescription, DEFAULT_PRODUCT_NAME)
-  assert.equal(metadata.productName, DEFAULT_PRODUCT_NAME)
-  assert.equal(metadata.internalName, DEFAULT_PRODUCT_NAME)
-  assert.equal(metadata.originalFilename, DEFAULT_EXECUTABLE_NAME)
+  assert.equal(
+    metadata.fileDescription,
+    DEFAULT_PRODUCT_NAME,
+    `FileDescription must be ${DEFAULT_PRODUCT_NAME}, found "${metadata.fileDescription}"`
+  )
+  assert.equal(
+    metadata.productName,
+    DEFAULT_PRODUCT_NAME,
+    `ProductName must be ${DEFAULT_PRODUCT_NAME}, found "${metadata.productName}"`
+  )
+  assert.equal(
+    metadata.internalName,
+    DEFAULT_PRODUCT_NAME,
+    `InternalName must be ${DEFAULT_PRODUCT_NAME}, found "${metadata.internalName}"`
+  )
+  assert.equal(
+    metadata.originalFilename,
+    DEFAULT_EXECUTABLE_NAME,
+    `OriginalFilename must be ${DEFAULT_EXECUTABLE_NAME}, found "${metadata.originalFilename}"`
+  )
   assert.ok(metadata.companyName, 'CompanyName is missing from the Windows executable')
   return metadata
 }
