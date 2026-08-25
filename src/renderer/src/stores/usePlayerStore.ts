@@ -3332,7 +3332,7 @@ function seekPlayback(time: number): void {
     beginPlaybackPositionTransition(position)
     return
   }
-  if (isLoading.value || loadedTrackId !== track.id) {
+  if (isLoading.value) {
     restoredPlaybackPending = true
     restoredPlaybackPosition = position
     beginPlaybackPositionTransition(position)

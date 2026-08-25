@@ -986,7 +986,12 @@ test('native queue switching guards the target track before applying playback-in
   assert.match(playbackSessionClockSource, /maxPredictionGapMs/)
   assert.match(playbackSessionClockSource, /needsResync: true/)
   assert.match(source, /restoredPlaybackPending &&\s*Number\.isFinite\(restoredPlaybackPosition\)/)
-  assert.match(source, /if \(isLoading\.value \|\| loadedTrackId !== track\.id\)/)
+  // A seek defers to the restore-pending slot only while a load is actually in
+  // flight; otherwise it must reach the real dispatch below instead of being
+  // dropped on a stale loadedTrackId.
+  const seekPlaybackGuardBody = extractInternalFunctionBody(source, 'seekPlayback')
+  assert.match(seekPlaybackGuardBody, /if \(isLoading\.value\) \{\s*restoredPlaybackPending = true/)
+  assert.doesNotMatch(seekPlaybackGuardBody, /loadedTrackId !== track\.id/)
   assert.match(advanceAfterPlaybackEnded, /activateCurrentTrack\(track/)
   assert.match(playQueueTrack, /activateCurrentTrack\(track, \{ resetUi: true, position: 0 \}\)/)
   assert.match(
