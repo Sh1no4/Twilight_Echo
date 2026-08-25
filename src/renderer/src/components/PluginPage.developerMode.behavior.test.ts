@@ -135,6 +135,7 @@ function stubScript(): string {
       closeWindowBehavior: 'quit',
       closeToTray: false,
       taskbarThumbarButtonsEnabled: false,
+      miniPlayer: { showInTaskbar: false },
       trackActivationMode: 'singleClick',
       startupHomePage: 'local',
       language: 'system',
