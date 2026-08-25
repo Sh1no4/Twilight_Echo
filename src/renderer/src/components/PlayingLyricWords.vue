@@ -1,31 +1,39 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch, type Ref } from 'vue'
+import { requestAnimationFrameWithFallback } from '../utils/animationFrameFallback'
 import {
-  requestAnimationFrameWithFallback,
-  waitForAnimationFrameWithFallback
-} from '../utils/animationFrameFallback'
-import { clamp, frameDeltaSeconds } from '../utils/lyricMotion'
-import {
-  buildSyllableGroups,
-  LyricSweepChannel,
-  type SyllableSweepGroup
-} from '../utils/lyricSyllableSweep'
+  buildEmphasisAnimation,
+  buildKaraokeMaskPlan,
+  buildWordFloatAnimation,
+  computeEmphasisStrength,
+  emphasisGraphemes,
+  MAX_EMPHASIS_GRAPHEMES,
+  shouldEmphasizeChunk,
+  splitGraphemes,
+  type LyricAnimationVoiceRole,
+  type LyricDirection,
+  type WordMeasurement
+} from '../utils/lyricEmphasis'
 import {
   chunkAndSplitLyricWords,
+  chunkSpan,
   resolveLyricWordTimings,
   type ResolvedLyricWord
 } from '../utils/lyricWordChunks'
 import type { LyricWord } from '../utils/lyrics'
 
 /**
- * Karaoke fill driven by the syllable-sweep engine: a single boundary in
- * cumulative text-width coordinates moves through linear keyframes whose
- * durations are each time group's own span, and every word's fill layer is
- * clipped to how much of it the boundary has passed.
+ * Karaoke fill and emphasis run on the Web Animations API rather than a
+ * per-frame JavaScript loop.
  *
- * The fill layers are plain overlay spans clipped with `clip-path`, written
- * only when a word's revealed width actually changes, so the per-frame cost
- * is one engine update plus a handful of style writes on the active line.
+ * The previous version recomputed a CSS variable every frame on the main thread,
+ * so any main-thread work showed up as a stutter in the fill, and a seek had to
+ * be chased frame by frame. Precomputing keyframes hands the whole timeline to
+ * the compositor: the fill cannot stutter, and a seek is one `currentTime`
+ * assignment.
+ *
+ * Every animation shares one time origin (the line's start), so a single
+ * `currentTime` value keeps the fill, the lift and the glow coherent.
  */
 
 interface LyricClockSnapshot {
@@ -35,8 +43,6 @@ interface LyricClockSnapshot {
 }
 
 type LyricMotionMode = 'full' | 'reduced' | 'off'
-type LyricAnimationVoiceRole = 'lead' | 'background' | 'harmony'
-type LyricDirection = 'ltr' | 'rtl'
 
 const props = withDefaults(
   defineProps<{
@@ -63,21 +69,43 @@ const props = withDefaults(
 interface RenderSyllable {
   key: number
   word: ResolvedLyricWord
+  /** Split per grapheme only when the word is emphasised. */
+  chars: string[] | null
 }
 
 type RenderChunk =
   | { kind: 'space'; key: string; text: string }
-  | { kind: 'word'; key: string; syllables: RenderSyllable[] }
+  | { kind: 'word'; key: string; syllables: RenderSyllable[]; emphasized: boolean }
 
+/** Drift beyond this is corrected; below it, leave the compositor alone. */
+const DRIFT_TOLERANCE_MS = 80
 const BUILD_FRAME_FALLBACK_MS = 120
-/** Skip a frame's DOM writes when the boundary barely moved. */
-const CLIP_WRITE_THRESHOLD_PX = 0.25
-/** Stop the loop after this many fully idle frames. */
-const IDLE_FRAME_GRACE = 4
+
+const wordElements = ref<Array<HTMLElement | null>>([])
+const charElements = ref<Map<string, HTMLElement>>(new Map())
+
+let activeAnimations: Animation[] = []
+let cancelScheduledBuild: (() => void) | null = null
+let buildGeneration = 0
 
 const resolvedWords = computed<ResolvedLyricWord[]>(() => resolveLyricWordTimings(props.words))
 
+const lineStartSeconds = computed(() => {
+  let start = Number.POSITIVE_INFINITY
+  for (const word of resolvedWords.value) start = Math.min(start, word.time)
+  return Number.isFinite(start) ? start : 0
+})
+
+const lineEndSeconds = computed(() => {
+  let end = Number.NEGATIVE_INFINITY
+  for (const word of resolvedWords.value) end = Math.max(end, word.endTime)
+  return Number.isFinite(end) ? end : lineStartSeconds.value
+})
+
+const emphasisPlan = new Map<string, { span: ResolvedLyricWord; isLast: boolean }>()
+
 const renderChunks = computed<RenderChunk[]>(() => {
+  emphasisPlan.clear()
   const chunks = chunkAndSplitLyricWords(resolvedWords.value)
   const result: RenderChunk[] = []
   let syllableKey = 0
@@ -87,165 +115,220 @@ const renderChunks = computed<RenderChunk[]>(() => {
       result.push({ kind: 'space', key: `s${index}`, text: chunk.text })
       return
     }
+
+    const span = chunkSpan(chunk)
+    const isLast = chunks.slice(index + 1).every((rest) => rest.kind === 'space')
+    const emphasized =
+      props.motionMode === 'full' && props.karaokeEnabled && shouldEmphasizeChunk(chunk)
     const words = chunk.kind === 'word' ? [chunk.word] : chunk.words
+    const splitForEmphasis =
+      emphasized &&
+      props.voiceRole === 'lead' &&
+      splitGraphemes(span?.text ?? '').length <= MAX_EMPHASIS_GRAPHEMES
+
     result.push({
       kind: 'word',
-      key: `w${index}-${words[0]?.time ?? 0}`,
-      syllables: words.map((word) => ({ key: syllableKey++, word }))
+      key: `w${index}-${span?.time ?? 0}`,
+      emphasized,
+      syllables: words.map((word) => ({
+        key: syllableKey++,
+        word,
+        chars: splitForEmphasis ? emphasisGraphemes(word.text) : null
+      }))
     })
+
+    // Recorded for strength; the last word of a line carries the phrase.
+    if (emphasized && span) emphasisPlan.set(`w${index}`, { span, isLast })
   })
 
   return result
 })
 
-const sweepEnabled = computed(
-  () => props.active && props.karaokeEnabled && props.motionMode === 'full' && hasTimedWords.value
-)
-
-const hasTimedWords = computed(() => resolvedWords.value.length > 0)
-
-/** Flat word list in render order, matching the element arrays below. */
-const flatSyllables = computed<RenderSyllable[]>(() =>
-  renderChunks.value.flatMap((chunk) => (chunk.kind === 'word' ? chunk.syllables : []))
-)
-
-const wordElements = ref<Array<HTMLElement | null>>([])
-const fillElements = ref<Array<HTMLElement | null>>([])
-
-function setWordElement(index: number, element: Element | null): void {
-  wordElements.value[index] = element instanceof HTMLElement ? element : null
+function setCharElement(key: string, element: Element | null): void {
+  if (element instanceof HTMLElement) charElements.value.set(key, element)
+  else charElements.value.delete(key)
 }
 
-function setFillElement(index: number, element: Element | null): void {
-  fillElements.value[index] = element instanceof HTMLElement ? element : null
+function supportsWebAnimations(): boolean {
+  return typeof Element !== 'undefined' && typeof Element.prototype.animate === 'function'
 }
 
-let channel: LyricSweepChannel | null = null
-let wordCumulative: number[] = []
-let wordWidths: number[] = []
-let lastInsets: number[] = []
-let cancelFrame: (() => void) | null = null
-let lastFrameNow: number | null = null
-let idleFrames = 0
-let buildGeneration = 0
-
-function lyricTime(): number {
-  return props.clock.positionAt() + props.offsetSeconds
+function lyricTime(position = props.clock.positionAt()): number {
+  return position + props.offsetSeconds
 }
 
-function cancelLoop(): void {
-  cancelFrame?.()
-  cancelFrame = null
-  lastFrameNow = null
-  idleFrames = 0
+function timelineMs(time = lyricTime()): number {
+  const lineDurationMs = Math.max(0, (lineEndSeconds.value - lineStartSeconds.value) * 1000)
+  return Math.min(lineDurationMs, Math.max(0, (time - lineStartSeconds.value) * 1000))
 }
 
-function releaseSweep(): void {
-  cancelLoop()
-  channel = null
-  wordCumulative = []
-  wordWidths = []
-  lastInsets = []
-  for (const element of fillElements.value) {
-    if (element) element.style.clipPath = ''
-  }
+function animationEndTime(animation: Animation): number | null {
+  const endTime = animation.effect?.getComputedTiming().endTime
+  return typeof endTime === 'number' && Number.isFinite(endTime) ? endTime : null
 }
 
-/** Measure the committed words and build the sweep channel for this layer. */
-async function buildSweep(): Promise<void> {
-  const generation = ++buildGeneration
-  releaseSweep()
-  if (!sweepEnabled.value) return
-
-  await nextTick()
-  await waitForAnimationFrameWithFallback(BUILD_FRAME_FALLBACK_MS)
-  if (generation !== buildGeneration || !sweepEnabled.value) return
-
-  const syllables = flatSyllables.value
-  const widths = syllables.map((syllable) => {
-    const element = wordElements.value[syllable.key]
-    // `offsetWidth` is the layout width: transforms from the row's scale
-    // spring must not leak into the clip math.
-    return element ? element.offsetWidth : 0
-  })
-  const groups: SyllableSweepGroup[] = buildSyllableGroups(
-    syllables.map((syllable) => syllable.word),
-    widths
-  )
-
-  wordCumulative = []
-  wordWidths = []
-  let cumulative = 0
-  for (const width of widths) {
-    wordCumulative.push(cumulative)
-    wordWidths.push(width)
-    cumulative += width
-  }
-  lastInsets = widths.map(() => Number.NaN)
-
-  channel = new LyricSweepChannel(groups)
-  startLoop()
-}
-
-/** Write each word's clip from the boundary; true when anything changed. */
-function writeClips(boundary: number): boolean {
-  if (!channel) return false
-  const rtl = props.direction === 'rtl'
-  let changed = false
-
-  for (let index = 0; index < wordWidths.length; index += 1) {
-    const width = wordWidths[index]
-    if (width <= 0) continue
-    const element = fillElements.value[index]
+function releaseAnimations(): void {
+  for (const animation of activeAnimations) animation.cancel()
+  activeAnimations = []
+  for (const element of wordElements.value) {
     if (!element) continue
-
-    const revealed = clamp(boundary - wordCumulative[index], 0, width)
-    const inset = width - revealed
-    if (Math.abs(inset - (lastInsets[index] ?? Number.NaN)) < CLIP_WRITE_THRESHOLD_PX) continue
-
-    lastInsets[index] = inset
-    changed = true
-    element.style.clipPath =
-      inset <= 0
-        ? 'none'
-        : rtl
-          ? `inset(0 0 0 ${inset.toFixed(2)}px)`
-          : `inset(0 ${inset.toFixed(2)}px 0 0)`
+    element.style.removeProperty('mask-image')
+    element.style.removeProperty('-webkit-mask-image')
+    element.style.removeProperty('mask-size')
+    element.style.removeProperty('-webkit-mask-size')
+    element.style.removeProperty('mask-repeat')
+    element.style.removeProperty('mask-origin')
+    element.classList.remove('lyric-word--karaoke')
   }
-  return changed
 }
 
-function frameLoop(now: number): void {
-  cancelFrame = null
-  if (!channel || !sweepEnabled.value) return
+function measureWords(): WordMeasurement[] {
+  return wordElements.value.map((element) => {
+    if (!element) return { width: 0, height: 0, padding: 0 }
+    const padding = Number.parseFloat(getComputedStyle(element).paddingLeft) || 0
+    return {
+      width: element.clientWidth - padding * 2,
+      height: element.clientHeight - padding * 2,
+      padding
+    }
+  })
+}
 
-  const dt = frameDeltaSeconds(
-    lastFrameNow == null ? 0 : (now - lastFrameNow) / 1000,
-    lastFrameNow != null
+/**
+ * Measure, then hand the whole line to the compositor. Measuring needs a
+ * committed layout, which is why this waits for a frame.
+ */
+function buildAnimations(): void {
+  releaseAnimations()
+  if (
+    props.motionMode !== 'full' ||
+    !supportsWebAnimations() ||
+    !props.active ||
+    resolvedWords.value.length === 0
   )
-  lastFrameNow = now
-
-  const time = lyricTime()
-  const boundary = channel.update(time, dt)
-  const changed = writeClips(boundary)
-  idleFrames = changed ? 0 : idleFrames + 1
-
-  const settled = idleFrames > IDLE_FRAME_GRACE
-  if (settled && !channel.isSeeking() && (channel.finished(time) || !props.clock.isPlaying.value)) {
-    lastFrameNow = null
     return
+
+  const words = renderChunks.value.flatMap((chunk) =>
+    chunk.kind === 'word' ? chunk.syllables.map((syllable) => syllable.word) : []
+  )
+  const measurements = measureWords()
+  const lineStart = lineStartSeconds.value
+  const lineEnd = lineEndSeconds.value
+  let syllableIndex = 0
+
+  for (const chunk of renderChunks.value) {
+    if (chunk.kind === 'space') continue
+
+    const plan = emphasisPlan.get(chunk.key.split('-')[0])
+    const strength =
+      chunk.emphasized && plan
+        ? computeEmphasisStrength((plan.span.endTime - plan.span.time) * 1000, plan.isLast)
+        : null
+
+    for (const syllable of chunk.syllables) {
+      const element = wordElements.value[syllableIndex]
+      const index = syllableIndex
+      syllableIndex += 1
+      if (!element) continue
+
+      if (props.karaokeEnabled) {
+        const mask = buildKaraokeMaskPlan(
+          words,
+          measurements,
+          index,
+          lineStart,
+          lineEnd,
+          props.direction
+        )
+        if (mask) {
+          element.style.setProperty('mask-image', mask.maskImage)
+          element.style.setProperty('-webkit-mask-image', mask.maskImage)
+          element.style.setProperty('mask-size', mask.maskSize)
+          element.style.setProperty('-webkit-mask-size', mask.maskSize)
+          element.style.setProperty('mask-repeat', 'no-repeat')
+          element.style.setProperty('mask-origin', mask.maskOrigin)
+          element.classList.add('lyric-word--karaoke')
+          try {
+            activeAnimations.push(element.animate(mask.keyframes, mask.timing))
+          } catch {
+            // A malformed keyframe set must not take the line down with it.
+            element.style.removeProperty('mask-image')
+            element.style.removeProperty('-webkit-mask-image')
+            element.classList.remove('lyric-word--karaoke')
+          }
+        }
+      }
+
+      // Every word lifts slightly while sung, emphasised or not.
+      const float = buildWordFloatAnimation(syllable.word, lineStart, props.voiceRole)
+      activeAnimations.push(element.animate(float.keyframes, float.timing))
+
+      if (!strength || !syllable.chars) continue
+
+      const startDelayMs = (syllable.word.time - lineStart) * 1000
+      syllable.chars.forEach((_char, charIndex) => {
+        const charElement = charElements.value.get(`${syllable.key}:${charIndex}`)
+        if (!charElement) return
+        const emphasis = buildEmphasisAnimation(
+          charIndex,
+          syllable.chars?.length ?? 1,
+          strength,
+          startDelayMs,
+          props.voiceRole
+        )
+        if (emphasis.glow.length > 0)
+          activeAnimations.push(charElement.animate(emphasis.glow, emphasis.glowTiming))
+        if (emphasis.float.length > 0)
+          activeAnimations.push(charElement.animate(emphasis.float, emphasis.floatTiming))
+      })
+    }
   }
-  scheduleFrame()
+
+  syncAnimations(true)
 }
 
-function scheduleFrame(): void {
-  if (cancelFrame) return
-  cancelFrame = requestAnimationFrameWithFallback((now) => frameLoop(now), BUILD_FRAME_FALLBACK_MS)
+/**
+ * Align the compositor timeline with playback. `hard` seeks unconditionally;
+ * otherwise only correct once drift is audible, so a healthy line is left to run.
+ */
+function syncAnimations(hard = false): void {
+  if (activeAnimations.length === 0) return
+
+  const target = timelineMs()
+  const playing = props.active && props.clock.isPlaying.value
+
+  for (const animation of activeAnimations) {
+    const endTime = animationEndTime(animation)
+    const boundedTarget = endTime == null ? target : Math.min(target, endTime)
+    const current = Number(animation.currentTime ?? 0)
+    const forwardDrift = boundedTarget - current
+    const shouldCorrect =
+      hard ||
+      (!playing ? Math.abs(forwardDrift) > DRIFT_TOLERANCE_MS : forwardDrift > DRIFT_TOLERANCE_MS)
+    if (shouldCorrect) {
+      animation.currentTime = boundedTarget
+    }
+    if (playing) {
+      const pastEnd = endTime != null && target >= endTime
+      if (pastEnd) {
+        if (animation.playState !== 'finished') {
+          animation.currentTime = endTime
+          animation.finish()
+        }
+      } else if (animation.playState !== 'finished') animation.play()
+    } else animation.pause()
+  }
 }
 
-function startLoop(): void {
-  if (!channel || !sweepEnabled.value) return
-  scheduleFrame()
+function scheduleBuild(): void {
+  if (props.motionMode !== 'full') return
+  const generation = ++buildGeneration
+  cancelScheduledBuild?.()
+  cancelScheduledBuild = requestAnimationFrameWithFallback(() => {
+    cancelScheduledBuild = null
+    if (generation !== buildGeneration) return
+    buildAnimations()
+  }, BUILD_FRAME_FALLBACK_MS)
 }
 
 watch(
@@ -253,65 +336,79 @@ watch(
     () => props.active,
     () => props.karaokeEnabled,
     () => props.motionMode,
+    () => props.voiceRole,
     () => props.direction,
-    () => props.words
+    () => props.words,
+    () => props.offsetSeconds,
+    () => props.clock.snapshot.value.epoch
   ],
-  () => {
-    void buildSweep()
+  async () => {
+    const generation = ++buildGeneration
+    cancelScheduledBuild?.()
+    cancelScheduledBuild = null
+    releaseAnimations()
+    if (props.motionMode !== 'full') return
+    await nextTick()
+    if (generation !== buildGeneration) return
+    scheduleBuild()
   },
   { immediate: true, flush: 'post' }
 )
 
-// A transport epoch bump marks a seek: follow the instant boundary from here.
+// The clock ticks far slower than a frame; this only corrects drift and seeks.
 watch(
-  () => props.clock.snapshot.value.epoch,
+  () => (props.active ? props.clock.snapshot.value.revision : null),
   () => {
-    if (!channel || !sweepEnabled.value) return
-    channel.markSeek(lyricTime())
-    startLoop()
+    if (!props.active || props.motionMode !== 'full') return
+    syncAnimations()
   }
 )
 
-// Playback resuming re-opens a loop that idled out while paused.
-watch(
-  () => props.clock.isPlaying.value,
-  (playing) => {
-    if (playing) startLoop()
-  }
-)
+watch(props.clock.isPlaying, () => {
+  if (props.motionMode !== 'full') return
+  syncAnimations(true)
+})
 
 onBeforeUnmount(() => {
   buildGeneration += 1
-  releaseSweep()
+  cancelScheduledBuild?.()
+  cancelScheduledBuild = null
+  releaseAnimations()
 })
 </script>
 
 <template>
   <span
     class="lyric-text lyric-text--words"
-    :class="{ 'lyric-text--static': !sweepEnabled }"
+    :class="{ 'lyric-text--static': motionMode !== 'full' }"
     :dir="direction"
     :data-motion-mode="motionMode"
     :data-voice-role="voiceRole"
   >
     <template v-for="chunk in renderChunks" :key="chunk.key">
       <template v-if="chunk.kind === 'space'">{{ chunk.text }}</template>
-      <span v-else class="lyric-word-group">
+      <span
+        v-else
+        class="lyric-word-group"
+        :class="{ 'lyric-word-group--emphasized': chunk.emphasized }"
+      >
         <span
           v-for="syllable in chunk.syllables"
           :key="syllable.key"
-          :ref="(element) => setWordElement(syllable.key, element as Element | null)"
+          :ref="(element) => (wordElements[syllable.key] = (element as HTMLElement | null) ?? null)"
           class="lyric-word"
           :data-word-text="syllable.word.text"
         >
-          <span class="lyric-word__text">{{ syllable.word.text }}</span>
-          <span
-            v-if="sweepEnabled"
-            :ref="(element) => setFillElement(syllable.key, element as Element | null)"
-            class="lyric-word__fill"
-            aria-hidden="true"
-            >{{ syllable.word.text }}</span
-          >
+          <template v-if="syllable.chars">
+            <span
+              v-for="(char, charIndex) in syllable.chars"
+              :key="charIndex"
+              :ref="(element) => setCharElement(`${syllable.key}:${charIndex}`, element as Element)"
+              class="lyric-char"
+              >{{ char }}</span
+            >
+          </template>
+          <template v-else>{{ syllable.word.text }}</template>
         </span>
       </span>
     </template>
@@ -319,36 +416,14 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.lyric-word-group {
-  display: inline-block;
-  white-space: pre-wrap;
-}
-
-.lyric-word {
-  position: relative;
-  display: inline-block;
-  white-space: pre;
-  backface-visibility: hidden;
-}
-
-/*
- * The fill layer re-draws the word in the karaoke colour and is clipped to
- * the swept width; `clip-path` values are written inline per frame.
- */
-.lyric-word__fill {
-  position: absolute;
-  inset: 0;
+.lyric-word--karaoke {
   color: var(--te-playback-lyric-karaoke, currentColor);
-  clip-path: inset(0 100% 0 0);
-  pointer-events: none;
-  user-select: none;
 }
 
-.lyric-text--static .lyric-word__fill {
-  display: none;
-}
-
-:global([dir='rtl']) .lyric-word__fill {
-  clip-path: inset(0 0 0 100%);
+.lyric-text--static .lyric-word {
+  mask-image: none !important;
+  -webkit-mask-image: none !important;
+  transform: none !important;
+  text-shadow: none !important;
 }
 </style>

@@ -69,11 +69,12 @@ test('active lyrics keep their size while auxiliary layers render smaller and co
   )
   assert.doesNotMatch(activeText, /font-size:/)
   assert.match(translationText, /font-size:\s*var\(--lyric-style-font-size, 14px\)/)
-  const auxiliaryStyles = lyricLine.match(/\.lyric-translation \{[\s\S]*?\n\}/)?.[0] ?? ''
-  const voiceAuxiliaryStyles =
-    lyricLine.match(
-      /\.lyric-voice-translation,\s*\.lyric-voice-romanization \{\s*width: 100%;\s*padding: 0;[\s\S]*?\n\}/
-    )?.[0] ?? ''
+  const auxiliaryStyles = lyricLine.match(
+    /\.lyric-translation \{[\s\S]*?\n\}/
+  )?.[0] ?? ''
+  const voiceAuxiliaryStyles = lyricLine.match(
+    /\.lyric-voice-translation,\s*\.lyric-voice-romanization \{\s*width: 100%;\s*padding: 0;[\s\S]*?\n\}/
+  )?.[0] ?? ''
   assert.match(auxiliaryStyles, /font-size:\s*var\(--lyric-style-font-size, 14px\)/)
   assert.match(auxiliaryStyles, /line-height:\s*var\(--lyric-style-line-height, 1\.3\)/)
   assert.match(auxiliaryStyles, /margin-top:\s*max\(2px/)
@@ -325,18 +326,17 @@ test('now playing isolates high-frequency playhead updates from the full lyrics 
   assert.match(words, /karaokeEnabled: boolean/)
   assert.doesNotMatch(words, /nextLineTime|reachNextLine|clockAnchorPosition|bindPlaybackClock/)
   assert.match(words, /requestAnimationFrameWithFallback/)
-  // Karaoke fill is a clipped overlay driven by the syllable-sweep engine: the
-  // boundary advances through the channel and each word's fill layer is
-  // clipped inline, written only when its revealed width actually changed.
-  assert.match(words, /new LyricSweepChannel\(/)
-  assert.match(words, /buildSyllableGroups\(/)
-  assert.match(words, /clipPath =/)
-  assert.match(words, /CLIP_WRITE_THRESHOLD_PX/)
-  assert.doesNotMatch(words, /\.animate\(|getAnimations|maskImage/)
+  // Karaoke fill and emphasis are precomputed keyframes handed to the compositor,
+  // not CSS variables rewritten every frame. Assert the property that matters:
+  // no per-frame main-thread work, and a seek is a single currentTime assignment.
+  assert.match(words, /\.animate\(/)
   assert.doesNotMatch(words, /setWordProgress|--lyric-word-progress|dataset\.progressing/)
+  assert.match(words, /animation\.currentTime = boundedTarget/)
+  assert.match(words, /animationEndTime\(animation\)/)
   assert.match(source, /contain-intrinsic-size: auto 4em/)
+  assert.match(words, /buildKaraokeMaskPlan\(/)
+  assert.match(words, /buildEmphasisAnimation\(/)
   assert.match(words, /data-word-text/)
-  assert.match(words, /lyric-word__fill/)
   assert.doesNotMatch(words, /findActiveWordIndex|activeWordIndex|lyric-word--active/)
   assert.doesNotMatch(source, /lyric-word--active|te-lyric-word-pulse/)
   assert.match(timeChip, /const \{ currentTime, duration, formatTime \} = usePlayerStore\(\)/)

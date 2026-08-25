@@ -172,7 +172,6 @@ export default defineConfig(
       'src/renderer/src/utils/animationFrameFallback.ts',
       'src/renderer/src/utils/liquidGlassDisplacement.ts',
       'src/renderer/src/utils/liquidGlassSpecular.ts',
-      'src/renderer/src/utils/lyricInterludeDots.ts',
       'src/renderer/src/utils/lyricViewportController.ts',
       'src/renderer/src/utils/scrollToTopButton.ts',
       'src/renderer/src/utils/themePreviewScheduler.ts',

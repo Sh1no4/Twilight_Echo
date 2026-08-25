@@ -34,12 +34,15 @@ import { getLyricFocusLineIndices } from '../utils/lyricFocusWindow'
 import { waitForAnimationFrameWithFallback } from '../utils/animationFrameFallback'
 import { createLyricViewportController } from '../utils/lyricViewportController'
 import { LYRIC_ALIGN_POSITION } from '../utils/lyricLineLayout'
-import { buildLyricTimeline, isDisplayableInterlude } from '../utils/lyricTimeline'
 import {
-  createLyricInterludeDots,
-  INTERLUDE_DOT_COUNT,
-  type InterludeDotState
-} from '../utils/lyricInterludeDots'
+  advanceLyricPlayhead,
+  buildLyricTimeline,
+  createLyricPlayheadState,
+  findLyricInterlude,
+  isDisplayableInterlude,
+  isNonDynamicTimeline,
+  type LyricPlayheadState
+} from '../utils/lyricTimeline'
 
 const playbackStore = usePlayerStore()
 const visualizationStore = useVisualizationStore()
@@ -198,8 +201,7 @@ let lyricMotionObserver: MutationObserver | null = null
 const LYRIC_SCROLL_FRAME_FALLBACK_MS = 120
 const LYRIC_ACTIVE_ANCHOR_RATIO = LYRIC_ALIGN_POSITION
 const INTERLUDE_DOTS_HEIGHT_PX = 24
-/** Row gap: the report's 45pt line pitch scaled to the lyric font size. */
-const LYRIC_ROW_GAP_PER_FONT = 45 / 48
+const LYRIC_ROW_GAP_PX = 10
 
 /**
  * Motion preference gates the physics. `full` runs springs, blur and glow;
@@ -214,36 +216,12 @@ function readLyricMotionLevel(): void {
 
 const lyricMotionFull = computed(() => lyricMotionLevel.value === 'full')
 
-/**
- * Active lines come from the controller's selector queue: the queue tail is the
- * line being sung, and the whole queue stays presented so overlapping lines can
- * hand over mid-cascade instead of flickering.
- */
+/** Presented lines, carrying Apple's hysteresis so brief gaps do not flicker. */
+let lyricPlayheadState: LyricPlayheadState = createLyricPlayheadState()
 const lyricBufferedIndices = ref<ReadonlySet<number>>(new Set<number>())
 const lyricHotIndices = ref<ReadonlySet<number>>(new Set<number>())
 const lyricInterludeAfterIndex = ref<number | null>(null)
 const lyricInterludeDotsTop = ref<number | null>(null)
-const interludeDotElements: (HTMLElement | undefined)[] = []
-
-function setInterludeDotRef(index: number, el: Element | ComponentPublicInstance | null): void {
-  interludeDotElements[index] = el instanceof HTMLElement ? el : undefined
-}
-
-/** The interlude-dots engine owns each dot's transform and opacity per frame. */
-function renderInterludeDots(states: readonly InterludeDotState[] | null): void {
-  for (let index = 0; index < interludeDotElements.length; index += 1) {
-    const element = interludeDotElements[index]
-    if (!element) continue
-    const state = states?.[index]
-    if (!state) {
-      element.style.opacity = '0'
-      element.style.transform = ''
-      continue
-    }
-    element.style.opacity = state.gate.toFixed(4)
-    element.style.transform = `translateY(${(state.verticalOffset * 100).toFixed(3)}%) scale(${state.scale.toFixed(4)})`
-  }
-}
 
 /**
  * The player bar floats over the bottom of the now-playing page, so the
@@ -350,18 +328,10 @@ const lyricFocusWindow = computed<ReadonlySet<number> | null>(() => {
   return new Set(getLyricFocusLineIndices(total, highlightedLyricIndex.value, focusLineCount))
 })
 
-const lyricTimeline = computed(() => buildLyricTimeline(lyricLines.value))
-
-/** Interlude dots breathe on their own frame loop (report section 11). */
-const interludeDots = createLyricInterludeDots({
-  getPlaybackTime: () => lyricTime(estimatePlaybackClockPosition()),
-  onRender: (states) => renderInterludeDots(states)
-})
-
 /**
- * One controller now owns lyric motion: the selector queue, seek detection and
- * classification, cascade springs, blur/opacity beziers, manual browsing and
- * the press springs all run inside its frame loop (report sections 1-7).
+ * One controller now owns lyric motion. Previously a second controller derived
+ * scale and blur from scroll position, which made those values slaves to the
+ * scroll and left no room for per-line physics. Depth is part of the layout.
  */
 const lyricViewport = createLyricViewportController({
   afterLayout: async () => {
@@ -369,27 +339,18 @@ const lyricViewport = createLyricViewportController({
     await waitForAnimationFrameWithFallback(LYRIC_SCROLL_FRAME_FALLBACK_MS)
   },
   onManualBrowseChange: () => {},
-  getTimeline: () => lyricTimeline.value,
-  getPlaybackTime: () => lyricTime(estimatePlaybackClockPosition()),
-  isPlaying: () => isPlaying.value,
-  onActiveLinesChange: (queue) => {
-    lyricHotIndices.value = new Set(queue.slice(-1))
-    lyricBufferedIndices.value = new Set(queue)
-    const nextIndex = queue.length > 0 ? queue[queue.length - 1] : -1
-    if (nextIndex !== activeLyricIndex.value) activeLyricIndex.value = nextIndex
-  },
-  onInterlude: (interlude) => {
-    const displayable = isDisplayableInterlude(interlude) ? interlude : null
-    lyricInterludeAfterIndex.value = displayable?.afterIndex ?? null
-    interludeDots.setInterlude(displayable)
-  },
+  getActiveIndex: () => activeLyricIndex.value,
+  getHotIndices: () => lyricHotIndices.value,
+  getBufferedIndices: () => lyricBufferedIndices.value,
   alignPosition: LYRIC_ACTIVE_ANCHOR_RATIO,
   getAlignPosition: () => lyricsAppearance.value.anchorPosition,
   getBottomReservedPx: measurePlaybarReservedPx,
-  getRowGapPx: () => lyricsAppearance.value.fontSize * LYRIC_ROW_GAP_PER_FONT,
+  getRowGapPx: () => LYRIC_ROW_GAP_PX,
   isSpringEnabled: () => lyricMotionFull.value && viewMode.value === 'cover',
   isBlurEnabled: () => lyricMotionFull.value,
   isScaleEnabled: () => lyricMotionFull.value,
+  isPlaying: () => isPlaying.value,
+  isNonDynamic: () => isNonDynamicTimeline(lyricLines.value),
   getFocusWindow: () => lyricFocusWindow.value,
   getInactiveDim: () => lyricsAppearance.value.inactiveOpacity / 100,
   getScaleIntensity: () => lyricsAppearance.value.scaleIntensity / 100,
@@ -404,6 +365,8 @@ const lyricViewport = createLyricViewportController({
 })
 
 lyricViewport.activate(currentTrackId())
+
+const lyricTimeline = computed(() => buildLyricTimeline(lyricLines.value))
 
 /**
  * Type and spacing changes alter measured row heights, and geometry changes move
@@ -429,9 +392,6 @@ watch(
     }
 
     if (currentTrack.value && lyricLines.value !== previousLines) {
-      // The line set changed under the same track: rebuild the selector queue
-      // against the new timeline so stale indices cannot survive.
-      lyricViewport.notifySeek(lyricTime())
       await lyricViewport.recenter('snap')
     }
   }
@@ -450,22 +410,42 @@ function lyricTime(position = playbackClockSnapshot.value.position): number {
 }
 
 /**
- * The controller's selector owns timed lines; this watch only forwards clock
- * epochs as explicit seeks and keeps untimed (line-only) sources highlighted
- * through a direct lookup while nothing is queued.
+ * Advance the presented set rather than just picking "the line whose time has
+ * come". The held set is what stops the view flickering between two overlapping
+ * lines and what holds the anchor still through a short instrumental gap.
  */
+function syncActiveLyricIndex(time = playbackClockSnapshot.value.position, isSeek = false): void {
+  const timeline = lyricTimeline.value
+  const adjusted = lyricTime(time)
+  const next = advanceLyricPlayhead(timeline, lyricPlayheadState, adjusted, isSeek)
+  lyricPlayheadState = { hot: next.hot, buffered: next.buffered, scrollToIndex: next.scrollToIndex }
+  lyricHotIndices.value = next.hot
+  lyricBufferedIndices.value = next.buffered
+
+  const interlude = findLyricInterlude(timeline, lyricPlayheadState, adjusted)
+  lyricInterludeAfterIndex.value = isDisplayableInterlude(interlude)
+    ? (interlude?.afterIndex ?? null)
+    : null
+
+  // Fall back to a direct lookup when nothing is presented, so an untimed or
+  // line-only source still highlights something.
+  const nextIndex =
+    next.buffered.size > 0 ? next.scrollToIndex : findActiveLyricIndex(lyricLines.value, adjusted)
+  if (nextIndex !== activeLyricIndex.value) activeLyricIndex.value = nextIndex
+  if (next.added.size > 0 || next.removed.size > 0) {
+    void lyricViewport.recenter(isSeek ? 'snap' : 'resize')
+  }
+}
+
 watch(
   [lyricLines, playbackClockSnapshot, currentLyricOffsetSeconds],
   ([lines, snapshot], previous) => {
+    const linesChanged = previous != null && previous[0] !== lines
     const previousSnapshot = previous?.[1]
     const epochChanged = previousSnapshot != null && previousSnapshot.epoch !== snapshot.epoch
-    if (epochChanged) {
-      lyricViewport.notifySeek(lyricTime(snapshot.position))
-    }
-    if (lyricHotIndices.value.size === 0) {
-      const fallback = findActiveLyricIndex(lines, lyricTime(snapshot.position))
-      if (fallback !== activeLyricIndex.value) activeLyricIndex.value = fallback
-    }
+    if (linesChanged) lyricPlayheadState = createLyricPlayheadState()
+    syncActiveLyricIndex(snapshot.position, linesChanged || epochChanged)
+    if (epochChanged && !linesChanged) void lyricViewport.recenter('snap')
   },
   { immediate: true }
 )
@@ -572,6 +552,12 @@ function onLyricVisibilityChange(): void {
   void lyricViewport.recenter('snap')
 }
 
+watch(activeLyricIndex, (index) => {
+  if (index < 0) return
+  if (lyricViewport.isManualBrowsing()) return
+  void lyricViewport.follow(index)
+})
+
 watch(lyricsEl, (el, previousEl) => {
   if (previousEl) {
     lyricResizeObserver?.unobserve(previousEl)
@@ -616,8 +602,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   lyricViewport.dispose()
-  interludeDots.reset()
-  interludeDotElements.length = 0
   lyricResizeObserver?.disconnect()
   lyricResizeObserver = null
   lyricRowElements.clear()
@@ -737,11 +721,7 @@ onBeforeUnmount(() => {
               :style="{ '--lyric-interlude-top': `${lyricInterludeDotsTop}px` }"
               aria-hidden="true"
             >
-              <span
-                v-for="index in INTERLUDE_DOT_COUNT"
-                :key="index"
-                :ref="(el) => setInterludeDotRef(index - 1, el)"
-              ></span>
+              <span></span><span></span><span></span>
             </div>
             <div v-if="hasLyrics" class="lyrics-list">
               <button
@@ -772,10 +752,7 @@ onBeforeUnmount(() => {
                 :aria-label="item.ariaLabel"
                 :style="item.singing ? lyricRowStyleActive : lyricRowStyleNormal"
                 :disabled="!item.line.timed"
-                @pointerdown.stop="lyricViewport.rowPointerDown(item.index)"
-                @pointerup="lyricViewport.rowPointerUp(item.index)"
-                @pointerleave="lyricViewport.rowPointerUp(item.index)"
-                @pointercancel="lyricViewport.rowPointerUp(item.index)"
+                @pointerdown.stop
                 @click="jumpToLyric(item.line.time)"
               >
                 <PlayingLyricLine
@@ -1323,18 +1300,38 @@ html[data-te-motion='off'] .backdrop-fluid::before {
   pointer-events: none;
 }
 
-/*
- * The dots' transform and opacity are written every frame by the interlude
- * dots engine (staggered entry, gate envelope, symmetric spread), so there is
- * no CSS animation here to fight it.
- */
 .lyric-interlude-dots span {
   width: clamp(6px, 0.8vh, 12px);
   height: clamp(6px, 0.8vh, 12px);
   border-radius: 50%;
   background: var(--te-playback-lyric-active-text, #fff);
-  opacity: 0;
-  will-change: transform, opacity;
+  opacity: 0.5;
+  animation: lyric-interlude-pulse 1.8s ease-in-out infinite;
+}
+
+.lyric-interlude-dots span:nth-child(2) {
+  animation-delay: 0.22s;
+}
+
+.lyric-interlude-dots span:nth-child(3) {
+  animation-delay: 0.44s;
+}
+
+@keyframes lyric-interlude-pulse {
+  0%,
+  100% {
+    opacity: 0.32;
+    transform: scale(0.86);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.08);
+  }
+}
+
+:global(html[data-te-motion='reduced'] .lyric-interlude-dots span),
+:global(html[data-te-motion='off'] .lyric-interlude-dots span) {
+  animation: none;
 }
 
 .lyric-row {
@@ -1377,20 +1374,6 @@ html[data-te-motion='off'] .backdrop-fluid::before {
   transition:
     color var(--te-motion-hover) ease,
     background var(--te-motion-hover) ease;
-}
-
-/*
- * The press bloom: a white veil under the text whose opacity the controller
- * drives from the click-scale spring, up to 8% at full press (report §7).
- */
-.lyric-row::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: #fff;
-  opacity: var(--lyric-line-press, 0);
-  pointer-events: none;
 }
 
 /* Culled rows keep their box for measurement but stop painting. */
