@@ -1118,13 +1118,17 @@ test('player store keeps default volume at 0.7, persists softwareVolume, and exp
 
 test('player store exposes setOutputStage for HiFi sample-rate lock (graph.outputStage)', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
-  const setOutputStage = extractInternalFunctionBody(source, 'setOutputStage')
+  const controllerSource = readFileSync(
+    new URL('./player/audioOutputController.ts', import.meta.url),
+    'utf8'
+  )
+  const setOutputStage = extractInternalFunctionBody(controllerSource, 'setOutputStage')
   const refresh = extractInternalFunctionBody(source, 'refreshAudioOutputState')
 
   assert.match(source, /dspOutputStage/)
   assert.match(source, /DEFAULT_DSP_OUTPUT_STAGE/)
-  assert.match(source, /async function setOutputStage\(/)
-  assert.match(setOutputStage, /audioEngine\.setOutputStage/)
+  assert.match(controllerSource, /async function setOutputStage\(/)
+  assert.match(setOutputStage, /api\.setOutputStage/)
   assert.match(refresh, /getDspSceneState/)
 })
 
@@ -1946,24 +1950,28 @@ test('play mode is persisted in settings and restored on launch', () => {
 
 test('heart mode is gated to the liked NCM playlist and drives smart-list playback', () => {
   const playerSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const controllerSource = readFileSync(
+    new URL('./player/heartModeController.ts', import.meta.url),
+    'utf8'
+  )
   const cyclePlayMode = extractInternalFunctionBody(playerSource, 'cyclePlayMode')
   const setPlayModeInternal = extractInternalFunctionBody(playerSource, 'setPlayModeInternal')
-  const enterHeartMode = extractInternalFunctionBody(playerSource, 'enterHeartMode')
-  const refillHeartQueue = extractInternalFunctionBody(playerSource, 'refillHeartQueue')
+  const enterHeartMode = extractInternalFunctionBody(controllerSource, 'enterHeartMode')
+  const refillHeartQueue = extractInternalFunctionBody(controllerSource, 'refillHeartQueue')
   const next = extractInternalFunctionBody(playerSource, 'next')
   const advanceAfterPlaybackEnded = extractInternalFunctionBody(
     playerSource,
     'advanceAfterPlaybackEnded'
   )
-  const advanceHeartPlayback = extractInternalFunctionBody(playerSource, 'advanceHeartPlayback')
+  const advanceHeartPlayback = extractInternalFunctionBody(controllerSource, 'advanceHeartPlayback')
   const syncNativeQueueState = extractInternalFunctionBody(playerSource, 'syncNativeQueueState')
 
   // 可用性只取决于“我喜欢的音乐”歌单上下文 + 网易云流媒体曲目。
   assert.match(
-    playerSource,
+    controllerSource,
     /heartModeContext\.value\.likedPlaylistId != null[\s\S]*getTrackSource\(currentTrack\.value\) === 'ncm'/
   )
-  assert.match(playerSource, /function setHeartModeContext\(playlistId: number \| null\): void/)
+  assert.match(controllerSource, /function setHeartModeContext\(playlistId: number \| null\): void/)
   assert.match(
     cyclePlayMode,
     /heartModeAvailable\.value \? modes : modes\.filter\(\(mode\) => mode !== 'heart'\)/
@@ -1972,15 +1980,15 @@ test('heart mode is gated to the liked NCM playlist and drives smart-list playba
     setPlayModeInternal,
     /if \(mode === 'heart'\) \{[\s\S]*if \(!heartModeAvailable\.value\) return/
   )
-  assert.match(playerSource, /let heartModeFetchRequest: Promise<number> \| null = null/)
-  assert.match(playerSource, /function fetchHeartRecommendations[\s\S]*fetchIntelligenceList/)
-  assert.match(playerSource, /function enterHeartMode[\s\S]*fetchHeartRecommendations/)
+  assert.match(controllerSource, /let heartModeFetchRequest: Promise<number> \| null = null/)
+  assert.match(controllerSource, /function fetchHeartRecommendations[\s\S]*fetchIntelligenceList/)
+  assert.match(controllerSource, /function enterHeartMode[\s\S]*fetchHeartRecommendations/)
   assert.match(enterHeartMode, /commitHeartQueue\(\[seed\]\)/)
   assert.match(refillHeartQueue, /if \(heartModeFetchRequest\) return heartModeFetchRequest/)
   assert.match(refillHeartQueue, /heartModeFetchRequest = request/)
   assert.match(
     advanceHeartPlayback,
-    /if \(playMode\.value !== 'heart'\) \{[\s\S]*await advanceAfterPlaybackEnded\(\)/
+    /if \(playMode\.value !== 'heart'\) \{[\s\S]*await options\.advanceAfterPlaybackEnded\(\)/
   )
   assert.match(next, /if \(playMode\.value === 'heart'\) \{[\s\S]*advanceHeartPlayback\(\)/)
   assert.match(
@@ -2185,11 +2193,15 @@ test('single-song repeat replays the current track when playback ends in fallbac
 })
 
 test('applyAudioProcessingState replaces processing locally without engine IPC', () => {
-  const storeSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const controllerSource = readFileSync(
+    new URL('./player/audioOutputController.ts', import.meta.url),
+    'utf8'
+  )
   const dspSource = readFileSync(new URL('./useAudioOutputDspStore.ts', import.meta.url), 'utf8')
-  const body = extractInternalFunctionBody(storeSource, 'applyAudioProcessingState')
+  const body = extractInternalFunctionBody(controllerSource, 'applyAudioProcessingState')
   assert.match(body, /audioProcessing\.value = cloneAudioProcessingSettings\(processing\)/)
   assert.doesNotMatch(body, /window\.api/)
+  assert.doesNotMatch(body, /getAudioEngineApi/)
   assert.match(dspSource, /applyAudioProcessingState: player\.applyAudioProcessingState/)
 })
 

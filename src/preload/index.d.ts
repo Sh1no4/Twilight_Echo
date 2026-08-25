@@ -348,6 +348,7 @@ interface MiniPlayerSettings {
   windowWidth: number
   windowHeight: number
   alwaysOnTop: boolean
+  showInTaskbar: boolean
   positionLocked: boolean
   activeStyleId: string
   profiles: Record<string, MiniPlayerThemeProfile>
@@ -402,7 +403,13 @@ type MiniPlayerCommand =
 type MiniPlayerSettingsPatch = Partial<
   Pick<
     MiniPlayerSettings,
-    'alwaysOnTop' | 'positionLocked' | 'activeStyleId' | 'profiles' | 'windowWidth' | 'windowHeight'
+    | 'alwaysOnTop'
+    | 'showInTaskbar'
+    | 'positionLocked'
+    | 'activeStyleId'
+    | 'profiles'
+    | 'windowWidth'
+    | 'windowHeight'
   >
 >
 

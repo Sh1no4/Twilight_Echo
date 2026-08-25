@@ -2541,14 +2541,17 @@ html[data-te-home-liquid-glass='on'] .home {
   --home-lg-blur: var(--te-lg-blur, 16px);
   --home-lg-saturate: var(--te-lg-saturate, 140%);
   --home-lg-specular: var(--te-lg-specular, 0.44);
-  --home-lg-filter: url(#te-lg-card);
+  /* SVG displacement dropped from cards: on the same layer as backdrop-filter it
+     makes Chromium abandon the backdrop pass (grey slab) and costs a full filter
+     pass per card per frame. The CSS sheen above carries the glass look. */
+  --home-lg-filter: none;
 }
 
 html[data-te-home-liquid-glass='on'] .home {
   --home-lg-blur: var(--te-home-lg-blur, var(--te-lg-blur, 16px));
   --home-lg-saturate: var(--te-home-lg-saturate, var(--te-lg-saturate, 140%));
   --home-lg-specular: var(--te-home-lg-specular, var(--te-lg-specular, 0.44));
-  --home-lg-filter: url(#te-lg-home-card);
+  --home-lg-filter: none;
 }
 
 /* ── Clear material recipe for the media hero ─────────────────────────── */

@@ -504,7 +504,14 @@ function setTrackActivationMode(trackActivationMode: TrackActivationMode): void 
 }
 
 function setCloseBehavior(event: Event): void {
-  void updateSettings({ closeToTray: (event.target as HTMLSelectElement).value === 'tray' })
+  const closeWindowBehavior = (event.target as HTMLSelectElement).value as
+    | 'quit'
+    | 'tray'
+    | 'miniPlayer'
+  void updateSettings({
+    closeWindowBehavior,
+    closeToTray: closeWindowBehavior === 'tray'
+  })
 }
 
 function pluginPanelStateKey(panel: UiContribution): string {

@@ -152,6 +152,8 @@ export interface GlobalShortcutSettings {
   toggleDesktopLyrics: string
 }
 
+export type CloseWindowBehavior = 'quit' | 'tray' | 'miniPlayer'
+
 export interface AppSettings {
   autoCheckLogin: boolean
   autoLaunch: boolean
@@ -164,7 +166,14 @@ export interface AppSettings {
   cachePath: string
   cachePolicy: MusicCachePolicySettings
   autoAnalyzeBpm: boolean
+  /**
+   * How the main-window close control behaves. closeToTray is retained as the
+   * compatibility mirror for older settings and code paths.
+   */
+  closeWindowBehavior: CloseWindowBehavior
   closeToTray: boolean
+  /** Windows taskbar thumbnail transport buttons; independent from SMTC metadata. */
+  taskbarThumbarButtonsEnabled: boolean
   /** First-run welcome wizard has been completed or skipped. */
   onboardingCompleted: boolean
   /** Unlocks developer-only affordances, e.g. installing an unpacked plugin directory. */

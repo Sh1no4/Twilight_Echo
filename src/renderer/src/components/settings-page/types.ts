@@ -52,6 +52,7 @@ export type BooleanSettingKey =
   | 'watchLibrary'
   | 'onlineLyricsFallback'
   | 'smtcEnabled'
+  | 'taskbarThumbarButtonsEnabled'
   | 'discordRpcEnabled'
   | 'remoteControlEnabled'
   | 'developerMode'
@@ -343,6 +344,11 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = (
     },
     {
       section: 'general',
+      title: '任务栏缩略图按钮',
+      terms: '任务栏 taskbar 缩略图 thumbar 上一首 播放 暂停 下一首 windows'
+    },
+    {
+      section: 'general',
       title: 'Discord Rich Presence',
       terms: 'discord 状态 展示 集成 社交 游戏'
     },
@@ -355,8 +361,21 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = (
       title: '开机自动启动',
       terms: '开机 启动 自启 登录 自动启动 launch at login'
     },
-    { section: 'general', title: '关闭主窗口时', terms: '关闭 主窗口 最小化 托盘 退出 行为 窗口' },
-    { section: 'general', title: '欢迎向导', terms: '向导 欢迎 onboarding 首次 引导' },
+    {
+      section: 'general',
+      title: '关闭主窗口时',
+      terms: '关闭 主窗口 最小化 托盘 退出 行为 窗口 迷你播放器'
+    },
+    {
+      section: 'general',
+      title: '迷你播放器显示在任务栏',
+      terms: '迷你播放器 mini player 任务栏 taskbar 悬浮窗 独立窗口'
+    },
+    {
+      section: 'general',
+      title: '欢迎向导',
+      terms: '向导 欢迎 onboarding 首次 引导 任务栏 播放器形态'
+    },
     { section: 'general', title: '设置备份', terms: '备份 backup 导出 导入 恢复 设置' },
     { section: 'general', title: '按分组恢复默认', terms: '恢复 默认 重置 reset 分组' },
     {

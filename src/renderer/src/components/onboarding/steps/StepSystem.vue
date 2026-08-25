@@ -1,47 +1,131 @@
 <script setup lang="ts">
-import type { PlaybackResumeMode } from '@renderer/types/settings'
+import type { CloseWindowBehavior, PlaybackResumeMode } from '@renderer/types/settings'
 
 const props = defineProps<{
-  closeToTray: boolean
+  closeWindowBehavior: CloseWindowBehavior
   launchAtLogin: boolean
   resumeMode: PlaybackResumeMode
+  taskbarThumbarButtonsEnabled: boolean
   globalShortcuts: boolean
   smtcEnabled: boolean
   discordRpcEnabled: boolean
 }>()
 const emit = defineEmits<{
-  'update:closeToTray': [value: boolean]
+  'update:closeWindowBehavior': [value: CloseWindowBehavior]
   'update:launchAtLogin': [value: boolean]
   'update:resumeMode': [value: PlaybackResumeMode]
+  'update:taskbarThumbarButtonsEnabled': [value: boolean]
   'update:globalShortcuts': [value: boolean]
   'update:smtcEnabled': [value: boolean]
   'update:discordRpcEnabled': [value: boolean]
 }>()
+
+const closeBehaviorOptions: {
+  value: CloseWindowBehavior
+  title: string
+  desc: string
+  icon: string
+}[] = [
+  {
+    value: 'quit',
+    title: '直接退出',
+    desc: '关闭窗口就是结束应用',
+    icon: 'ph ph-power'
+  },
+  {
+    value: 'tray',
+    title: '进入托盘',
+    desc: '音乐继续播放，从系统托盘唤回',
+    icon: 'ph ph-tray'
+  },
+  {
+    value: 'miniPlayer',
+    title: '切换迷你播放器',
+    desc: '主窗口收起，桌面保留轻量控制',
+    icon: 'ph ph-picture-in-picture'
+  }
+]
 </script>
 
 <template>
-  <section class="onb-stage" data-scene="06">
-    <p class="onb-kicker">系统集成</p>
+  <section class="onb-stage" data-scene="07">
+    <p class="onb-kicker">任务栏与后台</p>
     <h1 class="onb-title">让它<em>融入你的桌面</em></h1>
-    <p class="onb-subtitle">
-      这些开关决定 Twilight Echo 与系统相处的方式——托盘、开机自启、快捷键与媒体控制。
-    </p>
+    <p class="onb-subtitle">选择关闭窗口后的去向，以及任务栏、托盘与系统媒体控制的分工。</p>
+
+    <div
+      class="onb-cards onb-close-behavior-cards has-selection"
+      role="radiogroup"
+      aria-label="关闭窗口行为"
+    >
+      <button
+        v-for="option in closeBehaviorOptions"
+        :key="option.value"
+        type="button"
+        class="onb-card is-compact"
+        :class="{ 'is-selected': props.closeWindowBehavior === option.value }"
+        role="radio"
+        :aria-checked="props.closeWindowBehavior === option.value"
+        @click="emit('update:closeWindowBehavior', option.value)"
+      >
+        <span v-if="props.closeWindowBehavior === option.value" class="onb-card-check">
+          <i class="ph ph-check"></i>
+        </span>
+        <i class="onb-card-icon" :class="option.icon"></i>
+        <span class="onb-card-title">{{ option.title }}</span>
+        <span class="onb-card-desc">{{ option.desc }}</span>
+      </button>
+    </div>
+
     <div class="onb-panel">
       <div class="onb-toggle-row">
         <div class="onb-toggle-copy">
-          <strong>关闭窗口时最小化到托盘</strong>
-          <span>音乐继续播放，从系统托盘随时唤回窗口。</span>
+          <strong>任务栏缩略图按钮</strong>
+          <span>在 Windows 任务栏窗口预览中放置上一首、播放/暂停与下一首。</span>
         </div>
         <button
           type="button"
           class="onb-toggle"
-          :class="{ 'is-on': props.closeToTray }"
+          :class="{ 'is-on': props.taskbarThumbarButtonsEnabled }"
           role="switch"
-          :aria-checked="props.closeToTray"
-          aria-label="关闭窗口时最小化到托盘"
-          @click="emit('update:closeToTray', !props.closeToTray)"
+          :aria-checked="props.taskbarThumbarButtonsEnabled"
+          aria-label="任务栏缩略图按钮"
+          @click="emit('update:taskbarThumbarButtonsEnabled', !props.taskbarThumbarButtonsEnabled)"
         ></button>
       </div>
+      <div class="onb-toggle-row">
+        <div class="onb-toggle-copy">
+          <strong>系统媒体控制（SMTC）</strong>
+          <span>在系统音量条、媒体键与锁屏界面显示正在播放的歌曲。</span>
+        </div>
+        <button
+          type="button"
+          class="onb-toggle"
+          :class="{ 'is-on': props.smtcEnabled }"
+          role="switch"
+          :aria-checked="props.smtcEnabled"
+          aria-label="系统媒体控制"
+          @click="emit('update:smtcEnabled', !props.smtcEnabled)"
+        ></button>
+      </div>
+      <div class="onb-toggle-row">
+        <div class="onb-toggle-copy">
+          <strong>全局快捷键</strong>
+          <span>在任何应用里用快捷键切歌、暂停，无需切回窗口。</span>
+        </div>
+        <button
+          type="button"
+          class="onb-toggle"
+          :class="{ 'is-on': props.globalShortcuts }"
+          role="switch"
+          :aria-checked="props.globalShortcuts"
+          aria-label="全局快捷键"
+          @click="emit('update:globalShortcuts', !props.globalShortcuts)"
+        ></button>
+      </div>
+    </div>
+
+    <div class="onb-panel">
       <div class="onb-toggle-row">
         <div class="onb-toggle-copy">
           <strong>开机自动启动</strong>
@@ -75,38 +159,6 @@ const emit = defineEmits<{
               props.resumeMode === 'trackAndPosition' ? 'off' : 'trackAndPosition'
             )
           "
-        ></button>
-      </div>
-    </div>
-    <div class="onb-panel">
-      <div class="onb-toggle-row">
-        <div class="onb-toggle-copy">
-          <strong>全局快捷键</strong>
-          <span>在任何应用里用媒体键切歌、暂停，无需切回窗口。</span>
-        </div>
-        <button
-          type="button"
-          class="onb-toggle"
-          :class="{ 'is-on': props.globalShortcuts }"
-          role="switch"
-          :aria-checked="props.globalShortcuts"
-          aria-label="全局快捷键"
-          @click="emit('update:globalShortcuts', !props.globalShortcuts)"
-        ></button>
-      </div>
-      <div class="onb-toggle-row">
-        <div class="onb-toggle-copy">
-          <strong>系统媒体控制（SMTC）</strong>
-          <span>在系统音量条与锁屏界面显示正在播放的歌曲。</span>
-        </div>
-        <button
-          type="button"
-          class="onb-toggle"
-          :class="{ 'is-on': props.smtcEnabled }"
-          role="switch"
-          :aria-checked="props.smtcEnabled"
-          aria-label="系统媒体控制"
-          @click="emit('update:smtcEnabled', !props.smtcEnabled)"
         ></button>
       </div>
       <div class="onb-toggle-row">

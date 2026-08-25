@@ -3,6 +3,10 @@
     "codegraph": {
       "command": "codegraph",
       "args": ["serve", "--mcp"]
+    },
+    "twilight-insights": {
+      "command": "node",
+      "args": ["scripts/twilight-insights-mcp.cjs"]
     }
   }
 }

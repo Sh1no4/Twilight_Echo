@@ -68,7 +68,7 @@ function deviceBadges(device: AudioDeviceOption): string[] {
 </script>
 
 <template>
-  <section class="onb-stage" data-scene="05">
+  <section class="onb-stage" data-scene="06">
     <p class="onb-kicker">声音输出</p>
     <h1 class="onb-title">让声音去<em>对的地方</em></h1>
     <p class="onb-subtitle">

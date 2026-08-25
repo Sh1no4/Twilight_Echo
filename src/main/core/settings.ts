@@ -33,6 +33,7 @@ import type {
   CardAppearanceTheme,
   CardHoverEffect,
   CardShadowStrength,
+  CloseWindowBehavior,
   DesktopLyricsSettings,
   GlobalShortcutSettings,
   WindowTransparencyEffectSettings,
@@ -143,7 +144,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   cachePath: '',
   cachePolicy: DEFAULT_MUSIC_CACHE_POLICY,
   autoAnalyzeBpm: true,
+  closeWindowBehavior: 'quit',
   closeToTray: false,
+  taskbarThumbarButtonsEnabled: true,
   onboardingCompleted: false,
   developerMode: false,
   startupHomePage: 'local',
@@ -712,12 +715,21 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
         ? settings.autoLaunch
         : DEFAULT_SETTINGS.launchAtLogin
   const autoLaunch = launchAtLogin
-  const closeToTray =
+  const legacyCloseToTray =
     typeof settings.closeToTray === 'boolean'
       ? settings.closeToTray
       : typeof settings.minimizeToTray === 'boolean'
         ? settings.minimizeToTray
         : DEFAULT_SETTINGS.closeToTray
+  const closeWindowBehavior: CloseWindowBehavior =
+    settings.closeWindowBehavior === 'quit' ||
+    settings.closeWindowBehavior === 'tray' ||
+    settings.closeWindowBehavior === 'miniPlayer'
+      ? settings.closeWindowBehavior
+      : legacyCloseToTray
+        ? 'tray'
+        : 'quit'
+  const closeToTray = closeWindowBehavior === 'tray'
   const minimizeToTray =
     typeof settings.minimizeToTray === 'boolean' ? settings.minimizeToTray : closeToTray
 
@@ -741,7 +753,9 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     cachePath,
     cachePolicy: normalizeMusicCachePolicy(settings.cachePolicy),
     autoAnalyzeBpm: settings.autoAnalyzeBpm !== false,
+    closeWindowBehavior,
     closeToTray,
+    taskbarThumbarButtonsEnabled: settings.taskbarThumbarButtonsEnabled !== false,
     onboardingCompleted: settings.onboardingCompleted === true,
     developerMode: settings.developerMode === true,
     startupHomePage: normalizeStartupHomePage(settings.startupHomePage),

@@ -3123,12 +3123,14 @@ html[data-te-effects-mode='reduced'][data-te-background-treatment='image'] body:
    data-te-surface-material. Tuning lives in --te-lg-* (written by the theme
    runtime) and --te-lg-angle (written by the pointer tracker).
 
-   Structure: the refracting layer is the card's ::after, carrying both
-   backdrop-filter and filter: url(#te-lg-expanded-card). Putting the SVG filter on the card
-   itself would displace its cover art and text too, so the warp is confined to a
-   dedicated layer. At z-index -1 inside an isolated stacking context it paints
-   above the card's own background but below all in-flow content, which keeps
-   content sharp without editing any of the card components.
+   Structure: the refracting layer is the card's ::after, carrying backdrop-filter
+   plus a CSS sheen stack. The SVG displacement chain was removed from cards (it
+   now only serves the playbar): Chromium hostile-interacts `filter: url()` with
+   backdrop-filter on the same element — it can abandon the backdrop pass and even
+   paint an unfiltered grey slab — and the feDisplacementMap chain costs one full
+   filter pass per card per frame. At z-index -1 inside an isolated stacking
+   context the layer paints above the card's own background but below all in-flow
+   content, which keeps content sharp without editing any of the card components.
 
    ::before is deliberately untouched — five of these classes already use it for
    hover glows and layers. */
@@ -3278,7 +3280,6 @@ html[data-te-liquid-glass-coverage='expanded']
     saturate(var(--te-lg-expanded-saturate, 150%));
   -webkit-backdrop-filter: blur(var(--te-lg-expanded-blur, 16px))
     saturate(var(--te-lg-expanded-saturate, 150%));
-  filter: url(#te-lg-expanded-card);
   opacity: 1;
   transition:
     opacity 180ms ease,

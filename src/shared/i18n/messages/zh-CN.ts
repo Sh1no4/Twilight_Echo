@@ -366,9 +366,6 @@ export const ZH_CN_MESSAGES: Record<string, string> = {
   'error.audio.queue_load_failed': '播放队列加载失败：{detail}',
   'error.audio.play_mode_sync_failed': '播放模式同步失败：{detail}',
   'error.audio.play_mode_switch_failed': '播放模式切换失败：{detail}',
-  'error.audio.native_module_missing': '未加载 twilight_audio_node.node',
-  'error.audio.vst3_describe_failed': '原生音频引擎未返回有效 VST3 描述',
-  'error.audio.service_ipc_send_failed': '音频服务 IPC 发送失败',
 
   // ── 网络错误 ──────────────────────────────────────────────────────────────
   'error.network.timeout': '网络请求超时',

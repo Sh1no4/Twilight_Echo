@@ -257,6 +257,16 @@ async function handleOnboardingFinish(result: OnboardingFinishResult): Promise<v
     // settings while the streaming page was active.
     returnToLocalMode()
   }
+  if (result.openMiniPlayer) {
+    try {
+      await window.api.miniPlayer.open()
+    } catch (error) {
+      pushNotice({
+        kind: 'warning',
+        message: `打开迷你播放器失败：${error instanceof Error ? error.message : String(error)}`
+      })
+    }
+  }
   if (result.action === 'streaming-login') {
     openLoginPage('ncm')
   } else if (result.openPluginMarket) {

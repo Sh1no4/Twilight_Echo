@@ -92,14 +92,49 @@ test('the audio step owns device choice and exclusive mode; system step owns int
   assert.match(wizard, /<StepAudio/)
 })
 
+test('the local step offers online lyric fallback without enabling it silently', () => {
+  const local = readFileSync(new URL('./steps/StepLocal.vue', import.meta.url), 'utf8')
+  assert.match(local, /onlineLyricsFallback/)
+  assert.match(local, /缺歌词时联网补齐/)
+  assert.match(wizard, /v-model:online-lyrics-fallback="choices\.onlineLyricsFallback"/)
+})
+
+test('the player step owns bar shape and mini-player taskbar behavior', () => {
+  const player = readFileSync(new URL('./steps/StepPlayer.vue', import.meta.url), 'utf8')
+  assert.match(player, /playerBar\.mode/)
+  assert.match(player, /visibility/)
+  assert.match(player, /showInTaskbar/)
+  assert.match(player, /alwaysOnTop/)
+  assert.match(player, /openOnFinish/)
+  assert.match(wizard, /<StepPlayer/)
+  assert.match(wizard, /v-model:player-bar="choices\.playerBar"/)
+  assert.match(wizard, /v-model:mini-player="choices\.miniPlayer"/)
+})
+
+test('the system step exposes close behavior and taskbar control', () => {
+  const system = readFileSync(new URL('./steps/StepSystem.vue', import.meta.url), 'utf8')
+  assert.match(system, /closeWindowBehavior/)
+  assert.match(system, /taskbarThumbarButtonsEnabled/)
+  assert.match(system, /miniPlayer/)
+  assert.match(wizard, /v-model:close-window-behavior="choices\.closeWindowBehavior"/)
+  assert.match(
+    wizard,
+    /v-model:taskbar-thumbar-buttons-enabled="choices\.taskbarThumbarButtonsEnabled"/
+  )
+})
+
 test('finishing can hand off to the plugin market, but login wins', () => {
   const streaming = readFileSync(new URL('./steps/StepStreaming.vue', import.meta.url), 'utf8')
   assert.match(streaming, /wantsPluginMarket/)
+  assert.match(streaming, /cachePolicy\.streamingAudio/)
+  assert.match(wizard, /v-model:cache-policy="choices\.cachePolicy"/)
   assert.match(
     wizard,
     /openPluginMarket: choices\.value\.usage !== null && choices\.value\.wantsPluginMarket/
   )
   assert.match(app, /else if \(result\.openPluginMarket\) \{/)
+  assert.match(wizard, /openMiniPlayer:/)
+  assert.match(app, /await window\.api\.miniPlayer\.open\(\)/)
 })
 
 test('the finish scene reports live scan progress and offers desktop lyrics', () => {

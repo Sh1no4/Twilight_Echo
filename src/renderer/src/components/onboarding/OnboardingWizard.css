@@ -1122,6 +1122,40 @@ body.te-no-blur .onb-segmented {
   padding: 20px 18px 18px;
 }
 
+.onb-player-shape-cards .onb-card,
+.onb-close-behavior-cards .onb-card {
+  width: clamp(154px, 16vw, 190px);
+  gap: 8px;
+  padding: 22px 16px 18px;
+}
+
+.onb-player-shape-cards .onb-card-icon,
+.onb-close-behavior-cards .onb-card-icon {
+  font-size: 36px;
+}
+
+.onb-visibility-panel {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.onb-visibility-panel .onb-toggle-copy {
+  padding-left: 12px;
+}
+
+@media (max-width: 720px) {
+  .onb-visibility-panel {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .onb-visibility-panel .onb-segmented {
+    justify-content: center;
+  }
+}
+
 .onb-card:disabled {
   opacity: 0.45;
   cursor: default;

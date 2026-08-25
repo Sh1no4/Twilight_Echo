@@ -20,6 +20,7 @@ export type {
 } from '../../../shared/audioEngineTypes.ts'
 export type {
   AppTheme,
+  CloseWindowBehavior,
   PlaybackResumeMode,
   PreviousButtonAction,
   NcmPlaybackQuality,
@@ -63,7 +64,8 @@ export type {
   PlayerBarMode,
   PlayerBarPageMode,
   PlayerBarPresentation,
-  PlayerBarSettings
+  PlayerBarSettings,
+  PlayerBarVisibility
 } from '../../../shared/playerBar.ts'
 export type {
   LyricsAppearanceAlign,

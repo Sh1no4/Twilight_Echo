@@ -25,7 +25,6 @@ import {
   DEFAULT_DSP_STEREO_IMAGE,
   extractStereoImageFromGraph,
   mergeDspOutputStage,
-  mergeDspStereoImage,
   type DspOutputStageConfig,
   type DspStereoImageConfig
 } from '../../../shared/dspGraph.ts'
@@ -34,8 +33,6 @@ import { resolveCover } from '../utils/coverLoader'
 import { normalizeNativePlaybackInfo } from '../utils/playerPlaybackInfo.ts'
 import { clampSoftwareVolume, cloneAudioProcessingSettings } from '../utils/playerAudioSettings.ts'
 import {
-  HEART_MODE_REFILL_COUNT,
-  HEART_MODE_REFILL_THRESHOLD,
   NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS,
   NATIVE_PLAYBACK_INFO_POST_CONFIRMATION_GRACE_MS,
   NATIVE_PLAYBACK_INFO_REFRESH_DELAY_MS,
@@ -132,6 +129,8 @@ import { createPlaybackClockController } from './player/playbackClockController.
 import { createLyricsLoader } from './player/lyricsLoaderController.ts'
 import { createPlaybackSessionController } from './player/playbackSessionController.ts'
 import { createPlaybackQueueController } from './player/playbackQueueController.ts'
+import { createAudioOutputController } from './player/audioOutputController.ts'
+import { createHeartModeController } from './player/heartModeController.ts'
 
 type NativePlaybackInfo = Awaited<ReturnType<typeof window.api.audioEngine.getPlaybackInfo>>
 type NativeOutputInfo = NativePlaybackInfo['outputInfo']
@@ -232,19 +231,6 @@ const queue = shallowRef<Track[]>([])
 const queueIndex = ref(-1)
 const playMode = ref<PlayMode>('sequential')
 const originalQueue = shallowRef<Track[]>([])
-const heartModeContext = ref<{ likedPlaylistId: number | null }>({ likedPlaylistId: null })
-let heartModeBaseQueue: Track[] = []
-let heartModeFetchRequest: Promise<number> | null = null
-let heartModeFetchGeneration = 0
-// 心动模式只能在本应用内“我喜欢的音乐”流媒体歌单上下文中启用：必须是在点击
-// 收藏歌单后建立的队列（heartModeContext），且当前曲目必须是网易云流媒体。
-const heartModeAvailable = computed(
-  () =>
-    heartModeContext.value.likedPlaylistId != null &&
-    queue.value.length > 0 &&
-    currentTrack.value != null &&
-    getTrackSource(currentTrack.value) === 'ncm'
-)
 const personalizedStreamSession = ref<PersonalizedStreamSession | null>(null)
 const personalizedStreamRemaining = ref(0)
 const personalizedStreamEntryIds = new Set<string>()
@@ -1100,16 +1086,6 @@ async function refreshAudioOutputState(): Promise<void> {
   }
 }
 
-function mergeAudioProcessingPatch(
-  patch: Partial<AudioProcessingSettings>
-): AudioProcessingSettings {
-  return cloneAudioProcessingSettings({
-    ...audioProcessing.value,
-    ...patch,
-    eqBands: patch.eqBands ?? audioProcessing.value.eqBands
-  })
-}
-
 async function persistAudioProcessingFallback(
   nextSettings: AudioProcessingSettings,
   reason: unknown
@@ -1893,6 +1869,84 @@ const playbackHistoryController = createPlaybackHistoryController({
 })
 const { resumeOffer, acceptResumeOffer, dismissResumeOffer, addManualBookmarkAtCurrentTime } =
   playbackHistoryController
+
+const audioOutputController = createAudioOutputController({
+  exclusiveMode,
+  audioProcessing,
+  audioOutputConfig,
+  audioOutputConfigApplyStatus,
+  dspOutputStage,
+  dspStereoImage,
+  getAudioEngineApi: () => window.api.audioEngine,
+  applyAudioOutputState,
+  setAudioEngineError,
+  scheduleCrossfadeIfNeeded,
+  refreshPlaybackInfo: async () => {
+    playbackInfo.value = normalizeNativePlaybackInfo(await window.api.audioEngine.getPlaybackInfo())
+  },
+  persistAudioProcessingFallback
+})
+const {
+  toggleExclusiveMode,
+  setAudioOutput,
+  setAudioDevice,
+  setAudioOutputConfig,
+  setAudioProcessing,
+  applyAudioProcessingState,
+  setOutputStage,
+  setStereoImage,
+  toggleDspEnabled,
+  toggleEqEnabled,
+  toggleCrossfeed,
+  toggleGapless,
+  setReplayGainMode,
+  setCrossfeedStrength,
+  selectImpulseResponse,
+  clearImpulseResponse
+} = audioOutputController
+
+const heartModeController = createHeartModeController({
+  queue,
+  queueIndex,
+  currentTrack,
+  playMode,
+  isPlaying,
+  isLoading,
+  rendererPlayModeBoundaryPending,
+  fetchIntelligenceList: (request) => useNcmStore().fetchIntelligenceList(request),
+  playQueueTrack,
+  advanceAfterPlaybackEnded,
+  setAutoAdvanceInFlight: (value) => {
+    autoAdvanceInFlight = value
+  },
+  replaceQueue: (tracks, index, replaceOptions) => {
+    const snapshots = toPlaybackQueueSnapshots(tracks)
+    queue.value = snapshots
+    originalQueue.value = [...snapshots]
+    queueIndex.value = index
+    if (replaceOptions.persist) persistPlaybackSessionAfterQueueMutation()
+    void queueNativeQueueStateSync().catch((error) => {
+      setAudioEngineError(error instanceof Error ? error.message : String(error))
+    })
+  },
+  appendQueueAdditions: (additions) => {
+    const snapshots = toPlaybackQueueSnapshots(additions)
+    queue.value = [...queue.value, ...snapshots]
+    originalQueue.value = [...originalQueue.value, ...snapshots]
+    persistPlaybackSessionAfterQueueMutation()
+    void queueNativeQueueStateSync().catch((error) => {
+      setAudioEngineError(error instanceof Error ? error.message : String(error))
+    })
+  }
+})
+const {
+  heartModeAvailable,
+  setHeartModeContext,
+  enterHeartMode,
+  exitHeartModeToSequential,
+  exitHeartModeForManualQueueReplacement,
+  advanceHeartPlayback
+} = heartModeController
 
 // One dedupe slot for the whole audio-engine recovery lifecycle: crash, fatal
 // and ready all update the same toast in place. The main process can emit the
@@ -3820,157 +3874,6 @@ function cyclePlayMode(): void {
   setPlayModeInternal(cycleModes[(idx + 1) % cycleModes.length])
 }
 
-function setHeartModeContext(playlistId: number | null): void {
-  const normalized =
-    playlistId != null && Number.isFinite(Number(playlistId)) && Number(playlistId) > 0
-      ? Number(playlistId)
-      : null
-  heartModeContext.value = { likedPlaylistId: normalized }
-}
-
-function fetchHeartRecommendations(seedTrack: Track | null): Promise<Track[]> {
-  const playlistId = heartModeContext.value.likedPlaylistId
-  if (playlistId == null || !seedTrack?.ncmSongId) return Promise.resolve([])
-  return useNcmStore().fetchIntelligenceList({
-    songId: seedTrack.ncmSongId,
-    playlistId,
-    startSongId: seedTrack.ncmSongId,
-    count: HEART_MODE_REFILL_COUNT
-  })
-}
-
-function commitHeartQueue(nextQueue: Track[]): void {
-  const snapshots = toPlaybackQueueSnapshots(nextQueue)
-  queue.value = snapshots
-  originalQueue.value = [...snapshots]
-  queueIndex.value = 0
-  persistPlaybackSessionAfterQueueMutation()
-  void queueNativeQueueStateSync().catch((error) => {
-    setAudioEngineError(error instanceof Error ? error.message : String(error))
-  })
-}
-
-function enterHeartMode(options: { persist?: boolean } = {}): void {
-  void options
-  const seed = currentTrack.value
-  const likedPlaylistId = heartModeContext.value.likedPlaylistId
-  if (likedPlaylistId == null || !seed?.ncmSongId) return
-  heartModeBaseQueue = [...queue.value]
-  heartModeFetchGeneration += 1
-  const generation = heartModeFetchGeneration
-  playMode.value = 'heart'
-  rendererPlayModeBoundaryPending.value = false
-  commitHeartQueue([seed])
-  void refillHeartQueue(seed).then((added) => {
-    if (generation !== heartModeFetchGeneration || playMode.value !== 'heart') return
-    if (added === 0) {
-      console.error('[心动模式] 启动未返回推荐')
-      exitHeartModeToSequential()
-    }
-  })
-}
-
-function exitHeartModeToSequential(): void {
-  if (playMode.value !== 'heart') return
-  heartModeFetchGeneration += 1
-  heartModeFetchRequest = null
-  playMode.value = 'sequential'
-  rendererPlayModeBoundaryPending.value = false
-  if (heartModeBaseQueue.length > 0) {
-    const restored = toPlaybackQueueSnapshots(heartModeBaseQueue)
-    queue.value = restored
-    originalQueue.value = [...restored]
-    const currentId = currentTrack.value?.id
-    queueIndex.value = currentId ? restored.findIndex((item) => item.id === currentId) : 0
-    if (queueIndex.value < 0) queueIndex.value = 0
-    void queueNativeQueueStateSync().catch((error) => {
-      setAudioEngineError(error instanceof Error ? error.message : String(error))
-    })
-  }
-  heartModeBaseQueue = []
-}
-
-function exitHeartModeForManualQueueReplacement(): void {
-  if (playMode.value !== 'heart') return
-  heartModeFetchGeneration += 1
-  heartModeFetchRequest = null
-  playMode.value = 'sequential'
-  rendererPlayModeBoundaryPending.value = false
-  heartModeBaseQueue = []
-}
-
-async function refillHeartQueue(seedTrack: Track | null): Promise<number> {
-  if (playMode.value !== 'heart') return 0
-  if (heartModeFetchRequest) return heartModeFetchRequest
-  const playlistId = heartModeContext.value.likedPlaylistId
-  if (playlistId == null || !seedTrack?.ncmSongId) return 0
-  const generation = heartModeFetchGeneration
-  const request = (async () => {
-    try {
-      const recommended = await fetchHeartRecommendations(seedTrack)
-      if (generation !== heartModeFetchGeneration || playMode.value !== 'heart') return 0
-      const knownIds = new Set(queue.value.map((item) => item.id))
-      const additions = recommended.filter((item) => item.id && !knownIds.has(item.id))
-      if (additions.length === 0) return 0
-      const snapshots = toPlaybackQueueSnapshots(additions)
-      queue.value = [...queue.value, ...snapshots]
-      originalQueue.value = [...originalQueue.value, ...snapshots]
-      if (queueIndex.value < 0) {
-        queueIndex.value = 0
-        const track = queue.value[0]
-        if (track) playQueueTrack(track)
-      }
-      persistPlaybackSessionAfterQueueMutation()
-      void queueNativeQueueStateSync().catch((error) => {
-        setAudioEngineError(error instanceof Error ? error.message : String(error))
-      })
-      return additions.length
-    } catch (error) {
-      if (generation === heartModeFetchGeneration) {
-        console.error('[心动模式] 获取智能播放列表失败:', error)
-      }
-      return 0
-    } finally {
-      if (generation === heartModeFetchGeneration) heartModeFetchRequest = null
-    }
-  })()
-  heartModeFetchRequest = request
-  return request
-}
-
-function advanceHeartPlayback(): Promise<void> {
-  const nextIndex = queueIndex.value + 1
-  if (nextIndex >= 0 && nextIndex < queue.value.length) {
-    queueIndex.value = nextIndex
-    const track = queue.value[nextIndex]
-    if (track) {
-      playQueueTrack(track)
-      if (queueIndex.value >= queue.value.length - HEART_MODE_REFILL_THRESHOLD) {
-        void refillHeartQueue(track)
-      }
-    }
-    return Promise.resolve()
-  }
-  return refillHeartQueue(currentTrack.value).then(async () => {
-    if (playMode.value !== 'heart') {
-      await advanceAfterPlaybackEnded()
-      return
-    }
-    const afterRefillIndex = queueIndex.value + 1
-    if (afterRefillIndex >= 0 && afterRefillIndex < queue.value.length) {
-      queueIndex.value = afterRefillIndex
-      const track = queue.value[afterRefillIndex]
-      if (track) {
-        playQueueTrack(track)
-        return
-      }
-    }
-    isPlaying.value = false
-    isLoading.value = false
-    autoAdvanceInFlight = false
-  })
-}
-
 function setPlayModeInternal(mode: PlayMode, options: { persist?: boolean } = {}): void {
   if (mode === playMode.value) return
   if (mode === 'heart') {
@@ -4307,253 +4210,6 @@ export function usePlayerStore(): {
   /** Explicit user action for bit-perfect: software gain must be unity (1.0). Does not change default 0.7. */
   function setUnityVolume(): void {
     setVolume(1)
-  }
-
-  async function toggleExclusiveMode(): Promise<void> {
-    const next = !exclusiveMode.value
-    try {
-      applyAudioOutputState(await window.api.audioEngine.setExclusiveMode(next))
-    } catch (err) {
-      setAudioEngineError(err instanceof Error ? err.message : String(err))
-      console.error('[audio-engine] Failed to toggle exclusive mode:', err)
-    }
-  }
-
-  async function setAudioOutput(output: AudioOutputId, device?: string): Promise<void> {
-    try {
-      applyAudioOutputState(await window.api.audioEngine.setAudioOutput(output, device))
-    } catch (err) {
-      setAudioEngineError(err instanceof Error ? err.message : String(err))
-      console.error('[audio-engine] Failed to switch audio output:', err)
-    }
-  }
-
-  async function setAudioDevice(device: string): Promise<void> {
-    try {
-      applyAudioOutputState(await window.api.audioEngine.setAudioDevice(device))
-    } catch (err) {
-      setAudioEngineError(err instanceof Error ? err.message : String(err))
-      console.error('[audio-engine] Failed to switch audio device:', err)
-    }
-  }
-
-  async function setAudioOutputConfig(config: Partial<OutputConfig>): Promise<void> {
-    if (audioOutputConfigApplyStatus.value.state === 'pending') return
-    audioOutputConfigApplyStatus.value = {
-      ...audioOutputConfigApplyStatus.value,
-      requestedRevision: audioOutputConfigApplyStatus.value.requestedRevision + 1,
-      state: 'pending',
-      error: ''
-    }
-    try {
-      audioOutputConfig.value = await window.api.audioEngine.setOutputConfig({
-        ...audioOutputConfig.value,
-        ...config
-      })
-      audioOutputConfigApplyStatus.value = await window.api.audioEngine.getOutputConfigApplyStatus()
-      playbackInfo.value = normalizeNativePlaybackInfo(
-        await window.api.audioEngine.getPlaybackInfo()
-      )
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err)
-      setAudioEngineError(errorMessage)
-      audioOutputConfigApplyStatus.value = {
-        ...audioOutputConfigApplyStatus.value,
-        failedRevision: audioOutputConfigApplyStatus.value.requestedRevision,
-        state: 'failed',
-        error: errorMessage
-      }
-      console.error('[音频引擎] 更新输出配置失败:', err)
-    }
-  }
-
-  async function setAudioProcessing(settings: Partial<AudioProcessingSettings>): Promise<void> {
-    const nextSettings = mergeAudioProcessingPatch(settings)
-    const previousSettings = cloneAudioProcessingSettings(audioProcessing.value)
-    try {
-      audioProcessing.value = cloneAudioProcessingSettings(
-        await window.api.audioEngine.setAudioProcessing(nextSettings)
-      )
-      // Classic processing rewrites the default graph but must keep sample-rate lock;
-      // re-sync output stage from scene state after apply.
-      try {
-        const sceneState = await window.api.audioEngine.getDspSceneState()
-        const defaultScene = sceneState?.scenes?.find((scene) => scene.id === 'default')
-        const graph = defaultScene?.graph ?? sceneState?.graph
-        if (graph?.outputStage) {
-          dspOutputStage.value = mergeDspOutputStage(graph.outputStage, {})
-        }
-        if (graph) {
-          dspStereoImage.value = extractStereoImageFromGraph(graph)
-        }
-      } catch {
-        // Scene state is optional for older bridges; processing still applied.
-      }
-      playbackInfo.value = normalizeNativePlaybackInfo(
-        await window.api.audioEngine.getPlaybackInfo()
-      )
-      scheduleCrossfadeIfNeeded()
-    } catch (err) {
-      audioProcessing.value = previousSettings
-      setAudioEngineError(err instanceof Error ? err.message : String(err))
-      console.error('[audio-engine] Failed to update audio processing settings:', err)
-    }
-  }
-
-  /**
-   * Replace the renderer-side audio processing snapshot without touching the
-   * engine. The equalizer page must use this instead of reassigning a
-   * storeToRefs value, which would detach the DSP store from this store's
-   * live ref and freeze the EQ UI while the engine still processes changes.
-   */
-  function applyAudioProcessingState(processing: AudioProcessingSettings): void {
-    audioProcessing.value = cloneAudioProcessingSettings(processing)
-  }
-
-  /**
-   * Patch default-scene graph.outputStage (sample-rate lock / resampler / dither).
-   * Does not invent OutputConfig fields — rate lock lives only on the DSP graph.
-   */
-  async function setOutputStage(partial: Partial<DspOutputStageConfig>): Promise<void> {
-    const next = mergeDspOutputStage(dspOutputStage.value, partial)
-    dspOutputStage.value = next
-    try {
-      const state = await window.api.audioEngine.setOutputStage(partial)
-      const defaultScene = state?.scenes?.find((scene) => scene.id === 'default')
-      if (defaultScene?.graph?.outputStage) {
-        dspOutputStage.value = mergeDspOutputStage(defaultScene.graph.outputStage, {})
-      } else if (state?.graph?.outputStage) {
-        dspOutputStage.value = mergeDspOutputStage(state.graph.outputStage, {})
-      }
-      playbackInfo.value = normalizeNativePlaybackInfo(
-        await window.api.audioEngine.getPlaybackInfo()
-      )
-    } catch (err) {
-      setAudioEngineError(err instanceof Error ? err.message : String(err))
-      console.error('[音频引擎] 更新输出采样率锁失败:', err)
-      try {
-        const sceneState = await window.api.audioEngine.getDspSceneState()
-        const defaultScene = sceneState?.scenes?.find((scene) => scene.id === 'default')
-        const graph = defaultScene?.graph ?? sceneState?.graph
-        if (graph?.outputStage) {
-          dspOutputStage.value = mergeDspOutputStage(graph.outputStage, {})
-        }
-        if (graph) {
-          dspStereoImage.value = extractStereoImageFromGraph(graph)
-        }
-      } catch {
-        // keep optimistic value if scene state is unavailable
-      }
-    }
-  }
-
-  /**
-   * Patch default-scene stereoField balance/width + channelStrip polarity.
-   * Graph-only; not classic audioProcessing fields.
-   */
-  async function setStereoImage(partial: Partial<DspStereoImageConfig>): Promise<void> {
-    dspStereoImage.value = mergeDspStereoImage(dspStereoImage.value, partial)
-    try {
-      const state = await window.api.audioEngine.setStereoImage(partial)
-      const defaultScene = state?.scenes?.find((scene) => scene.id === 'default')
-      const graph = defaultScene?.graph ?? state?.graph
-      if (graph) {
-        dspStereoImage.value = extractStereoImageFromGraph(graph)
-      }
-      playbackInfo.value = normalizeNativePlaybackInfo(
-        await window.api.audioEngine.getPlaybackInfo()
-      )
-    } catch (err) {
-      setAudioEngineError(err instanceof Error ? err.message : String(err))
-      console.error('[音频引擎] 更新平衡/相位失败:', err)
-      try {
-        const sceneState = await window.api.audioEngine.getDspSceneState()
-        const defaultScene = sceneState?.scenes?.find((scene) => scene.id === 'default')
-        const graph = defaultScene?.graph ?? sceneState?.graph
-        if (graph) {
-          dspStereoImage.value = extractStereoImageFromGraph(graph)
-        }
-      } catch {
-        // keep optimistic value
-      }
-    }
-  }
-
-  async function toggleDspEnabled(): Promise<void> {
-    await setAudioProcessing({ dspEnabled: !audioProcessing.value.dspEnabled })
-  }
-
-  async function toggleEqEnabled(): Promise<void> {
-    await setAudioProcessing({ eqEnabled: !audioProcessing.value.eqEnabled })
-  }
-
-  async function toggleCrossfeed(): Promise<void> {
-    await setAudioProcessing({
-      crossfeedEnabled: !audioProcessing.value.crossfeedEnabled,
-      crossfeedStrength:
-        !audioProcessing.value.crossfeedEnabled && audioProcessing.value.crossfeedStrength <= 0
-          ? 0.35
-          : audioProcessing.value.crossfeedStrength
-    })
-  }
-
-  async function toggleGapless(): Promise<void> {
-    await setAudioProcessing({ gapless: !audioProcessing.value.gapless })
-  }
-
-  async function setReplayGainMode(
-    mode: AudioProcessingSettings['volumeNormalization']
-  ): Promise<void> {
-    await setAudioProcessing({ volumeNormalization: mode })
-  }
-
-  async function setCrossfeedStrength(strength: number): Promise<void> {
-    await setAudioProcessing({
-      crossfeedEnabled: strength > 0,
-      crossfeedStrength: Math.min(1, Math.max(0, strength))
-    })
-  }
-
-  async function selectImpulseResponse(): Promise<void> {
-    try {
-      const path = await window.api.audioEngine.selectImpulseResponse()
-      if (!path) return
-      const nextSettings = mergeAudioProcessingPatch({
-        convolverEnabled: true,
-        convolverIrPath: path
-      })
-      audioProcessing.value = nextSettings
-      await window.api.audioEngine.loadImpulseResponse(path)
-      audioProcessing.value = cloneAudioProcessingSettings(
-        await window.api.audioEngine.getAudioProcessing()
-      )
-      playbackInfo.value = normalizeNativePlaybackInfo(
-        await window.api.audioEngine.getPlaybackInfo()
-      )
-    } catch (err) {
-      console.error('[音频引擎] 加载卷积脉冲响应失败:', err)
-      await persistAudioProcessingFallback(audioProcessing.value, err)
-    }
-  }
-
-  async function clearImpulseResponse(): Promise<void> {
-    const nextSettings = mergeAudioProcessingPatch({
-      convolverEnabled: false,
-      convolverIrPath: ''
-    })
-    audioProcessing.value = nextSettings
-    try {
-      await window.api.audioEngine.unloadImpulseResponse()
-      audioProcessing.value = cloneAudioProcessingSettings(
-        await window.api.audioEngine.getAudioProcessing()
-      )
-      playbackInfo.value = normalizeNativePlaybackInfo(
-        await window.api.audioEngine.getPlaybackInfo()
-      )
-    } catch (err) {
-      console.error('[音频引擎] 卸载卷积脉冲响应失败:', err)
-      await persistAudioProcessingFallback(nextSettings, err)
-    }
   }
 
   async function refreshCurrentLyrics(): Promise<void> {

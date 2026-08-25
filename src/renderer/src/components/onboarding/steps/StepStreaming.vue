@@ -1,16 +1,23 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useSettingsStore } from '@renderer/stores/useSettingsStore'
-import type { NcmPlaybackQuality, ProxyMode } from '@renderer/types/settings'
+import type {
+  MusicCachePolicySettings,
+  NcmPlaybackQuality,
+  ProxyMode,
+  StreamingAudioCachePolicy
+} from '@renderer/types/settings'
 
 const props = defineProps<{
   wantsLogin: boolean
   quality: NcmPlaybackQuality
+  cachePolicy: MusicCachePolicySettings
   wantsPluginMarket: boolean
 }>()
 const emit = defineEmits<{
   'update:wantsLogin': [value: boolean]
   'update:quality': [value: NcmPlaybackQuality]
+  'update:cachePolicy': [value: MusicCachePolicySettings]
   'update:wantsPluginMarket': [value: boolean]
 }>()
 
@@ -21,6 +28,19 @@ const qualityOptions: { value: NcmPlaybackQuality; label: string }[] = [
   { value: 'lossless', label: '无损' },
   { value: 'hires', label: 'Hi-Res' }
 ]
+
+const cacheOptions: { value: StreamingAudioCachePolicy; label: string; title: string }[] = [
+  {
+    value: 'provider',
+    label: '跟随来源规则',
+    title: '由音乐来源决定是否允许缓存，兼容性与体验最均衡'
+  },
+  { value: 'off', label: '不缓存音频', title: '每次播放都实时拉取，占用空间最小' }
+]
+
+function setAudioCachePolicy(streamingAudio: StreamingAudioCachePolicy): void {
+  emit('update:cachePolicy', { ...props.cachePolicy, streamingAudio })
+}
 
 // Proxy is a rescue hatch for users whose network can't reach NCM directly;
 // collapsed by default so the happy path stays uncluttered. Writes apply
@@ -97,6 +117,20 @@ function setProxyPort(event: Event): void {
         {{ option.label }}
       </button>
     </div>
+    <div class="onb-segmented is-small" role="radiogroup" aria-label="流媒体音频缓存">
+      <button
+        v-for="option in cacheOptions"
+        :key="option.value"
+        type="button"
+        :class="{ 'is-selected': props.cachePolicy.streamingAudio === option.value }"
+        role="radio"
+        :aria-checked="props.cachePolicy.streamingAudio === option.value"
+        :title="option.title"
+        @click="setAudioCachePolicy(option.value)"
+      >
+        {{ option.label }}
+      </button>
+    </div>
     <div class="onb-panel">
       <div class="onb-toggle-row">
         <div class="onb-toggle-copy">
@@ -159,7 +193,7 @@ function setProxyPort(event: Event): void {
       </div>
     </div>
     <p class="onb-hint">
-      在线播放音质：无损与 Hi-Res 需要对应的会员权益，「自动」会按账号选择最佳档位。
+      在线播放音质：无损与 Hi-Res 需要对应的会员权益；音频缓存默认尊重各音乐来源的规则。
     </p>
   </section>
 </template>

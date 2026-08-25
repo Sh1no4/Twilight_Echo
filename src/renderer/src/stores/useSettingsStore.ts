@@ -115,7 +115,9 @@ const fallbackSettings: AppSettings = {
     streamingAudio: 'provider'
   },
   autoAnalyzeBpm: true,
+  closeWindowBehavior: 'quit',
   closeToTray: false,
+  taskbarThumbarButtonsEnabled: true,
   onboardingCompleted: false,
   developerMode: false,
   startupHomePage: 'local',

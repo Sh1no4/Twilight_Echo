@@ -125,8 +125,10 @@ html[data-theme='dark'][data-te-surface-material='liquidGlass'] .settings-previe
 }
 
 /* Liquid glass gives the fixed navigation its own readable surface. Keep the
-   filter on a pseudo-layer so the nav can remain fixed on desktop and sticky on
-   narrow layouts without changing its containing-block behaviour. */
+   blur on a pseudo-layer so the nav can remain fixed on desktop and sticky on
+   narrow layouts without changing its containing-block behaviour. No SVG
+   displacement here: co-located with backdrop-filter it makes Chromium abandon
+   the backdrop pass and repaint the whole nav per frame. */
 html:is([data-te-surface-material='liquidGlass'], [data-te-settings-navigation-liquid-glass='on'])
   .settings-preview-nav {
   isolation: isolate;
@@ -176,7 +178,6 @@ html:is([data-te-surface-material='liquidGlass'], [data-te-settings-navigation-l
   pointer-events: none;
   backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
   -webkit-backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
-  filter: url(#te-lg-card);
 }
 
 html[data-te-liquid-glass-source='solid']:is(

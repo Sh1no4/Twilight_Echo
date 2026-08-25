@@ -1,10 +1,15 @@
 <script setup lang="ts">
 import { useSettingsStore } from '@renderer/stores/useSettingsStore'
 
-const props = defineProps<{ watchLibrary: boolean; autoAnalyzeBpm: boolean }>()
+const props = defineProps<{
+  watchLibrary: boolean
+  autoAnalyzeBpm: boolean
+  onlineLyricsFallback: boolean
+}>()
 const emit = defineEmits<{
   'update:watchLibrary': [value: boolean]
   'update:autoAnalyzeBpm': [value: boolean]
+  'update:onlineLyricsFallback': [value: boolean]
 }>()
 
 const { settings, addLibraryFolder, removeLibraryFolder } = useSettingsStore()
@@ -76,6 +81,21 @@ function folderName(path: string): string {
           :aria-checked="props.autoAnalyzeBpm"
           aria-label="后台分析 BPM 与响度"
           @click="emit('update:autoAnalyzeBpm', !props.autoAnalyzeBpm)"
+        ></button>
+      </div>
+      <div class="onb-toggle-row">
+        <div class="onb-toggle-copy">
+          <strong>缺歌词时联网补齐</strong>
+          <span>本地文件没有歌词时，可从在线歌词库搜索；关闭后完全不发起该请求。</span>
+        </div>
+        <button
+          type="button"
+          class="onb-toggle"
+          :class="{ 'is-on': props.onlineLyricsFallback }"
+          role="switch"
+          :aria-checked="props.onlineLyricsFallback"
+          aria-label="缺歌词时联网补齐"
+          @click="emit('update:onlineLyricsFallback', !props.onlineLyricsFallback)"
         ></button>
       </div>
     </div>

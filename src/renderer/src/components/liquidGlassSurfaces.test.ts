@@ -61,7 +61,11 @@ test('expanded coverage is opt-in and excludes dense rows and nested surfaces', 
   assert.match(app, /settings\.value\.liquidGlass\.coverage === 'expanded'/)
   assert.match(app, /:expanded-active="settings\.liquidGlass\.coverage === 'expanded'"/)
   assert.match(baseStyle, /data-te-liquid-glass-coverage='expanded'/)
-  assert.match(baseStyle, /filter: url\(#te-lg-expanded-card\)/)
+  assert.doesNotMatch(
+    baseStyle,
+    /filter: url\(#te-lg-expanded-card\)/,
+    'co-locating an feImage chain with backdrop-filter breaks the backdrop pass in Chromium'
+  )
   assert.match(baseStyle, /prefers-reduced-transparency: reduce/)
   assert.match(baseStyle, /prefers-contrast: more/)
   assert.match(baseStyle, /forced-colors: active/)
@@ -145,8 +149,12 @@ test('all SVG filters remain defined once and referenced from their intended sur
     assert.match(defs, new RegExp(`:id="${constant}"`))
   }
   assert.match(defs, /:id="LIQUID_GLASS_EXPANDED_CARD_FILTER_ID"[\s\S]*expandedChannelScales/)
-  assert.match(settingsStyle, /filter: url\(#te-lg-card\)/)
+  // Card surfaces keep the glass to backdrop-filter + CSS sheen: an feImage-based
+  // `filter: url()` on the same layer makes Chromium abandon the backdrop pass and
+  // burns a full filter pass per card per frame.
+  assert.doesNotMatch(settingsStyle, /filter: url\(#te-lg-card\)/)
   assert.match(dashboardStyle, /filter: var\(--home-lg-filter\)/)
+  assert.match(dashboardStyle, /--home-lg-filter: none/)
   // The playbar warp layer paints only its own gradients, so `filter` would have
   // nothing textured to bend. The chain has to sit in the *backdrop* list, where
   // the compositor hands it the scrolling content behind the bar.

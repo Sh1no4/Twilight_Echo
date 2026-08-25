@@ -27,6 +27,15 @@ function setLanguage(event: Event): void {
   void persistSettings({ language: value })
 }
 
+function toggleMiniPlayerShowInTaskbar(): void {
+  void persistSettings({
+    miniPlayer: {
+      ...settings.value.miniPlayer,
+      showInTaskbar: !settings.value.miniPlayer.showInTaskbar
+    }
+  })
+}
+
 defineProps<{
   libraryWatcherStatus: LibraryWatcherStatusSnapshot | null
   libraryScanStatus: { state: string; current: number; total: number }
@@ -337,6 +346,23 @@ const emit = defineEmits<{
             @click="toggleSetting('smtcEnabled')"
           ></span>
         </div>
+        <hr />
+        <div class="setting-item">
+          <div class="setting-copy">
+            <strong>任务栏缩略图按钮</strong>
+            <span>在 Windows 任务栏窗口预览中直接控制上一首、播放与下一首。</span>
+          </div>
+          <span
+            class="toggle-switch"
+            :class="{
+              active: settings.taskbarThumbarButtonsEnabled,
+              inactive: !settings.taskbarThumbarButtonsEnabled
+            }"
+            role="switch"
+            :aria-checked="settings.taskbarThumbarButtonsEnabled"
+            @click="toggleSetting('taskbarThumbarButtonsEnabled')"
+          ></span>
+        </div>
       </div>
     </div>
 
@@ -427,12 +453,30 @@ const emit = defineEmits<{
           </div>
           <select
             class="preview-select"
-            :value="settings.closeToTray ? 'tray' : 'quit'"
+            :value="settings.closeWindowBehavior"
             @change="setCloseBehavior"
           >
             <option value="tray">最小化到系统托盘</option>
+            <option value="miniPlayer">切换为迷你播放器</option>
             <option value="quit">退出应用</option>
           </select>
+        </div>
+        <hr />
+        <div class="setting-item">
+          <div class="setting-copy">
+            <strong>迷你播放器显示在任务栏</strong>
+            <span>开启后可从任务栏独立唤回迷你播放器；关闭后仅剩下悬浮小窗。</span>
+          </div>
+          <span
+            class="toggle-switch"
+            :class="{
+              active: settings.miniPlayer.showInTaskbar,
+              inactive: !settings.miniPlayer.showInTaskbar
+            }"
+            role="switch"
+            :aria-checked="settings.miniPlayer.showInTaskbar"
+            @click="toggleMiniPlayerShowInTaskbar"
+          ></span>
         </div>
         <hr />
         <div class="setting-item">
