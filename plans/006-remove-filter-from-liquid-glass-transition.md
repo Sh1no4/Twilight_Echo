@@ -70,15 +70,15 @@ html[data-te-liquid-glass-coverage='expanded']
 
 ```javascript
 // src/renderer/src/components/LiquidGlassDefs.vue:737-745 — 当前
-  surfaceVisibilityObserver = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        entry.target.classList.toggle(LIQUID_GLASS_OFFSCREEN_CLASS, !entry.isIntersecting)
-      }
-      syncExpandedSurfaceBudget()
-    },
-    { rootMargin: '128px 0px' }
-  )
+surfaceVisibilityObserver = new IntersectionObserver(
+  (entries) => {
+    for (const entry of entries) {
+      entry.target.classList.toggle(LIQUID_GLASS_OFFSCREEN_CLASS, !entry.isIntersecting)
+    }
+    syncExpandedSurfaceBudget()
+  },
+  { rootMargin: '128px 0px' }
+)
 ```
 
 ```javascript
@@ -192,7 +192,7 @@ AUDIT 第 5 节 Performance：
   - `writePointerVariables` 逐属性比对旧值才写；
   - 用 `event.target` 而不是 `elementFromPoint`；
   - 离开表面时 `detachPointerMove` 摘除监听。
-  `:136` 的 `createFrameCoalescer` 也不要改。
+    `:136` 的 `createFrameCoalescer` 也不要改。
 - **不要动 `src/renderer/src/components/LiquidGlassDefs.vue`。** IntersectionObserver 的 `rootMargin: '128px 0px'`、`syncExpandedSurfaceBudget()`、`LIQUID_GLASS_MAX_VISIBLE_EXPANDED_SURFACES` 都保持原样。本方案的立场是「预算机制是对的，过渡是错的」。
 - **不要动 `src/shared/liquidGlass.ts`。**
 - **不要动 `src/renderer/src/assets/base.css:3469-3477` 的预算类规则。** 那三个 `!important` 的 `none` 是有意的。

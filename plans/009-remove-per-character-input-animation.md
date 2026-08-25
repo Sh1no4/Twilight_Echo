@@ -53,14 +53,14 @@
 
 ```html
 <!-- src/renderer/src/components/AnimatedInput.vue:123-130 — 当前 -->
-    <span class="animated-input-mirror" aria-hidden="true">
-      <span class="animated-input-track" :style="{ transform: `translate3d(${-scrollX}px, 0, 0)` }">
-        <TransitionGroup v-if="animated" name="ai-char">
-          <span v-for="c in chars" :key="c.id" class="ai-char">{{ c.char }}</span>
-        </TransitionGroup>
-        <span v-else class="ai-plain">{{ modelValue }}</span>
-      </span>
-    </span>
+<span class="animated-input-mirror" aria-hidden="true">
+  <span class="animated-input-track" :style="{ transform: `translate3d(${-scrollX}px, 0, 0)` }">
+    <TransitionGroup v-if="animated" name="ai-char">
+      <span v-for="c in chars" :key="c.id" class="ai-char">{{ c.char }}</span>
+    </TransitionGroup>
+    <span v-else class="ai-plain">{{ modelValue }}</span>
+  </span>
+</span>
 ```
 
 新字符的 id 来自 `src/renderer/src/components/AnimatedInput.vue:42-58`：
@@ -139,8 +139,8 @@ const props = withDefaults(
 
 AUDIT 第 1 节的频次表，第一行原文：
 
-| Frequency | Decision |
-| --- | --- |
+| Frequency                                                   | Decision            |
+| ----------------------------------------------------------- | ------------------- |
 | 100+ times/day (keyboard shortcuts, command palette toggle) | No animation. Ever. |
 
 同节的 Hunt 项原文：「Hunt for: **animations on keyboard-initiated actions**, command palettes with open/close transitions (Raycast has none — correct), decorative motion on list items or hover states hit constantly. **The strongest fix is often delete the animation.**」
@@ -213,17 +213,17 @@ const animated = computed(() => props.animate && chars.value.length <= props.max
 
 ```html
 <!-- target — src/renderer/src/components/player-bar/QueueAddToPlaylistDialog.vue -->
-            <AnimatedInput
-              id="queue-playlist-new-name"
-              v-model="newName"
-              type="text"
-              class="queue-playlist-name-input"
-              maxlength="80"
-              placeholder="请输入歌单名称"
-              :disabled="busy"
-              autofocus
-              animate
-            />
+<AnimatedInput
+  id="queue-playlist-new-name"
+  v-model="newName"
+  type="text"
+  class="queue-playlist-name-input"
+  maxlength="80"
+  placeholder="请输入歌单名称"
+  :disabled="busy"
+  autofocus
+  animate
+/>
 ```
 
 ### CSS 的目标状态

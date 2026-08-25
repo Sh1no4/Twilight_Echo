@@ -163,11 +163,11 @@ FLIP 的位移量必须**等于**该布局下 `padding-left` / `left` 的实际�
 
 ```css
 /* target — src/renderer/src/assets/base.css，紧跟 --te-menu-width */
-  --te-menu-width: clamp(132px, 18vw, 216px);
-  /* 侧边栏让位的实际位移量。FLIP 用它把内容推回视觉起点，必须与该布局下
+--te-menu-width: clamp(132px, 18vw, 216px);
+/* 侧边栏让位的实际位移量。FLIP 用它把内容推回视觉起点，必须与该布局下
      padding-left / left 的变化量完全相等，否则动画起点会跳。预设布局如果改了
      让位距离（浮岛式菜单的空气间隙），必须同步覆盖这个 token。 */
-  --te-menu-shift: var(--te-menu-width);
+--te-menu-shift: var(--te-menu-width);
 ```
 
 ### `.main-content` 目标
@@ -484,17 +484,17 @@ FLIP 的位移量必须**等于**该布局下 `padding-left` / `left` 的实际�
 17. 同一文件，找到第 604-606 行窄窗媒体查询里的：
 
     ```css
-      html[data-te-preset-layout='aurora-reference'] body .main-content.menu-open {
-        padding-left: calc(var(--te-menu-width) + 18px);
-      }
+    html[data-te-preset-layout='aurora-reference'] body .main-content.menu-open {
+      padding-left: calc(var(--te-menu-width) + 18px);
+    }
     ```
 
     在这条规则**之前**（仍在同一个 `@media` 块内）插入：
 
     ```css
-      html[data-te-preset-layout='aurora-reference'] {
-        --te-menu-shift: calc(var(--te-menu-width) + 18px);
-      }
+    html[data-te-preset-layout='aurora-reference'] {
+      --te-menu-shift: calc(var(--te-menu-width) + 18px);
+    }
     ```
 
 18. 处理自定义外壳布局。`src/renderer/src/App.vue:1038-1043` 把 `.main-content` 的 `padding-left` 强制成 `0`，`:1045-1052` 把 `.player-bar-shell` 变成 `position: relative !important; inset: auto !important`。这两种情况下让位距离是 0，FLIP 不该产生位移。在 `src/renderer/src/App.vue` 第 1038 行那条规则**之前**插入：

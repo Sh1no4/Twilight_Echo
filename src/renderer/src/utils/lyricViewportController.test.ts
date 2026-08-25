@@ -1,28 +1,49 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import type { AnimationFrameFallbackScheduler } from './animationFrameFallback.ts'
 import {
   createLyricViewportController,
-  type LyricRowElement,
-  type LyricStageElement
+  LYRIC_MANUAL_BROWSE_RESET_MS,
+  type LyricRowElement
 } from './lyricViewportController.ts'
+import { buildLyricTimeline, type LyricInterlude } from './lyricTimeline.ts'
+import type { LyricLine } from './lyrics.ts'
+import {
+  criticalRetune,
+  LYRIC_SPRING_INIT_ONCE,
+  LYRIC_SPRING_LINE,
+  LYRIC_SPRING_PRESS,
+  LYRIC_SPRING_SEEK_SHORT
+} from './lyricMotion.ts'
 
 const ROW_HEIGHT = 72
-const STAGE_HEIGHT = 180
+const STAGE_HEIGHT = 360
+const FRAME = 1 / 60
+
+function line(partial: Partial<LyricLine> & { time: number }): LyricLine {
+  return {
+    text: partial.text ?? 'line',
+    translation: null,
+    romanization: null,
+    timed: true,
+    words: [{ text: partial.text ?? 'x', time: partial.time, endTime: partial.time + 2 }],
+    voices: undefined,
+    rowKey: undefined,
+    time: partial.time
+  }
+}
+
+/** Six lines at 4s spacing: 0-2, 4-6, ..., 20-22. */
+const LINES: LyricLine[] = [0, 4, 8, 12, 16, 20].map((time) => line({ time }))
 
 interface FakeRow extends LyricRowElement {
   properties: Map<string, string>
 }
 
-function createStage(height = STAGE_HEIGHT): LyricStageElement {
-  return { clientHeight: height, clientWidth: 1440 }
-}
-
-function createRow(height = ROW_HEIGHT, scrollHeight = height): FakeRow {
+function createRow(height = ROW_HEIGHT): FakeRow {
   const properties = new Map<string, string>()
   return {
     offsetHeight: height,
-    scrollHeight,
+    scrollHeight: height,
     isConnected: true,
     properties,
     style: {
@@ -32,14 +53,7 @@ function createRow(height = ROW_HEIGHT, scrollHeight = height): FakeRow {
   }
 }
 
-function createManualScheduler(): {
-  scheduler: AnimationFrameFallbackScheduler
-  runFrame: () => void
-  runFrames: (count: number) => void
-  runFrameBatch: () => void
-  pendingFrames: () => number
-  runTimeouts: () => void
-} {
+function createManualScheduler() {
   const frames = new Map<number, FrameRequestCallback>()
   const timeouts = new Map<number, () => void>()
   let handle = 0
@@ -65,29 +79,17 @@ function createManualScheduler(): {
       const next = frames.entries().next().value as [number, FrameRequestCallback] | undefined
       if (!next) return
       frames.delete(next[0])
-      now += 1000 / 60
+      now += FRAME * 1000
       next[1](now)
     },
-    runFrames: (count) => {
+    runFrames: (count: number) => {
       for (let index = 0; index < count; index += 1) {
         const next = frames.entries().next().value as [number, FrameRequestCallback] | undefined
         if (!next) return
         frames.delete(next[0])
-        now += 1000 / 60
+        now += FRAME * 1000
         next[1](now)
       }
-    },
-    /**
-     * One browser frame: every callback already queued runs against the same
-     * timestamp, and callbacks they queue in turn wait for the next frame. A
-     * ResizeObserver notification is delivered after this, at the end of the
-     * frame, which is what `onResize` models in these tests.
-     */
-    runFrameBatch: () => {
-      const batch = [...frames.entries()]
-      frames.clear()
-      now += 1000 / 60
-      for (const [, callback] of batch) callback(now)
     },
     pendingFrames: () => frames.size,
     runTimeouts: () => {
@@ -102,604 +104,341 @@ interface Harness {
   controller: ReturnType<typeof createLyricViewportController>
   rows: FakeRow[]
   manual: ReturnType<typeof createManualScheduler>
-  manualBrowseStates: boolean[]
-  activeIndex: { value: number }
+  playhead: { value: number }
+  playing: { value: boolean }
+  queues: number[][]
+  interludes: (LyricInterlude | null)[]
+  dotsTops: (number | null)[]
 }
 
-function harness(rowCount = 8, overrides: Record<string, unknown> = {}): Harness {
+function harness(
+  options: {
+    lines?: LyricLine[]
+    rowCount?: number
+    backgroundRows?: number[]
+    playing?: boolean
+    stageHeight?: number
+  } = {}
+): Harness {
+  const lines = options.lines ?? LINES
+  const timeline = buildLyricTimeline(lines)
   const manual = createManualScheduler()
-  const manualBrowseStates: boolean[] = []
-  const activeIndex = { value: 0 }
+  const playhead = { value: 1 }
+  const playing = { value: options.playing ?? true }
+  const queues: number[][] = []
+  const interludes: (LyricInterlude | null)[] = []
+  const dotsTops: (number | null)[] = []
+  const rowCount = options.rowCount ?? lines.length
   const rows = Array.from({ length: rowCount }, () => createRow())
+  const backgroundRows = new Set(options.backgroundRows ?? [])
 
   const controller = createLyricViewportController({
     afterLayout: async () => {},
-    onManualBrowseChange: (active) => manualBrowseStates.push(active),
-    getActiveIndex: () => activeIndex.value,
+    onManualBrowseChange: () => {},
+    getTimeline: () => timeline,
+    getPlaybackTime: () => playhead.value,
+    isPlaying: () => playing.value,
+    onActiveLinesChange: (queue) => queues.push([...queue]),
+    onInterlude: (interlude) => interludes.push(interlude),
+    onInterludeDotsTop: (top) => dotsTops.push(top),
     alignPosition: 0.5,
-    frameScheduler: manual.scheduler,
-    ...overrides
+    getDeviceScale: () => 1,
+    frameScheduler: manual.scheduler
   })
 
-  controller.attach(createStage())
+  controller.attach({ clientHeight: options.stageHeight ?? STAGE_HEIGHT, clientWidth: 800 })
   controller.activate('track-a')
-  rows.forEach((row, index) => controller.registerRow(index, row))
+  rows.forEach((row, index) => controller.registerRow(index, row, backgroundRows.has(index)))
 
-  return { controller, rows, manual, manualBrowseStates, activeIndex }
+  return { controller, rows, manual, playhead, playing, queues, interludes, dotsTops }
 }
 
-test('each line gets its own target, so lines are no longer one rigid block', async () => {
-  const { controller, activeIndex } = harness()
-  activeIndex.value = 3
-  await controller.follow(3, { mode: 'snap' })
-
-  const tops = [0, 1, 2, 3, 4].map((index) => controller.getRowTop(index) as number)
-  for (let index = 1; index < tops.length; index += 1) {
-    assert.ok(tops[index] > tops[index - 1], `line ${index} should sit below line ${index - 1}`)
-    assert.ok(
-      Math.abs(tops[index] - tops[index - 1] - ROW_HEIGHT) < 1e-6,
-      'consecutive lines are one row apart'
-    )
+/** Bootstrap the layout, then run frames with the playhead advancing. */
+async function start(h: Harness, playSeconds = 0.2): Promise<void> {
+  await h.controller.recenter('snap')
+  for (let t = 0; t < playSeconds - 1e-9; t += FRAME) {
+    h.playhead.value += FRAME
+    if (h.manual.pendingFrames() > 0) h.manual.runFrame()
+    else h.manual.runTimeouts()
   }
+}
+
+/**
+ * Bootstrap at a fixed playhead and sync the selector once, without letting
+ * the playhead drift: classification tests need `oldTime` exactly known.
+ */
+async function startAt(h: Harness, time: number): Promise<void> {
+  h.playhead.value = time
+  await h.controller.recenter('snap')
+  h.manual.runFrames(2)
+}
+
+function playSeconds(h: Harness, seconds: number): void {
+  for (let t = 0; t < seconds - 1e-9; t += FRAME) {
+    h.playhead.value += FRAME
+    if (h.manual.pendingFrames() > 0) h.manual.runFrame()
+    else h.manual.runTimeouts()
+  }
+}
+
+/** Wake an idled loop; leaves it running when the next line is near. */
+function wake(h: Harness): void {
+  h.manual.runTimeouts()
+  h.manual.runFrame()
+}
+
+test('the selector promotes the current line and reports the queue', async () => {
+  const h = harness()
+  await start(h)
+
+  assert.deepEqual(h.controller.getActiveQueue(), [0])
+  assert.equal(h.controller.getCurrentIndex(), 0)
+  assert.ok(h.queues.some((queue) => queue.length === 1 && queue[0] === 0))
 })
 
-test('rows use their full scroll height when layered vocals exceed the button box', async () => {
-  const { controller, activeIndex } = harness(0)
-  controller.registerRow(0, createRow(72, 154))
-  controller.registerRow(1, createRow(72, 72))
-  activeIndex.value = 0
+test('the one-shot init writes 260/50 before ordinary updates take over', async () => {
+  const h = harness()
+  await h.controller.recenter('snap')
+  assert.deepEqual(h.controller.getRowSpringParams(0), LYRIC_SPRING_INIT_ONCE)
 
-  await controller.follow(0, { mode: 'snap' })
-
-  const firstTop = controller.getRowTop(0) as number
-  const secondTop = controller.getRowTop(1) as number
-  assert.equal(secondTop - firstTop, 154)
+  // A normal (non-seek) layout restores the ordinary line spring.
+  await start(h, 0.05)
+  playSeconds(h, 3.5)
+  assert.deepEqual(h.controller.getRowSpringParams(0), LYRIC_SPRING_LINE)
 })
 
-test('a configured row gap preserves breathing room between scaled lyric groups', async () => {
-  const { controller, activeIndex } = harness(0, { getRowGapPx: () => 10 })
-  controller.registerRow(0, createRow(72, 154))
-  controller.registerRow(1, createRow(72, 72))
-  activeIndex.value = 0
+test('explicit short seeks retune every row to the 0.1s critical spring', async () => {
+  const h = harness()
+  await start(h)
 
-  await controller.follow(0, { mode: 'snap' })
-
-  const firstTop = controller.getRowTop(0) as number
-  const secondTop = controller.getRowTop(1) as number
-  assert.equal(secondTop - firstTop, 164)
-})
-
-test('resize remeasures responsive row content before stacking following rows', async () => {
-  const { controller, manual, activeIndex } = harness(0, { getRowGapPx: () => 10 })
-  const responsiveRow = createRow(72, 154)
-  controller.registerRow(0, responsiveRow)
-  controller.registerRow(1, createRow(72, 72))
-  activeIndex.value = 0
-  await controller.follow(0, { mode: 'snap' })
-
-  responsiveRow.scrollHeight = 200
-  controller.onResize('snap')
-  manual.runFrame()
-  await Promise.resolve()
-
-  const firstTop = controller.getRowTop(0) as number
-  const secondTop = controller.getRowTop(1) as number
-  assert.equal(secondTop - firstTop, 210)
-  assert.equal(manual.pendingFrames(), 0, 'responsive geometry should not animate through overlap')
-})
-
-test('the anchored line lands at the align position', async () => {
-  const { controller, activeIndex } = harness()
-  activeIndex.value = 3
-  await controller.follow(3, { mode: 'snap' })
-
-  // 0.5 of 180 = 90, minus half a row = 54.
-  assert.ok(Math.abs((controller.getRowTop(3) as number) - 54) < 1e-6)
-})
-
-test('reserved bottom space lifts the anchor above the overlay', async () => {
-  const { controller, activeIndex } = harness(8, { getBottomReservedPx: () => 48 })
-  activeIndex.value = 3
-  await controller.follow(3, { mode: 'snap' })
-
-  // Visible height 180 - 48 = 132; 0.5 of that is 66, minus half a row = 30.
-  assert.ok(Math.abs((controller.getRowTop(3) as number) - 30) < 1e-6)
-})
-
-test('lines depart in sequence rather than as one block, which is the cascade', async () => {
-  const { controller, manual, activeIndex } = harness(10)
-  activeIndex.value = 0
-  await controller.follow(0, { mode: 'snap' })
-
-  // Anchor 0 stacks rows at 54 + 72i.
-  const restingSeven = controller.getRowTop(7) as number
-  assert.ok(Math.abs(restingSeven - (54 + 72 * 7)) < 1e-6)
-
-  activeIndex.value = 5
-  await controller.follow(5)
-  manual.runFrames(3)
-
-  // A spring whose delay has not elapsed still reports its *previous* target, so
-  // comparing targets shows exactly which lines have been released so far. A
-  // rigid block would release every line on the same frame.
-  const releasedTarget = controller.getRowTargetTop(4) as number
-  const pendingTarget = controller.getRowTargetTop(7) as number
-
-  assert.ok(Math.abs(releasedTarget - -18) < 1e-6, 'the first visible line has already departed')
+  h.controller.notifySeek(1.9)
+  assert.equal(h.controller.getLastSeekKind(), 'short')
+  assert.deepEqual(h.controller.getRowSpringParams(0), LYRIC_SPRING_SEEK_SHORT)
+  assert.deepEqual(h.controller.getRowSpringParams(3), LYRIC_SPRING_SEEK_SHORT)
+  // The 0.1s critical spring settles quickly.
+  h.manual.runFrames(12)
   assert.ok(
-    Math.abs(pendingTarget - restingSeven) < 1e-6,
-    'a line further down is still waiting its turn'
-  )
-
-  manual.runFrames(400)
-  assert.ok(
-    Math.abs((controller.getRowTop(7) as number) - (-306 + 72 * 7)) < 1,
-    'every line still arrives at its place'
+    Math.abs((h.controller.getRowTop(0) ?? 0) - (h.controller.getRowTargetTop(0) ?? 0)) < 0.01
   )
 })
 
-test('an underdamped line overshoots its target and settles back', async () => {
-  const { controller, manual, activeIndex } = harness(10)
-  activeIndex.value = 8
-  await controller.follow(8, { mode: 'snap' })
+test('a large seek snaps and restores the ordinary spring', async () => {
+  const h = harness()
+  await start(h)
 
-  activeIndex.value = 0
-  await controller.follow(0)
-
-  const target = controller.getRowTargetTop(0) as number
-  let overshot = false
-  for (let frame = 0; frame < 200; frame += 1) {
-    manual.runFrame()
-    const top = controller.getRowTop(0) as number
-    if (top > target + 0.5) overshot = true
-  }
-
-  assert.ok(overshot, 'scrollTop could never do this; a per-line spring can')
-  assert.ok(Math.abs((controller.getRowTop(0) as number) - target) < 1, 'it still settles')
+  h.controller.notifySeek(17)
+  assert.equal(h.controller.getLastSeekKind(), 'large')
+  assert.deepEqual(h.controller.getRowSpringParams(0), LYRIC_SPRING_LINE)
+  assert.deepEqual(h.controller.getActiveQueue(), [4])
+  // Snapped: positions equal their targets immediately.
+  assert.equal(h.controller.getRowTop(4), h.controller.getRowTargetTop(4))
 })
 
-test('the first lyric layout snaps into place instead of falling from the top', async () => {
-  const { controller, manual, activeIndex } = harness(8)
-  activeIndex.value = 4
+test('seek classification boundaries are strict over line distance', async () => {
+  // Lines every 0.7s so line distance and time distance can be isolated.
+  const dense = Array.from({ length: 8 }, (_, index) => line({ time: index * 0.7 }))
 
-  await controller.follow(4)
+  // deltaLine = 3 (not > 3) and deltaTime = 2.0 (not > 2): short.
+  const h = harness({ lines: dense, stageHeight: 300 })
+  await startAt(h, 0.2)
+  h.controller.notifySeek(2.2)
+  assert.equal(h.controller.getLastSeekKind(), 'short')
 
-  assert.equal(manual.pendingFrames(), 0, 'the first layout must not animate from the row default')
-  assert.equal(controller.getRowTop(4), controller.getRowTargetTop(4))
+  // deltaTime 2.1 > 2.0 with the same line distance: large.
+  const h2 = harness({ lines: dense, stageHeight: 300 })
+  await startAt(h2, 0.2)
+  h2.controller.notifySeek(2.3)
+  assert.equal(h2.controller.getLastSeekKind(), 'large')
+
+  // deltaLine = 4 > 3: large regardless of the time budget.
+  const h3 = harness({ lines: dense, stageHeight: 300 })
+  await startAt(h3, 0.2)
+  h3.controller.notifySeek(2.9)
+  assert.equal(h3.controller.getLastSeekKind(), 'large')
 })
 
-test('scale trails position, so the motion is not perfectly rigid', async () => {
-  const { controller, manual, activeIndex } = harness(10)
-  activeIndex.value = 0
-  await controller.follow(0, { mode: 'snap' })
-  const restingScale = controller.getRowScale(1) as number
+test('playback-clock discontinuities are detected per frame, strictly', async () => {
+  // Detection only runs on live frames, so park the playhead inside the
+  // pre-line window where the loop keeps running (candidate at 4s).
+  const h = harness()
+  await start(h, 0.1)
+  playSeconds(h, 1.6)
+  assert.ok(h.manual.pendingFrames() > 0, 'the loop should be live inside the window')
 
-  activeIndex.value = 1
-  await controller.follow(1)
-  manual.runFrames(2)
+  // A gap of exactly 1.5s is not a discontinuity.
+  h.playhead.value += 1.5
+  h.manual.runFrame()
+  assert.equal(h.controller.getLastSeekKind(), 'none')
 
-  const scale = controller.getRowScale(1) as number
-  assert.notEqual(scale, restingScale, 'the scale spring is moving')
-  assert.ok(scale > 100 && scale < 104, 'and has not snapped straight to the active size')
+  // Slightly past 1.5s is.
+  h.playhead.value += 1.6
+  h.manual.runFrame()
+  assert.notEqual(h.controller.getLastSeekKind(), 'none')
+
+  // Backwards past 1.0s is.
+  const h2 = harness()
+  await start(h2, 0.1)
+  playSeconds(h2, 1.6)
+  assert.ok(h2.manual.pendingFrames() > 0)
+  h2.playhead.value -= 1.1
+  h2.manual.runFrame()
+  assert.notEqual(h2.controller.getLastSeekKind(), 'none')
+
+  // Returning to under 10% of a >5s clock is.
+  const h3 = harness()
+  await start(h3, 0.1)
+  h3.playhead.value = 14.7
+  wake(h3)
+  assert.ok(h3.manual.pendingFrames() > 0, 'the loop should be live at 14.7s')
+  h3.playhead.value = 1.2
+  h3.manual.runFrame()
+  assert.notEqual(h3.controller.getLastSeekKind(), 'none')
 })
 
-test('snap mode places lines without consuming a frame', async () => {
-  const { controller, manual, activeIndex } = harness()
-  activeIndex.value = 4
-  await controller.follow(4, { mode: 'snap' })
+test('the loop idles between lines and wakes before the retune window', async () => {
+  const h = harness()
+  // 1.2s lets the bootstrap springs settle before the candidate's window.
+  await start(h, 1.2)
+  // Candidate line 1 starts at 4: well past the idle margin, and the
+  // bootstrap springs have settled, so nothing keeps the loop alive.
+  assert.equal(h.manual.pendingFrames(), 0, 'the loop should idle with nothing pending')
 
-  assert.equal(manual.pendingFrames(), 0, 'a snap must not schedule animation')
-  assert.equal(controller.getRowTop(4), controller.getRowTargetTop(4))
+  // Continuous playback advances through wake-ups; the promotion at
+  // ~3.29s re-opens the loop and the queue advances.
+  playSeconds(h, 3.1)
+  assert.deepEqual(h.controller.getActiveQueue(), [1])
 })
 
-test('reduced motion snaps and drops blur entirely', async () => {
-  const { controller, rows, manual, activeIndex } = harness(8, {
-    isSpringEnabled: () => false,
-    isBlurEnabled: () => false
-  })
-  activeIndex.value = 3
-  await controller.follow(3)
-
-  assert.equal(manual.pendingFrames(), 0, 'no animation frames when springs are off')
-  assert.equal(controller.getRowTop(3), controller.getRowTargetTop(3))
-  assert.equal(rows[0].properties.get('--lyric-line-blur'), '0.000px')
+test('tier-2 retune pre-tunes the upcoming line with the budget formula', async () => {
+  const h = harness()
+  await start(h, 0.1)
+  // Drive past one line change so every row runs the ordinary line spring
+  // (mass 1), then approach line 2 (starts at 8s).
+  playSeconds(h, 5.65)
+  // Line 1 (4-6) lost its protection at 6.5, so the queue waits on line 2.
+  assert.deepEqual(h.controller.getActiveQueue(), [])
+  // delta = 8 - 6.75 = 1.25: R = 0.75 < 0.8 and the fresh spring settles
+  // too slowly, so T = max(R - 0.4, 0.3) = 0.35.
+  h.manual.runFrames(2)
+  const params = h.controller.getRowSpringParams(2)
+  assert.ok(params, 'line 2 should carry a row spring')
+  const expected = criticalRetune(1, 0.35)
+  assert.ok(Math.abs(params.stiffness - expected.stiffness) < 1e-6)
+  assert.ok(Math.abs(params.damping - expected.damping) < 1e-6)
 })
 
-test('a track switch drops stale rows and resets browsing', async () => {
-  const { controller, activeIndex } = harness()
-  activeIndex.value = 5
-  await controller.follow(5, { mode: 'snap' })
-  assert.ok((controller.getRowTop(5) as number) !== 0)
-
-  controller.activate('track-b')
-  assert.equal(controller.getRowTop(5), null, 'rows from the previous track are gone')
-  assert.equal(controller.trackId(), 'track-b')
-  assert.equal(controller.getScrollOffset(), 0)
+test('tier-1 retune takes over inside 1.1s and settles in 0.3s', async () => {
+  const h = harness()
+  await start(h, 0.1)
+  playSeconds(h, 5.85)
+  // delta = 8 - 6.95 = 1.05 < 1.1: T = max(0.3, 0.01) = 0.3.
+  h.manual.runFrames(2)
+  const params = h.controller.getRowSpringParams(2)
+  assert.ok(params, 'line 2 should carry a row spring')
+  const expected = criticalRetune(1, 0.3)
+  assert.ok(Math.abs(params.stiffness - expected.stiffness) < 1e-6)
+  assert.ok(Math.abs(params.damping - expected.damping) < 1e-6)
 })
 
-test('a layout pass belonging to a previous track cannot move the new one', async () => {
-  const manual = createManualScheduler()
-  const activeIndex = { value: 5 }
-  let releaseLayout: (() => void) | null = null
-  const firstLayout = new Promise<void>((resolve) => {
-    releaseLayout = resolve
-  })
-  let layoutCalls = 0
+test('manual drag follows through the low-pass and de-blurs', async () => {
+  const h = harness()
+  await start(h, 0.1)
 
-  const controller = createLyricViewportController({
-    afterLayout: async () => {
-      layoutCalls += 1
-      if (layoutCalls === 1) await firstLayout
-    },
-    onManualBrowseChange: () => {},
-    getActiveIndex: () => activeIndex.value,
-    alignPosition: 0.5,
-    frameScheduler: manual.scheduler
-  })
-  controller.attach(createStage())
-  controller.activate('track-a')
-  controller.registerRow(5, createRow())
-  const stale = controller.follow(5, { mode: 'snap' })
+  // Distant row carries blur before the interaction.
+  h.controller.browseBy(60)
+  assert.ok(h.controller.isManualBrowsing())
+  h.manual.runFrames(30)
+  // targetOffset = 2 * 1 * 60 = 120, followed within the snap threshold.
+  assert.ok(Math.abs(h.controller.getDragOffset() - 120) < 0.51)
+  assert.ok(h.controller.getInteractionBlend() > 0.9, 'interaction blend approaches 1')
 
-  controller.activate('track-b')
-  const rowB = createRow()
-  controller.registerRow(3, rowB)
-  activeIndex.value = 3
-  const current = controller.follow(3, { mode: 'snap' })
-  ;(releaseLayout as (() => void) | null)?.()
-  await Promise.all([stale, current])
-
-  assert.equal(controller.trackId(), 'track-b')
-  assert.ok(Math.abs((controller.getRowTop(3) as number) - 54) < 1e-6)
+  // Release folds the offset back and re-follows.
+  h.controller.releaseManualBrowse()
+  assert.ok(!h.controller.isManualBrowsing())
+  h.manual.runFrames(40)
+  assert.equal(h.controller.getDragOffset(), 0)
+  assert.ok(h.controller.getInteractionBlend() < 0.01)
 })
 
-test('a newer follow cancels an older one still awaiting layout', async () => {
-  const manual = createManualScheduler()
-  const activeIndex = { value: 0 }
-  let releaseFirst: (() => void) | null = null
-  const firstLayout = new Promise<void>((resolve) => {
-    releaseFirst = resolve
-  })
-  let layoutCalls = 0
+test('the manual browse timer releases after 1.5s of inactivity', async () => {
+  const h = harness()
+  await start(h, 0.1)
+  assert.equal(LYRIC_MANUAL_BROWSE_RESET_MS, 1500)
 
-  const controller = createLyricViewportController({
-    afterLayout: async () => {
-      layoutCalls += 1
-      if (layoutCalls === 1) await firstLayout
-    },
-    onManualBrowseChange: () => {},
-    getActiveIndex: () => activeIndex.value,
-    alignPosition: 0.5,
-    frameScheduler: manual.scheduler
-  })
-  controller.attach(createStage())
-  controller.activate('track-a')
-  controller.registerRow(0, createRow())
-  controller.registerRow(5, createRow())
-
-  const stale = controller.follow(0, { mode: 'snap' })
-  activeIndex.value = 5
-  await controller.follow(5, { mode: 'snap' })
-  ;(releaseFirst as (() => void) | null)?.()
-  await stale
-
-  // Line 5 is the anchor, so it sits at the align position and line 0 above it.
-  assert.ok(Math.abs((controller.getRowTop(5) as number) - 54) < 1e-6)
-  assert.ok((controller.getRowTop(0) as number) < 0, 'the stale follow did not win')
+  h.controller.browseBy(40)
+  assert.ok(h.controller.isManualBrowsing())
+  h.manual.runTimeouts()
+  assert.ok(!h.controller.isManualBrowsing())
 })
 
-test('a reused Vue ref clearing an older row keeps the live one', async () => {
-  const { controller, activeIndex } = harness()
+test('click press and release use their two documented springs', async () => {
+  const h = harness()
+  await start(h, 0.1)
+
+  h.controller.rowPointerDown(1)
+  h.manual.runFrames(6)
+  const scaleDuringPress = Number(h.rows[1].properties.get('--lyric-line-scale')?.replace('px', ''))
+  assert.ok(scaleDuringPress < 0.98, `pressed scale ${scaleDuringPress} should shrink toward 0.95`)
+  assert.ok(
+    Number(h.rows[1].properties.get('--lyric-line-press')) > 0,
+    'the pressed row gains a white overlay tint'
+  )
+
+  h.controller.rowPointerUp(1)
+  h.manual.runFrames(30)
+  const scaleAfterRelease = Number(h.rows[1].properties.get('--lyric-line-scale'))
+  assert.ok(Math.abs(scaleAfterRelease - 0.98) < 0.01, 'release returns the row to full scale')
+  assert.equal(Number(h.rows[1].properties.get('--lyric-line-press')), 0)
+  void LYRIC_SPRING_PRESS
+})
+
+test('auxiliary rows animate their opacity through the activity spring', async () => {
+  const h = harness({ backgroundRows: [1] })
+  await start(h, 0.1)
+  h.manual.runFrames(30)
+
+  // Line 1 is a background row; while line 0 sings it sits at the auxiliary
+  // inactive blend (its content hides itself in CSS, the row collapses).
+  const collapsedAlpha = Number(h.rows[1].properties.get('--lyric-line-opacity'))
+  assert.ok(Math.abs(collapsedAlpha - 0.175) < 0.01, `collapsed alpha ${collapsedAlpha}`)
+
+  // Once line 1 itself becomes active, the activity spring opens it up.
+  playSeconds(h, 2.5)
+  h.manual.runFrames(20)
+  const activeAlpha = Number(h.rows[1].properties.get('--lyric-line-opacity'))
+  assert.ok(activeAlpha > 0.2, `active auxiliary alpha ${activeAlpha} should rise toward 0.5`)
+})
+
+test('a long gap surfaces an interlude record for the dots', async () => {
+  const gapLines = [line({ time: 0 }), line({ time: 20 })]
+  const h = harness({ lines: gapLines })
+  await start(h, 0.1)
+  // Line 0 ends at 2; from 2.5..20 nothing is active and the gap is 18s.
+  playSeconds(h, 2)
+  h.manual.runFrames(5)
+
+  const record = h.interludes.at(-1)
+  assert.ok(record, 'an interlude record should be discovered in the long gap')
+  assert.equal(record.afterIndex, 0)
+  assert.equal(record.end, 20)
+  assert.ok(record.start > 2 && record.start < 3)
+})
+
+test('registerRow replacement keeps the previous position', async () => {
+  const h = harness()
+  await start(h, 0.1)
+  const before = h.controller.getRowTop(2)
+
   const replacement = createRow()
-  controller.registerRow(5, replacement)
-  // Vue may invoke the previous ref callback with null afterwards.
-  controller.registerRow(5, null)
-
-  activeIndex.value = 5
-  await controller.follow(5, { mode: 'snap' })
-  assert.ok(Math.abs((controller.getRowTop(5) as number) - 54) < 1e-6)
+  h.controller.registerRow(2, replacement)
+  h.manual.runFrames(2)
+  assert.ok(Math.abs((h.controller.getRowTop(2) ?? 0) - (before ?? 0)) < 0.01)
 })
 
-test('a disconnected row is dropped when its ref clears', () => {
-  const { controller } = harness()
-  const stale = createRow()
-  stale.isConnected = false
-  controller.registerRow(5, stale)
-  controller.registerRow(5, null)
-
-  assert.equal(controller.getRowTop(5), null)
-})
-
-test('browsing moves the view without native scroll and reports manual mode', async () => {
-  const { controller, manualBrowseStates, activeIndex } = harness()
-  activeIndex.value = 4
-  await controller.follow(4, { mode: 'snap' })
-  const before = controller.getRowTop(4) as number
-
-  controller.browseBy(60)
-  assert.ok(controller.isManualBrowsing())
-  assert.deepEqual(manualBrowseStates, [true])
-  assert.equal(controller.getScrollOffset(), 60)
-  assert.ok((controller.getRowTargetTop(4) as number) < before, 'the lines moved up')
-})
-
-test('browsing is bounded by the content extent', async () => {
-  const { controller, activeIndex } = harness()
-  activeIndex.value = 4
-  await controller.follow(4, { mode: 'snap' })
-
-  controller.browseBy(-100_000)
-  const min = controller.getScrollOffset()
-  controller.browseBy(-100_000)
-  assert.equal(controller.getScrollOffset(), min, 'cannot browse past the top')
-
-  controller.browseBy(100_000)
-  const max = controller.getScrollOffset()
-  controller.browseBy(100_000)
-  assert.equal(controller.getScrollOffset(), max, 'cannot browse past the bottom')
-})
-
-test('following is suppressed while browsing and resumes on release', async () => {
-  const { controller, manual, manualBrowseStates, activeIndex } = harness()
-  activeIndex.value = 2
-  await controller.follow(2, { mode: 'snap' })
-
-  controller.beginManualBrowse()
-  activeIndex.value = 6
-  await controller.follow(6)
-  assert.notEqual(controller.getRowTargetTop(6), 54, 'automatic follow must not fight the user')
-
-  controller.releaseManualBrowse()
-  await Promise.resolve()
-  manual.runFrames(400)
-
-  assert.ok(!controller.isManualBrowsing())
-  assert.deepEqual(manualBrowseStates, [true, false])
-  assert.equal(controller.getScrollOffset(), 0, 'releasing returns to the followed position')
-})
-
-test('browsing releases itself after the idle timeout', async () => {
-  const { controller, manual, activeIndex } = harness()
-  activeIndex.value = 2
-  await controller.follow(2, { mode: 'snap' })
-
-  controller.browseBy(80)
-  assert.ok(controller.isManualBrowsing())
-
-  manual.runTimeouts()
-  assert.ok(!controller.isManualBrowsing(), 'the view should return to the song on its own')
-})
-
-test('automatic following never reports manual browsing', async () => {
-  const { controller, manualBrowseStates, activeIndex } = harness()
-  for (const index of [0, 2, 5, 7]) {
-    activeIndex.value = index
-    await controller.follow(index, { mode: 'snap' })
-  }
-  assert.deepEqual(manualBrowseStates, [])
-})
-
-test('content resize recentres once per frame without snapping away lyric motion', async () => {
-  const { controller, manual, activeIndex } = harness()
-  activeIndex.value = 5
-  await controller.follow(5, { mode: 'snap' })
-  const before = controller.getRowTop(5) as number
-
-  controller.attach(createStage(400))
-  controller.onResize('spring')
-  controller.onResize('spring')
-  manual.runFrames(1)
-  await Promise.resolve()
-  manual.runFrames(3)
-
-  const moving = controller.getRowTop(5) as number
-  assert.notEqual(moving, before, 'content remeasurement should start the lyric spring')
-  assert.ok(Math.abs(moving - 164) > 1.5, 'content remeasurement must not snap to its target')
-
-  manual.runFrames(400)
-  // 0.5 of 400 = 200, minus half a row = 164.
-  assert.ok(Math.abs((controller.getRowTop(5) as number) - 164) < 1.5)
-})
-
-test('a spring resize preserves the queued push from the anchor into lower lines', async () => {
-  const { controller, manual, activeIndex } = harness(10)
-  activeIndex.value = 0
-  await controller.follow(0, { mode: 'snap' })
-  const restingLowerTarget = controller.getRowTargetTop(7) as number
-
-  activeIndex.value = 5
-  await controller.follow(5)
-  manual.runFrames(2)
-  assert.equal(
-    controller.getRowTargetTop(7),
-    restingLowerTarget,
-    'a lower line should still be waiting for its cascade turn'
-  )
-
-  controller.onResize('spring')
-  manual.runFrame()
-  assert.equal(
-    controller.getRowTargetTop(7),
-    restingLowerTarget,
-    'a spring resize must not release the lower line together with the anchor'
-  )
-})
-
-test('a row resizing every frame must not freeze the cascade it overlaps', async () => {
-  // A background voice that ends with its line collapses its box over the whole
-  // hand-off, so ResizeObserver reports the row on every frame of the very
-  // cascade the line change just started. Each notification used to cancel the
-  // in-flight frame loop and re-schedule it from inside a rAF callback, where
-  // the next notification cancelled it again before it ever ran: the lyrics
-  // stood still for the length of the collapse and then jumped.
-  const { controller, rows, manual, activeIndex } = harness(10)
-  activeIndex.value = 0
-  await controller.follow(0, { mode: 'snap' })
-
-  activeIndex.value = 5
-  await controller.follow(5)
-
-  const tops: number[] = []
-  for (let frame = 0; frame < 20; frame += 1) {
-    manual.runFrameBatch()
-    tops.push(controller.getRowTop(5) as number)
-    // The collapsing row sits just above the anchor, where a line that has only
-    // now finished singing is.
-    rows[4].offsetHeight = Math.max(24, rows[4].offsetHeight - 3)
-    rows[4].scrollHeight = rows[4].offsetHeight
-    controller.onResize('spring')
-  }
-
-  const advanced = tops.filter(
-    (top, index) => index > 0 && Math.abs(top - tops[index - 1]) > 0.01
-  ).length
-  assert.equal(
-    advanced,
-    tops.length - 1,
-    `the anchor must keep travelling through the resize storm; it moved on ${advanced} of ${tops.length - 1} frames`
-  )
-  assert.ok(
-    Math.abs((controller.getRowTop(5) as number) - 54) < Math.abs(tops[0] - 54),
-    'the anchor must be closer to the align position after the storm than before it'
-  )
-})
-
-test('resize is ignored while the user is browsing', async () => {
-  const { controller, activeIndex } = harness()
-  activeIndex.value = 5
-  await controller.follow(5, { mode: 'snap' })
-  controller.beginManualBrowse()
-  const offset = controller.getScrollOffset()
-
-  controller.onResize()
-  assert.equal(controller.getScrollOffset(), offset)
-  assert.ok(controller.isManualBrowsing())
-})
-
-test('presented lines stay unblurred while distant ones recede', async () => {
-  const { controller, rows, activeIndex } = harness(8, {
-    getBufferedIndices: () => new Set([3])
-  })
-  activeIndex.value = 3
-  await controller.follow(3, { mode: 'snap' })
-
-  assert.equal(rows[3].properties.get('--lyric-line-blur'), '0.000px')
-  const near = Number.parseFloat(rows[4].properties.get('--lyric-line-blur') as string)
-  const far = Number.parseFloat(rows[7].properties.get('--lyric-line-blur') as string)
-  assert.ok(near > 0)
-  assert.ok(far > near, 'depth grows with distance')
-})
-
-test('lines outside the viewport are marked so they can stop painting', async () => {
-  const { controller, rows, activeIndex } = harness(30)
-  activeIndex.value = 0
-  await controller.follow(0, { mode: 'snap' })
-
-  assert.equal(rows[0].properties.get('--lyric-line-in-sight'), undefined, 'visible by default')
-  assert.equal(rows[29].properties.get('--lyric-line-in-sight'), '0', 'far lines are culled')
-  assert.ok(
-    rows[29].properties.get('--lyric-line-top'),
-    'culled lines still keep a layout top so a later browse cannot stack them at y=0'
-  )
-})
-
-test('browsing does not wait on the cascade, so lines below move with the wheel', async () => {
-  const { controller, activeIndex } = harness(10)
-  activeIndex.value = 0
-  await controller.follow(0, { mode: 'snap' })
-  const restingSeven = controller.getRowTargetTop(7) as number
-
-  controller.browseBy(80)
-  assert.ok(
-    Math.abs((controller.getRowTargetTop(7) as number) - (restingSeven - 80)) < 1e-6,
-    'a line further down must retarget immediately rather than waiting its cascade turn'
-  )
-})
-
-test('culled rows keep their last measured height so browsing cannot collapse them', async () => {
-  const { controller, rows, activeIndex } = harness(30)
-  activeIndex.value = 0
-  await controller.follow(0, { mode: 'snap' })
-
-  for (let index = 8; index < 30; index += 1) {
-    rows[index].offsetHeight = 24
-  }
-
-  controller.browseBy(400)
-  const tops = [18, 19, 20, 21].map((index) => controller.getRowTargetTop(index) as number)
-  for (let index = 1; index < tops.length; index += 1) {
-    assert.ok(
-      Math.abs(tops[index] - tops[index - 1] - ROW_HEIGHT) < 1,
-      `browsed lines must stay one row apart; gap=${tops[index] - tops[index - 1]}`
-    )
-  }
-})
-
-test('browsing expands the focus window so distant lines do not share a row', async () => {
-  const { controller, activeIndex } = harness(8, {
-    getFocusWindow: () => new Set([2, 3, 4]),
-    isPlaying: () => true
-  })
-  activeIndex.value = 3
-  await controller.follow(3, { mode: 'snap' })
-  assert.equal(
-    controller.getRowTargetTop(5),
-    controller.getRowTargetTop(7),
-    'focus mode collapses outsiders onto the same y'
-  )
-
-  controller.browseBy(40)
-  assert.ok(
-    (controller.getRowTargetTop(7) as number) - (controller.getRowTargetTop(5) as number) >
-      ROW_HEIGHT,
-    'browsing must give hidden lines their own rows'
-  )
-})
-
-test('the interlude dots position is published for the view', async () => {
-  const { controller, activeIndex } = harness(8, {
-    getInterludeAfterIndex: () => 2,
-    getInterludeDotsHeight: () => 20,
-    getBufferedIndices: () => new Set<number>()
-  })
-  activeIndex.value = 2
-  await controller.follow(2, { mode: 'snap' })
-
-  assert.ok(typeof controller.getInterludeDotsTop() === 'number')
-})
-
-test('disposing releases rows, browsing and pending work', async () => {
-  const { controller, manual, activeIndex } = harness()
-  activeIndex.value = 3
-  await controller.follow(3)
-  controller.beginManualBrowse()
-
-  controller.dispose()
-  assert.equal(controller.trackId(), '')
-  assert.equal(controller.getRowTop(3), null)
-  assert.ok(!controller.isManualBrowsing())
-
-  manual.runFrames(5)
-  assert.equal(controller.getRowTop(3), null)
-})
-
-test('following a negative index is a no-op', async () => {
-  const { controller, manual } = harness()
-  await controller.follow(-1)
-
-  // Rows exist but were never laid out, so they sit at their initial position
-  // and nothing was scheduled.
-  assert.equal(controller.getRowTop(0), 0)
-  assert.equal(manual.pendingFrames(), 0)
-})
-
-test('untimed lyrics still receive a snap layout when no row is active', async () => {
-  const { controller, activeIndex, rows } = harness()
-  activeIndex.value = -1
-
-  await controller.recenter('snap')
-
-  assert.ok((controller.getRowTop(1) as number) > (controller.getRowTop(0) as number))
-  assert.equal(rows[0].properties.get('--lyric-line-ready'), '1')
-  assert.equal(rows[1].properties.get('--lyric-line-ready'), '1')
+test('dispose stops the loop and clears state', async () => {
+  const h = harness()
+  await start(h, 0.1)
+  h.controller.dispose()
+  assert.equal(h.manual.pendingFrames(), 0)
+  assert.equal(h.controller.trackId(), '')
 })

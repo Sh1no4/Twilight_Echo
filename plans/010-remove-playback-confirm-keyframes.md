@@ -113,7 +113,7 @@ const barRegions = computed(() => {
      :class="{ 'is-playing': isPlaying }"
      aria-label="播放/暂停"
      @click="togglePlay"
-   >
+   ></button>
    ```
 
 也就是说：**按一次 `Ctrl+Alt+Space` 或键盘上的播放键，就跑一次 280ms 的弹簧脉冲。** 用户根本没有把视线放在播放按钮上（快捷键的用途就是不用看界面），动效在向没人看的地方汇报。
@@ -154,8 +154,8 @@ AUDIT 第 4 节原文：「CSS **transitions** retarget from the current state m
 
 AUDIT 第 1 节，第一行原文：
 
-| Frequency | Decision |
-| --- | --- |
+| Frequency                                                   | Decision            |
+| ----------------------------------------------------------- | ------------------- |
 | 100+ times/day (keyboard shortcuts, command palette toggle) | No animation. Ever. |
 
 同节 Hunt 项原文：「Hunt for: **animations on keyboard-initiated actions**…**The strongest fix is often delete the animation.**」
@@ -286,6 +286,7 @@ AUDIT 第 1 节，第一行原文：
 ## Steps
 
 1. 打开 `src/renderer/src/components/player-bar/PlayerBar.css`，定位 `:1298-1307`，删掉整段：
+
    ```css
    :global(html[data-te-motion='full'] .player-left) {
      animation: player-track-arrive var(--te-motion-panel) var(--te-ease-spring) both;
@@ -298,7 +299,9 @@ AUDIT 第 1 节，第一行原文：
      }
    }
    ```
+
 2. 同一文件，定位 `:1309-1317`，删掉整段：
+
    ```css
    :global(html[data-te-motion='full'] .btn-play.is-playing) {
      animation: player-play-confirm var(--te-motion-panel) var(--te-ease-spring) both;
@@ -310,8 +313,11 @@ AUDIT 第 1 节，第一行原文：
      }
    }
    ```
+
    删完后 `.btn-play:hover { … }` 的闭合花括号与 `.btn-play i {` 之间应当只隔一个空行。
+
 3. 同一文件，定位 `:570-578`，删掉整段：
+
    ```css
    :global(html[data-te-motion='full'] .playlist-item.active) {
      animation: queue-item-confirm var(--te-motion-panel) var(--te-ease-spring) both;
@@ -323,8 +329,11 @@ AUDIT 第 1 节，第一行原文：
      }
    }
    ```
+
    删完后 `border-color: color-mix(in srgb, var(--te-primary-500) 16%, transparent);` 所在规则的闭合花括号与 `.panel-glass .playlist-item.active {` 之间应当只隔一个空行。
+
 4. 打开 `src/renderer/src/mini-player/MiniPlayer.css`，定位 `:648-656`，删掉整段：
+
    ```css
    html[data-te-motion='full'] .mini-play-button.is-playing {
      animation: mini-play-confirm var(--te-motion-press) var(--te-ease-spring) both;
@@ -336,7 +345,9 @@ AUDIT 第 1 节，第一行原文：
      }
    }
    ```
+
    删完后 `.mini-play-button:active { transform: scale(0.88); }` 的闭合花括号与 `.mini-progress-block {` 之间应当只隔一个空行。**不要删 `:642-646` 的 `:active` 规则。**
+
 5. 不做其他任何修改。本方案共 4 处删除，全部在这两个 CSS 文件里。
 
 ## Boundaries

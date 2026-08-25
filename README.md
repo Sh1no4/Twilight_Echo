@@ -236,6 +236,7 @@ pnpm run dev</code></pre>
 Twilight Echo 采用 [Apache License 2.0](./LICENSE) 开源。
 
 第三方依赖、字体、图标、在线服务接口、插件和内容素材分别受各自许可证或服务条款约束。项目名称或界面中出现的第三方服务商标归其权利人所有；Twilight Echo 与这些服务不存在官方隶属或背书关系。
+
 ## 支持与赞助
 
 如果你喜欢 Twilight Echo，欢迎通过 [爱发电](https://afdian.com/a/pxasen) 支持本项目。你的支持将帮助它持续改进，感谢每一位用户与贡献者。

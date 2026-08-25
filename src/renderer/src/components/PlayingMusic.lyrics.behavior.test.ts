@@ -167,21 +167,31 @@ function expect(condition, message) {
 }
 
 /*
- * The sweep gradient is built from measured glyph widths, and .lyric-word gets
+ * The sweep clips are built from measured glyph widths, and .lyric-word gets
  * its box from PlayingMusic.vue's :deep() block, which a bare mount of this
  * component does not carry. Supply just enough of it for measurement to be real.
  */
 const measurementStyle = document.createElement('style')
 measurementStyle.textContent =
-  '.lyric-word, .lyric-char { display: inline-block; font-size: 24px; } .lyric-space { white-space: pre; }'
+  '.lyric-word { display: inline-block; font-size: 24px; }'
 document.head.appendChild(measurementStyle)
 
 window.runPlayingLyricWordsRuntime = async () => {
-  const snapshot = ref({ epoch: 1, revision: 0, position: 1 })
+  const snapshot = ref({ epoch: 1, revision: 0, position: 0.9 })
   const isPlaying = ref(false)
   let anchorAt = performance.now()
   const setPosition = (position) => {
     snapshot.value = { ...snapshot.value, position, revision: snapshot.value.revision + 1 }
+    anchorAt = performance.now()
+  }
+  // A transport epoch bump marks a deliberate seek, not a drifting sample.
+  const setSeek = (position) => {
+    snapshot.value = {
+      ...snapshot.value,
+      epoch: snapshot.value.epoch + 1,
+      position,
+      revision: snapshot.value.revision + 1
+    }
     anchorAt = performance.now()
   }
   const clock = {
@@ -202,11 +212,25 @@ window.runPlayingLyricWordsRuntime = async () => {
     })
   }).mount('#app')
   await nextTick()
+  // Hidden test windows pause rAF, so every frame wait also rides a timeout.
+  const frame = () =>
+    new Promise((resolve) => {
+      let done = false
+      const finish = () => {
+        if (!done) {
+          done = true
+          resolve()
+        }
+      }
+      requestAnimationFrame(finish)
+      setTimeout(finish, 96)
+    })
+
   // The build measures glyphs, so it waits a frame. Poll rather than assume.
   const settle = async (predicate, message) => {
-    for (let attempt = 0; attempt < 90; attempt += 1) {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
       await nextTick()
-      await new Promise((resolve) => requestAnimationFrame(resolve))
+      await frame()
       if (predicate()) return
     }
     throw new Error(message)
@@ -218,129 +242,76 @@ window.runPlayingLyricWordsRuntime = async () => {
   expect(firstWord && secondWord, 'karaoke words were not rendered; got ' + lyricWords.length)
   expect(!document.querySelector('.lyric-word--active'), 'karaoke sweep retained a singled-out word')
 
-  await settle(
-    () => firstWord.getAnimations().length > 0,
-    'karaoke sweep never handed keyframes to the compositor'
-  )
-
-  // The sweep is a mask whose position is animated; nothing is recomputed in JS.
+  // The sweep is one shared boundary: every word carries a fill overlay clipped
+  // to how much of it the boundary has passed, written inline by the engine.
+  const firstFill = firstWord.querySelector('.lyric-word__fill')
+  const secondFill = secondWord.querySelector('.lyric-word__fill')
+  expect(firstFill && secondFill, 'the karaoke fill overlays were not rendered')
   expect(
-    /linear-gradient/.test(firstWord.style.getPropertyValue('mask-image')),
-    'karaoke word did not receive its inline sweep gradient'
+    firstFill.getAttribute('aria-hidden') === 'true',
+    'the fill overlay is not hidden from assistive technology'
+  )
+
+  const insetPx = (element) => {
+    const match = /inset\\(0(?:px)? ([\\d.]+)px/.exec(element.style.clipPath)
+    if (match) return Number(match[1])
+    return element.style.clipPath === 'none' ? 0 : Number.NaN
+  }
+
+  // Before the line starts, every word is fully clipped.
+  await settle(
+    () => insetPx(firstFill) > 0 && insetPx(secondFill) > 0,
+    'the karaoke fill was not clipped before the line started; first=' + firstFill.style.clipPath
+  )
+
+  // A seek into the first group follows the instant boundary exponentially;
+  // the first word's reveal opens up while the second stays clipped.
+  const firstStartInset = insetPx(firstFill)
+  setSeek(1.6)
+  await settle(
+    () => insetPx(firstFill) < firstStartInset - 1,
+    'the karaoke boundary did not advance with the shared playback clock; clip=' +
+      firstFill.style.clipPath
   )
   expect(
-    firstWord.style.getPropertyValue('--lyric-word-progress') === '',
-    'the retired per-frame progress variable is still being written'
+    insetPx(secondFill) > 0,
+    'the following word revealed before its time; clip=' + secondFill.style.clipPath
   )
 
-  const maskAnimation = (element) =>
-    element.getAnimations().find((animation) => {
-      const frames = animation.effect?.getKeyframes?.() ?? []
-      return frames.some((frame) => frame.maskPosition !== undefined)
-    })
-
-  const firstMask = maskAnimation(firstWord)
-  expect(firstMask, 'the karaoke word has no mask animation')
-
-  // One time origin for the whole line (its start), so a single currentTime
-  // keeps fill, lift and glow coherent. Line starts at 1s; position is 1s.
-  expect(
-    Math.abs(Number(firstMask.currentTime)) < 60,
-    'karaoke timeline did not start at the line origin; currentTime=' + firstMask.currentTime
+  // Deep enough into the first group that the boundary has swept the first
+  // word while the following word has only begun: both read one boundary.
+  setSeek(2.18)
+  await settle(
+    () => firstFill.style.clipPath === 'none',
+    'the first word was not fully revealed at its group end; clip=' + firstFill.style.clipPath
   )
   expect(
-    firstMask.playState === 'paused',
-    'karaoke sweep ran while playback was paused; state=' + firstMask.playState
+    insetPx(secondFill) > 0,
+    'the following word revealed before its time; clip=' + secondFill.style.clipPath
   )
 
-  // A seek is one currentTime assignment, not a frame-by-frame chase.
-  setPosition(1.5)
+  // A transport epoch rewind switches the channel to the exponential follow
+  // and pulls the boundary back toward the instant target.
+  setSeek(1.1)
   await settle(
-    () => Math.abs(Number(firstMask.currentTime) - 500) < 60,
-    'karaoke timeline did not seek with the shared playback clock; currentTime=' +
-      firstMask.currentTime
+    () => insetPx(firstFill) > 1,
+    'an epoch seek did not rewind the karaoke boundary; clip=' + firstFill.style.clipPath
   )
 
-  isPlaying.value = true
+  // Playing past the last group clamps the boundary at the final target.
+  setSeek(4)
   await settle(
-    () => firstMask.playState === 'running',
-    'karaoke sweep did not resume with playback; state=' + firstMask.playState
-  )
-  const beforeAdvance = Number(firstMask.currentTime)
-  await new Promise((resolve) => setTimeout(resolve, 120))
-  expect(
-    Number(firstMask.currentTime) > beforeAdvance,
-    'karaoke sweep did not advance on the compositor while playing'
-  )
-
-  const beforeLaggingSample = Number(firstMask.currentTime)
-  setPosition(1.2)
-  await new Promise((resolve) => setTimeout(resolve, 120))
-  expect(
-    Number(firstMask.currentTime) >= beforeLaggingSample - 60,
-    'a lagging playback sample rewound the karaoke timeline'
-  )
-
-  isPlaying.value = false
-  await settle(
-    () => firstMask.playState === 'paused',
-    'karaoke sweep kept running after playback stopped'
-  )
-
-  // Words share the line timeline, so the second word's sweep is the same
-  // animation advanced further rather than a separately triggered one.
-  const secondMask = maskAnimation(secondWord)
-  expect(secondMask, 'the following karaoke word has no mask animation')
-  setPosition(2)
-  await settle(
-    () => Math.abs(Number(secondMask.currentTime) - 1000) < 60,
-    'the following word did not share the line timeline; currentTime=' + secondMask.currentTime
-  )
-
-  // A held word also emphasises per character.
-  const chars = firstWord.querySelectorAll('.lyric-char')
-  expect(chars.length > 1, 'a held word was not split per character for emphasis')
-  expect(
-    chars[0].getAnimations().length >= 2,
-    'emphasised characters did not receive both a glow and a float animation'
-  )
-
-  const firstWordFloat = firstWord.getAnimations().find((animation) => {
-    const frames = animation.effect?.getKeyframes?.() ?? []
-    return frames.some((frame) => String(frame.transform ?? '').includes('translateY'))
-  })
-  expect(firstWordFloat, 'the word did not receive its lift animation')
-
-  setPosition(4)
-  await settle(
-    () => Math.abs(Number(firstMask.currentTime) - 2000) < 60,
-    'karaoke timeline exceeded the current line duration; currentTime=' + firstMask.currentTime
-  )
-
-  isPlaying.value = true
-  await settle(
-    () => firstMask.playState === 'finished' && firstWordFloat.playState === 'finished',
+    () => firstFill.style.clipPath === 'none' && secondFill.style.clipPath === 'none',
     'the completed karaoke sweep did not settle at the line boundary'
   )
-  const completedMaskTime = Number(firstMask.currentTime)
-  const completedFloatTime = Number(firstWordFloat.currentTime)
-  setPosition(4.2)
-  await new Promise((resolve) => setTimeout(resolve, 120))
+
+  // Paused playback leaves the settled clips untouched.
+  const pausedClip = firstFill.style.clipPath
+  await new Promise((resolve) => setTimeout(resolve, 200))
   expect(
-    Math.abs(Number(firstMask.currentTime) - completedMaskTime) < 60,
-    'the completed karaoke sweep restarted after a later clock tick'
+    firstFill.style.clipPath === pausedClip,
+    'the paused karaoke sweep kept moving; clip=' + firstFill.style.clipPath
   )
-  expect(
-    Math.abs(Number(firstWordFloat.currentTime) - completedFloatTime) < 60,
-    'the completed word lift restarted after a later clock tick; before=' +
-      completedFloatTime +
-      '; after=' +
-      firstWordFloat.currentTime +
-      '; state=' +
-      firstWordFloat.playState
-  )
-  expect(firstMask.playState === 'finished', 'the completed karaoke sweep was played again')
-  expect(firstWordFloat.playState === 'finished', 'the completed word lift was played again')
 
   const spacedRoot = document.createElement('div')
   document.body.appendChild(spacedRoot)
@@ -354,11 +325,11 @@ window.runPlayingLyricWordsRuntime = async () => {
     })
   }).mount(spacedRoot)
   await nextTick()
-  await new Promise((resolve) => requestAnimationFrame(resolve))
+  await frame()
   const spacedWords = [...spacedRoot.querySelectorAll('.lyric-word')]
   expect(spacedWords.length === 2, 'the internally spaced TTML translation was not split')
   expect(
-    spacedWords.every((word) => maskAnimation(word)),
+    spacedWords.every((word) => word.querySelector('.lyric-word__fill')),
     'some internally spaced TTML translation fragments did not receive karaoke highlighting'
   )
 
@@ -383,7 +354,7 @@ window.runPlayingLyricWordsRuntime = async () => {
     })
   }).mount(wrappedRoot)
   await nextTick()
-  await new Promise((resolve) => requestAnimationFrame(resolve))
+  await frame()
   const wrappedWords = [...wrappedRoot.querySelectorAll('.lyric-word')]
   const firstRect = wrappedWords[0].getBoundingClientRect()
   const firstWrappedWord = wrappedWords.find(
@@ -416,14 +387,10 @@ window.runPlayingLyricWordsRuntime = async () => {
   await nextTick()
   const disabledWord = disabledRoot.querySelector('.lyric-word')
   expect(disabledWord, 'disabled karaoke words were not rendered')
-  await new Promise((resolve) => requestAnimationFrame(resolve))
+  await frame()
   expect(
-    disabledWord.style.getPropertyValue('mask-image') === '',
-    'disabled karaoke still installed a sweep mask'
-  )
-  expect(
-    !maskAnimation(disabledWord),
-    'disabled karaoke still animated a mask position'
+    !disabledWord.querySelector('.lyric-word__fill'),
+    'disabled karaoke still installed a fill overlay'
   )
 
   const reducedRoot = document.createElement('div')
@@ -442,16 +409,12 @@ window.runPlayingLyricWordsRuntime = async () => {
     })
   }).mount(reducedRoot)
   await nextTick()
-  await new Promise((resolve) => requestAnimationFrame(resolve))
+  await frame()
   const reducedWords = [...reducedRoot.querySelectorAll('.lyric-word')]
   expect(reducedWords.length > 0, 'reduced motion lyrics were not rendered')
   expect(
-    reducedWords.every((word) => word.getAnimations().length === 0),
-    'reduced motion still created WAAPI animations'
-  )
-  expect(
-    reducedWords.every((word) => word.style.getPropertyValue('mask-image') === ''),
-    'reduced motion still installed a karaoke mask'
+    reducedWords.every((word) => !word.querySelector('.lyric-word__fill')),
+    'reduced motion still installed a karaoke fill overlay'
   )
   console.log('PLAYING_LYRIC_WORDS_RUNTIME_OK')
 }
@@ -799,8 +762,11 @@ window.runPlayingMusicLyricsRuntime = async () => {
     activeAlignedContent && getComputedStyle(activeAlignedContent).transformOrigin.startsWith('0px'),
     'the highlighted left-aligned row still scaled around its centre'
   )
-  player.currentTime.value = 3.1
-  player.seek(3.1)
+  // The line ends at 3.0s and the active-line selector keeps it presented
+  // through a 0.5s end-overlap protection window, so sample the translation
+  // once that window has closed and the row has handed its highlight back.
+  player.currentTime.value = 3.6
+  player.seek(3.6)
   await tick()
 
   const styledAppearance = JSON.parse(JSON.stringify(originalAppearance))
@@ -1035,9 +1001,15 @@ window.runPlayingMusicLyricsRuntime = async () => {
   // regardless of tick phase.
   await new Promise((resolve) => setTimeout(resolve, 900))
   window.clearInterval(activeLineProbe)
+  /*
+   * The selector promotes lines ahead by the anticipation window (~0.6s), and
+   * these lines are only 100-300ms apart, so the queue rolls through Brief in
+   * the same frame it enters: what the samples must catch is the handoff
+   * landing on the last line rather than sticking on the first.
+   */
   expect(
-    [...observedActiveLines].some((line) => line.includes('Brief line')),
-    'rapid plain LRC line never became active between playback time samples; currentTime=' +
+    [...observedActiveLines].some((line) => line.includes('Following line')),
+    'rapid plain LRC handoff never reached the final line; currentTime=' +
       player.currentTime.value +
       '; isPlaying=' +
       player.isPlaying.value +

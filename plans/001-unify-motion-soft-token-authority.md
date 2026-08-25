@@ -14,12 +14,12 @@
 
 ```css
 /* src/renderer/src/assets/base.css:26-31 — 当前 */
-  --te-ease-enter: cubic-bezier(0.4, 0, 0.2, 1);
-  /* Soft = out-quint: fast start, long settling tail (osu!lazer-style motion). */
-  --te-ease-soft: var(--te-ease-out-quint);
-  --te-ease-spring: cubic-bezier(0.22, 1.14, 0.36, 1);
-  --te-ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
-  --te-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+--te-ease-enter: cubic-bezier(0.4, 0, 0.2, 1);
+/* Soft = out-quint: fast start, long settling tail (osu!lazer-style motion). */
+--te-ease-soft: var(--te-ease-out-quint);
+--te-ease-spring: cubic-bezier(0.22, 1.14, 0.36, 1);
+--te-ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+--te-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 ```
 
 按这里读，`--te-ease-soft` 应当是 `cubic-bezier(0.22, 1, 0.36, 1)`，注释还明确写了设计意图（out-quint，快起步 + 长收尾）。
@@ -28,16 +28,16 @@
 
 ```ts
 // src/shared/themeTokens.ts:1697-1706 — 当前
-  token(
-    'motion.soft',
-    '--te-ease-soft',
-    '柔和缓动',
-    'motion',
-    'global',
-    'easing',
-    'cubic-bezier(0.2, 0.8, 0.2, 1)',
-    'cubic-bezier(0.2, 0.8, 0.2, 1)'
-  )
+token(
+  'motion.soft',
+  '--te-ease-soft',
+  '柔和缓动',
+  'motion',
+  'global',
+  'easing',
+  'cubic-bezier(0.2, 0.8, 0.2, 1)',
+  'cubic-bezier(0.2, 0.8, 0.2, 1)'
+)
 ```
 
 两个 tone（pureWhite / dark）的默认值都是 `cubic-bezier(0.2, 0.8, 0.2, 1)`。
@@ -52,11 +52,11 @@
 
 ```ts
 // src/shared/theme.ts:1110-1114 — 当前
-  return {
-    ...TWILIGHT_DEFAULT_THEME.variants[tone].tokens,
-    ...(basePreset?.overrides[tone] ?? {}),
-    ...profile.overrides[tone]
-  }
+return {
+  ...TWILIGHT_DEFAULT_THEME.variants[tone].tokens,
+  ...(basePreset?.overrides[tone] ?? {}),
+  ...profile.overrides[tone]
+}
 ```
 
 4. `themeTokensToCssVariables`（`src/shared/theme.ts:1209-1214`）把 `motion.soft` 映射成 CSS 变量名 `--te-ease-soft`。
@@ -64,9 +64,9 @@
 
 ```ts
 // src/renderer/src/stores/useThemeStore.ts:453-455 — 当前
-  const root = Object.entries({ ...themeShellLayoutToCssVariables(shellLayout), ...variables })
-    .map(([name, value]) => `  ${name}: ${value} !important;`)
-    .join('\n')
+const root = Object.entries({ ...themeShellLayoutToCssVariables(shellLayout), ...variables })
+  .map(([name, value]) => `  ${name}: ${value} !important;`)
+  .join('\n')
 ```
 
 **结论：开箱即用（默认主题、未做任何自定义）状态下 `--te-ease-soft` 的计算值是 `cubic-bezier(0.2, 0.8, 0.2, 1)`，不是 base.css 注释承诺的 out-quint。** base.css 的那行声明只在主题运行时注入之前（首帧、`injectCachedThemeRuntime` 之前）短暂生效。
@@ -121,27 +121,27 @@
 
 ```ts
 // target — src/shared/themeTokens.ts
-  token(
-    'motion.soft',
-    '--te-ease-soft',
-    '柔和缓动',
-    'motion',
-    'global',
-    'easing',
-    'cubic-bezier(0.22, 1, 0.36, 1)',
-    'cubic-bezier(0.22, 1, 0.36, 1)'
-  )
+token(
+  'motion.soft',
+  '--te-ease-soft',
+  '柔和缓动',
+  'motion',
+  'global',
+  'easing',
+  'cubic-bezier(0.22, 1, 0.36, 1)',
+  'cubic-bezier(0.22, 1, 0.36, 1)'
+)
 ```
 
 ```css
 /* target — src/renderer/src/assets/base.css */
-  --te-ease-enter: cubic-bezier(0.4, 0, 0.2, 1);
-  /* Soft = out-quint: fast start, long settling tail (osu!lazer-style motion).
+--te-ease-enter: cubic-bezier(0.4, 0, 0.2, 1);
+/* Soft = out-quint: fast start, long settling tail (osu!lazer-style motion).
      Runtime authority is the `motion.soft` token in src/shared/themeTokens.ts:
      useThemeStore injects it into :root with !important, so this declaration
      only covers the frames before the theme runtime lands. Keep both values
      identical. */
-  --te-ease-soft: var(--te-ease-out-quint);
+--te-ease-soft: var(--te-ease-out-quint);
 ```
 
 ```ts
@@ -169,13 +169,13 @@
 2. 打开 `src/renderer/src/assets/base.css`，把第 27 行的单行注释
 
    ```css
-     /* Soft = out-quint: fast start, long settling tail (osu!lazer-style motion). */
+   /* Soft = out-quint: fast start, long settling tail (osu!lazer-style motion). */
    ```
 
    替换成多行注释：
 
    ```css
-     /* Soft = out-quint: fast start, long settling tail (osu!lazer-style motion).
+   /* Soft = out-quint: fast start, long settling tail (osu!lazer-style motion).
         Runtime authority is the `motion.soft` token in src/shared/themeTokens.ts:
         useThemeStore injects it into :root with !important, so this declaration
         only covers the frames before the theme runtime lands. Keep both values
@@ -183,6 +183,7 @@
    ```
 
    第 28 行 `--te-ease-soft: var(--te-ease-out-quint);` **保持原样不动**（它现在与 themeTokens.ts 一致了）。第 30 行 `--te-ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);` 也不要动。
+
 3. 打开 `src/shared/themePresets.ts`，定位第 1122 行 `'motion.soft': 'linear',`（在 `builtin:studio-split` 的 `pureWhite` 块内），改成 `'motion.soft': 'cubic-bezier(0.23, 1, 0.32, 1)',`。同一行上方的 `'motion.enter': 'cubic-bezier(0.2, 0, 0.4, 1)',` 不要动。
 4. 同一文件，定位第 1185 行 `'motion.soft': 'linear',`（`builtin:studio-split` 的 `dark` 块内），同样改成 `'motion.soft': 'cubic-bezier(0.23, 1, 0.32, 1)',`。
 5. 同一文件，定位第 1323 行 `'motion.soft': 'cubic-bezier(0.45, 0.05, 0.15, 1)'`（`builtin:zen-minimal` 的 `pureWhite` 块内），改成 `'motion.soft': 'cubic-bezier(0.22, 1, 0.36, 1)'`。注意这一行是块内最后一项，行尾没有逗号，改完也不要加逗号。

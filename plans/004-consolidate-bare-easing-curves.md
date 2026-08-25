@@ -14,30 +14,30 @@
 
 ```css
 /* src/renderer/src/assets/base.css:26-31 — 当前 */
-  --te-ease-enter: cubic-bezier(0.4, 0, 0.2, 1);
-  /* Soft = out-quint: fast start, long settling tail (osu!lazer-style motion). */
-  --te-ease-soft: var(--te-ease-out-quint);
-  --te-ease-spring: cubic-bezier(0.22, 1.14, 0.36, 1);
-  --te-ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
-  --te-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+--te-ease-enter: cubic-bezier(0.4, 0, 0.2, 1);
+/* Soft = out-quint: fast start, long settling tail (osu!lazer-style motion). */
+--te-ease-soft: var(--te-ease-out-quint);
+--te-ease-spring: cubic-bezier(0.22, 1.14, 0.36, 1);
+--te-ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+--te-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 ```
 
 ### A 组 — 23 处纯替换（值与 token 逐字相同）
 
 **`cubic-bezier(0.4, 0, 0.2, 1)` = `--te-ease-enter`，10 处：**
 
-| 位置 | 当前代码 |
-| --- | --- |
-| `src/renderer/src/App.vue:1174` | `    transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),` |
-| `src/renderer/src/App.vue:1175` | `    filter 0.28s cubic-bezier(0.4, 0, 0.2, 1) !important;` |
-| `src/renderer/src/components/streaming-page/StreamingPage.css:386` | `    transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),` |
-| `src/renderer/src/components/streaming-page/StreamingPage.css:387` | `    filter 0.28s cubic-bezier(0.4, 0, 0.2, 1);` |
-| `src/renderer/src/components/StreamingLibrary.vue:406` | `  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);` |
-| `src/renderer/src/components/StreamingLibrary.vue:715` | `  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);` |
-| `src/renderer/src/components/StreamingLibrary.vue:960` | `  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);` |
-| `src/renderer/src/components/PluginPage.vue:996` | `  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);` |
-| `src/renderer/src/components/PluginPage.vue:1168` | `  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);` |
-| `src/renderer/src/components/EqualizerPage.vue:1340` | `  --te-ease-soft: cubic-bezier(0.4, 0, 0.2, 1);` |
+| 位置                                                               | 当前代码                                                     |
+| ------------------------------------------------------------------ | ------------------------------------------------------------ |
+| `src/renderer/src/App.vue:1174`                                    | `    transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),`           |
+| `src/renderer/src/App.vue:1175`                                    | `    filter 0.28s cubic-bezier(0.4, 0, 0.2, 1) !important;`  |
+| `src/renderer/src/components/streaming-page/StreamingPage.css:386` | `    transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),`           |
+| `src/renderer/src/components/streaming-page/StreamingPage.css:387` | `    filter 0.28s cubic-bezier(0.4, 0, 0.2, 1);`             |
+| `src/renderer/src/components/StreamingLibrary.vue:406`             | `  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);`       |
+| `src/renderer/src/components/StreamingLibrary.vue:715`             | `  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);`       |
+| `src/renderer/src/components/StreamingLibrary.vue:960`             | `  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);`       |
+| `src/renderer/src/components/PluginPage.vue:996`                   | `  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);` |
+| `src/renderer/src/components/PluginPage.vue:1168`                  | `  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);`       |
+| `src/renderer/src/components/EqualizerPage.vue:1340`               | `  --te-ease-soft: cubic-bezier(0.4, 0, 0.2, 1);`            |
 
 **最后一处（EqualizerPage.vue:1340）本方案不动。**它在一段死代码里：
 
@@ -57,26 +57,26 @@
 
 **`cubic-bezier(0.16, 1, 0.3, 1)` = `--te-ease-out-expo`，9 处：**
 
-| 位置 | 当前代码 |
-| --- | --- |
-| `src/renderer/src/App.vue:1163` | `    transform 0.48s cubic-bezier(0.16, 1, 0.3, 1),` |
-| `src/renderer/src/App.vue:1164` | `    filter 0.42s cubic-bezier(0.16, 1, 0.3, 1) !important;` |
-| `src/renderer/src/components/streaming-page/StreamingPage.css:90` | `  animation: stream-chrome-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;` |
-| `src/renderer/src/components/streaming-page/StreamingPage.css:375` | `    transform 0.48s cubic-bezier(0.16, 1, 0.3, 1),` |
-| `src/renderer/src/components/streaming-page/StreamingPage.css:376` | `    filter 0.42s cubic-bezier(0.16, 1, 0.3, 1);` |
-| `src/renderer/src/components/streaming-page/StreamingPage.css:2072` | `  animation: stream-chrome-in 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;` |
-| `src/renderer/src/components/streaming-page/StreamingContentHeader.css:69` | `  animation: stream-chrome-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;` |
+| 位置                                                                        | 当前代码                                                                  |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `src/renderer/src/App.vue:1163`                                             | `    transform 0.48s cubic-bezier(0.16, 1, 0.3, 1),`                      |
+| `src/renderer/src/App.vue:1164`                                             | `    filter 0.42s cubic-bezier(0.16, 1, 0.3, 1) !important;`              |
+| `src/renderer/src/components/streaming-page/StreamingPage.css:90`           | `  animation: stream-chrome-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;`  |
+| `src/renderer/src/components/streaming-page/StreamingPage.css:375`          | `    transform 0.48s cubic-bezier(0.16, 1, 0.3, 1),`                      |
+| `src/renderer/src/components/streaming-page/StreamingPage.css:376`          | `    filter 0.42s cubic-bezier(0.16, 1, 0.3, 1);`                         |
+| `src/renderer/src/components/streaming-page/StreamingPage.css:2072`         | `  animation: stream-chrome-in 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;` |
+| `src/renderer/src/components/streaming-page/StreamingContentHeader.css:69`  | `  animation: stream-chrome-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;`  |
 | `src/renderer/src/components/streaming-page/StreamingContentHeader.css:432` | `  animation: stream-chrome-in 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;` |
-| `src/renderer/src/mini-player/MiniPlayer.css:529` | `    transform 200ms cubic-bezier(0.16, 1, 0.3, 1);` |
+| `src/renderer/src/mini-player/MiniPlayer.css:529`                           | `    transform 200ms cubic-bezier(0.16, 1, 0.3, 1);`                      |
 
 **`cubic-bezier(0.22, 1, 0.36, 1)` = `--te-ease-out-quint`，4 处：**
 
-| 位置 | 当前代码 |
-| --- | --- |
-| `src/renderer/src/components/AppNoticeHost.vue:147` | `    transform var(--te-toast-motion-duration, 220ms) cubic-bezier(0.22, 1, 0.36, 1);` |
-| `src/renderer/src/components/AppNoticeHost.vue:172` | `  transition: transform var(--te-toast-motion-duration, 220ms) cubic-bezier(0.22, 1, 0.36, 1);` |
-| `src/renderer/src/components/PlayingLyricLine.vue:451` | `    max-height 320ms cubic-bezier(0.22, 1, 0.36, 1),` |
-| `src/renderer/src/components/PlayingLyricLine.vue:453` | `    transform 320ms cubic-bezier(0.22, 1, 0.36, 1),` |
+| 位置                                                   | 当前代码                                                                                         |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `src/renderer/src/components/AppNoticeHost.vue:147`    | `    transform var(--te-toast-motion-duration, 220ms) cubic-bezier(0.22, 1, 0.36, 1);`           |
+| `src/renderer/src/components/AppNoticeHost.vue:172`    | `  transition: transform var(--te-toast-motion-duration, 220ms) cubic-bezier(0.22, 1, 0.36, 1);` |
+| `src/renderer/src/components/PlayingLyricLine.vue:451` | `    max-height 320ms cubic-bezier(0.22, 1, 0.36, 1),`                                           |
+| `src/renderer/src/components/PlayingLyricLine.vue:453` | `    transform 320ms cubic-bezier(0.22, 1, 0.36, 1),`                                            |
 
 ### B 组 — 7 处新曲线
 
@@ -105,14 +105,14 @@
 
 ```css
 /* src/renderer/src/components/streaming-page/StreamingDetailStage.css:29 — 当前 */
-  --stage-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+--stage-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 ```
 
 `--stage-ease` 的消费者 9 处：`StreamingDetailStage.css:208`、`:412`、`:413`、`:463`、`:591`，`src/renderer/src/components/streaming-page/StreamingSocialStage.css:42`、`:45`、`:112`、`:183`。
 
 ```css
 /* src/renderer/src/components/streaming-page/StreamingPage.css:2027 — 当前 */
-  --bar-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+--bar-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 ```
 
 `--bar-ease` 的消费者 8 处：`StreamingPage.css:2122`、`:2125`、`:2248`、`:2251`，`src/renderer/src/components/streaming-page/StreamingContentHeader.css:482`、`:485`、`:608`、`:611`。
@@ -121,31 +121,31 @@
 
 ```css
 /* src/renderer/src/components/SideMenu.vue:362-364 — 当前 */
-  transition:
-    color 0.2s,
-    transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+transition:
+  color 0.2s,
+  transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
 ```
 
 ```css
 /* src/renderer/src/components/player-bar/PlayerBar.css:682 — 当前 */
-  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
 ```
 
 **`cubic-bezier(0.34, 1.4, 0.64, 1)`（约 +12%），1 处：**
 
 ```css
 /* src/renderer/src/components/player-bar/HiFiSidebar.css:860 — 当前 */
-  transition: all 0.22s cubic-bezier(0.34, 1.4, 0.64, 1);
+transition: all 0.22s cubic-bezier(0.34, 1.4, 0.64, 1);
 ```
 
 ### 四档回弹并存
 
-| 值 | 过冲 | 出处 |
-| --- | --- | --- |
-| `cubic-bezier(0.22, 1.14, 0.36, 1)` | 约 +7% | token `--te-ease-spring`（`base.css:29`），36 处消费 |
-| `cubic-bezier(0.34, 1.2, 0.64, 1)` | 约 +11% | 设计文档给 Web 的映射值（`docs/apple-music-inspired-hifi-player-design-system.md:670`，「`cubic-bezier(0.34, 1.2, 0.64, 1)` — spring-like, duration-bounded」） |
-| `cubic-bezier(0.34, 1.4, 0.64, 1)` | 约 +12% | `HiFiSidebar.css:860` |
-| `cubic-bezier(0.34, 1.56, 0.64, 1)` | 约 +16% | `SideMenu.vue:364`、`PlayerBar.css:682` |
+| 值                                  | 过冲    | 出处                                                                                                                                                            |
+| ----------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cubic-bezier(0.22, 1.14, 0.36, 1)` | 约 +7%  | token `--te-ease-spring`（`base.css:29`），36 处消费                                                                                                            |
+| `cubic-bezier(0.34, 1.2, 0.64, 1)`  | 约 +11% | 设计文档给 Web 的映射值（`docs/apple-music-inspired-hifi-player-design-system.md:670`，「`cubic-bezier(0.34, 1.2, 0.64, 1)` — spring-like, duration-bounded」） |
+| `cubic-bezier(0.34, 1.4, 0.64, 1)`  | 约 +12% | `HiFiSidebar.css:860`                                                                                                                                           |
+| `cubic-bezier(0.34, 1.56, 0.64, 1)` | 约 +16% | `SideMenu.vue:364`、`PlayerBar.css:682`                                                                                                                         |
 
 即**连 token 本身都没对齐设计文档**。同一个「弹一下」在侧边菜单图标、播放列表封面、HiFi 开关上幅度各不相同。
 
@@ -163,18 +163,18 @@
 
 ```css
 /* target — App.vue:1161-1164 */
-  transition:
-    opacity 0.34s ease,
-    transform 0.48s var(--te-ease-out-expo),
-    filter 0.42s var(--te-ease-out-expo) !important;
+transition:
+  opacity 0.34s ease,
+  transform 0.48s var(--te-ease-out-expo),
+  filter 0.42s var(--te-ease-out-expo) !important;
 ```
 
 ```css
 /* target — App.vue:1172-1175 */
-  transition:
-    opacity 0.22s ease,
-    transform 0.3s var(--te-ease-enter),
-    filter 0.28s var(--te-ease-enter) !important;
+transition:
+  opacity 0.22s ease,
+  transform 0.3s var(--te-ease-enter),
+  filter 0.28s var(--te-ease-enter) !important;
 ```
 
 替换规则（机械照做，不要动时长、不要动属性、不要动 `!important` / `both`）：
@@ -192,36 +192,36 @@
 
 ```css
 /* target — LyricsAppearanceCustomizer.vue:1256-1258 */
-  transition:
-    transform 260ms var(--te-ease-soft),
-    opacity 220ms ease;
+transition:
+  transform 260ms var(--te-ease-soft),
+  opacity 220ms ease;
 ```
 
 ```css
 /* target — MiniPlayer.css:604-607 */
-  transition:
-    color 150ms ease,
-    background 150ms ease,
-    transform 180ms var(--te-ease-soft);
+transition:
+  color 150ms ease,
+  background 150ms ease,
+  transform 180ms var(--te-ease-soft);
 ```
 
 **B 组 — 三处回弹全部收敛到 `--te-ease-spring`：**
 
 ```css
 /* target — SideMenu.vue:362-364 */
-  transition:
-    color 0.2s,
-    transform 0.2s var(--te-ease-spring);
+transition:
+  color 0.2s,
+  transform 0.2s var(--te-ease-spring);
 ```
 
 ```css
 /* target — PlayerBar.css:682 */
-  transition: transform 0.2s var(--te-ease-spring);
+transition: transform 0.2s var(--te-ease-spring);
 ```
 
 ```css
 /* target — HiFiSidebar.css:860 */
-  transition: all 0.22s var(--te-ease-spring);
+transition: all 0.22s var(--te-ease-spring);
 ```
 
 **`--te-ease-spring` 的值本身不改**，保持 `cubic-bezier(0.22, 1.14, 0.36, 1)`（`base.css:29`）。理由写清楚，执行者不要自行改成设计文档的 `cubic-bezier(0.34, 1.2, 0.64, 1)`：
@@ -246,6 +246,7 @@
   ```
 
   这条 `assert.doesNotMatch(css, /cubic-bezier\(/)` 只覆盖 `OnboardingWizard.css`。本方案要按同样思路给 `SideMenu.test.ts` 换断言。
+
 - Vue `<style scoped>` 里引用 `var(--te-…)` 无需 `:global()`——CSS 自定义属性沿 DOM 继承，`:root` 上的值在 scoped 样式里照样能取到。现有 `SideMenu.vue:362` 的 `transform 0.32s var(--te-ease-soft)` 就是这么写的。
 
 ## Steps
@@ -257,11 +258,18 @@
 3. `src/renderer/src/components/SideMenu.test.ts`：第 13-16 行与第 18-21 行两条 `assert.match` 逐字钉住了上面那 4 行的裸曲线字面量，替换后会**变红**。把它们改成断言 token 名：
 
    ```ts
-     assert.match(app, /transform 0\.48s var\(--te-ease-out-expo\),\s*filter 0\.42s var\(--te-ease-out-expo\)/)
-     assert.match(app, /transform 0\.3s var\(--te-ease-enter\),\s*filter 0\.28s var\(--te-ease-enter\)/)
+   assert.match(
+     app,
+     /transform 0\.48s var\(--te-ease-out-expo\),\s*filter 0\.42s var\(--te-ease-out-expo\)/
+   )
+   assert.match(
+     app,
+     /transform 0\.3s var\(--te-ease-enter\),\s*filter 0\.28s var\(--te-ease-enter\)/
+   )
    ```
 
    同文件第 10、12、23 行的三条 `var(--te-ease-soft)` 断言和第 17、22 行的 `translate3d` 断言**不要动**（本方案没改那些位置）。该文件已登记在 `package.json` 的 `test:playback-routing` 脚本里，无需新增登记。
+
 4. `src/renderer/src/components/streaming-page/StreamingPage.css`：第 90 行、第 375、376 行、第 2072 行的 4 处 `cubic-bezier(0.16, 1, 0.3, 1)` → `var(--te-ease-out-expo)`；第 386、387 行的 2 处 `cubic-bezier(0.4, 0, 0.2, 1)` → `var(--te-ease-enter)`。
 5. `src/renderer/src/components/streaming-page/StreamingContentHeader.css`：第 69、432 行的 2 处 `cubic-bezier(0.16, 1, 0.3, 1)` → `var(--te-ease-out-expo)`。
 6. `src/renderer/src/mini-player/MiniPlayer.css` 第 529 行：`cubic-bezier(0.16, 1, 0.3, 1)` → `var(--te-ease-out-expo)`。

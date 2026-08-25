@@ -39,11 +39,11 @@
 
 三种存在状态（由根组件 `DesktopLyricsApp.vue` 的 `data-state` 驱动，CSS 按状态降级）：
 
-| 状态 | 形态 |
-|---|---|
-| **常态** | 无任何底板边框（`bgOpacity=0` 为默认值），歌词直接悬浮桌面。主行大字 + 可选翻译副行（0.62em、`-40%` 透明度）。歌名信息不显示。 |
+| 状态      | 形态                                                                                                                                                                                                                                                                                                                                          |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **常态**  | 无任何底板边框（`bgOpacity=0` 为默认值），歌词直接悬浮桌面。主行大字 + 可选翻译副行（0.62em、`-40%` 透明度）。歌名信息不显示。                                                                                                                                                                                                                |
 | **hover** | 歌词背后浮出毛玻璃胶囊底（`backdrop-filter: blur(16px) saturate(1.4)`、圆角 `999px`、1px `rgba(255,255,255,.18)` 描边）；顶部居中淡入第二颗**工具条胶囊**（进场 `translateY(-6px)→0` + opacity，离场反向，260ms out-quint）。鼠标离开 300ms 后整体回收。左下角小字歌名 `artist - title · 来源` 随底囊一起出现（现有 `#song-info` 语义保留）。 |
-| **锁定** | 窗口 click-through，纯歌词悬浮；悬停原工具条位置时才显示一颗半透明「解锁」胶囊（沿用现有 `tempInteractive`/`setInteractive` 前向机制，`desktopLyrics.ts` 不动）。 |
+| **锁定**  | 窗口 click-through，纯歌词悬浮；悬停原工具条位置时才显示一颗半透明「解锁」胶囊（沿用现有 `tempInteractive`/`setInteractive` 前向机制，`desktopLyrics.ts` 不动）。                                                                                                                                                                             |
 
 **排版规则**
 
@@ -88,12 +88,12 @@ playbackState.playing === false → 冻结 projected；恢复时重锚
 
 `<Transition mode="out-in">` 包当前行 key=activeIndex：
 
-| 档位 `lineTransition` | 旧行出场 (140ms) | 新行入场 (330ms) |
-|---|---|---|
-| `slide-blur`（默认） | `translateY(-30%) blur(6px) opacity 0` | `translateY(40%) blur(8px) → 0` |
-| `spring` | 同上加快速 | 位移走 LYRIC_POS_Y_SPRING 参数（mass .9/damping 13/stiffness 90）由 rAF 写 transform |
-| `fade` | 纯 opacity | 纯 opacity |
-| `none` | 瞬切 | 瞬切 |
+| 档位 `lineTransition` | 旧行出场 (140ms)                       | 新行入场 (330ms)                                                                     |
+| --------------------- | -------------------------------------- | ------------------------------------------------------------------------------------ |
+| `slide-blur`（默认）  | `translateY(-30%) blur(6px) opacity 0` | `translateY(40%) blur(8px) → 0`                                                      |
+| `spring`              | 同上加快速                             | 位移走 LYRIC_POS_Y_SPRING 参数（mass .9/damping 13/stiffness 90）由 rAF 写 transform |
+| `fade`                | 纯 opacity                             | 纯 opacity                                                                           |
+| `none`                | 瞬切                                   | 瞬切                                                                                 |
 
 `dual` 模式不用 out-in：两个行位各一个 Transition，行位交叉换位（交替模式下传 row key）。微幅 overshoot 由参数表唯一来源控制。
 
@@ -108,15 +108,15 @@ playbackState.playing === false → 冻结 projected；恢复时重锚
 
 ### 5.1 可调项
 
-| 组 | 项 | 说明 |
-|---|---|---|
-| 文字 | fontFamily / fontSize(12-80) / fontWeight(300-900) / lineSpacing / autoFit(stretch) | 字体源沿用现有 `follow/system/inter/lxgw/sarasa/comic` + `fonts:listInstalled` 本机字体；`resolvedFontFamily` 解析机制不动 |
-| 颜色 | colorMode `accent\|custom`；color(未唱) / highlightStart / highlightEnd(渐变止) / translationColor / bgColor / bgOpacity / bgBlur(新增) | accent 模式：高亮两端色由主窗口 `accentColor` 派生（start=`accentColor`，end=`color-mix(in srgb, accent 55%, white)`），切歌自动换 |
-| 特效 | shadow/shadowColor/shadowBlur（保留）、glow 0-20px（新增，逐词发光）、stroke+strokeColor+strokeWidth（新增，对齐渲染进程 `resolveLyricsTextStroke` 语义） | |
-| 布局 | layout `single\|dual`、align 左中右、translation `show\|hide\|only`、lineOffset | |
-| 动画 | lineTransition 四档、wordEffect `gradient\|glow\|none`、animIntensity 0-100（位移/模糊/发光统一乘算缩放） | |
-| 行为 | autoHide `off\|pause\|pause-and-instrumental`、idleSeconds(2-30)、showMediaControls | |
-| 窗口 | alwaysOnTop、宽高、锁定（仅设置页/工具条锁钮） | 沿用现有 |
+| 组   | 项                                                                                                                                                        | 说明                                                                                                                               |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 文字 | fontFamily / fontSize(12-80) / fontWeight(300-900) / lineSpacing / autoFit(stretch)                                                                       | 字体源沿用现有 `follow/system/inter/lxgw/sarasa/comic` + `fonts:listInstalled` 本机字体；`resolvedFontFamily` 解析机制不动         |
+| 颜色 | colorMode `accent\|custom`；color(未唱) / highlightStart / highlightEnd(渐变止) / translationColor / bgColor / bgOpacity / bgBlur(新增)                   | accent 模式：高亮两端色由主窗口 `accentColor` 派生（start=`accentColor`，end=`color-mix(in srgb, accent 55%, white)`），切歌自动换 |
+| 特效 | shadow/shadowColor/shadowBlur（保留）、glow 0-20px（新增，逐词发光）、stroke+strokeColor+strokeWidth（新增，对齐渲染进程 `resolveLyricsTextStroke` 语义） |                                                                                                                                    |
+| 布局 | layout `single\|dual`、align 左中右、translation `show\|hide\|only`、lineOffset                                                                           |                                                                                                                                    |
+| 动画 | lineTransition 四档、wordEffect `gradient\|glow\|none`、animIntensity 0-100（位移/模糊/发光统一乘算缩放）                                                 |                                                                                                                                    |
+| 行为 | autoHide `off\|pause\|pause-and-instrumental`、idleSeconds(2-30)、showMediaControls                                                                       |                                                                                                                                    |
+| 窗口 | alwaysOnTop、宽高、锁定（仅设置页/工具条锁钮）                                                                                                            | 沿用现有                                                                                                                           |
 
 ### 5.2 预设系统（新建 `src/shared/desktopLyricsPresets.ts`，仿 `lyricsPresets.ts:1-155`）
 
@@ -128,14 +128,14 @@ interface DesktopLyricsPresetConfig { activeId: string; custom: DesktopLyricsPre
 
 内置 6 套（具体值写死在模块里，执行者无需品味判断）：
 
-| id | 名 | 关键值 |
-|---|---|---|
-| `minimal-white` | 极简白（默认） | color `rgba(255,255,255,.45)`、hi `#ffffff→#dbeafe`、bgOpacity 0、glow 0、slide-blur+gradient |
-| `midnight-radio` | 午夜电台 | bg `#0a0f1e`@35% blur16、hi `#67e8f9→#60a5fa`、text `rgba(226,232,240,.55)` |
-| `honey-pink` | 蜜糖粉 | hi `#fbcfe8→#f472b6`、shadow `rgba(244,114,182,.35)` 8px |
-| `neon-violet` | 霓虹紫夜 | hi `#e879f9→#a78bfa`、glow 14 `rgba(168,85,247,.45)`、wordEffect glow |
-| `noir-gold` | 黑金 | bg `#000`@45%、hi `#fde68a→#f59e0b`、text `rgba(254,243,199,.5)` |
-| `daylight` | 日间浅底 | bg `#ffffff`@72%、text `rgba(15,23,42,.55)`、hi `#2563eb→#7c3aed` |
+| id               | 名             | 关键值                                                                                        |
+| ---------------- | -------------- | --------------------------------------------------------------------------------------------- |
+| `minimal-white`  | 极简白（默认） | color `rgba(255,255,255,.45)`、hi `#ffffff→#dbeafe`、bgOpacity 0、glow 0、slide-blur+gradient |
+| `midnight-radio` | 午夜电台       | bg `#0a0f1e`@35% blur16、hi `#67e8f9→#60a5fa`、text `rgba(226,232,240,.55)`                   |
+| `honey-pink`     | 蜜糖粉         | hi `#fbcfe8→#f472b6`、shadow `rgba(244,114,182,.35)` 8px                                      |
+| `neon-violet`    | 霓虹紫夜       | hi `#e879f9→#a78bfa`、glow 14 `rgba(168,85,247,.45)`、wordEffect glow                         |
+| `noir-gold`      | 黑金           | bg `#000`@45%、hi `#fde68a→#f59e0b`、text `rgba(254,243,199,.5)`                              |
+| `daylight`       | 日间浅底       | bg `#ffffff`@72%、text `rgba(15,23,42,.55)`、hi `#2563eb→#7c3aed`                             |
 
 - 工具条预设▾：单击切换（写 activePresetId + 整套 appearance 上屏）。
 - 样式弹层/设置页：「另存为预设」（名称 ≤48 字符，normalize 照抄 `lyricsPresets.ts:normalizePresetName`）、导出自定义预设为 JSON / 导入 JSON（validation 走 normalize）。
@@ -148,30 +148,42 @@ interface DesktopLyricsPresetConfig { activeId: string; custom: DesktopLyricsPre
 export interface DesktopLyricsSettings {
   // 保留原样
   enabled: boolean
-  windowWidth: number; windowHeight: number; windowX: number; windowY: number
+  windowWidth: number
+  windowHeight: number
+  windowX: number
+  windowY: number
   alwaysOnTop: boolean
   locked: boolean
-  clickThrough: boolean          // 兼容读取，归一化进 locked，写盘时可省略
-  fontFamily: string             // 'follow' 语义不变
-  resolvedFontFamily?: string    // 主进程注入，不持久选择
-  fontSize: number; fontWeight: number; lineSpacing: number; lineOffset: number
+  clickThrough: boolean // 兼容读取，归一化进 locked，写盘时可省略
+  fontFamily: string // 'follow' 语义不变
+  resolvedFontFamily?: string // 主进程注入，不持久选择
+  fontSize: number
+  fontWeight: number
+  lineSpacing: number
+  lineOffset: number
   align: LyricAlign
-  bgColor: string; bgOpacity: number
-  shadow: boolean; shadowColor: string; shadowBlur: number
+  bgColor: string
+  bgOpacity: number
+  shadow: boolean
+  shadowColor: string
+  shadowBlur: number
   // v2 新增
   version: 2
   layout: 'single' | 'dual'
   translation: 'show' | 'hide' | 'only'
   colorMode: 'accent' | 'custom'
-  color: string                  // 未唱文字
-  highlightStart: string; highlightEnd: string
+  color: string // 未唱文字
+  highlightStart: string
+  highlightEnd: string
   translationColor: string
-  bgBlur: number                 // 0-32
-  glow: number                   // 0-20
-  stroke: boolean; strokeColor: string; strokeWidth: number  // 0-3
+  bgBlur: number // 0-32
+  glow: number // 0-20
+  stroke: boolean
+  strokeColor: string
+  strokeWidth: number // 0-3
   lineTransition: 'slide-blur' | 'fade' | 'spring' | 'none'
   wordEffect: 'gradient' | 'glow' | 'none'
-  animIntensity: number          // 0-100
+  animIntensity: number // 0-100
   autoHide: 'off' | 'pause' | 'pause-and-instrumental'
   idleSeconds: number
   showMediaControls: boolean
@@ -181,16 +193,16 @@ export interface DesktopLyricsSettings {
 
 **v1 → v2 迁移映射**（写进 `normalizeDesktopLyrics`/`migrateDesktopLyricsV1toV2`，主进程 `src/main/core/settings.ts` 归一化出口调用）：
 
-| v1 | v2 |
-|---|---|
-| `presentation:'netease'` | `layout:'single'` + `wordEffect:'gradient'` |
-| `presentation:'classic'` + `layout:'bilingual'` | `layout:'single'` + `wordEffect:'none'`（classic 的逐词只是透明度跳变，语义最接近 none） |
-| `presentation:'classic'` + `layout:'multi'` | `layout:'dual'`，`lineOffset` 保留 |
-| `showTranslation:false` | `translation:'hide'`；true→`'show'` |
-| `highlightColor` | `highlightStart=highlightEnd=highlightColor`（单色=两端同值） |
-| `color` | 直接保留；`translationColor := color`（渲染靠 CSS 降透明度区分） |
-| `maxLines` | 废弃（dual 固定 2 行位） |
-| 新增字段 | 走默认值：colorMode `'custom'`、bgBlur 16、glow 0、stroke off、lineTransition `'slide-blur'`、wordEffect `'gradient'`、animIntensity 100、autoHide `'pause'`、idleSeconds 8、showMediaControls true |
+| v1                                              | v2                                                                                                                                                                                                  |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `presentation:'netease'`                        | `layout:'single'` + `wordEffect:'gradient'`                                                                                                                                                         |
+| `presentation:'classic'` + `layout:'bilingual'` | `layout:'single'` + `wordEffect:'none'`（classic 的逐词只是透明度跳变，语义最接近 none）                                                                                                            |
+| `presentation:'classic'` + `layout:'multi'`     | `layout:'dual'`，`lineOffset` 保留                                                                                                                                                                  |
+| `showTranslation:false`                         | `translation:'hide'`；true→`'show'`                                                                                                                                                                 |
+| `highlightColor`                                | `highlightStart=highlightEnd=highlightColor`（单色=两端同值）                                                                                                                                       |
+| `color`                                         | 直接保留；`translationColor := color`（渲染靠 CSS 降透明度区分）                                                                                                                                    |
+| `maxLines`                                      | 废弃（dual 固定 2 行位）                                                                                                                                                                            |
+| 新增字段                                        | 走默认值：colorMode `'custom'`、bgBlur 16、glow 0、stroke off、lineTransition `'slide-blur'`、wordEffect `'gradient'`、animIntensity 100、autoHide `'pause'`、idleSeconds 8、showMediaControls true |
 
 **发送侧 payload 扩展**（`desktopLyrics.ts:getEffectiveDesktopLyricsSettings` 出口合成，不动持久层）：`{ ...settings, resolvedFontFamily, motionPreference, accentColor }`。后两个字段类型加进 shared 类型为可选，不回写。
 
@@ -200,10 +212,10 @@ export interface DesktopLyricsSettings {
 
 新增 2 条：
 
-| channel | 方向 | payload | 说明 |
-|---|---|---|---|
-| `desktopLyrics:updatePlayback` | 主窗口渲染→主进程→歌词窗 | `{ playing: boolean }` | 发送点与 `updateTrack` 同一处（usePlayerStore 内现有 push 逻辑旁）；主进程照 `updateTime` 的转发模式加 handler，缓存 `runtime.latestDesktopLyricsPlaying` 供 `sendDesktopLyricsSnapshot()` 补发。驱动：插值冻结 + 空闲隐藏 + 工具条 ▶/⏸ 图标切换。 |
-| `desktopLyrics:playerShortcut` | 歌词窗→主进程 | `'previous'\|'playPause'\|'next'` | 主进程校验 `event.sender === runtime.desktopLyricsWindow.webContents`（照 `desktopLyrics.ts:190` 现有校验模式）后 `runtime.mainWindow?.webContents.send('player:shortcut', action)`——与 `smtc.ts:33-49` 同一目标通道，主窗口零改动。 |
+| channel                        | 方向                     | payload                           | 说明                                                                                                                                                                                                                                               |
+| ------------------------------ | ------------------------ | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `desktopLyrics:updatePlayback` | 主窗口渲染→主进程→歌词窗 | `{ playing: boolean }`            | 发送点与 `updateTrack` 同一处（usePlayerStore 内现有 push 逻辑旁）；主进程照 `updateTime` 的转发模式加 handler，缓存 `runtime.latestDesktopLyricsPlaying` 供 `sendDesktopLyricsSnapshot()` 补发。驱动：插值冻结 + 空闲隐藏 + 工具条 ▶/⏸ 图标切换。 |
+| `desktopLyrics:playerShortcut` | 歌词窗→主进程            | `'previous'\|'playPause'\|'next'` | 主进程校验 `event.sender === runtime.desktopLyricsWindow.webContents`（照 `desktopLyrics.ts:190` 现有校验模式）后 `runtime.mainWindow?.webContents.send('player:shortcut', action)`——与 `smtc.ts:33-49` 同一目标通道，主窗口零改动。               |
 
 扩展 1 处 payload：`initSettings` 对象附加 `motionPreference`、`accentColor`（见 §Schema），桌面歌词窗首启即用；主窗口主题/动效偏好变化走既有 `settings:changed` → `syncDesktopLyricsSettings()` 链路重推，无需新通道。
 
@@ -255,35 +267,44 @@ src/shared/
 ## 实施阶段（按序执行，P0-P2 为一刀切重构主体）
 
 ### P0 血管接通
+
 1. `main.ts` 加 `desktop-lyrics` 分支 + `DesktopLyricsApp.vue` 占位（渲染一行固定文本「桌面歌词已联通」）。
 2. `desktopLyrics.ts` 加载改 `?window=desktop-lyrics`（两个分支；其他逻辑一行不动）。
 3. 更新 `desktopLyrics.test.ts` 中加载路径的断言。
+
 - 验收：开关桌面歌词正常出窗/关窗，锁定穿透、位置持久化行为与现状一致。
 
 ### P1 渲染核（功能追平现状）
+
 1. 解析搬移：`desktopLyricsParsing.ts`，从 html 逐函数搬运（`parseYrc/parseLrc/parseEnhancedWords/parseNeteaseJsonLyricLine/stripValidVoiceTag/parsePlainLyrics/mergeLyrics/buildMergedLyrics`），按现状行为补单测（voice tag 合法化、NetEase JSON、t<0 credits、repeat 时间错、plain 纯文本）。
 2. `desktopLyricsPlayback.ts` 收编 presentation.js 三函数 + 测试随迁。
 3. store + `useInterpolatedTime` + LyricsViewport(single) + KaraokeLine（gradient 扫描）。
 4. settings v2 落盘 + 迁移 + `applySettings` 全字段生效。
 5. 删 `resources/desktop-lyrics.html`、`.js`。
+
 - 验收：与旧版并排截屏对比，single 布局信息等价（同色同字同翻译），仅动效更顺。
 
 ### P2 动效
+
 1. 换行 Transition 四档 + spring（复用/裁剪 `lyricSpring.ts`；复用粒度不够就内联简版，不强求共享）。
 2. 词激活 scale/glow、强调词、`animIntensity` 乘算。
 3. dual 双行交替。
 4. 动效偏好四档接线（IPC payload + `data-te-motion` + CSS 降级）——016 桌面歌词半段关闭。
+
 - 验收：四档动效偏好下行为符合 4.4；强度 0/50/100 三档截图对比。
 
 ### P3 自定义 UI
+
 1. ToolbarPill + StylePopover 构建，所有控件接通 updateSettings。
 2. `desktopLyrics:playerShortcut` + `updatePlayback` 双向接通。
 3. 预设模块 + 工具条预设▾ + 另存/导入导出。
 4. 设置页重写 + 嵌入 KaraokeLine 实时预览。
 5. accentColor 跟随。
+
 - 验收：窗内改→设置页同步；设置页改→窗秒变；预设切换 6 套全部正常。
 
 ### P4 打磨
+
 1. `useIdleHide` 三模式 + 边界（暂停中禁用 hover 弹层、seek 取消隐藏计时）。
 2. 性能：全动画仅 transform/opacity/背景 clip；rAF 单循环；`content-visibility` 不上（窗口太小无意义）。
 3. 多显示器拖位边界、系统休眠恢复后时间重锚。
@@ -292,6 +313,7 @@ src/shared/
 ## 测试与验收
 
 **新增/迁移单测**
+
 - `desktopLyricsParsing.test.ts`：从 html 解析行为反写（voice tag 剥离/保留、YRC `[t,d]`+`(t,d,o)`词、NetEase JSON 行、credits t<0、多时间戳重复行、plain fallback）。
 - `desktopLyricsPlayback.test.ts`：presentation.js 现有测试平移 + 逐词进度边界（空词、末词 0.25s 兜底、非时间错词）。
 - `useInterpolatedTime.test.ts`：假时钟驱动 rAF，验证上限钳制、0.08s 收敛带、>1s 跳变、暂停冻结。

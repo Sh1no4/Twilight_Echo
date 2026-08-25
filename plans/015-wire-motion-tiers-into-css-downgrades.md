@@ -48,22 +48,22 @@
 
 **14 个文件**只有 OS 通路、没有 `data-te-motion` 分支（逐个核对过引入方式与 `@media` 起始行）：
 
-| 文件 | `@media` 起始行 | 样式是否 scoped |
-| --- | --- | --- |
-| `src/renderer/src/App.vue` | 1206 | 否（`:922` 是 `<style>`，无 scoped） |
-| `src/renderer/src/assets/primeicons.css` | 39 | 否（`assets/main.css:1` 以 `@import` 引入） |
-| `src/renderer/src/components/AnimatedInput.vue` | 231 | 是 |
-| `src/renderer/src/components/AppNoticeHost.vue` | 175 | 是 |
-| `src/renderer/src/components/LoginPage.vue` | 2348 | 是 |
-| `src/renderer/src/components/LyricsAppearanceCustomizer.vue` | 1311 | 是 |
-| `src/renderer/src/components/player-bar/HiFiSidebar.css` | 1564 | 是（`HiFiSidebar.vue:1745` 用 `<style scoped src=>`） |
-| `src/renderer/src/components/streaming-page/StreamingContentHeader.css` | 88 | 是（`StreamingContentHeader.vue:109`） |
-| `src/renderer/src/components/streaming-page/StreamingLoadingStage.vue` | 472 | 是 |
-| `src/renderer/src/components/streaming-page/StreamingPage.css` | 455 | 是（`StreamingPage.vue:3289`） |
-| `src/renderer/src/components/StreamingDiscovery.vue` | 1313 | 是 |
-| `src/renderer/src/components/theme-studio/ThemeStudioPage.css` | 1899 | 否（`ThemeStudioPage.vue:1354` 用 `<style src=>`，无 scoped） |
-| `src/renderer/src/mini-player/MiniPlayerCustomizer.css` | 315 | 否（`MiniPlayerCustomizer.vue:529` 用 `<style src=>`） |
-| `src/renderer/src/components/equalizer/ParametricEqWorkspace.vue` | 1747 | 是 |
+| 文件                                                                    | `@media` 起始行 | 样式是否 scoped                                               |
+| ----------------------------------------------------------------------- | --------------- | ------------------------------------------------------------- |
+| `src/renderer/src/App.vue`                                              | 1206            | 否（`:922` 是 `<style>`，无 scoped）                          |
+| `src/renderer/src/assets/primeicons.css`                                | 39              | 否（`assets/main.css:1` 以 `@import` 引入）                   |
+| `src/renderer/src/components/AnimatedInput.vue`                         | 231             | 是                                                            |
+| `src/renderer/src/components/AppNoticeHost.vue`                         | 175             | 是                                                            |
+| `src/renderer/src/components/LoginPage.vue`                             | 2348            | 是                                                            |
+| `src/renderer/src/components/LyricsAppearanceCustomizer.vue`            | 1311            | 是                                                            |
+| `src/renderer/src/components/player-bar/HiFiSidebar.css`                | 1564            | 是（`HiFiSidebar.vue:1745` 用 `<style scoped src=>`）         |
+| `src/renderer/src/components/streaming-page/StreamingContentHeader.css` | 88              | 是（`StreamingContentHeader.vue:109`）                        |
+| `src/renderer/src/components/streaming-page/StreamingLoadingStage.vue`  | 472             | 是                                                            |
+| `src/renderer/src/components/streaming-page/StreamingPage.css`          | 455             | 是（`StreamingPage.vue:3289`）                                |
+| `src/renderer/src/components/StreamingDiscovery.vue`                    | 1313            | 是                                                            |
+| `src/renderer/src/components/theme-studio/ThemeStudioPage.css`          | 1899            | 否（`ThemeStudioPage.vue:1354` 用 `<style src=>`，无 scoped） |
+| `src/renderer/src/mini-player/MiniPlayerCustomizer.css`                 | 315             | 否（`MiniPlayerCustomizer.vue:529` 用 `<style src=>`）        |
+| `src/renderer/src/components/equalizer/ParametricEqWorkspace.vue`       | 1747            | 是                                                            |
 
 ### 第二个问题：已有的 4 条动效降级规则是死代码
 
@@ -81,7 +81,8 @@
 Vue 的 scoped 转换**只重写选择器的最后一个复合项**。当 `:global()` 包住祖先、后面还跟着后代时，转换器丢掉后代部分，只留 `:global()` 里的内容。我用仓库自带的 `@vue/compiler-sfc` 3.5.33 把上面这段原文编译过，产物是：
 
 ```css
-html[data-te-motion='reduced'],html[data-te-motion='off'] {
+html[data-te-motion='reduced'],
+html[data-te-motion='off'] {
   transition: none;
   transform: none;
 }
@@ -172,25 +173,33 @@ html[data-te-motion='off'] .page-down-enter-active {
 一个文件一步。每步做完先 `grep` 自查再进入下一步。
 
 1. **`src/renderer/src/components/PlayingLyricLine.vue` —— 修两处死规则。** 这是本方案优先级最高的一步（改的是已存在但无效的规则，不是新增覆盖面）。把 `:557-558`：
+
    ```css
    :global(html[data-te-motion='reduced']) .lyric-voice--supporting,
    :global(html[data-te-motion='off']) .lyric-voice--supporting {
    ```
+
    改成：
+
    ```css
    :global(html[data-te-motion='reduced'] .lyric-voice--supporting),
    :global(html[data-te-motion='off'] .lyric-voice--supporting) {
    ```
+
    再把 `:595-596`：
+
    ```css
    :global(html[data-te-motion='reduced']) .lyric-row-content,
    :global(html[data-te-motion='off']) .lyric-row-content {
    ```
+
    改成：
+
    ```css
    :global(html[data-te-motion='reduced'] .lyric-row-content),
    :global(html[data-te-motion='off'] .lyric-row-content) {
    ```
+
    **只移动括号位置，声明块内容一个字不动。**
 
 2. **`src/renderer/src/components/player-bar/CompactPlayerBarVisualizer.vue` —— 修两处死规则。** 同样只移括号，把 `:82` 与 `:86` 的 `:global(html[data-te-motion='reduced']) .compact-visualizer__band` 改成 `:global(html[data-te-motion='reduced'] .compact-visualizer__band)`，`'off'` 那条同理。
@@ -219,10 +228,12 @@ html[data-te-motion='off'] .page-down-enter-active {
 9. **`src/renderer/src/components/streaming-page/StreamingContentHeader.css`（scoped，`:88`）。** 同上。
 
 10. **改 `ParametricEqWorkspace.test.ts:34` 的断言。** 第 7 步去掉了那个文件的 `@media`，断言要跟着改。打开 `src/renderer/src/components/equalizer/ParametricEqWorkspace.test.ts`，把断言 `@media (prefers-reduced-motion: reduce)` 存在的那一行，改成断言两档属性选择器存在：
+
     ```ts
     assert.match(workspace, /html\[data-te-motion='reduced'\]/)
     assert.match(workspace, /html\[data-te-motion='off'\]/)
     ```
+
     先读出该文件第 34 行的原文再替换（正则的变量名按文件里实际的来）。
 
 11. **收尾核对。** 跑：
@@ -265,7 +276,12 @@ html[data-te-motion='off'] .page-down-enter-active {
   const src = readFileSync('src/renderer/src/components/PlayingLyricLine.vue', 'utf8')
   const css = src.slice(src.indexOf('<style scoped>') + 14, src.lastIndexOf('</style>'))
   const out = compileStyle({ source: css, filename: 'x.vue', id: 'data-v-test', scoped: true })
-  console.log(out.code.split('\n').filter((l) => l.includes('data-te-motion')).join('\n'))
+  console.log(
+    out.code
+      .split('\n')
+      .filter((l) => l.includes('data-te-motion'))
+      .join('\n')
+  )
   ```
   预期看到 `html[data-te-motion='reduced'] .lyric-voice--supporting` 这样**带后代**的选择器；如果只看到 `html[data-te-motion='reduced']` 光秃秃一条，说明括号位置还是错的。
 - **Feel check（真实渲染，不许用简化替身当证据）**：按 `MEMORY.md` 里「Real render capture recipe」的隔离 profile + CDP 流程起应用。关键是**在操作系统减弱动效关闭的前提下**测应用内开关 —— 这正是当前失效的那个组合。

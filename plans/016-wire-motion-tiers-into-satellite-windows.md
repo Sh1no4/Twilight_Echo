@@ -21,11 +21,11 @@ src/renderer/src/mini-player/MiniPlayerApp.vue:38   useMotionPreference(motionPr
 
 ### 三个上下文的实际形态（这一段决定了修法，务必读完）
 
-| 上下文 | 是什么 | 能否收到 `data-te-motion` | 能否命中 OS `@media` |
-| --- | --- | --- | --- |
-| `resources/desktop-lyrics.html` | **真正独立的 BrowserWindow**（`src/main/integrations/desktopLyrics.ts:90` 的 `new BrowserWindow`），不加载渲染进程 bundle，样式全部内联 | 否，且 `base.css` 根本不在这个文档里 | **否 —— 文件内零 `@media (prefers-reduced-motion)`** |
-| `resources/audio-visualizer/index.html` | **主窗口内的 iframe**（`src/renderer/src/components/AudioVisualizerPanel.vue:67` 返回 `./audio-visualizer/index.html?v=…`，`:380` 处 `<iframe>`），有独立 document | 否（iframe 有自己的 `documentElement`，父窗口的属性不跨文档） | **是**（同一台机器的 OS 偏好，`:699` 已有 `@media` 块） |
-| `src/renderer/src/tray-player/TrayPlayerApp.vue` | 独立 BrowserWindow，但**加载同一份渲染进程 bundle**（`src/renderer/src/main.ts:56` 按 `windowKind === 'tray-player'` 挂载），所以 `base.css` 在场 | **否 —— 没有任何代码给它写这个属性**，于是 `html[data-te-motion='reduced'] *` 与 `…='off' *` 都不匹配，`base.css` 的兜底完全不生效 | 是（`TrayPlayerApp.vue:335` 有一条 `@media`） |
+| 上下文                                           | 是什么                                                                                                                                                             | 能否收到 `data-te-motion`                                                                                                          | 能否命中 OS `@media`                                    |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `resources/desktop-lyrics.html`                  | **真正独立的 BrowserWindow**（`src/main/integrations/desktopLyrics.ts:90` 的 `new BrowserWindow`），不加载渲染进程 bundle，样式全部内联                            | 否，且 `base.css` 根本不在这个文档里                                                                                               | **否 —— 文件内零 `@media (prefers-reduced-motion)`**    |
+| `resources/audio-visualizer/index.html`          | **主窗口内的 iframe**（`src/renderer/src/components/AudioVisualizerPanel.vue:67` 返回 `./audio-visualizer/index.html?v=…`，`:380` 处 `<iframe>`），有独立 document | 否（iframe 有自己的 `documentElement`，父窗口的属性不跨文档）                                                                      | **是**（同一台机器的 OS 偏好，`:699` 已有 `@media` 块） |
+| `src/renderer/src/tray-player/TrayPlayerApp.vue` | 独立 BrowserWindow，但**加载同一份渲染进程 bundle**（`src/renderer/src/main.ts:56` 按 `windowKind === 'tray-player'` 挂载），所以 `base.css` 在场                  | **否 —— 没有任何代码给它写这个属性**，于是 `html[data-te-motion='reduced'] *` 与 `…='off' *` 都不匹配，`base.css` 的兜底完全不生效 | 是（`TrayPlayerApp.vue:335` 有一条 `@media`）           |
 
 ### 1. 桌面歌词：常驻置顶窗口，四档全都管不着
 
@@ -33,33 +33,33 @@ src/renderer/src/mini-player/MiniPlayerApp.vue:38   useMotionPreference(motionPr
 
 ```css
 /* resources/desktop-lyrics.html:286-290 */
-      .lyric-line {
-        transition:
-          color 0.3s ease,
-          opacity 0.3s ease,
-          transform 0.3s ease;
-        will-change: transform;
-      }
+.lyric-line {
+  transition:
+    color 0.3s ease,
+    opacity 0.3s ease,
+    transform 0.3s ease;
+  will-change: transform;
+}
 ```
 
 ```css
 /* resources/desktop-lyrics.html:56-61 —— 工具栏 hover 显形 */
-      #toolbar {
-        opacity: 0;
-        pointer-events: none;
-        transition:
-          opacity 0.25s ease,
-          transform 0.25s ease;
-        transform: translateY(-4px);
-      }
+#toolbar {
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease;
+  transform: translateY(-4px);
+}
 ```
 
 JS 每次换行直接拼 transform，与 CSS 无关，所以**只改 CSS 挡不住它**：
 
 ```js
 /* resources/desktop-lyrics.html:859-860 */
-          if (rowOffsetX !== 0) parts.push('translateX(' + rowOffsetX + 'px)')
-          if (isActive && !isTranslation) parts.push('scale(1.05)')
+if (rowOffsetX !== 0) parts.push('translateX(' + rowOffsetX + 'px)')
+if (isActive && !isTranslation) parts.push('scale(1.05)')
 ```
 
 主进程侧也没有对应通道。`src/main/integrations/desktopLyrics.ts` 转发的是 `desktopLyrics:initSettings`（`:60`、`:67`）、`updateTrack`（`:72`、`:226`）、`updateTime`（`:77`、`:236`）、`updateSettings`（`:242`），**没有 `motionPreference`**。
@@ -70,17 +70,17 @@ JS 每次换行直接拼 transform，与 CSS 无关，所以**只改 CSS 挡不�
 
 ```css
 /* resources/audio-visualizer/index.html:699-711 —— 现状，已覆盖全部 orbit-spin 宿主 */
-    @media (prefers-reduced-motion: reduce) {
-      .album-orbit-node,
-      .album-orbit-tick,
-      .album-edge-node,
-      .album-edge-tick,
-      .control-orbit-node,
-      .album-orbit-ring.time-ticks::before,
-      .album-track-runner {
-        animation: none;
-      }
-    }
+@media (prefers-reduced-motion: reduce) {
+  .album-orbit-node,
+  .album-orbit-tick,
+  .album-edge-node,
+  .album-edge-tick,
+  .control-orbit-node,
+  .album-orbit-ring.time-ticks::before,
+  .album-track-runner {
+    animation: none;
+  }
+}
 ```
 
 `:314` 的宿主是 `.album-orbit-node, .album-orbit-tick`，`:463` 的是 `.album-edge-node, .album-edge-tick`，`:630` 的是 `.control-orbit-node` —— **三处全在上面这个列表里**。所以「有两处 orbit-spin 漏了」的说法不成立，不要照那个说法去加选择器。
@@ -89,15 +89,15 @@ JS 每次换行直接拼 transform，与 CSS 无关，所以**只改 CSS 挡不�
 
 ```css
 /* resources/audio-visualizer/index.html:759 */
-      transition: all 0.2s ease;
+transition: all 0.2s ease;
 ```
 
 ```css
 /* resources/audio-visualizer/index.html:786-789 —— 裸 hover 缩放，无 (hover: hover) 门禁 */
-      .btn-circle.play-pause:hover {
-        background-color: #0b0c0f;
-        transform: scale(1.04);
-      }
+.btn-circle.play-pause:hover {
+  background-color: #0b0c0f;
+  transform: scale(1.04);
+}
 ```
 
 好消息是通道已经现成：iframe 与宿主之间已有完整的 postMessage 握手 —— iframe 就绪时 `window.parent.postMessage({ kind: 'ready' }, '*')`（`:2442`），宿主在 `AudioVisualizerPanel.vue:234-236` 收 `ready`，之后用 `:56-62` 的 `post()` 下发消息；iframe 侧在 `:2265` 用 `switch (msg.kind)` 分发。**所以这里不需要新增 IPC，只需要多一种 `kind`。**
@@ -140,18 +140,18 @@ function sendDesktopLyricsMotionPreference(
 
 ```css
 /* target — 加到 resources/desktop-lyrics.html 的 <style> 内 */
-      html[data-te-motion='reduced'] .lyric-line,
-      html[data-te-motion='off'] .lyric-line {
-        transition:
-          color 0.3s ease,
-          opacity 0.3s ease;
-      }
+html[data-te-motion='reduced'] .lyric-line,
+html[data-te-motion='off'] .lyric-line {
+  transition:
+    color 0.3s ease,
+    opacity 0.3s ease;
+}
 
-      html[data-te-motion='reduced'] #toolbar,
-      html[data-te-motion='off'] #toolbar {
-        transition: opacity 0.25s ease;
-        transform: none;
-      }
+html[data-te-motion='reduced'] #toolbar,
+html[data-te-motion='off'] #toolbar {
+  transition: opacity 0.25s ease;
+  transform: none;
+}
 ```
 
 保留 `color` 与 `opacity`（承载「哪一行在唱」这个信息），去掉 `transform` —— 正是 AUDIT 第 6 节的范式「keep opacity/color, drop movement」。
@@ -160,11 +160,11 @@ JS 侧必须同步，否则 CSS 改了也白改：
 
 ```js
 /* target — resources/desktop-lyrics.html:859-860 附近 */
-          var motionReduced =
-            document.documentElement.getAttribute('data-te-motion') === 'reduced' ||
-            document.documentElement.getAttribute('data-te-motion') === 'off'
-          if (rowOffsetX !== 0 && !motionReduced) parts.push('translateX(' + rowOffsetX + 'px)')
-          if (isActive && !isTranslation && !motionReduced) parts.push('scale(1.05)')
+var motionReduced =
+  document.documentElement.getAttribute('data-te-motion') === 'reduced' ||
+  document.documentElement.getAttribute('data-te-motion') === 'off'
+if (rowOffsetX !== 0 && !motionReduced) parts.push('translateX(' + rowOffsetX + 'px)')
+if (isActive && !isTranslation && !motionReduced) parts.push('scale(1.05)')
 ```
 
 ### 目标二：可视化器 iframe —— 复用现有 postMessage，并让 hover 缩放可降级
@@ -183,37 +183,37 @@ JS 侧必须同步，否则 CSS 改了也白改：
 
 ```css
 /* target — resources/audio-visualizer/index.html，把 :759 的 all 收窄 */
-      transition:
-        background-color 0.2s ease,
-        border-color 0.2s ease,
-        color 0.2s ease;
+transition:
+  background-color 0.2s ease,
+  border-color 0.2s ease,
+  color 0.2s ease;
 ```
 
 ```css
 /* target — 给 hover 缩放加指针门禁，并让四档能关掉它 */
-    @media (hover: hover) and (pointer: fine) {
-      .btn-circle.play-pause:hover {
-        background-color: #0b0c0f;
-        transform: scale(1.04);
-      }
-    }
+@media (hover: hover) and (pointer: fine) {
+  .btn-circle.play-pause:hover {
+    background-color: #0b0c0f;
+    transform: scale(1.04);
+  }
+}
 
-    html[data-te-motion='reduced'] .album-orbit-node,
-    html[data-te-motion='reduced'] .album-orbit-tick,
-    html[data-te-motion='reduced'] .album-edge-node,
-    html[data-te-motion='reduced'] .album-edge-tick,
-    html[data-te-motion='reduced'] .control-orbit-node,
-    html[data-te-motion='reduced'] .album-orbit-ring.time-ticks::before,
-    html[data-te-motion='reduced'] .album-track-runner,
-    html[data-te-motion='off'] .album-orbit-node,
-    html[data-te-motion='off'] .album-orbit-tick,
-    html[data-te-motion='off'] .album-edge-node,
-    html[data-te-motion='off'] .album-edge-tick,
-    html[data-te-motion='off'] .control-orbit-node,
-    html[data-te-motion='off'] .album-orbit-ring.time-ticks::before,
-    html[data-te-motion='off'] .album-track-runner {
-      animation: none;
-    }
+html[data-te-motion='reduced'] .album-orbit-node,
+html[data-te-motion='reduced'] .album-orbit-tick,
+html[data-te-motion='reduced'] .album-edge-node,
+html[data-te-motion='reduced'] .album-edge-tick,
+html[data-te-motion='reduced'] .control-orbit-node,
+html[data-te-motion='reduced'] .album-orbit-ring.time-ticks::before,
+html[data-te-motion='reduced'] .album-track-runner,
+html[data-te-motion='off'] .album-orbit-node,
+html[data-te-motion='off'] .album-orbit-tick,
+html[data-te-motion='off'] .album-edge-node,
+html[data-te-motion='off'] .album-edge-tick,
+html[data-te-motion='off'] .control-orbit-node,
+html[data-te-motion='off'] .album-orbit-ring.time-ticks::before,
+html[data-te-motion='off'] .album-track-runner {
+  animation: none;
+}
 ```
 
 选择器清单与 `:699-711` 那个 `@media` 块**逐字相同**，只是换了触发通路 —— 照抄，不要自己重新列。

@@ -673,7 +673,10 @@ test('playbar shape persists across settings layers and flips without an IPC rou
 test('settings patches are detached from Vue reactivity before crossing the IPC bridge', () => {
   const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
 
-  assert.match(storeSource, /function toWirePatch\(patch: Partial<AppSettings>\): Partial<AppSettings>/)
+  assert.match(
+    storeSource,
+    /function toWirePatch\(patch: Partial<AppSettings>\): Partial<AppSettings>/
+  )
   assert.match(storeSource, /window\.api\.settings\.update\(toWirePatch\(patch\)\)/)
   // Every path out of the store must go through it — a raw patch must not remain.
   assert.doesNotMatch(storeSource, /window\.api\.settings\.update\(patch\)/)

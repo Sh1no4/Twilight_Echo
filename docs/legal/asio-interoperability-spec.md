@@ -26,7 +26,7 @@ with the following Windows x64 data contract:
 | set I/O format selector        | `0x23111961`                                                     |
 | get I/O format selector        | `0x23111983`                                                     |
 | can-do I/O format selector     | `0x23112004`                                                     |
-| success                        | error value `0` or `0x3f4847a0`                                 |
+| success                        | error value `0` or `0x3f4847a0`                                  |
 
 The request block is represented internally as `AsioIoFormat`. Its `sizeof`, alignment, and field
 offsets are part of `audio-engine/output/asio/abi/asio-abi-manifest.json` and are asserted by both

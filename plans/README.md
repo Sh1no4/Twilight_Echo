@@ -16,28 +16,28 @@
 
 ## 方案总表
 
-| # | 方案 | 严重度 | 类别 | 体量 | 状态 |
-|---|---|---|---|---|---|
-| 001 | [统一 `--te-ease-soft` 的权威定义源](001-unify-motion-soft-token-authority.md) | HIGH | token | 3 文件 / 8 处单行 | TODO |
-| 002 | [修复全局按压反馈：消除缩放相乘、按住保持压下、可打断](002-fix-global-press-feedback.md) | HIGH | 物理性 + 可打断 | 6 文件 / ~40 行 | TODO |
-| 003 | [reduced 档改按属性精确降级，保住反馈](003-reduced-motion-preserve-feedback.md) | HIGH | 无障碍 | 3 文件 / ~60 行 | TODO |
-| 004 | [30 处手写 cubic-bezier 归并到 token，收敛四档回弹](004-consolidate-bare-easing-curves.md) | MEDIUM | token | 13 文件 / ~35 处 | TODO |
-| 005 | [`transition: all` 换成显式属性清单](005-replace-transition-all.md) | HIGH | 性能 | 12 文件 / 45 选择器 | DONE |
-| 006 | [液态玻璃过渡里删掉 filter / backdrop-filter](006-remove-filter-from-liquid-glass-transition.md) | HIGH | 性能 | 1 文件 / 1 声明 | DONE |
-| 007 | [进度条与电平表改 transform 驱动](007-progress-bars-use-transform.md) | HIGH | 性能 | 7 文件 | DONE |
-| 008 | [侧边栏让位改 transform，去掉 320ms 全树重排](008-sidebar-clearance-use-transform.md) | HIGH | 性能 | 5 文件（含 JS） | DONE |
-| 009 | [删掉搜索类输入框的逐字符入场动效](009-remove-per-character-input-animation.md) | HIGH | 频次 | 5 文件 | TODO |
-| 010 | [删掉播放确认脉冲与切歌入场 keyframes](010-remove-playback-confirm-keyframes.md) | HIGH | 频次 + 可打断 | 2 文件 / 纯删除 | TODO |
-| 011 | [删掉导航悬停旋转缩放，补指针类型门禁](011-reduce-nav-hover-motion.md) | HIGH | 频次 + 无障碍 | 8 文件 / ~82 处 | TODO |
-| 012 | [删掉歌单行死指针追踪 rAF 与常驻流动描边](012-remove-dead-pointer-tracking-raf.md) | MEDIUM | 性能 + 频次 | 4 文件 / 纯删除 | TODO |
-| 013 | [修掉吐司退场的 `ease-in`](013-fix-toast-leave-easing.md) | HIGH | 缓动 | 1 文件 / 1 值 | TODO |
-| 014 | [播放页背景封面过渡减重](014-lighten-backdrop-cover-transition.md) | HIGH | 性能 | 1 文件 / 4 规则 | DONE |
-| 015 | [三档动效偏好接入 CSS 降级通路（含 `:global()` 编译陷阱修正）](015-wire-motion-tiers-into-css-downgrades.md) | HIGH | 无障碍 | 16 文件 / ~17 处 | TODO |
-| 016 | [桌面歌词与可视化 iframe 接入动效偏好](016-wire-motion-tiers-into-satellite-windows.md) | MEDIUM | 无障碍 | 5 文件（含主进程 + preload） | TODO |
-| 017 | [删掉 EqualizerPage 死 `:root` 块，8 处过渡改显式清单](017-fix-equalizer-dead-root-block.md) | HIGH | token | 2 文件 / 9 处 | TODO |
-| 018 | [设置页开关与折叠面板改可打断 transition](018-settings-toggle-accordion-transitions.md) | MEDIUM | 可打断 | 2 文件 / ~7 处 | TODO |
-| 019 | [右键菜单与音量抽屉从触发点长出来](019-anchor-popover-transform-origin.md) | MEDIUM | 物理性 | 5 文件 / ~60 行 | TODO |
-| 020 | [为动效体系建立门禁，预设主题补动效条款](020-add-motion-audit-gate.md) | MEDIUM | token / 门禁 | 4 文件 / ~300 行 | TODO |
+| #   | 方案                                                                                                         | 严重度 | 类别            | 体量                         | 状态 |
+| --- | ------------------------------------------------------------------------------------------------------------ | ------ | --------------- | ---------------------------- | ---- |
+| 001 | [统一 `--te-ease-soft` 的权威定义源](001-unify-motion-soft-token-authority.md)                               | HIGH   | token           | 3 文件 / 8 处单行            | TODO |
+| 002 | [修复全局按压反馈：消除缩放相乘、按住保持压下、可打断](002-fix-global-press-feedback.md)                     | HIGH   | 物理性 + 可打断 | 6 文件 / ~40 行              | TODO |
+| 003 | [reduced 档改按属性精确降级，保住反馈](003-reduced-motion-preserve-feedback.md)                              | HIGH   | 无障碍          | 3 文件 / ~60 行              | TODO |
+| 004 | [30 处手写 cubic-bezier 归并到 token，收敛四档回弹](004-consolidate-bare-easing-curves.md)                   | MEDIUM | token           | 13 文件 / ~35 处             | TODO |
+| 005 | [`transition: all` 换成显式属性清单](005-replace-transition-all.md)                                          | HIGH   | 性能            | 12 文件 / 45 选择器          | DONE |
+| 006 | [液态玻璃过渡里删掉 filter / backdrop-filter](006-remove-filter-from-liquid-glass-transition.md)             | HIGH   | 性能            | 1 文件 / 1 声明              | DONE |
+| 007 | [进度条与电平表改 transform 驱动](007-progress-bars-use-transform.md)                                        | HIGH   | 性能            | 7 文件                       | DONE |
+| 008 | [侧边栏让位改 transform，去掉 320ms 全树重排](008-sidebar-clearance-use-transform.md)                        | HIGH   | 性能            | 5 文件（含 JS）              | DONE |
+| 009 | [删掉搜索类输入框的逐字符入场动效](009-remove-per-character-input-animation.md)                              | HIGH   | 频次            | 5 文件                       | TODO |
+| 010 | [删掉播放确认脉冲与切歌入场 keyframes](010-remove-playback-confirm-keyframes.md)                             | HIGH   | 频次 + 可打断   | 2 文件 / 纯删除              | TODO |
+| 011 | [删掉导航悬停旋转缩放，补指针类型门禁](011-reduce-nav-hover-motion.md)                                       | HIGH   | 频次 + 无障碍   | 8 文件 / ~82 处              | TODO |
+| 012 | [删掉歌单行死指针追踪 rAF 与常驻流动描边](012-remove-dead-pointer-tracking-raf.md)                           | MEDIUM | 性能 + 频次     | 4 文件 / 纯删除              | TODO |
+| 013 | [修掉吐司退场的 `ease-in`](013-fix-toast-leave-easing.md)                                                    | HIGH   | 缓动            | 1 文件 / 1 值                | TODO |
+| 014 | [播放页背景封面过渡减重](014-lighten-backdrop-cover-transition.md)                                           | HIGH   | 性能            | 1 文件 / 4 规则              | DONE |
+| 015 | [三档动效偏好接入 CSS 降级通路（含 `:global()` 编译陷阱修正）](015-wire-motion-tiers-into-css-downgrades.md) | HIGH   | 无障碍          | 16 文件 / ~17 处             | TODO |
+| 016 | [桌面歌词与可视化 iframe 接入动效偏好](016-wire-motion-tiers-into-satellite-windows.md)                      | MEDIUM | 无障碍          | 5 文件（含主进程 + preload） | TODO |
+| 017 | [删掉 EqualizerPage 死 `:root` 块，8 处过渡改显式清单](017-fix-equalizer-dead-root-block.md)                 | HIGH   | token           | 2 文件 / 9 处                | TODO |
+| 018 | [设置页开关与折叠面板改可打断 transition](018-settings-toggle-accordion-transitions.md)                      | MEDIUM | 可打断          | 2 文件 / ~7 处               | TODO |
+| 019 | [右键菜单与音量抽屉从触发点长出来](019-anchor-popover-transform-origin.md)                                   | MEDIUM | 物理性          | 5 文件 / ~60 行              | TODO |
+| 020 | [为动效体系建立门禁，预设主题补动效条款](020-add-motion-audit-gate.md)                                       | MEDIUM | token / 门禁    | 4 文件 / ~300 行             | TODO |
 
 ## 推荐执行顺序
 
@@ -47,19 +47,19 @@
 
 这三条不是「动效调得不好」，而是看代码完全看不出来的失效：一个 token 的运行时值不等于声明值、8 个控件的过渡悬空、一套 rAF 在驱动看不见的东西。它们也是后续方案的地基。
 
-| 顺序 | 方案 | 为什么排在最前 |
-|---|---|---|
-| 1 | **001** | `--te-ease-soft` 的运行时值目前是 `cubic-bezier(0.2, 0.8, 0.2, 1)` 而非 base.css 声明的 out-quint。**在这条修完之前做 004 的 token 替换，等于把 30 处代码指向一个值不对的 token。** |
-| 2 | **017** / **012** | 二者互不相干，可并行。017 修 EQ 页悬空过渡（并把 005 划过来的 3 处一并处理），012 是纯删除。 |
+| 顺序 | 方案              | 为什么排在最前                                                                                                                                                                      |
+| ---- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | **001**           | `--te-ease-soft` 的运行时值目前是 `cubic-bezier(0.2, 0.8, 0.2, 1)` 而非 base.css 声明的 out-quint。**在这条修完之前做 004 的 token 替换，等于把 30 处代码指向一个值不对的 token。** |
+| 2    | **017** / **012** | 二者互不相干，可并行。017 修 EQ 页悬空过渡（并把 005 划过来的 3 处一并处理），012 是纯删除。                                                                                        |
 
 ### 第 2 批 — 高频交互面（用户每天感知最多的）
 
-| 方案 | 说明 |
-|---|---|
-| **002** | 全局按压。改完 `--te-motion-press-scale` 后，15 处已正确复用该 token 的组件自动收敛。 |
+| 方案    | 说明                                                                                     |
+| ------- | ---------------------------------------------------------------------------------------- |
+| **002** | 全局按压。改完 `--te-motion-press-scale` 后，15 处已正确复用该 token 的组件自动收敛。    |
 | **010** | 依赖 002 先落：删掉播放确认脉冲后，按压反馈成为该按钮唯一的动效，需要 002 已经把它改对。 |
-| **009** | 独立，无依赖。 |
-| **013** | 独立，1 行改动，随时可做。 |
+| **009** | 独立，无依赖。                                                                           |
+| **013** | 独立，1 行改动，随时可做。                                                               |
 
 ### 第 3 批 — 性能（各自独立，可全部并行）
 
@@ -69,12 +69,12 @@
 
 ### 第 4 批 — 无障碍与其余打磨
 
-| 方案 | 说明 |
-|---|---|
-| **003** | 依赖 002：003 的按属性白名单要保留按压反馈，而按压反馈的形态由 002 决定。 |
-| **015** | 依赖 003：015 把 16 个文件的 `@media` 降级并上 `[data-te-motion]` 选择器，而 `reduced` 档的降级策略由 003 定义。**015 另含一项独立修复**：`PlayingLyricLine.vue:557/595` 与 `CompactPlayerBarVisualizer.vue:82/86` 现有的 4 条降级用了 `:global(祖先) .后代` 写法，Vue scoped 编译会丢掉后代部分、把声明落到 `<html>` 上——它们当前是死代码。这一项不依赖任何其他方案，可以单独先做。 |
-| **016** | 依赖 015 的策略，但文件完全不重叠。注意两个目标形态不同：`resources/audio-visualizer/index.html` 是主窗口内的 **iframe**（`AudioVisualizerPanel.vue:380`），已有 postMessage 通道可用；`resources/desktop-lyrics.html` 才是真正的独立 `BrowserWindow`，需要照 `miniPlayer.ts:174-177` 加 IPC 通道。 |
-| **011** / **018** / **019** | 三条互不相干，可并行。011 与 002 都碰 `base.css` 的 hover/press 规则族，建议 011 排在 002 之后。 |
+| 方案                        | 说明                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **003**                     | 依赖 002：003 的按属性白名单要保留按压反馈，而按压反馈的形态由 002 决定。                                                                                                                                                                                                                                                                                                            |
+| **015**                     | 依赖 003：015 把 16 个文件的 `@media` 降级并上 `[data-te-motion]` 选择器，而 `reduced` 档的降级策略由 003 定义。**015 另含一项独立修复**：`PlayingLyricLine.vue:557/595` 与 `CompactPlayerBarVisualizer.vue:82/86` 现有的 4 条降级用了 `:global(祖先) .后代` 写法，Vue scoped 编译会丢掉后代部分、把声明落到 `<html>` 上——它们当前是死代码。这一项不依赖任何其他方案，可以单独先做。 |
+| **016**                     | 依赖 015 的策略，但文件完全不重叠。注意两个目标形态不同：`resources/audio-visualizer/index.html` 是主窗口内的 **iframe**（`AudioVisualizerPanel.vue:380`），已有 postMessage 通道可用；`resources/desktop-lyrics.html` 才是真正的独立 `BrowserWindow`，需要照 `miniPlayer.ts:174-177` 加 IPC 通道。                                                                                  |
+| **011** / **018** / **019** | 三条互不相干，可并行。011 与 002 都碰 `base.css` 的 hover/press 规则族，建议 011 排在 002 之后。                                                                                                                                                                                                                                                                                     |
 
 ### 第 5 批 — 最后上门禁
 
@@ -89,15 +89,15 @@
 
 同一文件被多个方案碰到的地方。**同一格里的方案不要并行派给不同节点。**
 
-| 文件 | 方案 | 冲突性质 |
-|---|---|---|
-| `src/renderer/src/components/SideMenu.test.ts` | **008**（`:12`/`:23` 布局过渡断言）、**020**（`:15`/`:20` 曲线字面量断言）、004（同 020 那两条） | **必须串行。** 三者改同一文件的不同断言行。建议 008 → 004 → 020。 |
-| `src/renderer/src/assets/base.css` | 001、002、003、004、006、011 | 区域不同（token 定义 / press 规则 / reduced 兜底 / 曲线引用 / 玻璃层 / hover 门禁），但同文件并行编辑易冲突。按批次顺序串行即可自然错开。 |
-| `src/renderer/src/components/player-bar/PlayerBar.css` | 002（`:1271` 按压）、007（进度条）、008（`:2` 让位 `left`）、010（`:1299`/`:1309` 脉冲）、019（音量抽屉 origin） | 区域不重叠，但建议不同批次执行。 |
-| `src/renderer/src/components/EqualizerPage.vue` | 005（`:1148`/`:1198`/`:1277`/`:1306` 四处 `all`）、017（`:1335-1342` 死块 + 8 处悬空引用） | 区域不重叠且已在两个方案的 Boundaries 里互相点名。可并行，但 017 优先。 |
-| `src/renderer/src/mini-player/MiniPlayer.css` | 002（`:645` 按压）、003（reduced 分支）、010（`:648` 脉冲） | 区域不重叠。 |
-| `src/renderer/src/App.vue` | 004（`:1163-1164`/`:1174-1175` 曲线）、008（`.main-content` 结构）、020（同 004 那两处） | **008 与 004/020 必须串行**——008 会改动 `.main-content` 规则块的结构。 |
-| `src/shared/themeTokens.ts` | 001（改 `motion.soft` 默认值）、020（读它做断言） | 001 先行。 |
+| 文件                                                   | 方案                                                                                                             | 冲突性质                                                                                                                                  |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/renderer/src/components/SideMenu.test.ts`         | **008**（`:12`/`:23` 布局过渡断言）、**020**（`:15`/`:20` 曲线字面量断言）、004（同 020 那两条）                 | **必须串行。** 三者改同一文件的不同断言行。建议 008 → 004 → 020。                                                                         |
+| `src/renderer/src/assets/base.css`                     | 001、002、003、004、006、011                                                                                     | 区域不同（token 定义 / press 规则 / reduced 兜底 / 曲线引用 / 玻璃层 / hover 门禁），但同文件并行编辑易冲突。按批次顺序串行即可自然错开。 |
+| `src/renderer/src/components/player-bar/PlayerBar.css` | 002（`:1271` 按压）、007（进度条）、008（`:2` 让位 `left`）、010（`:1299`/`:1309` 脉冲）、019（音量抽屉 origin） | 区域不重叠，但建议不同批次执行。                                                                                                          |
+| `src/renderer/src/components/EqualizerPage.vue`        | 005（`:1148`/`:1198`/`:1277`/`:1306` 四处 `all`）、017（`:1335-1342` 死块 + 8 处悬空引用）                       | 区域不重叠且已在两个方案的 Boundaries 里互相点名。可并行，但 017 优先。                                                                   |
+| `src/renderer/src/mini-player/MiniPlayer.css`          | 002（`:645` 按压）、003（reduced 分支）、010（`:648` 脉冲）                                                      | 区域不重叠。                                                                                                                              |
+| `src/renderer/src/App.vue`                             | 004（`:1163-1164`/`:1174-1175` 曲线）、008（`.main-content` 结构）、020（同 004 那两处）                         | **008 与 004/020 必须串行**——008 会改动 `.main-content` 规则块的结构。                                                                    |
+| `src/shared/themeTokens.ts`                            | 001（改 `motion.soft` 默认值）、020（读它做断言）                                                                | 001 先行。                                                                                                                                |
 
 ## 需要真机 feel-check 的方案
 

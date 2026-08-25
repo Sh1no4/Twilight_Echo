@@ -1,4 +1,4 @@
-import { LyricSpring, type LyricSpringParams } from './lyricSpring.ts'
+import { LyricSpring, type LyricSpringParams } from './lyricMotion.ts'
 
 /**
  * Press "squish" for liquid glass surfaces.
@@ -14,9 +14,9 @@ import { LyricSpring, type LyricSpringParams } from './lyricSpring.ts'
 export const LIQUID_GLASS_PRESS_TARGET_SCALE = 0.96
 
 /** Fast attack with a whisper of overshoot as the press lands. */
-const PRESS_SPRING: Partial<LyricSpringParams> = { mass: 1, stiffness: 420, damping: 34 }
+const PRESS_SPRING: LyricSpringParams = { mass: 1, stiffness: 420, damping: 34 }
 /** Release settles without crossing; the material relaxes instead of bouncing. */
-const RELEASE_SPRING: Partial<LyricSpringParams> = { mass: 1, stiffness: 260, damping: 38 }
+const RELEASE_SPRING: LyricSpringParams = { mass: 1, stiffness: 260, damping: 38 }
 
 export interface LiquidGlassPressState {
   scale: number
@@ -48,13 +48,13 @@ export class LiquidGlassPressController {
   }
 
   press(): void {
-    this.spring.updateParams(PRESS_SPRING)
-    this.spring.setTargetPosition(LIQUID_GLASS_PRESS_TARGET_SCALE)
+    this.spring.retune(PRESS_SPRING)
+    this.spring.setTarget(LIQUID_GLASS_PRESS_TARGET_SCALE)
   }
 
   release(): void {
-    this.spring.updateParams(RELEASE_SPRING)
-    this.spring.setTargetPosition(1)
+    this.spring.retune(RELEASE_SPRING)
+    this.spring.setTarget(1)
   }
 
   /** Jump to rest with no animation (reduced motion, cancel, teardown). */
@@ -63,13 +63,13 @@ export class LiquidGlassPressController {
   }
 
   isPressed(): boolean {
-    return this.spring.getTargetPosition() === LIQUID_GLASS_PRESS_TARGET_SCALE
+    return this.spring.target === LIQUID_GLASS_PRESS_TARGET_SCALE
   }
 
   /** `deltaSeconds` advances the spring; returns the state to write this frame. */
   update(deltaSeconds: number): LiquidGlassPressState {
     this.spring.update(deltaSeconds)
-    const scale = this.spring.getCurrentPosition()
+    const scale = this.spring.position
     return { scale, glow: resolvePressGlow(scale), settled: this.spring.arrived() }
   }
 }
