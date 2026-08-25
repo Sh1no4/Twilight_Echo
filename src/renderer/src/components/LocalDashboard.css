@@ -31,11 +31,10 @@
   box-sizing: border-box;
   scrollbar-gutter: stable;
   color: var(--home-ink);
-  background-color: var(--te-local-bg);
-  background-image: var(--te-local-bg-image);
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: cover;
+  /* Transparent on purpose: the body carries the one window-wide local wallpaper
+     (body.te-local-surface), so the open sidebar and this page share a single
+     image instead of two cover-scaled copies meeting at the sidebar edge. */
+  background: transparent;
   font-family: var(--te-font-sans, sans-serif);
 }
 

@@ -195,15 +195,19 @@ function handleImportClick(): void {
      shell layout's `inset: auto !important` still wins. */
   bottom: var(--te-side-menu-bottom, 0px);
   width: var(--te-menu-width);
-  /* Frosted surface: the bottom-most global background shows through. */
+  /* Frosted surface: the bottom-most global background shows through. The
+     blur is what keeps the split readable over a custom wallpaper — the page
+     draws its own cover-scaled copy of that image while the body carries the
+     window-wide one, and an unblurred seam between the two scales reads as the
+     menu sitting off-grid. Same recipe the streaming sidebar ships. */
   background: transparent;
   border-right: 1px solid var(--te-navigation-border);
   border-radius: 0 var(--te-navigation-radius) var(--te-navigation-radius) 0;
   z-index: 1000;
   overflow: hidden;
   box-shadow: var(--te-navigation-shadow);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
   transform: translate3d(-100%, 0, 0);
   transform-origin: left center;
   will-change: transform;

@@ -34,15 +34,13 @@
   padding: calc(32px + 30px) min(4.4vw, 48px) 132px;
   overflow-y: auto;
   overflow-x: hidden;
-  background-color: var(--te-local-bg);
+  /* Ambient tints only: the local wallpaper stays on the body (te-local-surface)
+     so the open sidebar and this list share one continuous image. */
+  background-color: transparent;
   background-image:
     radial-gradient(circle at 18% 7%, rgba(124, 77, 255, 0.045), transparent 34%),
     radial-gradient(circle at 53% 12%, rgba(255, 126, 182, 0.04), transparent 32%),
-    radial-gradient(circle at 86% 12%, rgba(104, 132, 255, 0.038), transparent 36%),
-    var(--te-local-bg-image);
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
+    radial-gradient(circle at 86% 12%, rgba(104, 132, 255, 0.038), transparent 36%);
   width: 100%;
   box-sizing: border-box;
   scrollbar-width: thin;

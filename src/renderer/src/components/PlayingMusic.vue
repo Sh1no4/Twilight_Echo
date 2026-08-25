@@ -433,7 +433,7 @@ function syncActiveLyricIndex(time = playbackClockSnapshot.value.position, isSee
     next.buffered.size > 0 ? next.scrollToIndex : findActiveLyricIndex(lyricLines.value, adjusted)
   if (nextIndex !== activeLyricIndex.value) activeLyricIndex.value = nextIndex
   if (next.added.size > 0 || next.removed.size > 0) {
-    void lyricViewport.recenter(isSeek ? 'snap' : 'resize')
+    void lyricViewport.recenter('resize')
   }
 }
 
@@ -445,7 +445,7 @@ watch(
     const epochChanged = previousSnapshot != null && previousSnapshot.epoch !== snapshot.epoch
     if (linesChanged) lyricPlayheadState = createLyricPlayheadState()
     syncActiveLyricIndex(snapshot.position, linesChanged || epochChanged)
-    if (epochChanged && !linesChanged) void lyricViewport.recenter('snap')
+    if (epochChanged && !linesChanged) void lyricViewport.recenter('resize')
   },
   { immediate: true }
 )

@@ -45,6 +45,11 @@ test('settings chrome no longer dual-writes theme-owned CSS variables', () => {
     new URL('../components/song-list/SongList.css', import.meta.url),
     'utf8'
   )
+  const localDashboardSource = readFileSync(
+    new URL('../components/LocalDashboard.css', import.meta.url),
+    'utf8'
+  )
+  const baseSource = readFileSync(new URL('../assets/base.css', import.meta.url), 'utf8')
 
   assert.match(source, /THEME_OWNED_INLINE_STYLE_VARS/)
   assert.match(source, /clearLegacyThemeOwnedInlineStyles/)
@@ -62,7 +67,16 @@ test('settings chrome no longer dual-writes theme-owned CSS variables', () => {
   )
   assert.match(themeSource, /applyAppBackgroundVariables\(tone, variables\)/)
   assert.doesNotMatch(appSource, /body\s*\{\s*background:\s*transparent/)
-  assert.match(songListSource, /background-image:[\s\S]*var\(--te-local-bg-image\)/)
+  // The local background choice lands on the one window-wide body surface
+  // (te-local-surface), never on the page boxes: a second cover-scaled copy on
+  // a page would meet the sidebar edge as a visible seam.
+  assert.match(
+    baseSource,
+    /body\.te-local-surface[\s\S]*?background-image:\s*var\(--te-local-bg-image\) !important/
+  )
+  assert.match(appSource, /classList\.toggle\('te-local-surface', !visible\)/)
+  assert.doesNotMatch(songListSource, /var\(--te-local-bg-image\)/)
+  assert.doesNotMatch(localDashboardSource, /var\(--te-local-bg-image\)/)
 })
 
 test('the global font setting reaches the theme runtime instead of dying in the store', () => {
@@ -673,7 +687,10 @@ test('playbar shape persists across settings layers and flips without an IPC rou
 test('settings patches are detached from Vue reactivity before crossing the IPC bridge', () => {
   const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
 
-  assert.match(storeSource, /function toWirePatch\(patch: Partial<AppSettings>\): Partial<AppSettings>/)
+  assert.match(
+    storeSource,
+    /function toWirePatch\(patch: Partial<AppSettings>\): Partial<AppSettings>/
+  )
   assert.match(storeSource, /window\.api\.settings\.update\(toWirePatch\(patch\)\)/)
   // Every path out of the store must go through it — a raw patch must not remain.
   assert.doesNotMatch(storeSource, /window\.api\.settings\.update\(patch\)/)

@@ -391,7 +391,7 @@
 :where(html[data-te-motion='full'])
   :where(button, [role='button'], [role='switch'], [data-te-interactive]):where(
     :not(:disabled)
-  ):where(:not([aria-disabled='true'])) {
+  ):where(:not([aria-disabled='true'])):where(:not(.lyric-row)) {
   transition:
     translate var(--te-motion-hover) var(--te-ease-soft),
     transform 160ms var(--te-ease-soft);
@@ -400,7 +400,7 @@
 html[data-te-motion='full']
   :where(button, [role='button'], [role='switch'], [data-te-interactive]):not(:disabled):not(
     [aria-disabled='true']
-  ):active {
+  ):where(:not(.lyric-row)):active {
   transform: scale(var(--te-motion-press-scale));
   transition-duration: var(--te-motion-hover), var(--te-motion-press);
 }
@@ -409,7 +409,7 @@ html[data-te-motion='full']
   html[data-te-motion='full']
     :where(button, [role='button'], [role='switch'], [data-te-interactive]):not(:disabled):not(
       [aria-disabled='true']
-    ):hover {
+    ):where(:not(.lyric-row)):hover {
     translate: 0 var(--te-motion-hover-translate);
   }
 }
@@ -794,6 +794,18 @@ html[data-theme='pureWhite'] body.te-streaming-surface {
   background-repeat: no-repeat;
 }
 
+/* The local shell keeps its wallpaper on the body alone: one cover-scaled copy
+   spanning the window, so the open sidebar and the content share one image and
+   the menu reads as squeezing the content inward — not splitting it. */
+body.te-local-surface,
+html[data-theme='pureWhite'] body.te-local-surface {
+  background-color: var(--te-local-bg) !important;
+  background-image: var(--te-local-bg-image) !important;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
 html[data-theme='dark'] body {
   background-color: var(--te-app-bg);
   background-image: var(--te-app-bg-image);
@@ -991,11 +1003,11 @@ html[data-theme='pureWhite'] .title-bar:not(.title-bar-glass) .control-btn:hover
 
 html[data-theme='pureWhite'] .side-menu {
   border-right-color: rgba(17, 24, 39, 0.06);
-  /* Only the bottom-most global background renders; no separate surface. */
+  /* Only the bottom-most global background renders; no separate surface. The
+     base frosted blur stays on so a custom wallpaper's page/body scale seam
+     never shows through the split. */
   background: transparent;
   box-shadow: 8px 0 24px rgba(15, 23, 42, 0.04);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
 }
 
 html[data-theme='pureWhite'] .menu-item:hover,
@@ -1296,6 +1308,14 @@ html[data-theme='dark'] body.te-streaming-surface {
   background-repeat: no-repeat;
 }
 
+html[data-theme='dark'] body.te-local-surface {
+  background-color: var(--te-local-bg) !important;
+  background-image: var(--te-local-bg-image) !important;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
 html[data-theme='dark'] body::before {
   display: none;
 }
@@ -1387,12 +1407,10 @@ html[data-theme='dark'] .streaming-menu-label {
   color: rgba(226, 232, 240, 0.9);
 }
 
+/* Dark mode must not repaint the local wallpaper here: the body already carries
+   the one window-wide copy (te-local-surface), and a second cover-scaled one on
+   the list box would reopen the seam at the sidebar edge. */
 html[data-theme='dark'] .song-list {
-  background-color: var(--te-local-bg);
-  background-image: var(--te-local-bg-image);
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
   scrollbar-color: var(--te-scrollbar-thumb) transparent;
 }
 
@@ -2721,7 +2739,8 @@ html[data-window-transparent='on'][data-theme='dark'] body,
 html[data-window-transparent='on'][data-theme='pureWhite'],
 html[data-window-transparent='on'][data-theme='pureWhite'] body,
 html[data-window-transparent='on'] body.te-settings-surface,
-html[data-window-transparent='on'] body.te-streaming-surface {
+html[data-window-transparent='on'] body.te-streaming-surface,
+html[data-window-transparent='on'] body.te-local-surface {
   background-color: rgba(var(--te-tp-surface-rgb), var(--te-tp-base-alpha, 0.78)) !important;
   background-image: var(--te-app-bg-image) !important;
 }

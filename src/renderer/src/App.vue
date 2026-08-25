@@ -718,6 +718,13 @@ watch(
   showStreamingSurface,
   (visible) => {
     document.body.classList.toggle('te-streaming-surface', visible)
+    // One continuous wallpaper for the whole local shell: the body paints the
+    // local background once, window-wide, and the sidebar plus every page sit
+    // transparent on top. Pages that each carried their own cover-scaled copy
+    // opened a seam at the sidebar edge — two scales of the same image reading
+    // as a split surface. Mutually exclusive with the streaming surface, which
+    // owns the body in its mode.
+    document.body.classList.toggle('te-local-surface', !visible)
   },
   { immediate: true }
 )
@@ -749,6 +756,7 @@ onBeforeUnmount(() => {
   disposeSideMenuClearance()
   document.body.classList.remove('te-settings-surface')
   document.body.classList.remove('te-streaming-surface')
+  document.body.classList.remove('te-local-surface')
 })
 
 const coverTransformOrigin = computed(() => `${coverOrigin.value.x}px ${coverOrigin.value.y}px`)
