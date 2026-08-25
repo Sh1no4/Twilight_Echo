@@ -449,8 +449,25 @@ PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation) {
       result.perfectReasonCode = "routing_changes_semantics";
       result.perfectReason = "Channel routing changes DSD channel semantics";
     } else if (result.processingActive) {
-      result.perfectReasonCode = "dsd_processing_pcm_fallback";
-      result.perfectReason = "DSD processing active; falling back to PCM";
+      // Volume and playback rate are transport controls, not the DSP chain.
+      // Collapsing them into dsd_processing_pcm_fallback told the listener to
+      // "turn off DSP or enable direct mode" — advice that changes nothing when
+      // the real blocker is the 70% default software volume, which direct mode
+      // deliberately leaves alone (jumping to unity would be a +3dB surprise).
+      // Volume gets its own DSD code because it is the one blocker a listener
+      // hits by default; playback rate defaults to 1.0 and direct mode forces
+      // it, so the shared transport code carries enough for that edge case.
+      const std::string processingCode = processingReasonCode(evaluation);
+      if (processingCode == "volume_not_unity") {
+        result.perfectReasonCode = "dsd_volume_pcm_fallback";
+        result.perfectReason = "Software volume is not unity; DSD falls back to PCM";
+      } else if (processingCode == "playback_rate_not_unity") {
+        result.perfectReasonCode = processingCode;
+        result.perfectReason = processingReason(evaluation);
+      } else {
+        result.perfectReasonCode = "dsd_processing_pcm_fallback";
+        result.perfectReason = "DSD processing active; falling back to PCM";
+      }
     } else if (evaluation.dsdMode == DsdMode::Pcm && evaluation.dsdRate >= 256 &&
                evaluation.backendPerfectReason.empty()) {
       result.perfectReasonCode = "dsd_high_rate_pcm_fallback";

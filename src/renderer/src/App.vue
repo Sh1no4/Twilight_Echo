@@ -43,6 +43,7 @@ import { getStartupSnapshot } from './app/startupSnapshot'
 import { useExtensionRegistry } from './extensions/registry'
 import { syncPluginProviders, useMediaProviders } from './providers'
 import { useAppNavigation } from './app/useAppNavigation'
+import { useBackStack } from './app/useBackStack'
 import { createPlaybackSessionPersistence } from './app/usePlaybackSessionPersistence'
 import { useSideMenuClearance } from './app/useSideMenuClearance'
 import { useMiniPlayerSync } from './app/useMiniPlayerSync'
@@ -121,6 +122,26 @@ const {
   openSettingsPage
 } = navigation
 const { pushNotice } = useAppNoticeStore()
+
+// One global back affordance on the title bar. Every full-screen page
+// registers a single base layer here; deeper in-page states (streaming
+// details, login QR flow, EQ advanced settings, …) push themselves on top of
+// it, so the button always resolves the innermost layer first.
+const backStack = useBackStack()
+backStack.useBackHandler(showPlayingPage, closePlayingPage)
+backStack.useBackHandler(showSettingsPage, closeSettingsPage)
+// ThemeStudio 不在此注册：未应用的修改需要确认，由 ThemeStudioPage 自己挂载
+// 期间注册 closeStudio。
+backStack.useBackHandler(showPluginPage, hidePluginPage)
+backStack.useBackHandler(showEqualizerPage, closeEqualizerPage)
+backStack.useBackHandler(showDspRackPage, closeDspRackPage)
+backStack.useBackHandler(showRadioPodcastPage, closeRadioPodcastPage)
+backStack.useBackHandler(showNetworkSourcesPage, closeNetworkSourcesPage)
+backStack.useBackHandler(showLoginPage, closeLoginPage)
+backStack.useBackHandler(
+  computed(() => activePluginPage.value !== null),
+  closePluginPage
+)
 const toggleMenu = navigation.createToggleMenuHandler()
 const toggleSettingsPage = navigation.createToggleSettingsHandler()
 const togglePluginPage = navigation.createTogglePluginHandler()
@@ -160,11 +181,22 @@ const titleMenuOpen = computed(() =>
 )
 
 function handleTitleBack(): void {
-  if (activePluginPage.value) {
-    closePluginPage()
-    return
+  backStack.goBack()
+}
+
+function onGlobalBackKeydown(event: KeyboardEvent): void {
+  // Browser-style back on Alt+Left. Plain ArrowLeft keeps its existing
+  // meanings (text fields, sliders) and Escape stays with overlay dismissal.
+  if (
+    event.key === 'ArrowLeft' &&
+    event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.shiftKey &&
+    backStack.goBack()
+  ) {
+    event.preventDefault()
   }
-  closePlayingPage()
 }
 
 function openPlayingPage(rect: { x: number; y: number; w: number; h: number }): void {
@@ -619,6 +651,7 @@ onMounted(async () => {
   pageHideFlushHandler = flushPendingPersistenceForExit
   window.addEventListener('beforeunload', quitFlushHandler)
   window.addEventListener('pagehide', pageHideFlushHandler)
+  window.addEventListener('keydown', onGlobalBackKeydown)
 })
 
 watch(
@@ -699,6 +732,7 @@ onBeforeUnmount(() => {
   removeCoversMissingListener = null
   if (quitFlushHandler) window.removeEventListener('beforeunload', quitFlushHandler)
   if (pageHideFlushHandler) window.removeEventListener('pagehide', pageHideFlushHandler)
+  window.removeEventListener('keydown', onGlobalBackKeydown)
   quitFlushHandler = null
   pageHideFlushHandler = null
   stopSideMenuMonitor()
@@ -821,7 +855,6 @@ useLiquidGlassEnvironment({
           <PlayingMusic
             v-if="showPlayingPage"
             :style="{ transformOrigin: coverTransformOrigin }"
-            @back="closePlayingPage"
             @customize-appearance="openThemeStudioPage('player')"
           />
         </Transition>
@@ -837,20 +870,19 @@ useLiquidGlassEnvironment({
           @back-to-local="returnToLocalMode"
           @login="handleStreamingLogin"
         />
-        <RadioPodcastPage v-if="showRadioPodcastPage" @back="closeRadioPodcastPage" />
-        <NetworkSourcesPage v-if="showNetworkSourcesPage" @back="closeNetworkSourcesPage" />
+        <RadioPodcastPage v-if="showRadioPodcastPage" />
+        <NetworkSourcesPage v-if="showNetworkSourcesPage" />
         <Transition name="login-page">
           <LoginPage
             v-if="showLoginPage"
             :force-profile="loginPageMode === 'profile'"
             :initial-provider-id="loginInitialProviderId"
-            @back="closeLoginPage"
             @login-success="handleLoginSuccess"
             @configure="handleLoginConfigure"
           />
         </Transition>
         <Transition name="settings-page">
-          <PluginPage v-if="showPluginPage" @back="hidePluginPage" />
+          <PluginPage v-if="showPluginPage" />
         </Transition>
         <Transition name="settings-page">
           <ThemeStudioPage
@@ -860,17 +892,13 @@ useLiquidGlassEnvironment({
           />
         </Transition>
         <Transition name="settings-page">
-          <DspRackPage v-if="showDspRackPage" @back="closeDspRackPage" />
+          <DspRackPage v-if="showDspRackPage" />
         </Transition>
         <Transition name="login-page">
-          <EqualizerPage v-if="showEqualizerPage" @back="closeEqualizerPage" />
+          <EqualizerPage v-if="showEqualizerPage" />
         </Transition>
         <Transition name="login-page">
-          <PluginExtensionPage
-            v-if="activePluginPage"
-            :page="activePluginPage"
-            @back="closePluginPage"
-          />
+          <PluginExtensionPage v-if="activePluginPage" :page="activePluginPage" />
         </Transition>
       </div>
     </div>
@@ -905,7 +933,6 @@ useLiquidGlassEnvironment({
       <SettingsPage
         v-if="showSettingsPage"
         :initial-section="settingsInitialSection"
-        @back="closeSettingsPage"
         @open-equalizer="openEqualizerPage"
         @open-dsp-rack="openDspRackPage"
         @open-theme-studio="openThemeStudioPage"
@@ -1075,6 +1102,21 @@ html[data-te-shell-layout='custom']
   }
 }
 
+/* The clearance is animated on `padding-left` itself, deliberately, even though
+   that reflows this subtree every frame of the 0.32s slide.
+
+   The alternative — land the padding instantly and give the distance back with a
+   composited `translate` — is cheaper but geometrically wrong here. This box is
+   `width: 100%` and `border-box`, so its right edge is pinned to the window and
+   only its width changes; a translate moves *both* edges, so the right edge
+   snapped inward by the clearance on the first frame and slid back over the
+   remaining ones. That read as the content flashing on the right, and on the
+   collapsing direction it overhung the window and flickered a scrollbar in.
+
+   Pinning the right edge while the left one moves *is* a width change, and a
+   width change is a layout. There is no compositor-only spelling of it: only
+   `scaleX` alters visual width, and that stretches the glyphs. So the cost is
+   the intended trade, not an oversight — keep the layout property here. */
 .main-content {
   display: grid;
   box-sizing: border-box;
@@ -1083,7 +1125,6 @@ html[data-te-shell-layout='custom']
   min-height: 100vh;
   padding-left: 0;
   transform: translateZ(0);
-  will-change: padding-left;
   transition: padding-left 0.32s var(--te-ease-soft);
   overflow: hidden;
   position: relative;

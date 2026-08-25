@@ -209,10 +209,12 @@ const emit = defineEmits<{
 </style>
 
 <style>
+/* Inset the content rather than narrowing and translating it. The box keeps its
+   full width, so its right edge — and the scrollbar riding it — stay pinned to
+   the window while only the left edge moves. StreamingPage.css carries the
+   matching `padding-left` transition and the reasoning. */
 .streaming-sidebar.open + .streaming-content {
-  width: calc(100% - var(--te-menu-width));
-  flex-basis: calc(100% - var(--te-menu-width));
-  transform: translate3d(var(--te-menu-width), 0, 0);
+  padding-left: var(--te-menu-width);
 }
 
 .streaming-sidebar .streaming-menu-label {
@@ -250,9 +252,7 @@ const emit = defineEmits<{
   }
 
   .streaming-sidebar.open + .streaming-content {
-    transform: translate3d(var(--te-menu-width), 0, 0);
-    width: calc(100% - var(--te-menu-width));
-    flex-basis: calc(100% - var(--te-menu-width));
+    padding-left: var(--te-menu-width);
   }
 
   .streaming-menu-item {

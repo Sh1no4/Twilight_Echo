@@ -403,7 +403,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
     inset 0 1px 0 rgba(255, 255, 255, 0.9);
   position: relative;
   overflow: hidden;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.3s var(--te-ease-enter);
   cursor: pointer;
 }
 .glass-card:hover {
@@ -499,7 +499,10 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    border-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
 }
 .provider-switch-btn:hover,
 .provider-switch-btn.active {
@@ -621,7 +624,9 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    border-color 0.2s var(--te-ease-soft);
 }
 .stat-badge:hover {
   background: rgba(194, 112, 61, 0.1);
@@ -695,7 +700,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   align-items: center;
   gap: 8px;
   box-shadow: 0 10px 24px rgba(var(--te-primary-rgb, 99, 102, 241), 0.3);
-  transition: all 0.3s;
+  transition: transform 0.3s var(--te-ease-soft);
   cursor: pointer;
 }
 .btn-play:hover {
@@ -712,7 +717,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   box-shadow: 0 16px 32px rgba(15, 23, 42, 0.15);
   overflow: hidden;
   transform: perspective(1000px) rotateY(-5deg);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.3s var(--te-ease-enter);
 }
 .favorites-card:hover .favorites-cover {
   transform: perspective(1000px) rotateY(0deg) scale(1.05);
@@ -826,7 +831,9 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   align-items: center;
   justify-content: center;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
-  transition: all 0.3s;
+  transition:
+    transform 0.3s var(--te-ease-soft),
+    color 0.3s var(--te-ease-soft);
   color: var(--te-neutral-500, #64748b);
   font-size: 16px;
 }
@@ -864,7 +871,9 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition:
+    transform 0.2s var(--te-ease-soft),
+    background-color 0.2s var(--te-ease-soft);
 }
 
 .create-playlist-btn:hover {
@@ -888,7 +897,9 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   justify-content: center;
   cursor: pointer;
   opacity: 0;
-  transition: all 0.2s ease;
+  transition:
+    opacity 0.2s var(--te-ease-soft),
+    background-color 0.2s var(--te-ease-soft);
 }
 
 .playlist-item:hover .playlist-delete-button,
@@ -957,7 +968,9 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   border-radius: 20px;
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.02);
   cursor: pointer;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition:
+    transform 0.3s var(--te-ease-enter),
+    background-color 0.3s var(--te-ease-enter);
   position: relative;
 }
 
@@ -973,7 +986,7 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   border-radius: 14px;
   object-fit: cover;
   box-shadow: 0 8px 16px rgba(15, 23, 42, 0.1);
-  transition: all 0.3s;
+  transition: transform 0.3s var(--te-ease-soft);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1011,7 +1024,9 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
 
 .playlist-item-arrow {
   color: #cbd5e1;
-  transition: all 0.3s;
+  transition:
+    color 0.3s var(--te-ease-soft),
+    transform 0.3s var(--te-ease-soft);
   width: 24px;
   display: flex;
   justify-content: flex-end;
@@ -1036,7 +1051,11 @@ function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
   background: var(--te-card-bg);
   color: #94a3b8;
   cursor: pointer;
-  transition: all 0.2s;
+  transition:
+    transform 0.2s var(--te-ease-soft),
+    background-color 0.2s var(--te-ease-soft),
+    border-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
   margin-right: -4px;
 }
 

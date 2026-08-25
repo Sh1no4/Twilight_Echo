@@ -39,7 +39,6 @@
 .aggregate-detail-header {
   position: relative;
   align-items: center;
-  padding-inline-start: 60px;
 }
 
 .aggregate-heading {
@@ -78,8 +77,7 @@
   transform: rotate(30deg);
 }
 
-.aggregate-primary-action,
-.aggregate-back {
+.aggregate-primary-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -101,26 +99,12 @@
     transform 0.18s;
 }
 
-.aggregate-back {
-  width: 38px;
-  padding: 0;
-}
-
-.aggregate-detail-header .aggregate-back {
-  position: absolute;
-  inset-inline-start: 0;
-  inset-block-start: 50%;
-  transform: translateY(-50%);
-}
-
-.aggregate-primary-action:hover,
-.aggregate-back:hover {
+.aggregate-primary-action:hover {
   background: var(--te-hover-bg);
   border-color: color-mix(in srgb, var(--te-primary-500) 34%, var(--te-card-border));
 }
 
-.aggregate-primary-action:active,
-.aggregate-back:active {
+.aggregate-primary-action:active {
   transform: scale(0.97);
 }
 

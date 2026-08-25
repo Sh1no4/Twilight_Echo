@@ -215,6 +215,12 @@ export const ZH_CN_MESSAGES: Record<string, string> = {
   'audio.reason.dsd_processing_pcm_fallback.fix':
     '关闭 DSP 处理或开启直通模式，让 DSD 保持原生传输。',
 
+  'audio.reason.dsd_volume_pcm_fallback.label': 'DSD 因软件音量不是 100% 而回退到 PCM',
+  'audio.reason.dsd_volume_pcm_fallback.explain':
+    '软件音量要逐样本乘一个增益系数，而 DSD 位流无法直接承载增益，所以 DSD 先被解调成 PCM 才能调音量。这与 DSP 处理链无关，开启直通模式也不会解除——直通模式刻意不动音量，避免响度突然跳到满刻度。',
+  'audio.reason.dsd_volume_pcm_fallback.fix':
+    '把软件音量设为 100%（Unity），改用功放或 DAC 上的物理旋钮控制响度，DSD 即可恢复原生传输。',
+
   'audio.reason.dsd_high_rate_pcm_fallback.label': 'DSD 因采样率或驱动限制回退到 PCM',
   'audio.reason.dsd_high_rate_pcm_fallback.explain':
     '这个 DSD 速率超出了设备或驱动的 Native DSD 与 DoP 承载能力，已转成 PCM。',

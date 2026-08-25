@@ -6,10 +6,6 @@ import { usePlayerStore } from '../stores/usePlayerStore'
 import { isInsecureHttpUrl } from '../../../shared/radioStations.ts'
 import type { PodcastSubscription } from '../../../shared/podcastSubscriptions.ts'
 
-const emit = defineEmits<{
-  back: []
-}>()
-
 const radio = useRadioStore()
 const podcast = usePodcastStore()
 const { playTrack, playTrackFromPosition } = usePlayerStore()
@@ -217,16 +213,6 @@ function formatDuration(seconds: number): string {
 <template>
   <div class="radio-podcast-page">
     <header class="page-header">
-      <button
-        type="button"
-        class="back-btn"
-        data-te-back-button="pill"
-        data-te-page-back-button="pill"
-        @click="emit('back')"
-      >
-        <i class="pi pi-arrow-left"></i>
-        <span>返回</span>
-      </button>
       <div class="page-heading">
         <span class="page-kicker">ONLINE LISTENING</span>
         <h1>电台与播客</h1>
@@ -555,7 +541,6 @@ function formatDuration(seconds: number): string {
   position: relative;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 20px;
-  padding-inline-start: 88px;
   align-items: center;
   margin-bottom: 28px;
 }
@@ -590,16 +575,6 @@ function formatDuration(seconds: number): string {
     transform 0.18s ease;
 }
 
-.back-btn {
-  position: absolute;
-  inset-inline-start: 0;
-  inset-block-start: 50%;
-  padding-inline: 11px 14px;
-  transform: translateY(-50%);
-}
-.back-btn:hover {
-  transform: translate(-2px, -50%);
-}
 button:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--te-primary-500) 38%, transparent);
 }

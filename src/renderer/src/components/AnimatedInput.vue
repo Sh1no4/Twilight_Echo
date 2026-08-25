@@ -9,8 +9,9 @@ const props = withDefaults(
     modelValue: string
     placeholder?: string
     maxAnimatedLength?: number
+    animate?: boolean
   }>(),
-  { placeholder: '', maxAnimatedLength: 60 }
+  { placeholder: '', maxAnimatedLength: 60, animate: false }
 )
 
 const emit = defineEmits<{ (e: 'update:modelValue', value: string): void }>()
@@ -57,7 +58,11 @@ function reconcile(value: string): void {
 
 watch(() => props.modelValue, reconcile, { immediate: true })
 
-const animated = computed(() => chars.value.length <= props.maxAnimatedLength)
+// Per-character motion is opt-in by scenario, not inferred from length: search
+// boxes take hundreds of keystrokes a day and must never animate, while a
+// one-off playlist-name field can afford it. maxAnimatedLength still caps the
+// opted-in case so a long paste does not spawn dozens of transitions.
+const animated = computed(() => props.animate && chars.value.length <= props.maxAnimatedLength)
 
 function syncScroll(): void {
   requestAnimationFrame(() => {
@@ -209,7 +214,7 @@ function onCompositionCancel(): void {
 
 .ai-char-enter-from {
   opacity: 0;
-  transform: translateY(0.35em) scale(0.4);
+  transform: translateY(0.35em) scale(0.9);
 }
 
 .ai-char-leave-active {
@@ -221,7 +226,7 @@ function onCompositionCancel(): void {
 
 .ai-char-leave-to {
   opacity: 0;
-  transform: translateY(0.3em) scale(0.3);
+  transform: translateY(0.3em) scale(0.9);
 }
 
 .ai-char-move {

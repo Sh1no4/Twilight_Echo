@@ -61,7 +61,17 @@ test('motion stylesheet covers native and custom interactive controls', async ()
   assert.match(baseCss, /transition: translate var\(--te-motion-hover\)/)
   assert.match(baseCss, /--te-ease-spring/)
   assert.match(baseCss, /\[aria-disabled='true'\]/)
+  // Press feedback must retarget mid-flight: a transition, never a keyframe.
+  assert.match(baseCss, /transform: scale\(var\(--te-motion-press-scale\)\)/)
+  assert.doesNotMatch(baseCss, /te-interactive-press/)
   assert.match(baseCss, /html\[data-te-motion='off'\]/)
+  // Reduced motion keeps property-scoped feedback instead of nuking everything.
+  assert.match(
+    baseCss,
+    /html\[data-te-motion='reduced'\][\s\S]{0,400}transition-property: opacity, color, background-color, border-color/
+  )
+  assert.match(baseCss, /html\[data-te-motion='reduced'\] \.pi-spin/)
+  assert.doesNotMatch(baseCss, /animation-iteration-count: 1 !important/)
   assert.match(playingMusic, /te-playing-artwork-arrive/)
   assert.match(playingMusic, /lyrics-column--depth/)
   assert.doesNotMatch(playingMusic, /transition: all/)

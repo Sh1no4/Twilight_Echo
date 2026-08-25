@@ -17,7 +17,6 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{
-  back: []
   'clear-search': []
   'update:searchQuery': [value: string]
   login: []
@@ -32,22 +31,10 @@ const avatarLoadFailed = ref(false)
     class="streaming-content-header"
     :class="{
       'is-detail': isDetail,
-      'is-searching': isSearching,
-      'has-page-back': isDetail || isSearching
+      'is-searching': isSearching
     }"
   >
     <div class="streaming-header-left">
-      <button
-        v-if="isDetail || isSearching"
-        type="button"
-        class="btn-back"
-        data-te-back-button="icon"
-        data-te-page-back-button="icon"
-        title="返回"
-        @click="emit('back')"
-      >
-        <i class="pi pi-arrow-left"></i>
-      </button>
       <div class="streaming-header-copy">
         <div v-if="isDetail || isSearching" class="streaming-header-kicker" aria-hidden="true">
           <span class="streaming-header-kicker-mark"></span>

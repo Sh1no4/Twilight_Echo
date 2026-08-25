@@ -154,8 +154,8 @@ function runAction(id: number, run: () => void): void {
   right: 0;
   width: 100%;
   transition:
-    opacity 160ms ease-in,
-    transform 160ms ease-in;
+    opacity 160ms var(--te-ease-out-strong),
+    transform 160ms var(--te-ease-out-strong);
 }
 
 .app-notice-enter-from {

@@ -590,12 +590,18 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
           </span>
         </div>
         <div class="meter-channel" aria-label="左声道">
-          <i class="meter-peak" :style="{ height: peakMeterLevel + '%' }"></i>
-          <i class="meter-rms" :style="{ height: rmsMeterLevel + '%' }"></i>
+          <i class="meter-peak" :style="{ transform: `scaleY(${peakMeterLevel / 100})` }"></i>
+          <i class="meter-rms" :style="{ transform: `scaleY(${rmsMeterLevel / 100})` }"></i>
         </div>
         <div class="meter-channel" aria-label="右声道">
-          <i class="meter-peak" :style="{ height: Math.max(0, peakMeterLevel - 2) + '%' }"></i>
-          <i class="meter-rms" :style="{ height: Math.max(0, rmsMeterLevel - 3) + '%' }"></i>
+          <i
+            class="meter-peak"
+            :style="{ transform: `scaleY(${Math.max(0, peakMeterLevel - 2) / 100})` }"
+          ></i>
+          <i
+            class="meter-rms"
+            :style="{ transform: `scaleY(${Math.max(0, rmsMeterLevel - 3) / 100})` }"
+          ></i>
         </div>
         <div class="meter-labels" aria-hidden="true"><span>L</span><span>R</span></div>
       </aside>
@@ -1328,8 +1334,12 @@ function updateNumeric(field: 'frequency' | 'gain' | 'q', event: Event): void {
   right: 1px;
   bottom: 1px;
   left: 1px;
+  height: 100%;
   display: block;
-  transition: height 90ms linear;
+  transform: scaleY(0);
+  transform-origin: 50% 100%;
+  will-change: transform;
+  transition: none;
 }
 
 .meter-peak {

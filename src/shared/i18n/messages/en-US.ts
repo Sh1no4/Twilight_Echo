@@ -228,6 +228,12 @@ export const EN_US_MESSAGES: Record<string, string> = {
   'audio.reason.dsd_processing_pcm_fallback.fix':
     'Turn off DSP processing or enable direct mode so DSD stays native.',
 
+  'audio.reason.dsd_volume_pcm_fallback.label': 'DSD fell back to PCM because volume is not 100%',
+  'audio.reason.dsd_volume_pcm_fallback.explain':
+    'Software volume multiplies every sample by a gain factor, and a DSD bitstream cannot carry gain directly, so DSD is demodulated to PCM before the volume is applied. This is unrelated to the DSP chain, and direct mode will not clear it — direct mode deliberately leaves volume alone rather than jumping the loudness to full scale.',
+  'audio.reason.dsd_volume_pcm_fallback.fix':
+    'Set software volume to 100% (unity) and control loudness with the physical knob on your amp or DAC; DSD then returns to native transport.',
+
   'audio.reason.dsd_high_rate_pcm_fallback.label':
     'DSD fell back to PCM due to rate or driver limits',
   'audio.reason.dsd_high_rate_pcm_fallback.explain':

@@ -102,6 +102,14 @@ export const AUDIO_REASON_CODES: Record<string, ReasonCodeEntry> = {
     origin: 'processing',
     settingsAnchor: 'dsp'
   },
+  // Non-unity software volume forces a DSD source through PCM. It is its own
+  // code because the fix is the opposite of the DSP-chain one: direct mode does
+  // not clear it, so pointing the listener at the DSP rack sends them nowhere.
+  dsd_volume_pcm_fallback: {
+    severity: 'degraded',
+    origin: 'player',
+    settingsAnchor: 'playback'
+  },
   dsd_high_rate_pcm_fallback: {
     severity: 'degraded',
     origin: 'output',

@@ -1461,7 +1461,10 @@ onBeforeUnmount(() => {
     v-if="currentTrack"
     ref="playerBarShellRef"
     class="player-bar-shell"
-    :class="{ 'menu-open': menuOpen, 'is-geometry-animating': geometryAnimating }"
+    :class="{
+      'menu-open': menuOpen,
+      'is-geometry-animating': geometryAnimating
+    }"
     v-bind="shellDataAttrs"
   >
     <!-- 播放列表面板（向上抽屉） -->

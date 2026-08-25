@@ -194,7 +194,11 @@ onBeforeUnmount(() => {
   font-weight: 700;
   color: var(--te-neutral-900);
   cursor: pointer;
-  transition: var(--transition);
+  transition:
+    transform var(--te-motion-hover) var(--te-ease-soft),
+    background-color var(--te-motion-hover) var(--te-ease-soft),
+    color var(--te-motion-hover) var(--te-ease-soft),
+    border-color var(--te-motion-hover) var(--te-ease-soft);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -262,7 +266,10 @@ onBeforeUnmount(() => {
   font-size: 14px;
   color: var(--te-neutral-900);
   outline: none;
-  transition: var(--transition);
+  transition:
+    background-color var(--te-motion-hover) var(--te-ease-soft),
+    color var(--te-motion-hover) var(--te-ease-soft),
+    border-color var(--te-motion-hover) var(--te-ease-soft);
   font-weight: 500;
 }
 .opra-search-input-wrap input:focus {
@@ -278,7 +285,10 @@ onBeforeUnmount(() => {
   color: var(--te-neutral-900);
   cursor: pointer;
   box-shadow: 0 2px 4px rgba(15, 23, 42, 0.02);
-  transition: var(--transition);
+  transition:
+    background-color var(--te-motion-hover) var(--te-ease-soft),
+    color var(--te-motion-hover) var(--te-ease-soft),
+    border-color var(--te-motion-hover) var(--te-ease-soft);
 }
 .opra-refresh:hover {
   background: var(--te-hover-bg);
@@ -312,7 +322,11 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  transition: var(--transition);
+  transition:
+    transform var(--te-motion-hover) var(--te-ease-soft),
+    background-color var(--te-motion-hover) var(--te-ease-soft),
+    color var(--te-motion-hover) var(--te-ease-soft),
+    border-color var(--te-motion-hover) var(--te-ease-soft);
   box-shadow: 0 2px 8px rgba(15, 23, 42, 0.02);
 }
 .opra-result-item:hover {
@@ -351,7 +365,10 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   font-weight: 700;
   cursor: pointer;
-  transition: var(--transition);
+  transition:
+    background-color var(--te-motion-hover) var(--te-ease-soft),
+    color var(--te-motion-hover) var(--te-ease-soft),
+    border-color var(--te-motion-hover) var(--te-ease-soft);
 }
 .result-apply:hover {
   background: var(--te-primary-500);

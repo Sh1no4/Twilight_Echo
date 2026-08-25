@@ -2559,7 +2559,8 @@ void testSacdIsoTrackFallsBackToPcmWhenProcessingActive() {
   assert(snapshots.size() == 1);
   assertFormatLooksDsdPcmFallbackRequest(snapshots.front().requestedFormat);
   assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
-  assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"dsd_processing_pcm_fallback\"");
+  // Volume is a transport control, not the DSP chain, so it reports its own code.
+  assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"dsd_volume_pcm_fallback\"");
   std::error_code ignored;
   std::filesystem::remove(iso, ignored);
 }
@@ -2615,7 +2616,44 @@ void testInitialNonUnityVolumeUsesPcmFallback() {
   assertFormatLooksDsdPcmFallbackRequest(snapshots.front().requestedFormat);
   assertLatestPlaybackContains(engine, "\"volume\":0.5");
   assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
-  assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"dsd_processing_pcm_fallback\"");
+  // Non-unity volume is the one blocker a listener hits by default (70%), and
+  // the DSP-chain advice does not apply to it: direct mode leaves volume alone.
+  assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"dsd_volume_pcm_fallback\"");
+}
+
+/**
+ * A DSD track parked in PCM fallback by non-unity volume must not reopen the
+ * device on every volume tick.
+ *
+ * The reroute decision asked "we want Native DSD and we are on PCM, so restart"
+ * without checking whether the restart could possibly reach DSD. The open path
+ * re-applied the volume check and landed back in PCM, so each tick of the volume
+ * slider cost a full device close/open and an audible gap, forever.
+ */
+void testNonUnityVolumeTicksDoNotRestartDsdPlayback() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.setVolume(0.5) == TAE_RESULT_OK);
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+
+  const size_t backendCountBefore = g_backendRegistry.snapshots().size();
+  for (int step = 0; step < 6; ++step) {
+    assert(engine.setVolume(0.30 + 0.05 * static_cast<double>(step)) == TAE_RESULT_OK);
+  }
+
+  // Still non-unity, so still PCM — but not one extra device open.
+  assert(g_backendRegistry.snapshots().size() == backendCountBefore);
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+  assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"dsd_volume_pcm_fallback\"");
+
+  // Reaching unity clears the blocker, so re-negotiation must still happen.
+  assert(engine.setVolume(1.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(backendCountBefore + 1));
+  assertLatestPlaybackContains(engine, "\"volume\":1");
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"dop\"");
 }
 
 void testEqEnableRequestsPcmReroute() {
@@ -3513,6 +3551,7 @@ int main() {
   testDopMismatchFallsBackWithStableCode();
   testDopUnprovenFallsBackWithStableCode();
   testInitialNonUnityVolumeUsesPcmFallback();
+  testNonUnityVolumeTicksDoNotRestartDsdPlayback();
   testEqEnableRequestsPcmReroute();
   testVolumeChangeRequestsPcmReroute();
   testUnityVolumeReentersForcedDopFromPcm();

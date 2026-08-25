@@ -852,10 +852,6 @@ html[data-theme='dark'] .onb-card::before {
   transform: scale(1.16);
 }
 
-.onb-swatch:active {
-  transform: scale(0.94);
-}
-
 .onb-swatch.is-selected {
   outline: 3px solid rgba(var(--onb-accent-rgb), 0.85);
   outline-offset: 3px;

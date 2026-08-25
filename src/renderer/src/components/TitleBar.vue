@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useBackStack } from '../app/useBackStack'
 import { useNcmStore } from '../stores/useNcmStore'
 import PuzzleIcon from './icons/PuzzleIcon.vue'
 
@@ -27,6 +28,7 @@ defineEmits<{
 }>()
 
 const { isLoggedIn, profile } = useNcmStore()
+const { canGoBack, backHint } = useBackStack()
 const avatarLoadFailed = ref(false)
 
 function setPressOrigin(event: PointerEvent): void {
@@ -63,6 +65,27 @@ function close(): void {
     }"
   >
     <div class="title-bar-background" aria-hidden="true"></div>
+    <!-- One global back affordance. It lives outside `hideStart`/`glass` so every
+         deep surface (playing page, theme studio, login, …) resolves through the
+         same fixed position; the wrapper width animates so sibling buttons do
+         not jump when it appears. -->
+    <div
+      class="title-bar-back no-drag"
+      :class="{ 'title-bar-back-visible': canGoBack }"
+      @pointerdown="setPressOrigin"
+    >
+      <Transition name="title-back-fade">
+        <button
+          v-if="canGoBack"
+          class="back-btn"
+          :title="backHint ?? '返回'"
+          aria-label="返回"
+          @click="$emit('back')"
+        >
+          <i class="pi pi-arrow-left" aria-hidden="true"></i>
+        </button>
+      </Transition>
+    </div>
     <div v-if="!glass && !hideStart" class="title-bar-start no-drag" @pointerdown="setPressOrigin">
       <button class="menu-btn" title="菜单" @click="$emit('toggleMenu')">
         <svg
@@ -210,6 +233,60 @@ html[data-theme='dark'] .title-bar.title-bar-glass {
   z-index: 1;
 }
 
+.title-bar-back {
+  display: flex;
+  align-items: center;
+  width: 0;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  transition: width 0.2s var(--te-ease-soft, ease);
+}
+
+.title-bar-back-visible {
+  width: 36px;
+}
+
+.back-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  min-width: 36px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--te-shell-control-text);
+  cursor: pointer;
+  transition: background 0.15s;
+  padding: 0;
+  font-size: 14px;
+}
+
+.back-btn:hover {
+  background: var(--te-shell-control-hover);
+}
+
+.title-back-fade-enter-active,
+.title-back-fade-leave-active {
+  transition: opacity 0.18s ease;
+}
+
+.title-back-fade-enter-from,
+.title-back-fade-leave-to {
+  opacity: 0;
+}
+
+.title-bar-glass .back-btn {
+  color: #fff;
+}
+
+.title-bar-glass .back-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .menu-btn {
   display: flex;
   align-items: center;
@@ -338,7 +415,6 @@ html[data-theme='dark'] .title-bar.title-bar-glass {
 }
 
 .control-btn:active {
-  transform: scale(0.88);
   transition-duration: 0.1s;
 }
 
@@ -409,13 +485,15 @@ html[data-te-liquid-glass-scrolled='on'] .title-bar-liquid .title-bar-background
     0 6px 18px color-mix(in srgb, var(--te-lg-context-label) 8%, transparent);
 }
 
-.title-bar-liquid :is(.menu-btn, .settings-btn, .plugins-btn, .login-btn, .control-btn) {
+.title-bar-liquid
+  :is(.menu-btn, .back-btn, .settings-btn, .plugins-btn, .login-btn, .control-btn) {
   position: relative;
   overflow: hidden;
   color: inherit;
 }
 
-.title-bar-liquid :is(.menu-btn, .settings-btn, .plugins-btn, .login-btn, .control-btn)::after {
+.title-bar-liquid
+  :is(.menu-btn, .back-btn, .settings-btn, .plugins-btn, .login-btn, .control-btn)::after {
   position: absolute;
   inset: 0;
   background: radial-gradient(
@@ -429,13 +507,14 @@ html[data-te-liquid-glass-scrolled='on'] .title-bar-liquid .title-bar-background
   transition: opacity 160ms ease-out;
 }
 
-.title-bar-liquid :is(.menu-btn, .settings-btn, .plugins-btn, .login-btn, .control-btn):active {
+.title-bar-liquid
+  :is(.menu-btn, .back-btn, .settings-btn, .plugins-btn, .login-btn, .control-btn):active {
   transform: scale(0.94);
   transition-duration: 90ms;
 }
 
 .title-bar-liquid
-  :is(.menu-btn, .settings-btn, .plugins-btn, .login-btn, .control-btn):active::after {
+  :is(.menu-btn, .back-btn, .settings-btn, .plugins-btn, .login-btn, .control-btn):active::after {
   opacity: 1;
 }
 

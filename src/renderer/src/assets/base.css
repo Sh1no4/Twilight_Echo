@@ -24,11 +24,17 @@
   --te-glow-cyan: rgba(34, 211, 238, 0.18);
   --color-text: var(--te-neutral-900);
   --te-ease-enter: cubic-bezier(0.4, 0, 0.2, 1);
-  /* Soft = out-quint: fast start, long settling tail (osu!lazer-style motion). */
+  /* Soft = out-quint: fast start, long settling tail (osu!lazer-style motion).
+     Runtime authority is the `motion.soft` token in src/shared/themeTokens.ts:
+     useThemeStore injects it into :root with !important, so this declaration
+     only covers the frames before the theme runtime lands. Keep both values
+     identical. */
   --te-ease-soft: var(--te-ease-out-quint);
   --te-ease-spring: cubic-bezier(0.22, 1.14, 0.36, 1);
   --te-ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
   --te-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Strong ease-out for UI enter/exit (AUDIT §2). */
+  --te-ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
   --te-motion-press: 90ms;
   --te-motion-hover: 160ms;
   --te-motion-panel: 280ms;
@@ -36,7 +42,7 @@
   /* Asymmetric motion: hover-in settles on a long out-quint tail, hover-out returns fast. */
   --te-motion-settle: 500ms;
   --te-motion-return: 220ms;
-  --te-motion-press-scale: 0.96;
+  --te-motion-press-scale: 0.97;
   --te-motion-hover-translate: -1px;
   --te-ui-scale: 0.94;
   --te-menu-width: clamp(132px, 18vw, 216px);
@@ -44,15 +50,14 @@
   --te-surface-opacity: 100%;
   /* Latin: Inter. CJK: packaged MiSans unicode-range subsets. */
   --te-font-display:
-    'Inter', 'Plus Jakarta Sans', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei',
-    'PingFang SC', 'Hiragino Sans GB', system-ui, sans-serif;
+    'Inter', 'Plus Jakarta Sans', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC',
+    'Hiragino Sans GB', system-ui, sans-serif;
   --te-font-rounded:
-    'Inter', 'Plus Jakarta Sans', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei',
-    'PingFang SC', 'Hiragino Sans GB', system-ui, sans-serif;
+    'Inter', 'Plus Jakarta Sans', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC',
+    'Hiragino Sans GB', system-ui, sans-serif;
   --te-font-sans:
-    'Inter', 'Plus Jakarta Sans', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei',
-    'PingFang SC', 'Hiragino Sans GB', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
-    sans-serif;
+    'Inter', 'Plus Jakarta Sans', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC',
+    'Hiragino Sans GB', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --te-text-title: 500;
   --te-text-body: 400;
   --te-text-meta: 400;
@@ -297,22 +302,10 @@
   outline-color: var(--te-back-button-color) !important;
 }
 
-/* Primary page navigation lives in its own rail, so it stays easy to hit without
-   consuming the title or toolbar's layout space. Dialog and mini-player controls
-   deliberately use only `data-te-back-button` and keep their compact sizing. */
-:where([data-te-page-back-button='icon']) {
-  min-width: 44px !important;
-  min-height: 44px !important;
-}
-
-:where([data-te-page-back-button='icon'] i) {
-  font-size: 18px;
-}
-
-:where([data-te-page-back-button='pill']) {
-  min-height: 44px !important;
-  padding-inline: 16px !important;
-}
+/* `data-te-page-back-button` has been retired: page-level back navigation now
+   lives on the title bar (TitleBar.vue) driven by app/useBackStack.ts. The
+   styles above remain for in-flow controls (onboarding stepper, mini player,
+   login error recovery). */
 
 /* Shared back-to-top control. scrollToTopButton.ts keeps exactly one of these in
    the document and anchors it to whichever container is scrolled, so `left`/`top`
@@ -382,11 +375,34 @@
   opacity: 0.52;
 }
 
+/* Press feedback is a transition, not a keyframe: a transition retargets from
+   the current scale when the button is tapped again mid-flight, and it holds the
+   pressed state for as long as the pointer is down. Asymmetric on purpose —
+   `:active` presses in over --te-motion-press (90ms) and the release rides the
+   longer base duration (160ms) below.
+
+   Every part of this selector is wrapped in :where() so the whole thing weighs
+   zero, exactly like the base rule above. This is a `transition` shorthand, so
+   any specificity here would replace — not merge with — the transition list of
+   every button that declares its own. `:where()` zeroes out but `:not()` does
+   not: unwrapped, this selector scores (0,3,1) and silently deletes the
+   background/color/opacity fades of 16 component rules, including the shared
+   back-to-top control (a real <button>, see utils/scrollToTopButton.ts). */
+:where(html[data-te-motion='full'])
+  :where(button, [role='button'], [role='switch'], [data-te-interactive]):where(
+    :not(:disabled)
+  ):where(:not([aria-disabled='true'])) {
+  transition:
+    translate var(--te-motion-hover) var(--te-ease-soft),
+    transform 160ms var(--te-ease-soft);
+}
+
 html[data-te-motion='full']
   :where(button, [role='button'], [role='switch'], [data-te-interactive]):not(:disabled):not(
     [aria-disabled='true']
   ):active {
-  animation: te-interactive-press var(--te-motion-press) var(--te-ease-soft);
+  transform: scale(var(--te-motion-press-scale));
+  transition-duration: var(--te-motion-hover), var(--te-motion-press);
 }
 
 @media (hover: hover) {
@@ -398,17 +414,9 @@ html[data-te-motion='full']
   }
 }
 
-@keyframes te-interactive-press {
-  0%,
-  100% {
-    scale: 1;
-  }
-
-  48% {
-    scale: var(--te-motion-press-scale);
-  }
-}
-
+/* Duration tokens still drop so any rule that reads them directly gets the
+   gentler value; the press-scale / hover-translate resets stay as belt-and-braces
+   for future rules that are not gated on [data-te-motion='full']. */
 html[data-te-motion='reduced'] {
   --te-motion-press: 0ms;
   --te-motion-hover: 100ms;
@@ -418,18 +426,51 @@ html[data-te-motion='reduced'] {
   --te-motion-hover-translate: 0px;
 }
 
-/* Near-zero durations (not e.g. 100ms): a non-zero universal transition-duration
-   would give every element an implicit `transition-property: all` tween, adding
-   motion instead of reducing it. Delays are zeroed so staggered entrances with
-   `fill: both` don't leave content invisible until their delay elapses. */
+/* Reduced motion means fewer and gentler animations, not zero. Two rules do the
+   work:
+   1. This block kills keyframe motion outright (`animation: none`, like the
+      'off' tier) so a frozen decorative loop lands on its static declaration
+      instead of "finishing" a 0.01ms run with no fill-mode.
+   2. The next block hands interactive elements a short, property-scoped
+      transition back. It must stay property-scoped: a non-zero universal
+      transition-duration would give every element an implicit
+      `transition-property: all` tween, adding motion instead of reducing it. */
 html[data-te-motion='reduced'] *,
 html[data-te-motion='reduced'] *::before,
 html[data-te-motion='reduced'] *::after {
-  animation-duration: 0.01ms !important;
-  animation-delay: 0ms !important;
-  animation-iteration-count: 1 !important;
+  animation: none !important;
   transition-duration: 0.01ms !important;
   transition-delay: 0ms !important;
+}
+
+/* Feedback survives: opacity and colour confirm the press/hover without moving
+   anything. transform/translate are deliberately absent — position changes are
+   exactly what this tier removes. */
+html[data-te-motion='reduced']
+  :where(
+    button,
+    [role='button'],
+    [role='switch'],
+    [role='radio'],
+    [role='tab'],
+    [data-te-interactive],
+    a,
+    input,
+    select,
+    textarea,
+    label
+  ) {
+  transition-property: opacity, color, background-color, border-color !important;
+  transition-duration: 120ms !important;
+  transition-timing-function: var(--te-ease-soft) !important;
+}
+
+/* Motion that carries information keeps running in the reduced tier; freezing it
+   removes meaning rather than movement. The loading spinner would become a
+   static icon (no way to tell "loading" from "hung"), so it keeps turning at
+   half speed. */
+html[data-te-motion='reduced'] .pi-spin {
+  animation: fa-spin 4s infinite linear !important;
 }
 
 html[data-te-motion='off'] *,
@@ -3197,19 +3238,19 @@ html[data-te-liquid-glass-coverage='expanded']
     /* A small, directional highlight is enough to communicate curvature. The old
        full-card bloom made large settings panes read as white molded plastic. */
     radial-gradient(
-      112% 126% at var(--te-lg-light-x, 50%) var(--te-lg-light-y, 42%),
-      rgba(
-          var(--te-lg-sheen-rgb),
-          calc(var(--te-lg-expanded-specular, var(--te-lg-rim-strength)) * 0.17)
-        )
-        0%,
-      rgba(
-          var(--te-lg-sheen-rgb),
-          calc(var(--te-lg-expanded-specular, var(--te-lg-rim-strength)) * 0.055)
-        )
-        21%,
-      transparent 55%
-    ),
+        112% 126% at var(--te-lg-light-x, 50%) var(--te-lg-light-y, 42%),
+        rgba(
+            var(--te-lg-sheen-rgb),
+            calc(var(--te-lg-expanded-specular, var(--te-lg-rim-strength)) * 0.17)
+          )
+          0%,
+        rgba(
+            var(--te-lg-sheen-rgb),
+            calc(var(--te-lg-expanded-specular, var(--te-lg-rim-strength)) * 0.055)
+          )
+          21%,
+        transparent 55%
+      ),
     linear-gradient(
       var(--te-lg-angle, 135deg),
       rgba(var(--te-lg-sheen-rgb), 0) 0%,
@@ -3241,10 +3282,7 @@ html[data-te-liquid-glass-coverage='expanded']
   opacity: 1;
   transition:
     opacity 180ms ease,
-    transform 180ms ease,
-    filter 180ms ease,
-    backdrop-filter 180ms ease,
-    -webkit-backdrop-filter 180ms ease;
+    transform 180ms ease;
 }
 
 /* A flat colour has no pixels for backdrop-filter to refract. Give those

@@ -3591,6 +3591,25 @@ bool AudioPipeline::isNativeDsdPathActive() const {
   return nativeDsdPathActive_;
 }
 
+/**
+ * Whether the current processing state would force a DSD source onto PCM.
+ *
+ * This is the same predicate the open path uses to decide whether Native DSD or
+ * DoP may even be attempted, exposed so the reroute decision can tell a
+ * re-negotiation that might succeed from one that provably cannot. Without it,
+ * a DSD track sitting in PCM fallback because software volume is below unity was
+ * restarted on every single volume change: the reroute reopened the device, the
+ * open path re-applied this very check, and playback landed back in PCM.
+ */
+bool AudioPipeline::processingForcesDsdPcmFallback() const {
+  std::lock_guard lock(mutex_);
+  return dspConfigProcessingRequiresPcm(
+      dspConfig_,
+      outputConfig_,
+      loadAtomicDouble(requestedVolumeBits_),
+      loadAtomicDouble(requestedPlaybackRateBits_));
+}
+
 bool AudioPipeline::needsPcmFallback(std::string* reason) const {
   std::lock_guard lock(mutex_);
   const bool processingActive =

@@ -54,7 +54,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  back: []
   openEqualizer: []
   openDspRack: []
   openThemeStudio: []

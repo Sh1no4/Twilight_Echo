@@ -84,6 +84,7 @@ useFocusTrap(dialogRef, () => props.show)
           class="create-aggregate-input"
           placeholder="聚合歌单名称"
           aria-label="聚合歌单名称"
+          animate
           @keydown.enter="confirm()"
         />
         <p v-if="error" class="create-aggregate-error" role="alert">{{ error }}</p>

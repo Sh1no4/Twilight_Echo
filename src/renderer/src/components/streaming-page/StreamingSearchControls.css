@@ -21,7 +21,9 @@
   background-color: rgba(255, 255, 255, 0.42);
   border: 1px solid rgba(255, 255, 255, 0.5);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
   user-select: none;
 }
 
@@ -59,7 +61,9 @@
   background: var(--te-card-bg);
   border: 1px solid var(--te-card-border, #eef1f6);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
   user-select: none;
   white-space: nowrap;
 }

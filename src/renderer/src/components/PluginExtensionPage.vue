@@ -7,10 +7,6 @@ const props = defineProps<{
   page: UiContribution
 }>()
 
-const emit = defineEmits<{
-  back: []
-}>()
-
 const loading = ref(false)
 const error = ref('')
 const textResult = ref('')
@@ -72,16 +68,6 @@ watch(
 <template>
   <section class="plugin-extension-page">
     <header class="plugin-extension-header">
-      <button
-        class="plugin-extension-back"
-        type="button"
-        data-te-back-button="icon"
-        data-te-page-back-button="icon"
-        title="返回"
-        @click="emit('back')"
-      >
-        <i class="pi pi-arrow-left"></i>
-      </button>
       <div class="plugin-extension-icon">
         <i v-if="page.icon" :class="page.icon"></i>
         <PuzzleIcon v-else />
@@ -149,25 +135,8 @@ watch(
   grid-template-columns: 54px minmax(0, 1fr) auto;
   align-items: center;
   gap: 16px;
-  padding-inline-start: 52px;
   max-width: 960px;
   margin: 0 auto 20px;
-}
-
-.plugin-extension-back {
-  position: absolute;
-  inset-inline-start: 0;
-  inset-block-start: 50%;
-  width: 34px;
-  height: 34px;
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  transform: translateY(-50%);
-}
-
-.plugin-extension-back:hover {
-  transform: translate(-1px, -50%);
 }
 
 .plugin-extension-icon {

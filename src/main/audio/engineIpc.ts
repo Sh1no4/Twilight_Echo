@@ -14,6 +14,7 @@ import {
 } from '../core/settings'
 import { DEFAULT_SOFTWARE_VOLUME } from '../../shared/audioProcessingOptions.ts'
 import { encodeAppError, ipcError } from '../../shared/errors/appError.ts'
+import { audioEngineError } from './engineErrors.ts'
 import { translate } from '../../shared/i18n/translate.ts'
 import { mainLocale } from '../core/locale.ts'
 import { renderAudioDiagnosticMarkdown } from './diagnosticReport.ts'

@@ -6,6 +6,7 @@ import ThemeIcon from '../ThemeIcon.vue'
 import { formatDuration } from '../song-list/formatDuration'
 import { useSongListVirtualScroll } from '../song-list/useSongListVirtualScroll'
 import { useEscapeToClose, useFocusTrap } from '../../app/useDismissLayer.ts'
+import { useBackHandler } from '../../app/useBackStack.ts'
 import { useMusicStore } from '../../stores/useMusicStore'
 import { usePlayerStore } from '../../stores/usePlayerStore'
 import { useProviderStore } from '../../stores/useProviderStore'
@@ -24,8 +25,14 @@ const props = withDefaults(
     hasPlayer: boolean
     /** 本地视图和流媒体页各挂一个实例，只用于外壳留白的细微差别。 */
     surface?: 'local' | 'streaming'
+    /**
+     * 流媒体页内嵌的实例在流媒体页切去后台（v-show）时依然存活；此时不
+     * 应向全局返回栈注册，让位给真正可见的页面。本地实例总是 v-if 挂载，
+     * 不需要关心。
+     */
+    active?: boolean
   }>(),
-  { surface: 'local' }
+  { surface: 'local', active: true }
 )
 
 const {
@@ -116,8 +123,7 @@ const {
   visibleTracks,
   totalHeight,
   paddingTop,
-  onScroll,
-  onRowPointerMove
+  onScroll
 } = useSongListVirtualScroll({
   displayTracks,
   resetSources: [activePlaylistId, searchQuery],
@@ -163,6 +169,13 @@ function backToGrid(): void {
   activePlaylistId.value = null
   openVariantMenuFor.value = null
 }
+
+// 歌单详情 → 标题栏返回按钮回到网格；取代了原来详情头部的页内返回按钮。
+useBackHandler(
+  computed(() => props.active && activePlaylistId.value !== null),
+  backToGrid,
+  '返回聚合歌单列表'
+)
 
 function togglePinned(playlistId: string, pinned: boolean, event: Event): void {
   event.stopPropagation()
@@ -393,16 +406,6 @@ function rowNumber(index: number): number {
     <!-- ── 详情视图 ───────────────────────────────────────────────────── -->
     <template v-else>
       <header class="aggregate-header aggregate-detail-header">
-        <button
-          type="button"
-          class="aggregate-back"
-          data-te-back-button="icon"
-          data-te-page-back-button="icon"
-          title="返回聚合歌单列表"
-          @click="backToGrid()"
-        >
-          <i class="pi pi-arrow-left"></i>
-        </button>
         <div class="aggregate-heading">
           <h2 class="aggregate-title">
             <i v-if="activePlaylist.pinnedAt" class="pi pi-thumbtack aggregate-pin-mark"></i>
@@ -480,7 +483,6 @@ function rowNumber(index: number): number {
               :style="{ height: rowHeight - 4 + 'px', display: 'flex' }"
               @click="onRowClick(track)"
               @dblclick="onRowDoubleClick(track)"
-              @pointermove="onRowPointerMove"
             >
               <td class="col-index">
                 <ThemeIcon
@@ -605,6 +607,7 @@ function rowNumber(index: number): number {
             class="aggregate-dialog-input"
             placeholder="聚合歌单名称"
             aria-label="聚合歌单名称"
+            animate
             @keydown.enter="confirmCreate()"
           />
           <p v-if="createError" class="aggregate-dialog-error" role="alert">{{ createError }}</p>

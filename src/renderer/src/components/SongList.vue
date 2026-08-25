@@ -18,6 +18,7 @@ import { resolveUnifiedRecentTracks } from '../utils/unifiedRecentTracks'
 import { getTrackSearchBlob, normalizeSearchText } from '../utils/localLibrarySearch'
 import { getTrackSource as getLogicalTrackSource } from '../utils/logicalTrackModel'
 import { useEscapeToClose } from '../app/useDismissLayer.ts'
+import { useBackHandler } from '../app/useBackStack.ts'
 import { buildMetadataMatchCandidates } from '../utils/musicMetadataMatching'
 import {
   applyLibraryCollectionView,
@@ -500,9 +501,14 @@ const unifiedSearchStatusText = computed(() => {
 
 const showDetailBackButton = computed(() => {
   // Top-level views (including recent / all songs) are reached from the side
-  // menu; a back button that only clears the filter is a no-op there.
+  // menu; a back action that only clears the filter is a no-op there.
   return !!props.filter
 })
+
+// The title-bar back button clears the active filter (same action as the old
+// in-page back button's selectView emit). SongList unmounts whenever another
+// full-screen surface takes over, so this layer always cleans itself up.
+useBackHandler(showDetailBackButton, () => emit('selectView', props.category, null))
 
 const showGrid = computed(() => {
   if (props.category === 'allSongs' || props.category === 'recent') return false
@@ -875,7 +881,6 @@ const {
   totalHeight,
   paddingTop,
   onScroll,
-  onRowPointerMove,
   updateViewportHeight,
   scrollTop,
   viewportHeight
@@ -1611,18 +1616,8 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
           </div>
         </template>
         <template v-else>
-          <div class="song-list-header" :class="{ 'has-page-back': showDetailBackButton }">
+          <div class="song-list-header">
             <div class="header-left">
-              <button
-                v-if="showDetailBackButton"
-                class="btn-back"
-                data-te-back-button="icon"
-                data-te-page-back-button="icon"
-                title="返回"
-                @click="emit('selectView', category, null)"
-              >
-                <i class="pi pi-arrow-left"></i>
-              </button>
               <div class="title-group">
                 <div class="title-line">
                   <h2 class="song-list-title">{{ viewTitle }}</h2>
@@ -2132,7 +2127,6 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   @dragstart="handlePlaylistDragStart($event, track)"
                   @dragover.prevent
                   @drop="handlePlaylistDrop($event, track)"
-                  @pointermove="onRowPointerMove"
                   @contextmenu="onTrackContextMenu($event, track)"
                 >
                   <td class="col-index">

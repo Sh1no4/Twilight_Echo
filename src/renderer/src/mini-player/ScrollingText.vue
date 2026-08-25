@@ -112,4 +112,16 @@ onBeforeUnmount(() => {
     transform: translateX(-50%);
   }
 }
+
+/* The marquee carries information: a long title is unreadable when truncated,
+   so the mini window's text keeps scrolling in the reduced tier — just slower.
+   See docs/ui-playback-refactor-audit.md:696 for why the component's own
+   prefers-reduced-motion disable rule was removed. */
+:global(html[data-te-motion='reduced'] .te-scroll-text.is-overflowing .te-scroll-text-inner) {
+  animation-name: te-scroll-text-loop !important;
+  animation-duration: calc(var(--te-scroll-duration, 10s) * 2) !important;
+  animation-timing-function: linear !important;
+  animation-iteration-count: infinite !important;
+  animation-delay: 2.4s !important;
+}
 </style>

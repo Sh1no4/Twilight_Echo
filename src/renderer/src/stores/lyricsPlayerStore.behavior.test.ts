@@ -525,7 +525,9 @@ window.runLyricsPlayerRuntime = async () => {
 }
 
 function runtimeHtml(bundleName: string): string {
-  return `<!doctype html><html><body><script>
+  // Without an explicit charset the bundle is decoded as latin1, which mangles
+  // the CJK ranges in shared/i18n/translate.ts into an invalid character class.
+  return `<!doctype html><html><head><meta charset="utf-8"></head><body><script>
 window.process = { env: {} }
 window.__audioFixture = {
   propertyCallbacks: [], playbackInfoCallbacks: [], startFileCallbacks: [],

@@ -1,4 +1,19 @@
-﻿/* ===== Shell ===== */
+﻿/* ===== Shell =====
+
+   Clearing the open side menu animates `left` — this shell's own inset — and
+   never `transform`. Both insets are pinned, so the distance between them *is*
+   the bar's width: a translate carries the right edge along with the left,
+   which starts the already-narrowed bar a full menu-width inside the frame and
+   sweeps it back out. That read as the bar flinching on its right side. The
+   inset transition costs a layout pass per frame instead, and it is a small
+   subtree — `.is-geometry-animating` below drops the glass blur for the
+   duration so the per-frame cost stays in layout rather than re-compositing.
+
+   Never add `will-change: transform` here. With a transform-like value this
+   shell becomes a permanent containing block for its `position: fixed`
+   descendants — the full-height `.hifi-overlay` and the viewport-wide
+   `.player-panel-dismiss` — collapsing both into this bottom strip. That is
+   what once made the HiFi deck open as a sliver across the playbar. */
 .player-bar-shell {
   position: fixed;
   bottom: 14px;
@@ -6,7 +21,6 @@
   right: 18px;
   z-index: 1002;
   pointer-events: none;
-  will-change: left;
   transition: left 0.32s var(--te-ease-soft);
 }
 
@@ -567,15 +581,6 @@
   border-color: color-mix(in srgb, var(--te-primary-500) 16%, transparent);
 }
 
-:global(html[data-te-motion='full'] .playlist-item.active) {
-  animation: queue-item-confirm var(--te-motion-panel) var(--te-ease-spring) both;
-}
-
-@keyframes queue-item-confirm {
-  48% {
-    scale: 1.012;
-  }
-}
 .panel-glass .playlist-item.active {
   background: linear-gradient(
     90deg,
@@ -1267,8 +1272,10 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 .ctrl-btn:hover {
   background: #f0f0f0;
 }
+/* Press scale comes from the global :active rule in base.css; a local
+   transform: scale() would multiply with it (scale and transform are separate
+   properties) and overshoot the 0.95–0.98 press range. */
 .ctrl-btn:active {
-  transform: scale(0.88);
   transition-duration: 0.1s;
 }
 .ctrl-btn img {
@@ -1295,26 +1302,6 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   box-shadow: none;
 }
 
-:global(html[data-te-motion='full'] .player-left) {
-  animation: player-track-arrive var(--te-motion-panel) var(--te-ease-spring) both;
-}
-
-@keyframes player-track-arrive {
-  from {
-    opacity: 0;
-    translate: -10px 0;
-  }
-}
-
-:global(html[data-te-motion='full'] .btn-play.is-playing) {
-  animation: player-play-confirm var(--te-motion-panel) var(--te-ease-spring) both;
-}
-
-@keyframes player-play-confirm {
-  46% {
-    scale: 1.1;
-  }
-}
 .btn-play i {
   font-size: 18px;
   line-height: 1;
@@ -1808,7 +1795,6 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 }
 
 .mode-btn-right:active {
-  transform: scale(0.88);
   transition-duration: 0.1s;
 }
 
@@ -1906,7 +1892,6 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 }
 
 .icon-btn:active {
-  transform: scale(0.88);
   transition-duration: 0.1s;
 }
 

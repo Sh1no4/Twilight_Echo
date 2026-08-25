@@ -4,6 +4,7 @@ import {
   type BuiltInThemePresetId,
   type ThemeStudioDomain
 } from './theme-studio/useThemeStudioEditor'
+import { useBackHandlerWhileMounted } from '../app/useBackStack'
 import EqualizerPage from './EqualizerPage.vue'
 import LocalDashboard from './LocalDashboard.vue'
 import PlayerBar from './PlayerBar.vue'
@@ -116,23 +117,16 @@ const {
   initialDomain: props.initialDomain,
   onBack: () => emit('back')
 })
+
+// 标题栏返回键必须走 closeStudio：有未应用的修改时它需要弹确认，不能由
+// App 层按页面旗标直接关闭，本页因此不注册 App 层基础层。
+useBackHandlerWhileMounted(closeStudio)
 void previewViewportRef.value
 </script>
 
 <template>
   <div class="theme-studio-page" data-te-surface="theme-studio">
     <header class="theme-studio-header">
-      <button
-        type="button"
-        class="studio-icon-button"
-        data-te-back-button="icon"
-        data-te-page-back-button="icon"
-        title="返回"
-        aria-label="返回"
-        @click="closeStudio"
-      >
-        <i class="ph ph-arrow-left"></i>
-      </button>
       <div>
         <h1>主题工作室 · Beta</h1>
         <span>{{

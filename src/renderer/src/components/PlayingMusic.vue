@@ -895,29 +895,37 @@ onBeforeUnmount(() => {
 
 .backdrop-cover-fade-enter-active,
 .backdrop-cover-fade-leave-active {
-  transition:
-    opacity 0.7s ease,
-    transform 0.7s ease;
+  transition: opacity 400ms var(--te-ease-out-strong);
+}
+
+/* Transition-time blur stays under the 20px budget (AUDIT §5): the heavy
+   58px+ pass cannot reuse its rasterized texture while two layers overlap.
+   The extra brightness drop keeps the stage as dark as the settled state. */
+.backdrop-cover-fade-enter-active :deep(img),
+.backdrop-cover-fade-leave-active :deep(img),
+.backdrop-cover-fade-enter-active .backdrop-cover,
+.backdrop-cover-fade-leave-active .backdrop-cover {
+  filter: blur(18px) saturate(1.28) brightness(0.34) !important;
 }
 
 .backdrop-cover-fade-enter-from {
   opacity: 0;
-  transform: translateY(-18px) scale(1.09);
+  transform: scale(1.06);
 }
 
 .backdrop-cover-fade-enter-to {
   opacity: 1;
-  transform: translateY(0) scale(1.06);
+  transform: scale(1.06);
 }
 
 .backdrop-cover-fade-leave-from {
   opacity: 1;
-  transform: translateY(0) scale(1.06);
+  transform: scale(1.06);
 }
 
 .backdrop-cover-fade-leave-to {
   opacity: 0;
-  transform: translateY(18px) scale(1.09);
+  transform: scale(1.06);
 }
 
 .backdrop-scrim {

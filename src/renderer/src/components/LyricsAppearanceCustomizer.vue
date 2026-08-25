@@ -954,7 +954,11 @@ html[data-theme='dark'] .lyrics-customizer {
   margin: 0;
   padding: 5px 9px;
   border-radius: 9px;
-  transition: all 160ms ease;
+  transition:
+    transform 160ms var(--te-ease-soft),
+    opacity 160ms var(--te-ease-soft),
+    color 160ms var(--te-ease-soft),
+    background-color 160ms var(--te-ease-soft);
 }
 .preview-lines .is-active {
   transform: scale(1.02);

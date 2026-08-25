@@ -125,10 +125,6 @@
   flex: 1 1 0;
 }
 
-.song-list-header.has-page-back .header-left {
-  padding-inline-start: 46px;
-}
-
 .title-group {
   display: flex;
   flex-direction: column;
@@ -437,7 +433,10 @@
   backdrop-filter: blur(14px) saturate(140%);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    border-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
   user-select: none;
   white-space: nowrap;
 }
@@ -576,7 +575,10 @@
   backdrop-filter: blur(14px) saturate(140%);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    border-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
   user-select: none;
   white-space: nowrap;
 }
@@ -1143,8 +1145,6 @@
   align-items: center;
 }
 .track-row {
-  --track-pointer-x: 50%;
-  --track-pointer-y: 50%;
   position: relative;
   cursor: pointer;
   transition:
@@ -1192,17 +1192,15 @@
     );
 }
 
+/* Border geometry only. The pointer-following radial-gradient that used to fill
+   this box was removed together with its rAF writer, but the box itself still
+   draws the playing row's border (.track-playing::after): without `inset` an
+   absolutely positioned pseudo-element collapses to 0x0, and the mask pair is
+   what turns the filled box into a 1px outline. */
 .track-row::after {
   z-index: 2;
   inset: 0;
   padding: 1px;
-  background: radial-gradient(
-    circle 92px at var(--track-pointer-x) var(--track-pointer-y),
-    rgba(124, 77, 255, 0.4) 0%,
-    rgba(34, 211, 238, 0.3) 34%,
-    rgba(255, 126, 182, 0.24) 55%,
-    transparent 76%
-  );
   mask:
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
@@ -1212,6 +1210,7 @@
   mask-composite: exclude;
   -webkit-mask-composite: xor;
 }
+
 .virtual-spacer {
   display: flex;
   width: 100%;
@@ -1287,8 +1286,6 @@
     rgba(255, 126, 182, 0.82),
     rgba(124, 77, 255, 0.88)
   );
-  background-size: 260% 100%;
-  animation: border-gradient-flow 3.4s linear infinite;
 }
 
 /* The animated border is decorative. Pause it whenever the row is not the
@@ -1611,32 +1608,6 @@
   -webkit-backdrop-filter: blur(20px) saturate(150%);
 }
 
-@keyframes border-gradient-flow {
-  to {
-    background-position: 260% 0;
-  }
-}
-
-@keyframes hover-gradient-flow {
-  to {
-    background-position:
-      100% 0,
-      260% 0;
-  }
-}
-
-@keyframes pointer-border-pulse {
-  0%,
-  100% {
-    opacity: 0.72;
-    filter: saturate(1.05);
-  }
-  50% {
-    opacity: 1;
-    filter: saturate(1.24);
-  }
-}
-
 /* Search Box */
 .search-box {
   display: flex;
@@ -1670,10 +1641,6 @@
   .btn-back {
     inset-block: 0 auto;
     inset-inline-start: 0;
-  }
-
-  .song-list-header.has-page-back .header-left {
-    padding-inline-start: 0;
   }
 
   .library-play-actions {
@@ -2184,7 +2151,10 @@
   font-weight: 600;
   letter-spacing: 0.01em;
   white-space: nowrap;
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    border-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
 }
 
 .excluded-tracks-trigger:hover {
