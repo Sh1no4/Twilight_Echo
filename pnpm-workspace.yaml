@@ -5,9 +5,13 @@ nodeLinker: hoisted
 
 overrides:
   form-data: 4.0.6
-  postcss: 8.5.18
+  postcss: 8.5.26
   qs: 6.15.2
   uuid: 11.1.1
+  # GHSA-28wg-ghj8-5hjv / GHSA-2v37-7h3g-55p8: nanoid 无限循环（经由 vue → postcss 引入）
+  nanoid: 3.3.18
+  # GHSA-mwp4-54f8-5fhr / GHSA-4xrf-jv44-h6hh / GHSA-22jq-vg5j-6vgg: ip-address SSRF/信任边界绕过（经由 socks → pac-proxy-agent 引入）
+  ip-address: 10.5.0
   # S8: CVE-2026-12590 — body-parser invalid `limit` 静默禁用请求体大小校验。
   # express@4 依赖 1.x 线，express@5 依赖 2.x 线，分别钉到修复版本。
   body-parser@1.20.5: 1.20.6
@@ -24,6 +28,14 @@ ignoredOptionalDependencies:
 patchedDependencies:
   '@neteasecloudmusicapienhanced/api@4.35.1': patches/@neteasecloudmusicapienhanced__api@4.35.1.patch
   '@phosphor-icons/web@2.1.2': patches/@phosphor-icons__web@2.1.2.patch
+  extract-zip@2.0.1: patches/extract-zip@2.0.1.patch
+
+# GHSA-jmr9-qjv8-65gv (extract-zip symlink 路径遍历): 上游 2.0.1 是最后一个发布版本，
+# 没有修复版可升级；漏洞已由 patches/extract-zip@2.0.1.patch 在本地修复（拒收符号链接条目）。
+# 上游一旦发布 >=2.0.2 就删除此例外并升级到修复版本。
+auditConfig:
+  ignoreGhsas:
+    - GHSA-jmr9-qjv8-65gv
 
 allowBuilds:
   electron: true

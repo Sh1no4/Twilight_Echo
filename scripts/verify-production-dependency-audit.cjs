@@ -26,8 +26,31 @@ function readVulnerabilityCounts(report) {
   return normalized
 }
 
+function readAdvisoryCounts(report) {
+  const advisories = report?.advisories
+  if (!advisories || typeof advisories !== 'object') {
+    return undefined
+  }
+
+  // pnpm filters auditConfig.ignoreGhsas out of `advisories` (but leaves the raw
+  // registry totals in metadata.vulnerabilities), and its own exit code is derived
+  // from the filtered advisories. Count the same map so locally patched advisories
+  // registered under auditConfig.ignoreGhsas behave identically to pnpm itself.
+  const counts = { info: 0, low: 0, moderate: 0, high: 0, critical: 0 }
+  for (const advisory of Object.values(advisories)) {
+    const severity = advisory?.severity
+    if (!(severity in counts)) {
+      fail(`advisory reported unknown severity "${severity}"`)
+    }
+    counts[severity] += 1
+  }
+  return counts
+}
+
 function validateAuditReport(report) {
-  const counts = readVulnerabilityCounts(report)
+  // Always keep the metadata shape check so a malformed report never passes.
+  readVulnerabilityCounts(report)
+  const counts = readAdvisoryCounts(report) ?? readVulnerabilityCounts(report)
   const blocking = BLOCKING_SEVERITIES.filter((severity) => counts[severity] > 0)
   if (blocking.length > 0) {
     fail(blocking.map((severity) => `${severity}=${counts[severity]}`).join(', '))
@@ -160,6 +183,7 @@ module.exports = {
   BLOCKING_SEVERITIES,
   parseArgs,
   parseAuditReport,
+  readAdvisoryCounts,
   readVulnerabilityCounts,
   resolveBundledCorepackScript,
   resolvePnpmInvocation,

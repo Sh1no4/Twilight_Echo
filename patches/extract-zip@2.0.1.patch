@@ -1,0 +1,21 @@
+diff --git a/index.js b/index.js
+index 23384ea16bb848616886f356d8d69f94325535bf..d289fdb5f79160b52d6b17ac79ba7ea5d5e1e56a 100644
+--- a/index.js
++++ b/index.js
+@@ -125,9 +125,13 @@ class Extractor {
+     const readStream = await promisify(this.zipfile.openReadStream.bind(this.zipfile))(entry)
+ 
+     if (symlink) {
+-      const link = await getStream(readStream)
+-      debug('creating symlink', link, dest)
+-      await fs.symlink(link, dest)
++      // Twilight Echo security patch (GHSA-jmr9-qjv8-65gv / CVE-2026-55677):
++      // upstream copies archive-supplied symlink targets without validating
++      // them, so a crafted archive can aim a link outside the destination
++      // directory and let later entries escape the sandbox. Theme archives,
++      // plugin packages, and DSP profiles never ship symlinks, so refuse the
++      // entry instead of trusting its target path.
++      throw new Error(`Refusing to extract symlink entry "${entry.fileName}" from ${this.zipPath}`)
+     } else {
+       await pipeline(readStream, createWriteStream(dest, { mode: procMode }))
+     }

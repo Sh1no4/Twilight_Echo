@@ -3,6 +3,7 @@ const test = require('node:test')
 
 const {
   parseArgs,
+  readAdvisoryCounts,
   readVulnerabilityCounts,
   resolveBundledCorepackScript,
   resolvePnpmInvocation,
@@ -47,6 +48,39 @@ test('production audit rejects malformed vulnerability metadata', () => {
   assert.throws(
     () => readVulnerabilityCounts(report({ high: -1 })),
     /must be a non-negative integer/
+  )
+})
+
+test('production audit counts filtered advisories so ignoreGhsas matches pnpm itself', () => {
+  // pnpm leaves raw registry totals in metadata.vulnerabilities even after
+  // auditConfig.ignoreGhsas removes advisories from the report; the gate must
+  // follow the filtered advisories (as pnpm's own exit code does) so locally
+  // patched advisories pass without weakening any remaining finding.
+  const ignoredButStillCounted = {
+    ...report({ high: 1 }),
+    advisories: {}
+  }
+  assert.deepEqual(validateAuditReport(ignoredButStillCounted), {
+    info: 0,
+    low: 0,
+    moderate: 0,
+    high: 0,
+    critical: 0
+  })
+
+  const liveAdvisories = {
+    ...report({ moderate: 1, high: 1 }),
+    advisories: {
+      one: { severity: 'moderate' },
+      two: { severity: 'high' }
+    }
+  }
+  assert.throws(() => validateAuditReport(liveAdvisories), /moderate=1, high=1/)
+
+  assert.deepEqual(readAdvisoryCounts(report()), undefined)
+  assert.throws(
+    () => readAdvisoryCounts({ advisories: { bad: { severity: 'extreme' } } }),
+    /unknown severity/
   )
 })
 

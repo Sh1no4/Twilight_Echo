@@ -27,14 +27,24 @@ use the same patched dependency tree.
 The release gate runs `pnpm audit --prod --json` through `pnpm run audit:production`. It rejects
 every moderate, high, or critical production advisory and can persist the unmodified registry
 response as release evidence with `--output <path>`. CI uploads that JSON response even when the
-gate fails.
+gate fails. Counts come from the report's filtered `advisories` map (the same map pnpm's own exit
+code uses); `metadata.vulnerabilities` keeps the raw registry totals even for advisories excluded
+by `auditConfig.ignoreGhsas`.
 
 The current explicit floors are enforced through root `pnpm-workspace.yaml` `overrides`, not a
 second npm lockfile:
 
 - `form-data@4.0.6` fixes `GHSA-hmw2-7cc7-3qxx` / `CVE-2026-12143` (multipart CRLF injection).
 - `qs@6.15.2` fixes `GHSA-q8mj-m7cp-5q26` / `CVE-2026-8723` (comma-array stringify DoS).
-- Root `undici@^6.27.0` fixes `GHSA-p88m-4jfj-68fv` / `GHSA-vxpw-j846-p89q` (header injection and WebSocket DoS).
+- Root `undici@^6.28.0` fixes `GHSA-p88m-4jfj-68fv` / `GHSA-vxpw-j846-p89q` (header injection and WebSocket DoS) plus `GHSA-8xcm-r25x-g524` / `GHSA-m8rv-5g2x-5cg5` / `GHSA-v3r7-h72x-cjcm` (retry desynchronization, blob body CRLF injection, cookie attribute injection).
+- `postcss@8.5.26` fixes `GHSA-fxqj-rqcc-2cmp` (sourceMappingURL arbitrary `.map` read).
+- `nanoid@3.3.18` fixes `GHSA-28wg-ghj8-5hjv` / `GHSA-2v37-7h3g-55p8` (infinite loop in generators, via vue → postcss).
+- `ip-address@10.5.0` fixes `GHSA-mwp4-54f8-5fhr` / `GHSA-4xrf-jv44-h6hh` / `GHSA-22jq-vg5j-6vgg` (SSRF and trust-boundary bypass, via socks → pac-proxy-agent).
+
+`extract-zip@2.0.1` has no patched upstream release (`GHSA-jmr9-qjv8-65gv`, symlink path
+traversal). `patches/extract-zip@2.0.1.patch` refuses every symlink entry instead; theme archives,
+plugin packages, and DSP profiles never ship symlinks. The advisory is registered under
+`auditConfig.ignoreGhsas` and must be removed again once upstream publishes `>=2.0.2`.
 
 Run the audit only after a clean frozen install. A stale hoisted `node_modules` directory is not
 evidence that the lockfile, overrides, or NCM patch were applied.
