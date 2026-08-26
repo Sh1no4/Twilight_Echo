@@ -6,10 +6,6 @@ import { usePlayerStore } from '../stores/usePlayerStore'
 import { isInsecureHttpUrl } from '../../../shared/radioStations.ts'
 import type { PodcastSubscription } from '../../../shared/podcastSubscriptions.ts'
 
-const emit = defineEmits<{
-  back: []
-}>()
-
 const radio = useRadioStore()
 const podcast = usePodcastStore()
 const { playTrack, playTrackFromPosition } = usePlayerStore()
@@ -217,10 +213,6 @@ function formatDuration(seconds: number): string {
 <template>
   <div class="radio-podcast-page">
     <header class="page-header">
-      <button type="button" class="back-btn" data-te-back-button="pill" @click="emit('back')">
-        <i class="pi pi-arrow-left"></i>
-        <span>返回</span>
-      </button>
       <div class="page-heading">
         <span class="page-kicker">ONLINE LISTENING</span>
         <h1>电台与播客</h1>
@@ -546,7 +538,8 @@ function formatDuration(seconds: number): string {
 
 .page-header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  position: relative;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 20px;
   align-items: center;
   margin-bottom: 28px;
@@ -582,12 +575,6 @@ function formatDuration(seconds: number): string {
     transform 0.18s ease;
 }
 
-.back-btn {
-  padding-inline: 11px 14px;
-}
-.back-btn:hover {
-  transform: translateX(-2px);
-}
 button:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--te-primary-500) 38%, transparent);
 }
@@ -1093,6 +1080,14 @@ button.primary {
   }
   .page-header {
     gap: 14px;
+    padding: 52px 0 0;
+  }
+  .back-btn {
+    inset-block: 0 auto;
+    transform: none;
+  }
+  .back-btn:hover {
+    transform: translateX(-2px);
   }
   .page-heading {
     grid-column: 1 / -1;

@@ -8,29 +8,12 @@ const {
   REQUIRED_NATIVE_BINARIES,
   assertBudget,
   listNativeBinaries,
+  listRuntimeDependencies,
   listShippedBinaries,
   parseArgs,
   readPeHeader
 } = require('./verify-release-artifacts.cjs')
-
-function makeMinimalPe(options = {}) {
-  const peOffset = 0x80
-  const buffer = Buffer.alloc(0x200)
-  buffer.write('MZ')
-  buffer.writeUInt32LE(peOffset, 0x3c)
-  buffer.write('PE\0\0', peOffset)
-  const coff = peOffset + 4
-  buffer.writeUInt16LE(0x8664, coff)
-  buffer.writeUInt16LE(0, coff + 2)
-  buffer.writeUInt32LE(options.symbolTableOffset || 0, coff + 8)
-  buffer.writeUInt32LE(options.symbolCount || 0, coff + 12)
-  buffer.writeUInt16LE(0xf0, coff + 16)
-  const optional = coff + 20
-  buffer.writeUInt16LE(0x20b, optional)
-  buffer.writeUInt32LE(options.debugDirectoryRva || 0, optional + 112 + 8 * 6)
-  buffer.writeUInt32LE(options.debugDirectorySize || 0, optional + 112 + 8 * 6 + 4)
-  return buffer
-}
+const { createMinimalPe } = require('./pe-fixture.cjs')
 
 test('release artifact arguments require a native directory and installer target', () => {
   assert.throws(() => parseArgs([]), /--native-dir is required/)
@@ -47,8 +30,8 @@ test('PE inspection finds stripped and retained debug metadata', () => {
   try {
     const clean = path.join(dir, 'clean.dll')
     const debug = path.join(dir, 'debug.dll')
-    fs.writeFileSync(clean, makeMinimalPe())
-    fs.writeFileSync(debug, makeMinimalPe({ debugDirectoryRva: 1, debugDirectorySize: 28 }))
+    fs.writeFileSync(clean, createMinimalPe())
+    fs.writeFileSync(debug, createMinimalPe({ debugDirectoryRva: 1, debugDirectorySize: 28 }))
     assert.equal(readPeHeader(clean).symbolCount, 0)
     assert.throws(() => require('./verify-release-artifacts.cjs').assertStrippedPe(debug), /debug directory/)
   } finally {
@@ -71,7 +54,7 @@ test('size checks reject unsafe release inputs', () => {
 test('all shipped native DLL/EXE/NODE files receive a size budget while strip checks remain product-only', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-shipped-binaries-'))
   try {
-    fs.writeFileSync(path.join(dir, 'twilight-audio-engine.dll'), makeMinimalPe())
+    fs.writeFileSync(path.join(dir, 'twilight-audio-engine.dll'), createMinimalPe())
     fs.writeFileSync(path.join(dir, 'msvcp140.dll'), Buffer.alloc(32))
     fs.writeFileSync(path.join(dir, 'notice.txt'), 'not a binary')
     assert.deepEqual(
@@ -83,18 +66,56 @@ test('all shipped native DLL/EXE/NODE files receive a size budget while strip ch
   }
 })
 
+test('release verification requires every imported runtime dependency beside the binaries', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-runtime-closure-'))
+  try {
+    fs.writeFileSync(
+      path.join(dir, 'twilight-audio-engine.dll'),
+      createMinimalPe({ imports: ['libstdc++-6.dll', 'KERNEL32.dll'] })
+    )
+    fs.writeFileSync(
+      path.join(dir, 'twilight_audio_node.node'),
+      createMinimalPe({ imports: ['twilight-audio-engine.dll', 'libstdc++-6.dll'] })
+    )
+    const entries = listNativeBinaries(dir)
+    assert.throws(
+      () => listRuntimeDependencies(dir, entries),
+      /Missing runtime dependency beside the native binaries: libstdc\+\+-6\.dll/
+    )
+
+    // A dependency's own imports are followed too, so a transitively missing DLL
+    // cannot pass by staging only the directly imported one.
+    fs.writeFileSync(
+      path.join(dir, 'libstdc++-6.dll'),
+      createMinimalPe({ imports: ['libmcfgthread-2.dll'] })
+    )
+    assert.throws(() => listRuntimeDependencies(dir, entries), /libmcfgthread-2\.dll/)
+
+    fs.writeFileSync(path.join(dir, 'libmcfgthread-2.dll'), createMinimalPe())
+    assert.deepEqual(
+      listRuntimeDependencies(dir, entries)
+        .map((filePath) => path.basename(filePath))
+        .sort(),
+      ['libmcfgthread-2.dll', 'libstdc++-6.dll'],
+      'system imports must not be demanded, and product binaries are not their own dependency'
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('native binary verification requires the core runtime and verifies optional VST3 helpers when staged', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-native-binaries-'))
   try {
     for (const name of REQUIRED_NATIVE_BINARIES) {
-      fs.writeFileSync(path.join(dir, name), makeMinimalPe())
+      fs.writeFileSync(path.join(dir, name), createMinimalPe())
     }
     assert.deepEqual(
       listNativeBinaries(dir).map((filePath) => path.basename(filePath)).sort(),
       [...REQUIRED_NATIVE_BINARIES].sort()
     )
-    fs.writeFileSync(path.join(dir, 'twilight-vst3-host.exe'), makeMinimalPe())
-    fs.writeFileSync(path.join(dir, 'twilight-vst3-scanner.exe'), makeMinimalPe())
+    fs.writeFileSync(path.join(dir, 'twilight-vst3-host.exe'), createMinimalPe())
+    fs.writeFileSync(path.join(dir, 'twilight-vst3-scanner.exe'), createMinimalPe())
     assert.equal(listNativeBinaries(dir).length, REQUIRED_NATIVE_BINARIES.length + 2)
     fs.rmSync(path.join(dir, 'twilight-audio-engine.dll'))
     assert.throws(() => listNativeBinaries(dir), /Missing required native binary/)

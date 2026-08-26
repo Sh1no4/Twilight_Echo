@@ -149,8 +149,7 @@ onUnmounted(() => {
                 <div
                   class="progress-bar-fill"
                   :style="{
-                    width:
-                      (progress.total > 0 ? (progress.current / progress.total) * 100 : 0) + '%'
+                    transform: `scaleX(${progress.total > 0 ? progress.current / progress.total : 0})`
                   }"
                 ></div>
               </div>
@@ -267,7 +266,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  transition: all 0.15s;
+  transition: background-color 0.15s var(--te-ease-soft);
 }
 
 .btn-add-folder:hover {
@@ -360,9 +359,12 @@ onUnmounted(() => {
 }
 
 .progress-bar-fill {
+  width: 100%;
   height: 100%;
   background: linear-gradient(90deg, var(--te-primary-500), var(--te-primary-300));
-  transition: width 0.3s ease;
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  transition: transform 0.3s ease;
 }
 
 .empty-result {

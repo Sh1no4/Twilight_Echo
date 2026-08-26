@@ -12,7 +12,9 @@ namespace twilight::audio {
 enum class PlayMode {
   Sequential,
   Repeat,
-  Shuffle
+  Shuffle,
+  /** Appended, not inserted: the values above are relied upon positionally by callers. */
+  ListLoop
 };
 
 class QueueManager {
@@ -46,6 +48,12 @@ class QueueManager {
 
  private:
   void rebuildPlayOrder();
+  /**
+   * Whether reaching the end of the play order continues into a new cycle
+   * instead of stopping. List loop and shuffle are cycles; sequential stops so
+   * that the host can end playback, and repeat never leaves the current item.
+   */
+  bool wrapsAfterEnd() const;
   int queueIndexAtOrderOffset(int offset, bool honorRepeat, bool allowWrap) const;
 
   std::vector<QueueItem> items_;

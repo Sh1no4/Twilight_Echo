@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Track } from '../types/music'
 
-const { buildLogicalTracks, getTrackSource } = (await import(
+const { buildLogicalTracks, canShareTrackIdentity, getTrackSource } = (await import(
   new URL('./logicalTrackModel.ts', import.meta.url).href
 )) as typeof import('./logicalTrackModel')
 
@@ -18,6 +18,62 @@ function track(overrides: Partial<Track> & Pick<Track, 'id' | 'title' | 'artist'
     ...overrides
   }
 }
+
+test('canShareTrackIdentity keeps two provider songs with one title apart', () => {
+  const base = { title: 'Moon River', artist: 'Audrey', source: 'ncm' as const }
+
+  // Same title and artist, same length, two different NetEase song ids: two
+  // different recordings, so they must not collapse into one favorite.
+  assert.equal(
+    canShareTrackIdentity(
+      track({ id: 'ncm:123', ncmSongId: 123, ...base }),
+      track({ id: 'ncm:456', ncmSongId: 456, ...base })
+    ),
+    false
+  )
+  assert.equal(
+    canShareTrackIdentity(track({ id: 'ncm:123', ...base }), track({ id: 'ncm:456', ...base })),
+    false
+  )
+  // One remote id seen twice is one song.
+  assert.equal(
+    canShareTrackIdentity(
+      track({ id: 'ncm:123', ncmSongId: 123, ...base }),
+      track({ id: 'ncm:123', ncmSongId: 123, ...base, album: 'Other tag' })
+    ),
+    true
+  )
+  // A local file carries no remote id, so it can still stand in for the
+  // streaming entry of the same song.
+  assert.equal(
+    canShareTrackIdentity(
+      track({ id: 'ncm:123', ncmSongId: 123, ...base }),
+      track({
+        id: 'local:moon',
+        title: 'Moon River',
+        artist: 'Audrey',
+        source: 'local',
+        duration: 181
+      })
+    ),
+    true
+  )
+  // Different providers stay comparable by duration rather than by id.
+  assert.equal(
+    canShareTrackIdentity(
+      track({ id: 'ncm:123', ncmSongId: 123, ...base }),
+      track({ id: 'qq:abc', title: 'Moon River', artist: 'Audrey', source: 'qq', duration: 180 })
+    ),
+    true
+  )
+  assert.equal(
+    canShareTrackIdentity(
+      track({ id: 'ncm:123', ncmSongId: 123, ...base }),
+      track({ id: 'qq:abc', title: 'Moon River', artist: 'Audrey', source: 'qq', duration: 420 })
+    ),
+    false
+  )
+})
 
 test('buildLogicalTracks groups source variants and prefers local lossless tracks', () => {
   const logicalTracks = buildLogicalTracks([

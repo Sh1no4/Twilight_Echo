@@ -33,21 +33,39 @@ export interface RevisionedNativeQueueSync<T> {
   setPlayMode: () => Promise<void>
 }
 
+export interface RevisionedNativeQueueResult<T> {
+  applied: boolean
+  prepared: T | null
+  /** Set when the loadQueue step was rejected by main rather than superseded. */
+  loadQueueError?: unknown
+}
+
 /**
  * Runs the production prepare -> loadQueue -> setPlayMode chain under one
  * revision. Later revisions may not commit stale prepared state or settings.
+ *
+ * A rejected loadQueue resolves to `prepared: null` with the reason attached
+ * instead of rejecting. Callers treat a null prepared queue as "leave the engine
+ * as it is", and this path is reached from fire-and-forget resynchronization
+ * (play-mode switches, queue edits), where a rejection would surface only as an
+ * unhandled rejection while the caller kept believing the queue was delegated.
  */
 export async function synchronizeLatestNativeQueue<T>(
   fence: NativeQueueRevisionFence,
   revision: number,
   sync: RevisionedNativeQueueSync<T>
-): Promise<{ applied: boolean; prepared: T | null }> {
+): Promise<RevisionedNativeQueueResult<T>> {
   const preparedResult = await fence.runLatest(revision, sync.prepare)
   if (!preparedResult.applied) return { applied: false, prepared: null }
   const prepared = preparedResult.value ?? null
   if (!prepared) return { applied: true, prepared: null }
 
-  const loadResult = await fence.runLatest(revision, () => sync.loadQueue(prepared))
+  let loadResult: { applied: boolean; value?: void }
+  try {
+    loadResult = await fence.runLatest(revision, () => sync.loadQueue(prepared))
+  } catch (error) {
+    return { applied: true, prepared: null, loadQueueError: error }
+  }
   if (!loadResult.applied) return { applied: false, prepared: null }
 
   const modeResult = await fence.runLatest(revision, sync.setPlayMode)

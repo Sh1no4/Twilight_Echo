@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import EditableRangeValue from '../EditableRangeValue.vue'
-import type { DesktopLyricsLayout, DesktopLyricsSettings, LyricAlign } from '../../types/settings'
+import type {
+  DesktopLyricsLayout,
+  DesktopLyricsPresentation,
+  DesktopLyricsSettings,
+  LyricAlign
+} from '../../types/settings'
 import {
   BUILTIN_FONT_OPTIONS,
   useLyricsFontPicker,
@@ -516,21 +521,39 @@ async function toggleFontMenu(): Promise<void> {
       <hr />
       <div class="setting-item">
         <div class="setting-copy">
-          <strong>鼠标穿透 (Click Through)</strong>
-          <span
-            >开启后鼠标点击会穿透歌词窗口。穿透时窗口内难以操作，请在本页关闭穿透，或关闭桌面歌词。</span
-          >
+          <strong>锁定桌面歌词 (Lock)</strong>
+          <span>开启后点击穿透桌面；把鼠标移到歌词右上角可显示解锁按钮。</span>
         </div>
         <span
           class="toggle-switch"
           :class="{
-            active: props.desktopLyrics.clickThrough,
-            inactive: !props.desktopLyrics.clickThrough
+            active: props.desktopLyrics.locked,
+            inactive: !props.desktopLyrics.locked
           }"
           role="switch"
-          :aria-checked="props.desktopLyrics.clickThrough"
-          @click="update('clickThrough', !props.desktopLyrics.clickThrough)"
+          :aria-checked="props.desktopLyrics.locked"
+          @click="update('locked', !props.desktopLyrics.locked)"
         ></span>
+      </div>
+      <hr />
+      <div class="setting-item">
+        <div class="setting-copy">
+          <strong>展示风格 (Presentation)</strong>
+          <span>网易云：当前句逐字渐变，下一句弱化显示；经典：保留原有布局。</span>
+        </div>
+        <select
+          class="preview-select wide"
+          :value="props.desktopLyrics.presentation ?? 'netease'"
+          @change="
+            update(
+              'presentation',
+              ($event.target as HTMLSelectElement).value as DesktopLyricsPresentation
+            )
+          "
+        >
+          <option value="netease">网易云风格 (NetEase)</option>
+          <option value="classic">经典布局 (Classic)</option>
+        </select>
       </div>
       <hr />
       <div class="setting-item">

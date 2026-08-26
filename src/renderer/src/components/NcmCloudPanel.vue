@@ -129,7 +129,11 @@ function progressLabel(task: NcmCloudTransferTask): string {
           <span>{{ (file.format || '音频').toUpperCase() }} · {{ formatBytes(file.size) }}</span>
           <div v-if="taskForHandle(file.handle)" class="progress-copy">
             <div class="progress-track">
-              <span :style="{ width: `${taskForHandle(file.handle)?.percent ?? 12}%` }"></span>
+              <span
+                :style="{
+                  transform: `scaleX(${(taskForHandle(file.handle)?.percent ?? 12) / 100})`
+                }"
+              ></span>
             </div>
             <small>{{ progressLabel(taskForHandle(file.handle)!) }}</small>
             <small v-if="taskForHandle(file.handle)?.error" class="task-error">
@@ -251,7 +255,9 @@ function progressLabel(task: NcmCloudTransferTask): string {
             </button>
           </span>
           <span v-if="taskForSong(song)" class="song-progress">
-            <span :style="{ width: `${taskForSong(song)?.percent ?? 12}%` }"></span>
+            <span
+              :style="{ transform: `scaleX(${(taskForSong(song)?.percent ?? 12) / 100})` }"
+            ></span>
           </span>
         </article>
       </div>
@@ -441,10 +447,12 @@ function progressLabel(task: NcmCloudTransferTask): string {
 .progress-track span,
 .song-progress span {
   display: block;
+  width: 100%;
   height: 100%;
-  border-radius: inherit;
   background: var(--te-primary-500);
-  transition: width 0.2s linear;
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  transition: transform 0.2s linear;
 }
 .icon-button {
   display: grid;
@@ -593,6 +601,8 @@ function progressLabel(task: NcmCloudTransferTask): string {
   bottom: 0;
   left: 0;
   height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
   background: rgba(128, 128, 128, 0.12);
 }
 .load-more {

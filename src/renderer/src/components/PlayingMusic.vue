@@ -433,7 +433,7 @@ function syncActiveLyricIndex(time = playbackClockSnapshot.value.position, isSee
     next.buffered.size > 0 ? next.scrollToIndex : findActiveLyricIndex(lyricLines.value, adjusted)
   if (nextIndex !== activeLyricIndex.value) activeLyricIndex.value = nextIndex
   if (next.added.size > 0 || next.removed.size > 0) {
-    void lyricViewport.recenter(isSeek ? 'snap' : 'resize')
+    void lyricViewport.recenter('resize')
   }
 }
 
@@ -445,7 +445,7 @@ watch(
     const epochChanged = previousSnapshot != null && previousSnapshot.epoch !== snapshot.epoch
     if (linesChanged) lyricPlayheadState = createLyricPlayheadState()
     syncActiveLyricIndex(snapshot.position, linesChanged || epochChanged)
-    if (epochChanged && !linesChanged) void lyricViewport.recenter('snap')
+    if (epochChanged && !linesChanged) void lyricViewport.recenter('resize')
   },
   { immediate: true }
 )
@@ -474,6 +474,14 @@ const renderedLyricLines = computed(() =>
     ariaLabel: resolveLyricVoiceLayout(line).ariaText || line.text
   }))
 )
+
+/**
+ * Kept out of the template because `v-memo` inlines the key expression into a
+ * `&&` chain, and a bare `??` there is a syntax error esbuild refuses to build.
+ */
+function lyricRowKey(item: { line: LyricLine; index: number }): string {
+  return item.line.rowKey ?? `${item.line.time}-${item.index}`
+}
 
 function setLyricLineRef(index: number, el: Element | ComponentPublicInstance | null): void {
   const element = el instanceof HTMLElement ? el : null
@@ -718,7 +726,7 @@ onBeforeUnmount(() => {
             <div v-if="hasLyrics" class="lyrics-list">
               <button
                 v-for="item in renderedLyricLines"
-                :key="(item.line.rowKey ? item.line.rowKey : `${item.line.time}-${item.index}`)"
+                :key="lyricRowKey(item)"
                 v-memo="[
                   item.index === highlightedLyricIndex,
                   item.singing,
@@ -887,29 +895,37 @@ onBeforeUnmount(() => {
 
 .backdrop-cover-fade-enter-active,
 .backdrop-cover-fade-leave-active {
-  transition:
-    opacity 0.7s ease,
-    transform 0.7s ease;
+  transition: opacity 400ms var(--te-ease-out-strong);
+}
+
+/* Transition-time blur stays under the 20px budget (AUDIT §5): the heavy
+   58px+ pass cannot reuse its rasterized texture while two layers overlap.
+   The extra brightness drop keeps the stage as dark as the settled state. */
+.backdrop-cover-fade-enter-active :deep(img),
+.backdrop-cover-fade-leave-active :deep(img),
+.backdrop-cover-fade-enter-active .backdrop-cover,
+.backdrop-cover-fade-leave-active .backdrop-cover {
+  filter: blur(18px) saturate(1.28) brightness(0.34) !important;
 }
 
 .backdrop-cover-fade-enter-from {
   opacity: 0;
-  transform: translateY(-18px) scale(1.09);
+  transform: scale(1.06);
 }
 
 .backdrop-cover-fade-enter-to {
   opacity: 1;
-  transform: translateY(0) scale(1.06);
+  transform: scale(1.06);
 }
 
 .backdrop-cover-fade-leave-from {
   opacity: 1;
-  transform: translateY(0) scale(1.06);
+  transform: scale(1.06);
 }
 
 .backdrop-cover-fade-leave-to {
   opacity: 0;
-  transform: translateY(18px) scale(1.09);
+  transform: scale(1.06);
 }
 
 .backdrop-scrim {
@@ -993,8 +1009,11 @@ onBeforeUnmount(() => {
   }
 }
 
-:global(html[data-te-motion='reduced']) .backdrop-fluid::before,
-:global(html[data-te-motion='off']) .backdrop-fluid::before {
+/* Ancestors stay unwrapped so Vue's scoped transform attaches the scope
+   attribute to `.backdrop-fluid` — wrapping them in `:global()` drops the scope
+   from the descendant and pauses every matching element on the page. */
+html[data-te-motion='reduced'] .backdrop-fluid::before,
+html[data-te-motion='off'] .backdrop-fluid::before {
   animation-play-state: paused;
 }
 

@@ -13,7 +13,13 @@ function runAction(id: number, run: () => void): void {
 </script>
 
 <template>
-  <div class="app-notice-host" aria-live="polite" aria-relevant="additions text">
+  <TransitionGroup
+    tag="div"
+    name="app-notice"
+    class="app-notice-host"
+    aria-live="polite"
+    aria-relevant="additions text"
+  >
     <div
       v-for="notice in notices"
       :key="notice.id"
@@ -52,7 +58,7 @@ function runAction(id: number, run: () => void): void {
         <i class="pi pi-times" aria-hidden="true"></i>
       </button>
     </div>
-  </div>
+  </TransitionGroup>
 </template>
 
 <style scoped>
@@ -131,6 +137,52 @@ function runAction(id: number, run: () => void): void {
 .app-notice-dismiss:hover,
 .app-notice-action:hover {
   opacity: 1;
+}
+
+/* Toasts slide in from the edge they are anchored to and collapse out of the
+   stack, so a dismissal reads as "gone" rather than "replaced". */
+.app-notice-enter-active {
+  transition:
+    opacity var(--te-toast-motion-duration, 220ms) ease-out,
+    transform var(--te-toast-motion-duration, 220ms) cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.app-notice-leave-active {
+  /* Out of flow so the remaining toasts close the gap with the move transition
+     instead of jumping. */
+  position: absolute;
+  right: 0;
+  width: 100%;
+  transition:
+    opacity 160ms var(--te-ease-out-strong),
+    transform 160ms var(--te-ease-out-strong);
+}
+
+.app-notice-enter-from {
+  opacity: 0;
+  transform: translateX(16px) scale(0.97);
+}
+
+.app-notice-leave-to {
+  opacity: 0;
+  transform: translateX(16px) scale(0.97);
+}
+
+.app-notice-move {
+  transition: transform var(--te-toast-motion-duration, 220ms) cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-notice-enter-active,
+  .app-notice-leave-active,
+  .app-notice-move {
+    transition-duration: 1ms;
+  }
+
+  .app-notice-enter-from,
+  .app-notice-leave-to {
+    transform: none;
+  }
 }
 
 html[data-theme='dark'] .app-notice {

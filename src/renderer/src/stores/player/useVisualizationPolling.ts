@@ -1,6 +1,6 @@
 import type { Ref } from 'vue'
 
-export const VISUALIZATION_UPDATE_INTERVAL_MS = 200 as const
+export const VISUALIZATION_UPDATE_INTERVAL_MS = 60 as const
 
 export type NativeVisualizationData = Awaited<
   ReturnType<Window['api']['audioEngine']['getVisualizationData']>

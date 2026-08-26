@@ -16,6 +16,7 @@ import type { LiquidGlassSettings, SurfaceMaterial } from './liquidGlass.ts'
 import type { LyricsAppearanceSettings } from './lyricsAppearance.ts'
 import type { LyricsPresetConfig } from './lyricsPresets.ts'
 import type { PlayerBarSettings } from './playerBar.ts'
+import type { LanguagePreference } from './i18n/locale.ts'
 
 export type AppTheme = 'system' | 'pureWhite' | 'dark'
 export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
@@ -91,12 +92,15 @@ export interface WindowTransparencyEffectSettings {
 }
 
 export type DesktopLyricsLayout = 'multi' | 'bilingual'
+export type DesktopLyricsPresentation = 'netease' | 'classic'
 
 export interface DesktopLyricsSettings {
   enabled: boolean
   fontSize: number
   /** `follow` resolves from the active PlayingMusic lyric style; other values are overrides. */
   fontFamily: string
+  /** Resolved font stack sent to the desktop window while preserving the stored preference. */
+  resolvedFontFamily?: string
   fontWeight: number
   color: string
   highlightColor: string
@@ -106,6 +110,8 @@ export interface DesktopLyricsSettings {
   showTranslation: boolean
   /** multi = consecutive lines; bilingual = original + translation for the active line. */
   layout: DesktopLyricsLayout
+  /** netease = two-row karaoke overlay; classic = the previous desktop lyrics layout. */
+  presentation: DesktopLyricsPresentation
   lineSpacing: number
   shadow: boolean
   shadowBlur: number
@@ -115,6 +121,9 @@ export interface DesktopLyricsSettings {
   windowX: number
   windowY: number
   alwaysOnTop: boolean
+  /** Locked windows are click-through until the hover unlock affordance is used. */
+  locked: boolean
+  /** Compatibility alias retained for settings written before locked mode existed. */
   clickThrough: boolean
   maxLines: number
   /** Horizontal stagger in px: even rows left (-), odd rows right (+). */
@@ -143,6 +152,8 @@ export interface GlobalShortcutSettings {
   toggleDesktopLyrics: string
 }
 
+export type CloseWindowBehavior = 'quit' | 'tray' | 'miniPlayer'
+
 export interface AppSettings {
   autoCheckLogin: boolean
   autoLaunch: boolean
@@ -155,13 +166,22 @@ export interface AppSettings {
   cachePath: string
   cachePolicy: MusicCachePolicySettings
   autoAnalyzeBpm: boolean
+  /**
+   * How the main-window close control behaves. closeToTray is retained as the
+   * compatibility mirror for older settings and code paths.
+   */
+  closeWindowBehavior: CloseWindowBehavior
   closeToTray: boolean
+  /** Windows taskbar thumbnail transport buttons; independent from SMTC metadata. */
+  taskbarThumbarButtonsEnabled: boolean
   /** First-run welcome wizard has been completed or skipped. */
   onboardingCompleted: boolean
   /** Unlocks developer-only affordances, e.g. installing an unpacked plugin directory. */
   developerMode: boolean
   startupHomePage: StartupHomePage
   trackActivationMode: TrackActivationMode
+  /** UI and error-message language. `system` follows the OS locale. */
+  language: LanguagePreference
   theme: AppTheme
   pluginThemeId: string | null
   activeTheme: ThemeSelection

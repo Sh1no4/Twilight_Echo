@@ -30,40 +30,47 @@ type UseStreamingSearchOptions = {
   searchSongs: (
     keywords: string,
     limit?: number,
-    offset?: number
+    offset?: number,
+    options?: { signal?: AbortSignal }
   ) => Promise<{ tracks: Track[]; total: number }>
   searchUnifiedSongs?: (
     keywords: string,
     limit?: number,
-    offset?: number
+    offset?: number,
+    options?: { signal?: AbortSignal }
   ) => Promise<{ tracks: Track[]; total: number }>
   searchPlaylists: (
     keywords: string,
     limit?: number,
-    offset?: number
+    offset?: number,
+    options?: { signal?: AbortSignal }
   ) => Promise<{ playlists: MediaProviderPlaylistSummary[]; total: number }>
   searchArtists: (
     keywords: string,
     limit?: number,
-    offset?: number
+    offset?: number,
+    options?: { signal?: AbortSignal }
   ) => Promise<{ artists: MediaProviderArtistSummary[]; total: number }>
   searchProviderSongs?: (
     providerId: string,
     keywords: string,
     limit?: number,
-    offset?: number
+    offset?: number,
+    options?: { signal?: AbortSignal }
   ) => Promise<{ tracks: Track[]; total: number }>
   searchProviderPlaylists?: (
     providerId: string,
     keywords: string,
     limit?: number,
-    offset?: number
+    offset?: number,
+    options?: { signal?: AbortSignal }
   ) => Promise<{ playlists: MediaProviderPlaylistSummary[]; total: number }>
   searchProviderArtists?: (
     providerId: string,
     keywords: string,
     limit?: number,
-    offset?: number
+    offset?: number,
+    options?: { signal?: AbortSignal }
   ) => Promise<{ artists: MediaProviderArtistSummary[]; total: number }>
   searchLocalSongs?: (
     keywords: string,
@@ -139,6 +146,12 @@ export function useStreamingSearch({
   let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
   let latestRequestId = 0
   let lastRequestFingerprint = ''
+  let activeSearchController: AbortController | null = null
+
+  const cancelActiveSearch = (): void => {
+    activeSearchController?.abort(new Error('Search request was superseded'))
+    activeSearchController = null
+  }
 
   const availableSearchTypes = computed<SearchType[]>(() => {
     const source = searchSources.value.find((s) => s.id === searchSource.value)
@@ -147,6 +160,7 @@ export function useStreamingSearch({
 
   function clearSearch(): void {
     latestRequestId += 1
+    cancelActiveSearch()
     if (searchDebounceTimer) {
       clearTimeout(searchDebounceTimer)
       searchDebounceTimer = null
@@ -166,16 +180,19 @@ export function useStreamingSearch({
     source: SearchSource,
     keywords: string,
     limit: number,
-    offset: number
+    offset: number,
+    signal?: AbortSignal
   ): Promise<{ tracks: Track[]; total: number }> {
     if (source === 'all') {
-      return (searchUnifiedSongs ?? searchSongs)(keywords, limit, offset)
+      return (searchUnifiedSongs ?? searchSongs)(keywords, limit, offset, { signal })
     }
     if (source === 'local') {
       if (searchLocalSongs) return searchLocalSongs(keywords, limit, offset)
       return { tracks: [], total: 0 }
     }
-    if (searchProviderSongs) return searchProviderSongs(source, keywords, limit, offset)
+    if (searchProviderSongs) {
+      return searchProviderSongs(source, keywords, limit, offset, { signal })
+    }
     return { tracks: [], total: 0 }
   }
 
@@ -183,7 +200,8 @@ export function useStreamingSearch({
     source: SearchSource,
     keywords: string,
     limit: number,
-    offset: number
+    offset: number,
+    signal?: AbortSignal
   ): Promise<{ playlists: MediaProviderPlaylistSummary[]; total: number }> {
     if (source === 'all') {
       return searchPlaylists(keywords, limit, offset)
@@ -192,7 +210,9 @@ export function useStreamingSearch({
       if (searchLocalPlaylists) return searchLocalPlaylists(keywords, limit, offset)
       return { playlists: [], total: 0 }
     }
-    if (searchProviderPlaylists) return searchProviderPlaylists(source, keywords, limit, offset)
+    if (searchProviderPlaylists) {
+      return searchProviderPlaylists(source, keywords, limit, offset, { signal })
+    }
     return { playlists: [], total: 0 }
   }
 
@@ -200,7 +220,8 @@ export function useStreamingSearch({
     source: SearchSource,
     keywords: string,
     limit: number,
-    offset: number
+    offset: number,
+    signal?: AbortSignal
   ): Promise<{ artists: MediaProviderArtistSummary[]; total: number }> {
     if (source === 'all') {
       return searchArtists(keywords, limit, offset)
@@ -209,7 +230,9 @@ export function useStreamingSearch({
       if (searchLocalArtists) return searchLocalArtists(keywords, limit, offset)
       return { artists: [], total: 0 }
     }
-    if (searchProviderArtists) return searchProviderArtists(source, keywords, limit, offset)
+    if (searchProviderArtists) {
+      return searchProviderArtists(source, keywords, limit, offset, { signal })
+    }
     return { artists: [], total: 0 }
   }
 
@@ -221,12 +244,16 @@ export function useStreamingSearch({
     const query = keywords.trim()
     if (!query) {
       latestRequestId += 1
+      cancelActiveSearch()
       searchResults.value = []
       searchPlaylistsResults.value = []
       searchArtistsResults.value = []
       searchTotal.value = 0
       return
     }
+    cancelActiveSearch()
+    const controller = new AbortController()
+    activeSearchController = controller
     const snapshot: SearchRequestSnapshot = {
       requestId: ++latestRequestId,
       query,
@@ -243,7 +270,8 @@ export function useStreamingSearch({
           snapshot.source,
           snapshot.query,
           30,
-          snapshot.offset
+          snapshot.offset,
+          controller.signal
         )
         if (snapshot.requestId === latestRequestId) {
           searchResults.value = tracks
@@ -254,7 +282,8 @@ export function useStreamingSearch({
           snapshot.source,
           snapshot.query,
           30,
-          snapshot.offset
+          snapshot.offset,
+          controller.signal
         )
         if (snapshot.requestId === latestRequestId) {
           searchPlaylistsResults.value = playlists
@@ -265,7 +294,8 @@ export function useStreamingSearch({
           snapshot.source,
           snapshot.query,
           30,
-          snapshot.offset
+          snapshot.offset,
+          controller.signal
         )
         if (snapshot.requestId === latestRequestId) {
           searchArtistsResults.value = artists
@@ -281,6 +311,7 @@ export function useStreamingSearch({
         searchTotal.value = 0
       }
     } finally {
+      if (activeSearchController === controller) activeSearchController = null
       if (snapshot.requestId === latestRequestId) {
         searchLoading.value = false
       }
@@ -294,6 +325,7 @@ export function useStreamingSearch({
       const q = newQuery.trim()
       if (!q) {
         latestRequestId += 1
+        cancelActiveSearch()
         searchResults.value = []
         searchPlaylistsResults.value = []
         searchArtistsResults.value = []
@@ -344,6 +376,7 @@ export function useStreamingSearch({
     onBeforeUnmount(() => {
       if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
       latestRequestId += 1
+      cancelActiveSearch()
     })
   }
 

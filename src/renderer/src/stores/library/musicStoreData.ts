@@ -155,6 +155,7 @@ export function toPlaylistTrackSnapshot(track: Track): Track {
     ...(track.queueEntryId !== undefined ? { queueEntryId: track.queueEntryId } : {}),
     title: track.title,
     artist: track.artist,
+    ...(track.artists !== undefined ? { artists: track.artists.map((item) => ({ ...item })) } : {}),
     album: track.album,
     ...(track.genre !== undefined ? { genre: track.genre } : {}),
     ...(track.albumArtist !== undefined ? { albumArtist: track.albumArtist } : {}),
@@ -299,6 +300,18 @@ export function replayPlaylistRecord(base: Playlist, local: Playlist, current: P
   if (base.createdAt !== local.createdAt) next.createdAt = local.createdAt
   if (base.cover !== local.cover) next.cover = local.cover
   if (base.updatedAt !== local.updatedAt) next.updatedAt = local.updatedAt
+  // 聚合歌单的字段同样是"本次事务改了才覆盖"，否则并发窗口的置顶/音源隐藏会被
+  // 这次回放静默抹掉。clonePlaylist 走 JSON 往返，undefined 要短路掉。
+  if (base.kind !== local.kind) next.kind = local.kind
+  if ((base.pinnedAt ?? null) !== (local.pinnedAt ?? null)) next.pinnedAt = local.pinnedAt
+  if (!playlistDataEqual(base.hiddenSources, local.hiddenSources)) {
+    next.hiddenSources = local.hiddenSources ? clonePlaylist(local.hiddenSources) : undefined
+  }
+  if (!playlistDataEqual(base.variantPreferences, local.variantPreferences)) {
+    next.variantPreferences = local.variantPreferences
+      ? clonePlaylist(local.variantPreferences)
+      : undefined
+  }
 
   const baseIds = new Set(base.trackIds)
   const localIds = new Set(local.trackIds)

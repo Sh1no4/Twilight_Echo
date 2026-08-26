@@ -25,7 +25,6 @@ import {
   DEFAULT_DSP_STEREO_IMAGE,
   extractStereoImageFromGraph,
   mergeDspOutputStage,
-  mergeDspStereoImage,
   type DspOutputStageConfig,
   type DspStereoImageConfig
 } from '../../../shared/dspGraph.ts'
@@ -34,8 +33,6 @@ import { resolveCover } from '../utils/coverLoader'
 import { normalizeNativePlaybackInfo } from '../utils/playerPlaybackInfo.ts'
 import { clampSoftwareVolume, cloneAudioProcessingSettings } from '../utils/playerAudioSettings.ts'
 import {
-  HEART_MODE_REFILL_COUNT,
-  HEART_MODE_REFILL_THRESHOLD,
   NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS,
   NATIVE_PLAYBACK_INFO_POST_CONFIRMATION_GRACE_MS,
   NATIVE_PLAYBACK_INFO_REFRESH_DELAY_MS,
@@ -107,8 +104,14 @@ import { useMusicStore } from './useMusicStore'
 import { type SleepTimerMode, type SleepTimerState } from '../../../shared/sleepTimer.ts'
 import { projectManagedLyrics, type LyricSource } from '../../../shared/lyricsManagement.ts'
 import { DEFAULT_SOFTWARE_VOLUME } from '../../../shared/audioProcessingOptions.ts'
+import { presentError, presentErrorDetail } from '../../../shared/errors/presentError.ts'
+import { parseAppError } from '../../../shared/errors/appError.ts'
+import { translate } from '../../../shared/i18n/translate.ts'
+import { currentLocale } from '../app/useLocale.ts'
+import { toNativePlayMode } from '../../../shared/playbackModes.ts'
+import { deviceOptionsForOutput } from '../../../shared/audioDeviceRouting.ts'
 import { createPlayerSleepTimer } from './player/usePlayerSleepTimer.ts'
-import { useAppNoticeStore } from './useAppNoticeStore'
+import { useAppNoticeStore, type AppNoticeKind } from './useAppNoticeStore'
 import { claimRendererRuntime } from './playerRuntimeOwnership.ts'
 import {
   DEFAULT_AUDIO_DEVICE_OPTION,
@@ -126,6 +129,8 @@ import { createPlaybackClockController } from './player/playbackClockController.
 import { createLyricsLoader } from './player/lyricsLoaderController.ts'
 import { createPlaybackSessionController } from './player/playbackSessionController.ts'
 import { createPlaybackQueueController } from './player/playbackQueueController.ts'
+import { createAudioOutputController } from './player/audioOutputController.ts'
+import { createHeartModeController } from './player/heartModeController.ts'
 
 type NativePlaybackInfo = Awaited<ReturnType<typeof window.api.audioEngine.getPlaybackInfo>>
 type NativeOutputInfo = NativePlaybackInfo['outputInfo']
@@ -158,7 +163,7 @@ interface AudioOutputState {
 }
 
 export interface AudioEngineRecoveryNotice {
-  kind: 'service-crash' | 'service-ready'
+  kind: 'service-crash' | 'service-fatal' | 'service-ready'
   message: string
   actionLabel?: string
   canResume?: boolean
@@ -226,19 +231,6 @@ const queue = shallowRef<Track[]>([])
 const queueIndex = ref(-1)
 const playMode = ref<PlayMode>('sequential')
 const originalQueue = shallowRef<Track[]>([])
-const heartModeContext = ref<{ likedPlaylistId: number | null }>({ likedPlaylistId: null })
-let heartModeBaseQueue: Track[] = []
-let heartModeFetchRequest: Promise<number> | null = null
-let heartModeFetchGeneration = 0
-// 心动模式只能在本应用内“我喜欢的音乐”流媒体歌单上下文中启用：必须是在点击
-// 收藏歌单后建立的队列（heartModeContext），且当前曲目必须是网易云流媒体。
-const heartModeAvailable = computed(
-  () =>
-    heartModeContext.value.likedPlaylistId != null &&
-    queue.value.length > 0 &&
-    currentTrack.value != null &&
-    getTrackSource(currentTrack.value) === 'ncm'
-)
 const personalizedStreamSession = ref<PersonalizedStreamSession | null>(null)
 const personalizedStreamRemaining = ref(0)
 const personalizedStreamEntryIds = new Set<string>()
@@ -246,24 +238,50 @@ const personalizedStreamPlayedEntryIds = new Set<string>()
 const audioEngineReady = ref(false)
 const audioEngineError = ref<string | null>(null)
 const audioEngineRecoveryNotice = ref<AudioEngineRecoveryNotice | null>(null)
-const { pushNotice, dismissNotice } = useAppNoticeStore()
+const { pushNotice, dismissNotice, releaseNoticeDedupe } = useAppNoticeStore()
 let audioEngineRecoveryAppNoticeId = 0
 let lastAudioEngineNotice = ''
 
-function setAudioEngineError(error: string | null): void {
-  const message = typeof error === 'string' ? error.trim() : ''
-  audioEngineError.value = error
+/**
+ * Resolve an audio-engine error string for display.
+ *
+ * Every audio failure reaches the UI through `setAudioEngineError`, including the
+ * 14 catch blocks that hand over a raw `err.message` from an IPC rejection.
+ * Resolving here means a main-process `ipcError(...)` is translated — and its
+ * `[TE-ERR:...]` tail stripped — without each catch block knowing about the codec.
+ *
+ * Only a sentinel-carrying message is translated. Anything else is passed through
+ * verbatim rather than sent to `presentError`: that function's job is to replace
+ * unrecognized *platform* English with a generic fallback, and it cannot tell our
+ * own English copy from a Node error string. Running "The audio service failed to
+ * start" through it under en-US produced "An unknown error occurred" — a
+ * regression that zh-CN hid, because the CJK passthrough rule saved it there.
+ */
+function resolveAudioEngineErrorText(error: string): string {
+  const parsed = parseAppError(error)
+  if (parsed.code !== null) return presentError(currentLocale(), error).trim()
+  return error.trim()
+}
+
+/**
+ * Publish an audio-engine error to the inline banner and the toast host.
+ *
+ * `kind` is passed in rather than sniffed out of the message. It used to be
+ * inferred by substring-matching Chinese copy ("已启用临时播放通道" and friends),
+ * which silently tied severity to wording: translating the message would have
+ * reclassified a recovered-with-fallback warning as a hard error. Callers know
+ * which case they are in, so they say so.
+ */
+function setAudioEngineError(error: string | null, kind: AppNoticeKind = 'error'): void {
+  const message = typeof error === 'string' ? resolveAudioEngineErrorText(error) : ''
+  audioEngineError.value = message || error
   if (!message) {
     lastAudioEngineNotice = ''
     return
   }
   if (message === lastAudioEngineNotice) return
   lastAudioEngineNotice = message
-  const isFallbackNotice =
-    message.includes('已启用临时播放通道') ||
-    message.includes('已尝试切换到') ||
-    message.includes('已重新匹配到')
-  pushNotice({ kind: isFallbackNotice ? 'warning' : 'error', message })
+  pushNotice({ kind, message })
 }
 const exclusiveMode = ref(false)
 // Tracks whether the in-PlayingMusic audio visualizer surface is active.
@@ -273,6 +291,14 @@ const audioOutput = ref<AudioOutputId>(getFallbackAudioOutput())
 const audioDevice = ref('auto')
 const audioOutputOptions = ref<AudioOutputOption[]>(getFallbackAudioOutputOptions())
 const audioDeviceOptions = ref<AudioDeviceOption[]>([DEFAULT_AUDIO_DEVICE_OPTION])
+/**
+ * The output-device picker's list. `audioDeviceOptions` stays merged because the
+ * DSD route picker targets a second backend and needs every entry; the main output
+ * picker must only offer what the selected backend can open.
+ */
+const audioOutputDeviceOptions = computed(() =>
+  deviceOptionsForOutput(audioOutput.value, audioDeviceOptions.value)
+)
 const defaultAudioProcessing: AudioProcessingSettings = {
   dspEnabled: false,
   directMode: false,
@@ -335,7 +361,7 @@ const playbackInfo = ref<NativePlaybackInfo | null>(null)
 const loudnormStatus = ref<'idle' | 'measuring' | 'cached' | 'fallback' | 'unavailable'>('idle')
 const loudnormStatusSource = ref<string | null>(null)
 const outputInfo = computed<NativeOutputInfo | null>(() => playbackInfo.value?.outputInfo ?? null)
-// 高频（200ms）整体替换的可视化载荷不值得一层层深度代理，消费方只读快照。
+// 高频（60ms）整体替换的可视化载荷不值得一层层深度代理，消费方只读快照。
 const visualizationData = shallowRef<NativeVisualizationData>(createInactiveVisualizationData())
 const { settings: appSettings, updateSettings } = useSettingsStore()
 const lyricsManagement = useLyricsManagement()
@@ -1060,16 +1086,6 @@ async function refreshAudioOutputState(): Promise<void> {
   }
 }
 
-function mergeAudioProcessingPatch(
-  patch: Partial<AudioProcessingSettings>
-): AudioProcessingSettings {
-  return cloneAudioProcessingSettings({
-    ...audioProcessing.value,
-    ...patch,
-    eqBands: patch.eqBands ?? audioProcessing.value.eqBands
-  })
-}
-
 async function persistAudioProcessingFallback(
   nextSettings: AudioProcessingSettings,
   reason: unknown
@@ -1453,10 +1469,7 @@ async function syncNativeQueueState(snapshot: NativeQueueStateSnapshot): Promise
     return
   }
 
-  const nativePlayMode =
-    snapshot.playMode === 'repeat' || snapshot.playMode === 'shuffle'
-      ? snapshot.playMode
-      : 'sequential'
+  const nativePlayMode = toNativePlayMode(snapshot.playMode)
   const heartModeActive = snapshot.playMode === 'heart'
   const synchronized = await synchronizeLatestNativeQueue(
     nativeQueueRevisionFence,
@@ -1475,7 +1488,8 @@ async function syncNativeQueueState(snapshot: NativeQueueStateSnapshot): Promise
             currentIndex: heartModeActive ? 0 : snapshot.currentIndex
           },
           {
-            isAudioFileAuthorized: window.api.fs.isAudioFileAuthorized
+            isAudioFileAuthorized: window.api.fs.isAudioFileAuthorized,
+            areAudioFilesAuthorized: window.api.fs.areAudioFilesAuthorized
           }
         ),
       loadQueue: (preparedQueue) =>
@@ -1484,6 +1498,12 @@ async function syncNativeQueueState(snapshot: NativeQueueStateSnapshot): Promise
     }
   )
   if (!synchronized.applied) return
+  if (synchronized.loadQueueError) {
+    console.warn(
+      '[audio-engine] Native queue resynchronization failed:',
+      synchronized.loadQueueError
+    )
+  }
   const preparedQueue = synchronized.prepared
   if (preparedQueue) pruneNativeSourceToTrackId(preparedQueue.items, getTrackAudioSource(current))
   if (!preparedQueue) {
@@ -1516,7 +1536,7 @@ function queueNativeQueueStateSync(): Promise<void> {
 }
 
 function queueNativePlayModeSync(mode: PlayMode): Promise<void> {
-  const nativePlayMode = mode === 'repeat' || mode === 'shuffle' ? mode : 'sequential'
+  const nativePlayMode = toNativePlayMode(mode)
   const previousRequest = nativeQueueSyncRequest
   const request = (previousRequest ?? Promise.resolve())
     .catch(() => {})
@@ -1558,9 +1578,10 @@ async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<vo
   const wasPlaying = isPlaying.value
   clearPlaybackToggleIntent()
 
-  // In shuffle mode the native queue owns play order. Do not predict an adjacent
-  // renderer item; wait for playback-info to identify the actual shuffled target.
-  const target = playMode.value === 'shuffle' ? null : getNativeQueueAdvanceTarget(direction)
+  // The native queue mirrors the renderer's queue order in every mode now
+  // (shuffle is applied by the renderer before the queue is handed over), so the
+  // adjacent item is a safe prediction and shuffle keeps the optimistic UI too.
+  const target = getNativeQueueAdvanceTarget(direction)
   if (target) {
     // Optimistic UI update so cover/title/progress reset immediately instead of
     // waiting for (or missing) the first native playback-info event.
@@ -1849,34 +1870,177 @@ const playbackHistoryController = createPlaybackHistoryController({
 const { resumeOffer, acceptResumeOffer, dismissResumeOffer, addManualBookmarkAtCurrentTime } =
   playbackHistoryController
 
+const audioOutputController = createAudioOutputController({
+  exclusiveMode,
+  audioProcessing,
+  audioOutputConfig,
+  audioOutputConfigApplyStatus,
+  dspOutputStage,
+  dspStereoImage,
+  getAudioEngineApi: () => window.api.audioEngine,
+  applyAudioOutputState,
+  setAudioEngineError,
+  scheduleCrossfadeIfNeeded,
+  refreshPlaybackInfo: async () => {
+    playbackInfo.value = normalizeNativePlaybackInfo(await window.api.audioEngine.getPlaybackInfo())
+  },
+  persistAudioProcessingFallback
+})
+const {
+  toggleExclusiveMode,
+  setAudioOutput,
+  setAudioDevice,
+  setAudioOutputConfig,
+  setAudioProcessing,
+  applyAudioProcessingState,
+  setOutputStage,
+  setStereoImage,
+  toggleDspEnabled,
+  toggleEqEnabled,
+  toggleCrossfeed,
+  toggleGapless,
+  setReplayGainMode,
+  setCrossfeedStrength,
+  selectImpulseResponse,
+  clearImpulseResponse
+} = audioOutputController
+
+const heartModeController = createHeartModeController({
+  queue,
+  queueIndex,
+  currentTrack,
+  playMode,
+  isPlaying,
+  isLoading,
+  rendererPlayModeBoundaryPending,
+  fetchIntelligenceList: (request) => useNcmStore().fetchIntelligenceList(request),
+  playQueueTrack,
+  advanceAfterPlaybackEnded,
+  setAutoAdvanceInFlight: (value) => {
+    autoAdvanceInFlight = value
+  },
+  replaceQueue: (tracks, index, replaceOptions) => {
+    const snapshots = toPlaybackQueueSnapshots(tracks)
+    queue.value = snapshots
+    originalQueue.value = [...snapshots]
+    queueIndex.value = index
+    if (replaceOptions.persist) persistPlaybackSessionAfterQueueMutation()
+    void queueNativeQueueStateSync().catch((error) => {
+      setAudioEngineError(error instanceof Error ? error.message : String(error))
+    })
+  },
+  appendQueueAdditions: (additions) => {
+    const snapshots = toPlaybackQueueSnapshots(additions)
+    queue.value = [...queue.value, ...snapshots]
+    originalQueue.value = [...originalQueue.value, ...snapshots]
+    persistPlaybackSessionAfterQueueMutation()
+    void queueNativeQueueStateSync().catch((error) => {
+      setAudioEngineError(error instanceof Error ? error.message : String(error))
+    })
+  }
+})
+const {
+  heartModeAvailable,
+  setHeartModeContext,
+  enterHeartMode,
+  exitHeartModeToSequential,
+  exitHeartModeForManualQueueReplacement,
+  advanceHeartPlayback
+} = heartModeController
+
+// One dedupe slot for the whole audio-engine recovery lifecycle: crash, fatal
+// and ready all update the same toast in place. The main process can emit the
+// same crash reason repeatedly (service crash and error channels both fire, and
+// a fatal is re-reported on every manual retry), so a fresh notice per event
+// would keep replacing the one the user just closed.
+const AUDIO_ENGINE_RECOVERY_DEDUPE_KEY = 'audio-engine-recovery'
+
 function publishAudioEngineRecoveryNotice(notice: AudioEngineRecoveryNotice): void {
   audioEngineRecoveryNotice.value = notice
-  if (audioEngineRecoveryAppNoticeId) dismissNotice(audioEngineRecoveryAppNoticeId)
-  audioEngineRecoveryAppNoticeId = pushNotice({
-    kind: notice.kind === 'service-crash' || notice.canResume === false ? 'warning' : 'success',
-    message: notice.message,
-    action:
-      notice.kind === 'service-ready' && notice.canResume !== false
+  const unrecoverable = notice.kind === 'service-fatal'
+  const action =
+    notice.kind === 'service-ready' && notice.canResume !== false
+      ? {
+          label: notice.actionLabel || translate(currentLocale(), 'action.resumePlayback'),
+          run: () => void togglePlayState()
+        }
+      : unrecoverable
         ? {
-            label: notice.actionLabel || '继续播放',
-            run: () => void togglePlayState()
+            label: notice.actionLabel || translate(currentLocale(), 'action.retry'),
+            run: () => void retryAudioService()
           }
-        : undefined,
-    sticky: notice.kind === 'service-crash' || notice.canResume === false,
-    durationMs: 8000
+        : undefined
+  audioEngineRecoveryAppNoticeId = pushNotice({
+    kind: unrecoverable
+      ? 'error'
+      : notice.kind === 'service-crash' || notice.canResume === false
+        ? 'warning'
+        : 'success',
+    message: notice.message,
+    action,
+    sticky: unrecoverable || notice.kind === 'service-crash' || notice.canResume === false,
+    durationMs: 8000,
+    dedupeKey: AUDIO_ENGINE_RECOVERY_DEDUPE_KEY
   })
 }
 
-function setAudioServiceCrashNotice(reason: string): void {
-  const message = reason.trim()
-  const prefix = message.startsWith('音频服务已重启')
-    ? message
-    : `音频服务已重启：${message || '未知原因'}`
+/**
+ * Both call sites now hand over a bare reason — the structured `serviceCrash`
+ * event and the sentinel-carrying `error` channel — so this no longer has to
+ * strip a Chinese prefix back off a pre-rendered sentence.
+ */
+function setAudioServiceCrashNotice(reason: string, options?: { fatal?: boolean }): void {
+  const locale = currentLocale()
+  const detail = reason.trim() || translate(locale, 'error.audio.unknown_reason')
+  if (options?.fatal === true) {
+    publishAudioEngineRecoveryNotice({
+      kind: 'service-fatal',
+      message: translate(locale, 'error.audio.service_fatal', { reason: detail }),
+      actionLabel: translate(locale, 'action.retry')
+    })
+    return
+  }
   publishAudioEngineRecoveryNotice({
     kind: 'service-crash',
-    message: `${prefix}。正在恢复音频服务，恢复后不会自动续播。`,
-    actionLabel: '稍后手动继续'
+    message: translate(locale, 'error.audio.service_crashed', { reason: detail }),
+    actionLabel: translate(locale, 'action.resumeManually')
   })
+}
+
+/**
+ * User-driven recovery from a fatal audio-service startup failure. Nothing else
+ * re-forks the child, so the retry must also release the notice suppression —
+ * the user asked for a fresh answer and deserves to see it.
+ */
+async function retryAudioService(): Promise<void> {
+  const api = window.api?.audioEngine
+  if (!api?.restartService) return
+  try {
+    const result = await api.restartService()
+    // Release only after awaiting: the notice host dismisses the toast right
+    // after the action returns, which re-suppresses the message it carried.
+    // Releasing here guarantees the retry's outcome is visible even when the
+    // service fails again with the identical reason.
+    releaseNoticeDedupe(AUDIO_ENGINE_RECOVERY_DEDUPE_KEY)
+    if (result.restarted) {
+      setAudioEngineError(null)
+      publishAudioEngineRecoveryNotice({
+        kind: 'service-ready',
+        message: translate(currentLocale(), 'error.audio.service_restarting'),
+        canResume: false
+      })
+      return
+    }
+    setAudioServiceCrashNotice(
+      result.error || translate(currentLocale(), 'error.audio.service_still_failing'),
+      { fatal: true }
+    )
+  } catch (error) {
+    releaseNoticeDedupe(AUDIO_ENGINE_RECOVERY_DEDUPE_KEY)
+    setAudioServiceCrashNotice(error instanceof Error ? error.message : String(error), {
+      fatal: true
+    })
+  }
 }
 
 function setAudioServiceReadyNotice(event?: {
@@ -1887,13 +2051,17 @@ function setAudioServiceReadyNotice(event?: {
   const restoreErrors = Array.isArray(event?.restoreErrors)
     ? event.restoreErrors.filter((item) => item.trim())
     : []
-  const detail = restoreErrors.length > 0 ? `（${restoreErrors.join('；')}）` : ''
+  const locale = currentLocale()
+  const detail =
+    restoreErrors.length > 0
+      ? translate(locale, 'error.audio.restore_detail', { detail: restoreErrors.join('；') })
+      : ''
   publishAudioEngineRecoveryNotice({
     kind: 'service-ready',
     message: outputRouteSynced
-      ? '音频服务已恢复，播放已停止，可手动继续。'
-      : `音频服务已恢复，但输出设备/后端未完全恢复${detail}。请重新选择输出设备后继续。`,
-    actionLabel: outputRouteSynced ? '继续播放' : undefined,
+      ? translate(locale, 'error.audio.service_recovered')
+      : translate(locale, 'error.audio.service_recovered_route_pending', { detail }),
+    actionLabel: outputRouteSynced ? translate(locale, 'action.resumePlayback') : undefined,
     canResume: outputRouteSynced
   })
 }
@@ -1961,7 +2129,13 @@ async function advanceAfterPlaybackEnded(): Promise<void> {
 
 function handleNativePlaybackEnded(): void {
   if (!nativePlaybackActive) return
-  if (isNativeQueueDelegated()) return
+  // Do not drop this because the queue is delegated. A delegated queue that
+  // actually reached its end is exactly the case that needs the renderer's
+  // boundary handling: listLoop/shuffle wrap in advanceAfterPlaybackEnded, and
+  // without this the auto-advance budget ended up equal to the queue length.
+  // Main only publishes the EOF signal when the engine reports no upcoming
+  // track, i.e. when it cannot advance on its own, so this never races the
+  // engine's own auto-advance (issue #48).
   void handlePlaybackEnded()
 }
 
@@ -2163,8 +2337,15 @@ async function handlePlaybackFallback(
   })
   if (!fallback) return await handleProviderRematchFallback(failedTrack, loadToken)
 
+  // A fallback succeeded: audio is still playing, so this is a warning.
+  const fallbackLocale = currentLocale()
   setAudioEngineError(
-    `播放 ${failedTrack.title || '当前曲目'} 失败，已尝试切换到 ${fallback.source ?? getTrackSource(fallback)} 来源：${reason instanceof Error ? reason.message : String(reason)}`
+    translate(fallbackLocale, 'error.audio.playback_fallback_switched', {
+      title: failedTrack.title || translate(fallbackLocale, 'error.audio.current_track'),
+      source: fallback.source ?? getTrackSource(fallback),
+      reason: presentError(fallbackLocale, reason)
+    }),
+    'warning'
   )
   nativePlaybackActive = false
   loadedTrackId = ''
@@ -2218,8 +2399,14 @@ async function handleProviderRematchFallback(
   const rematched = findProviderRematchCandidate(failedTrack, candidates)
   if (!rematched || !isActiveLoad(loadToken, failedTrack)) return false
 
+  // Rematch succeeded: playback continues from another source.
+  const rematchLocale = currentLocale()
   setAudioEngineError(
-    `播放 ${failedTrack.title || '当前曲目'} 失败，已重新匹配到 ${rematched.source ?? getTrackSource(rematched)} 来源`
+    translate(rematchLocale, 'error.audio.playback_fallback_rematched', {
+      title: failedTrack.title || translate(rematchLocale, 'error.audio.current_track'),
+      source: rematched.source ?? getTrackSource(rematched)
+    }),
+    'warning'
   )
   nativePlaybackActive = false
   loadedTrackId = ''
@@ -2422,8 +2609,8 @@ function setupAudioEngineListeners(): void {
 
   if (api.onServiceCrash) {
     cleanupFns.push(
-      api.onServiceCrash(({ reason }) => {
-        setAudioServiceCrashNotice(reason)
+      api.onServiceCrash(({ reason, fatal }) => {
+        setAudioServiceCrashNotice(reason, { fatal: fatal === true })
       })
     )
   }
@@ -2435,7 +2622,9 @@ function setupAudioEngineListeners(): void {
         if (event.outputRouteSynced) {
           setAudioEngineError(null)
         } else {
-          audioEngineError.value = event.restoreErrors?.join('；') || '音频输出设备/后端未完全恢复'
+          audioEngineError.value =
+            event.restoreErrors?.join('；') ||
+            translate(currentLocale(), 'error.audio.output_route_not_restored')
         }
         setAudioServiceReadyNotice({
           outputRouteSynced: event.outputRouteSynced === true,
@@ -2451,11 +2640,12 @@ function setupAudioEngineListeners(): void {
       const recoveredFromServiceCrash = audioEngineRecoveryNotice.value?.kind === 'service-crash'
       audioEngineReady.value = true
       if (recoveredFromServiceCrash) {
+        const locale = currentLocale()
         setAudioServiceReadyNotice({
           outputRouteSynced: false,
-          restoreErrors: ['等待结构化输出路由恢复确认']
+          restoreErrors: [translate(locale, 'error.audio.awaiting_route_confirmation')]
         })
-        audioEngineError.value = '音频输出设备/后端未完全恢复'
+        audioEngineError.value = translate(locale, 'error.audio.output_route_not_restored')
       } else {
         setAudioEngineError(null)
       }
@@ -2476,12 +2666,19 @@ function setupAudioEngineListeners(): void {
 
   cleanupFns.push(
     api.onError((message) => {
-      console.error('[audio-engine] Playback error:', message)
-      if (message.includes('音频服务已重启')) {
-        audioEngineError.value = message
-        setAudioServiceCrashNotice(message)
+      // The sentinel classifies the failure; the prose is only for the console.
+      // Reading `code` instead of substring-matching Chinese keeps crash handling
+      // working in every language.
+      const detail = presentErrorDetail(currentLocale(), message)
+      console.error('[audio-engine] Playback error:', detail.developerMessage || message)
+      if (detail.code === 'audio.service_fatal') {
+        audioEngineError.value = detail.display
+        setAudioServiceCrashNotice(String(detail.params.reason ?? ''), { fatal: true })
+      } else if (detail.code === 'audio.service_crashed') {
+        audioEngineError.value = detail.display
+        setAudioServiceCrashNotice(String(detail.params.reason ?? ''))
       } else {
-        setAudioEngineError(message)
+        setAudioEngineError(detail.display)
       }
       clearPlaybackToggleIntent()
       clearNativePlaybackInfoIntent()
@@ -2776,7 +2973,8 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
             currentIndex: playMode.value === 'heart' ? 0 : queueIndex.value
           },
           {
-            isAudioFileAuthorized: window.api.fs.isAudioFileAuthorized
+            isAudioFileAuthorized: window.api.fs.isAudioFileAuthorized,
+            areAudioFilesAuthorized: window.api.fs.areAudioFilesAuthorized
           }
         )
         if (!preparedQueue) {
@@ -2803,10 +3001,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         // 心动模式由渲染层驱动切歌与补拉，原生队列不代管边界。
         if (playMode.value === 'heart') nativeQueueDelegated = false
 
-        const nativePlayMode =
-          playMode.value === 'repeat' || playMode.value === 'shuffle'
-            ? playMode.value
-            : 'sequential'
+        const nativePlayMode = toNativePlayMode(playMode.value)
         await window.api.audioEngine.setPlayMode(nativePlayMode)
         if (!isActiveLoad(loadToken, track)) {
           releaseLoadIfOwned()
@@ -2857,17 +3052,24 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
       if (!htmlAudioFallbackAllowed) {
         setAudioEngineError(
           nativeFallbackReason
-            ? `原生音频引擎不可用：${nativeFallbackReason}`
-            : '原生音频引擎不可用'
+            ? translate(currentLocale(), 'error.audio.native_unavailable_detail', {
+                reason: nativeFallbackReason
+              })
+            : translate(currentLocale(), 'error.audio.native_unavailable')
         )
         isPlaying.value = false
         releaseLoadIfOwned()
         return
       }
+      // Degraded but audible: the HTML audio path took over, so this is a
+      // warning rather than an error.
       setAudioEngineError(
         nativeFallbackReason
-          ? `原生音频引擎不可用，已启用临时播放通道：${nativeFallbackReason}`
-          : ''
+          ? translate(currentLocale(), 'error.audio.native_fallback', {
+              reason: nativeFallbackReason
+            })
+          : '',
+        'warning'
       )
       const rendererStarted = await playWithRendererAudio(
         track,
@@ -3130,7 +3332,7 @@ function seekPlayback(time: number): void {
     beginPlaybackPositionTransition(position)
     return
   }
-  if (isLoading.value || loadedTrackId !== track.id) {
+  if (isLoading.value) {
     restoredPlaybackPending = true
     restoredPlaybackPosition = position
     beginPlaybackPositionTransition(position)
@@ -3672,157 +3874,6 @@ function cyclePlayMode(): void {
   setPlayModeInternal(cycleModes[(idx + 1) % cycleModes.length])
 }
 
-function setHeartModeContext(playlistId: number | null): void {
-  const normalized =
-    playlistId != null && Number.isFinite(Number(playlistId)) && Number(playlistId) > 0
-      ? Number(playlistId)
-      : null
-  heartModeContext.value = { likedPlaylistId: normalized }
-}
-
-function fetchHeartRecommendations(seedTrack: Track | null): Promise<Track[]> {
-  const playlistId = heartModeContext.value.likedPlaylistId
-  if (playlistId == null || !seedTrack?.ncmSongId) return Promise.resolve([])
-  return useNcmStore().fetchIntelligenceList({
-    songId: seedTrack.ncmSongId,
-    playlistId,
-    startSongId: seedTrack.ncmSongId,
-    count: HEART_MODE_REFILL_COUNT
-  })
-}
-
-function commitHeartQueue(nextQueue: Track[]): void {
-  const snapshots = toPlaybackQueueSnapshots(nextQueue)
-  queue.value = snapshots
-  originalQueue.value = [...snapshots]
-  queueIndex.value = 0
-  persistPlaybackSessionAfterQueueMutation()
-  void queueNativeQueueStateSync().catch((error) => {
-    setAudioEngineError(error instanceof Error ? error.message : String(error))
-  })
-}
-
-function enterHeartMode(options: { persist?: boolean } = {}): void {
-  void options
-  const seed = currentTrack.value
-  const likedPlaylistId = heartModeContext.value.likedPlaylistId
-  if (likedPlaylistId == null || !seed?.ncmSongId) return
-  heartModeBaseQueue = [...queue.value]
-  heartModeFetchGeneration += 1
-  const generation = heartModeFetchGeneration
-  playMode.value = 'heart'
-  rendererPlayModeBoundaryPending.value = false
-  commitHeartQueue([seed])
-  void refillHeartQueue(seed).then((added) => {
-    if (generation !== heartModeFetchGeneration || playMode.value !== 'heart') return
-    if (added === 0) {
-      console.error('[心动模式] 启动未返回推荐')
-      exitHeartModeToSequential()
-    }
-  })
-}
-
-function exitHeartModeToSequential(): void {
-  if (playMode.value !== 'heart') return
-  heartModeFetchGeneration += 1
-  heartModeFetchRequest = null
-  playMode.value = 'sequential'
-  rendererPlayModeBoundaryPending.value = false
-  if (heartModeBaseQueue.length > 0) {
-    const restored = toPlaybackQueueSnapshots(heartModeBaseQueue)
-    queue.value = restored
-    originalQueue.value = [...restored]
-    const currentId = currentTrack.value?.id
-    queueIndex.value = currentId ? restored.findIndex((item) => item.id === currentId) : 0
-    if (queueIndex.value < 0) queueIndex.value = 0
-    void queueNativeQueueStateSync().catch((error) => {
-      setAudioEngineError(error instanceof Error ? error.message : String(error))
-    })
-  }
-  heartModeBaseQueue = []
-}
-
-function exitHeartModeForManualQueueReplacement(): void {
-  if (playMode.value !== 'heart') return
-  heartModeFetchGeneration += 1
-  heartModeFetchRequest = null
-  playMode.value = 'sequential'
-  rendererPlayModeBoundaryPending.value = false
-  heartModeBaseQueue = []
-}
-
-async function refillHeartQueue(seedTrack: Track | null): Promise<number> {
-  if (playMode.value !== 'heart') return 0
-  if (heartModeFetchRequest) return heartModeFetchRequest
-  const playlistId = heartModeContext.value.likedPlaylistId
-  if (playlistId == null || !seedTrack?.ncmSongId) return 0
-  const generation = heartModeFetchGeneration
-  const request = (async () => {
-    try {
-      const recommended = await fetchHeartRecommendations(seedTrack)
-      if (generation !== heartModeFetchGeneration || playMode.value !== 'heart') return 0
-      const knownIds = new Set(queue.value.map((item) => item.id))
-      const additions = recommended.filter((item) => item.id && !knownIds.has(item.id))
-      if (additions.length === 0) return 0
-      const snapshots = toPlaybackQueueSnapshots(additions)
-      queue.value = [...queue.value, ...snapshots]
-      originalQueue.value = [...originalQueue.value, ...snapshots]
-      if (queueIndex.value < 0) {
-        queueIndex.value = 0
-        const track = queue.value[0]
-        if (track) playQueueTrack(track)
-      }
-      persistPlaybackSessionAfterQueueMutation()
-      void queueNativeQueueStateSync().catch((error) => {
-        setAudioEngineError(error instanceof Error ? error.message : String(error))
-      })
-      return additions.length
-    } catch (error) {
-      if (generation === heartModeFetchGeneration) {
-        console.error('[心动模式] 获取智能播放列表失败:', error)
-      }
-      return 0
-    } finally {
-      if (generation === heartModeFetchGeneration) heartModeFetchRequest = null
-    }
-  })()
-  heartModeFetchRequest = request
-  return request
-}
-
-function advanceHeartPlayback(): Promise<void> {
-  const nextIndex = queueIndex.value + 1
-  if (nextIndex >= 0 && nextIndex < queue.value.length) {
-    queueIndex.value = nextIndex
-    const track = queue.value[nextIndex]
-    if (track) {
-      playQueueTrack(track)
-      if (queueIndex.value >= queue.value.length - HEART_MODE_REFILL_THRESHOLD) {
-        void refillHeartQueue(track)
-      }
-    }
-    return Promise.resolve()
-  }
-  return refillHeartQueue(currentTrack.value).then(async () => {
-    if (playMode.value !== 'heart') {
-      await advanceAfterPlaybackEnded()
-      return
-    }
-    const afterRefillIndex = queueIndex.value + 1
-    if (afterRefillIndex >= 0 && afterRefillIndex < queue.value.length) {
-      queueIndex.value = afterRefillIndex
-      const track = queue.value[afterRefillIndex]
-      if (track) {
-        playQueueTrack(track)
-        return
-      }
-    }
-    isPlaying.value = false
-    isLoading.value = false
-    autoAdvanceInFlight = false
-  })
-}
-
 function setPlayModeInternal(mode: PlayMode, options: { persist?: boolean } = {}): void {
   if (mode === playMode.value) return
   if (mode === 'heart') {
@@ -3842,6 +3893,20 @@ function setPlayModeInternal(mode: PlayMode, options: { persist?: boolean } = {}
     void updateSettings({ playMode: mode }).catch((err) => {
       console.error('[音频引擎] 保存播放模式失败:', err)
     })
+  }
+  if (!castTargetUsn.value && nativePlaybackActive && isNativeQueueDelegated()) {
+    // A delegated engine has already preloaded its next item, so a later renderer
+    // boundary can no longer influence what plays next: the pending reorder would
+    // never take effect and shuffle would keep playing in plain queue order.
+    // Apply it now and resync the whole queue instead. The active track stays at
+    // the head of the new order and loadQueue does not touch the pipeline, so
+    // playback continues uninterrupted.
+    applyPendingRendererPlayModeAtBoundary()
+    void queueNativeQueueStateSync().catch((err) => {
+      setAudioEngineError(err instanceof Error ? err.message : String(err))
+      console.error('[音频引擎] 同步播放模式失败:', err)
+    })
+    return
   }
   void queueNativePlayModeSync(mode).catch((err) => {
     setAudioEngineError(err instanceof Error ? err.message : String(err))
@@ -3974,6 +4039,7 @@ export function usePlayerStore(): {
   audioDevice: Ref<string>
   audioOutputOptions: Ref<AudioOutputOption[]>
   audioDeviceOptions: Ref<AudioDeviceOption[]>
+  audioOutputDeviceOptions: ComputedRef<AudioDeviceOption[]>
   audioProcessing: Ref<AudioProcessingSettings>
   audioOutputConfig: Ref<OutputConfig>
   audioOutputConfigApplyStatus: Ref<OutputConfigApplyStatus>
@@ -4146,253 +4212,6 @@ export function usePlayerStore(): {
     setVolume(1)
   }
 
-  async function toggleExclusiveMode(): Promise<void> {
-    const next = !exclusiveMode.value
-    try {
-      applyAudioOutputState(await window.api.audioEngine.setExclusiveMode(next))
-    } catch (err) {
-      setAudioEngineError(err instanceof Error ? err.message : String(err))
-      console.error('[audio-engine] Failed to toggle exclusive mode:', err)
-    }
-  }
-
-  async function setAudioOutput(output: AudioOutputId, device?: string): Promise<void> {
-    try {
-      applyAudioOutputState(await window.api.audioEngine.setAudioOutput(output, device))
-    } catch (err) {
-      setAudioEngineError(err instanceof Error ? err.message : String(err))
-      console.error('[audio-engine] Failed to switch audio output:', err)
-    }
-  }
-
-  async function setAudioDevice(device: string): Promise<void> {
-    try {
-      applyAudioOutputState(await window.api.audioEngine.setAudioDevice(device))
-    } catch (err) {
-      setAudioEngineError(err instanceof Error ? err.message : String(err))
-      console.error('[audio-engine] Failed to switch audio device:', err)
-    }
-  }
-
-  async function setAudioOutputConfig(config: Partial<OutputConfig>): Promise<void> {
-    if (audioOutputConfigApplyStatus.value.state === 'pending') return
-    audioOutputConfigApplyStatus.value = {
-      ...audioOutputConfigApplyStatus.value,
-      requestedRevision: audioOutputConfigApplyStatus.value.requestedRevision + 1,
-      state: 'pending',
-      error: ''
-    }
-    try {
-      audioOutputConfig.value = await window.api.audioEngine.setOutputConfig({
-        ...audioOutputConfig.value,
-        ...config
-      })
-      audioOutputConfigApplyStatus.value = await window.api.audioEngine.getOutputConfigApplyStatus()
-      playbackInfo.value = normalizeNativePlaybackInfo(
-        await window.api.audioEngine.getPlaybackInfo()
-      )
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err)
-      setAudioEngineError(errorMessage)
-      audioOutputConfigApplyStatus.value = {
-        ...audioOutputConfigApplyStatus.value,
-        failedRevision: audioOutputConfigApplyStatus.value.requestedRevision,
-        state: 'failed',
-        error: errorMessage
-      }
-      console.error('[音频引擎] 更新输出配置失败:', err)
-    }
-  }
-
-  async function setAudioProcessing(settings: Partial<AudioProcessingSettings>): Promise<void> {
-    const nextSettings = mergeAudioProcessingPatch(settings)
-    const previousSettings = cloneAudioProcessingSettings(audioProcessing.value)
-    try {
-      audioProcessing.value = cloneAudioProcessingSettings(
-        await window.api.audioEngine.setAudioProcessing(nextSettings)
-      )
-      // Classic processing rewrites the default graph but must keep sample-rate lock;
-      // re-sync output stage from scene state after apply.
-      try {
-        const sceneState = await window.api.audioEngine.getDspSceneState()
-        const defaultScene = sceneState?.scenes?.find((scene) => scene.id === 'default')
-        const graph = defaultScene?.graph ?? sceneState?.graph
-        if (graph?.outputStage) {
-          dspOutputStage.value = mergeDspOutputStage(graph.outputStage, {})
-        }
-        if (graph) {
-          dspStereoImage.value = extractStereoImageFromGraph(graph)
-        }
-      } catch {
-        // Scene state is optional for older bridges; processing still applied.
-      }
-      playbackInfo.value = normalizeNativePlaybackInfo(
-        await window.api.audioEngine.getPlaybackInfo()
-      )
-      scheduleCrossfadeIfNeeded()
-    } catch (err) {
-      audioProcessing.value = previousSettings
-      setAudioEngineError(err instanceof Error ? err.message : String(err))
-      console.error('[audio-engine] Failed to update audio processing settings:', err)
-    }
-  }
-
-  /**
-   * Replace the renderer-side audio processing snapshot without touching the
-   * engine. The equalizer page must use this instead of reassigning a
-   * storeToRefs value, which would detach the DSP store from this store's
-   * live ref and freeze the EQ UI while the engine still processes changes.
-   */
-  function applyAudioProcessingState(processing: AudioProcessingSettings): void {
-    audioProcessing.value = cloneAudioProcessingSettings(processing)
-  }
-
-  /**
-   * Patch default-scene graph.outputStage (sample-rate lock / resampler / dither).
-   * Does not invent OutputConfig fields — rate lock lives only on the DSP graph.
-   */
-  async function setOutputStage(partial: Partial<DspOutputStageConfig>): Promise<void> {
-    const next = mergeDspOutputStage(dspOutputStage.value, partial)
-    dspOutputStage.value = next
-    try {
-      const state = await window.api.audioEngine.setOutputStage(partial)
-      const defaultScene = state?.scenes?.find((scene) => scene.id === 'default')
-      if (defaultScene?.graph?.outputStage) {
-        dspOutputStage.value = mergeDspOutputStage(defaultScene.graph.outputStage, {})
-      } else if (state?.graph?.outputStage) {
-        dspOutputStage.value = mergeDspOutputStage(state.graph.outputStage, {})
-      }
-      playbackInfo.value = normalizeNativePlaybackInfo(
-        await window.api.audioEngine.getPlaybackInfo()
-      )
-    } catch (err) {
-      setAudioEngineError(err instanceof Error ? err.message : String(err))
-      console.error('[音频引擎] 更新输出采样率锁失败:', err)
-      try {
-        const sceneState = await window.api.audioEngine.getDspSceneState()
-        const defaultScene = sceneState?.scenes?.find((scene) => scene.id === 'default')
-        const graph = defaultScene?.graph ?? sceneState?.graph
-        if (graph?.outputStage) {
-          dspOutputStage.value = mergeDspOutputStage(graph.outputStage, {})
-        }
-        if (graph) {
-          dspStereoImage.value = extractStereoImageFromGraph(graph)
-        }
-      } catch {
-        // keep optimistic value if scene state is unavailable
-      }
-    }
-  }
-
-  /**
-   * Patch default-scene stereoField balance/width + channelStrip polarity.
-   * Graph-only; not classic audioProcessing fields.
-   */
-  async function setStereoImage(partial: Partial<DspStereoImageConfig>): Promise<void> {
-    dspStereoImage.value = mergeDspStereoImage(dspStereoImage.value, partial)
-    try {
-      const state = await window.api.audioEngine.setStereoImage(partial)
-      const defaultScene = state?.scenes?.find((scene) => scene.id === 'default')
-      const graph = defaultScene?.graph ?? state?.graph
-      if (graph) {
-        dspStereoImage.value = extractStereoImageFromGraph(graph)
-      }
-      playbackInfo.value = normalizeNativePlaybackInfo(
-        await window.api.audioEngine.getPlaybackInfo()
-      )
-    } catch (err) {
-      setAudioEngineError(err instanceof Error ? err.message : String(err))
-      console.error('[音频引擎] 更新平衡/相位失败:', err)
-      try {
-        const sceneState = await window.api.audioEngine.getDspSceneState()
-        const defaultScene = sceneState?.scenes?.find((scene) => scene.id === 'default')
-        const graph = defaultScene?.graph ?? sceneState?.graph
-        if (graph) {
-          dspStereoImage.value = extractStereoImageFromGraph(graph)
-        }
-      } catch {
-        // keep optimistic value
-      }
-    }
-  }
-
-  async function toggleDspEnabled(): Promise<void> {
-    await setAudioProcessing({ dspEnabled: !audioProcessing.value.dspEnabled })
-  }
-
-  async function toggleEqEnabled(): Promise<void> {
-    await setAudioProcessing({ eqEnabled: !audioProcessing.value.eqEnabled })
-  }
-
-  async function toggleCrossfeed(): Promise<void> {
-    await setAudioProcessing({
-      crossfeedEnabled: !audioProcessing.value.crossfeedEnabled,
-      crossfeedStrength:
-        !audioProcessing.value.crossfeedEnabled && audioProcessing.value.crossfeedStrength <= 0
-          ? 0.35
-          : audioProcessing.value.crossfeedStrength
-    })
-  }
-
-  async function toggleGapless(): Promise<void> {
-    await setAudioProcessing({ gapless: !audioProcessing.value.gapless })
-  }
-
-  async function setReplayGainMode(
-    mode: AudioProcessingSettings['volumeNormalization']
-  ): Promise<void> {
-    await setAudioProcessing({ volumeNormalization: mode })
-  }
-
-  async function setCrossfeedStrength(strength: number): Promise<void> {
-    await setAudioProcessing({
-      crossfeedEnabled: strength > 0,
-      crossfeedStrength: Math.min(1, Math.max(0, strength))
-    })
-  }
-
-  async function selectImpulseResponse(): Promise<void> {
-    try {
-      const path = await window.api.audioEngine.selectImpulseResponse()
-      if (!path) return
-      const nextSettings = mergeAudioProcessingPatch({
-        convolverEnabled: true,
-        convolverIrPath: path
-      })
-      audioProcessing.value = nextSettings
-      await window.api.audioEngine.loadImpulseResponse(path)
-      audioProcessing.value = cloneAudioProcessingSettings(
-        await window.api.audioEngine.getAudioProcessing()
-      )
-      playbackInfo.value = normalizeNativePlaybackInfo(
-        await window.api.audioEngine.getPlaybackInfo()
-      )
-    } catch (err) {
-      console.error('[音频引擎] 加载卷积脉冲响应失败:', err)
-      await persistAudioProcessingFallback(audioProcessing.value, err)
-    }
-  }
-
-  async function clearImpulseResponse(): Promise<void> {
-    const nextSettings = mergeAudioProcessingPatch({
-      convolverEnabled: false,
-      convolverIrPath: ''
-    })
-    audioProcessing.value = nextSettings
-    try {
-      await window.api.audioEngine.unloadImpulseResponse()
-      audioProcessing.value = cloneAudioProcessingSettings(
-        await window.api.audioEngine.getAudioProcessing()
-      )
-      playbackInfo.value = normalizeNativePlaybackInfo(
-        await window.api.audioEngine.getPlaybackInfo()
-      )
-    } catch (err) {
-      console.error('[音频引擎] 卸载卷积脉冲响应失败:', err)
-      await persistAudioProcessingFallback(nextSettings, err)
-    }
-  }
-
   async function refreshCurrentLyrics(): Promise<void> {
     await lyricsLoader.ensureCurrentTrackLyricsLoaded(currentTrack.value, true, true)
   }
@@ -4437,6 +4256,7 @@ export function usePlayerStore(): {
     audioDevice,
     audioOutputOptions,
     audioDeviceOptions,
+    audioOutputDeviceOptions,
     audioProcessing,
     audioOutputConfig,
     audioOutputConfigApplyStatus,

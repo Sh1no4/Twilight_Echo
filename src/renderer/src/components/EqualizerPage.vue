@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
+import { useBackHandler } from '../app/useBackStack.ts'
 import { useAudioOutputDspStore } from '../stores/useAudioOutputDspStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import ParametricEqWorkspace from './equalizer/ParametricEqWorkspace.vue'
@@ -44,9 +45,6 @@ import type {
 } from '../types/settings'
 import type { DspSceneState } from '../../../shared/dspGraph.ts'
 
-const emit = defineEmits<{
-  back: []
-}>()
 
 type EqualizerTab = EqMode
 type ResponseView = 'dsp' | 'headphone'
@@ -799,6 +797,14 @@ function switchTab(tab: EqualizerTab): void {
   }
 }
 
+// 参数均衡是页面内部的一层：标题栏返回键先退回图形标签，再退出均衡器页
+// （页面层由 App.vue 按页面旗标注冊）。
+useBackHandler(
+  computed(() => activeTab.value === 'parametric'),
+  () => switchTab('graphic'),
+  '返回图形'
+)
+
 function openAdvancedSettings(index = selectedBandIndex.value): void {
   selectedBandIndex.value = Math.min(Math.max(index, 0), audioProcessing.value.eqBands.length - 1)
   activeTab.value = 'parametric'
@@ -866,16 +872,6 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
 
 <template>
   <div class="eq-page" @keydown="onEqualizerKeydown">
-    <button
-      type="button"
-      class="eq-back-button"
-      data-te-back-button="icon"
-      aria-label="返回"
-      @click="emit('back')"
-    >
-      <i class="pi pi-chevron-left"></i>
-    </button>
-
     <div class="eq-container">
       <aside class="eq-sidebar">
         <div
@@ -1131,28 +1127,6 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
 </template>
 
 <style scoped>
-.eq-back-button {
-  position: fixed;
-  top: 42px;
-  left: 42px;
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  backdrop-filter: blur(10px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  font-size: 16px;
-  transition: all 0.2s;
-  z-index: 100;
-}
-
-.eq-back-button:hover {
-  transform: translateX(-2px);
-}
-
-/* Ensure eq-page allows absolute positioning of the back button */
 .eq-page {
   position: fixed;
   inset: 0;
@@ -1194,7 +1168,10 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
   font-weight: 600;
   color: var(--te-neutral-700);
   cursor: pointer;
-  transition: all 0.2s;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    border-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1273,7 +1250,9 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
   color: var(--te-neutral-700);
   border-radius: 8px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
 }
 
 .preset-menu-item:hover {
@@ -1302,7 +1281,9 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
   padding: 6px 10px;
   font-size: 12px;
   outline: none;
-  transition: all 0.2s;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    border-color 0.2s var(--te-ease-soft);
   width: 100%;
 }
 
@@ -1329,15 +1310,6 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
 .preset-create button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-:root {
-  --te-primary-500: #6366f1;
-  --te-primary-rgb: 99, 102, 241;
-  --te-neutral-900: #1e293b;
-  --te-neutral-500: #64748b;
-  --te-ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
-  --transition: all 0.3s var(--te-ease-soft);
 }
 
 * {
@@ -1378,7 +1350,10 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
   padding: 14px 16px;
   border-radius: 16px;
   cursor: pointer;
-  transition: var(--transition);
+  transition:
+    background-color var(--te-motion-hover) var(--te-ease-soft),
+    color var(--te-motion-hover) var(--te-ease-soft),
+    border-color var(--te-motion-hover) var(--te-ease-soft);
   color: var(--te-neutral-500);
 }
 .nav-item:hover {
@@ -1400,7 +1375,10 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
   align-items: center;
   justify-content: center;
   border-radius: 10px;
-  transition: var(--transition);
+  transition:
+    background-color var(--te-motion-hover) var(--te-ease-soft),
+    color var(--te-motion-hover) var(--te-ease-soft),
+    border-color var(--te-motion-hover) var(--te-ease-soft);
 }
 .nav-item.active i {
   background: rgba(var(--te-primary-rgb), 0.1);
@@ -1607,7 +1585,10 @@ watch([spectrumVisible, responseView, isPlaying], () => scheduleSpectrumPathUpda
   font-weight: 700;
   color: var(--te-neutral-500);
   cursor: pointer;
-  transition: var(--transition);
+  transition:
+    background-color var(--te-motion-hover) var(--te-ease-soft),
+    color var(--te-motion-hover) var(--te-ease-soft),
+    border-color var(--te-motion-hover) var(--te-ease-soft);
 }
 .band-tab:hover {
   background: var(--te-hover-bg);

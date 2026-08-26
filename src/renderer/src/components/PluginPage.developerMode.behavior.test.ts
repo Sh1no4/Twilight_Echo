@@ -80,6 +80,17 @@ async function compileComponent(
     /import\s+\{[\s\S]*?\}\s+from\s+['"]@renderer\/utils\/pluginTrustRefresh['"]\s*/g,
     'const { createPluginTrustRefreshController } = window.__trustRefresh\n'
   )
+  // 语言选择器带进来的 i18n 依赖：这个 fixture 是纯脚本，没有模块解析，
+  // 所以按既有范式换成 window 上的替身。本测试断言的是开发者模式贯通，
+  // 语言选择器只需要能渲染出来、不炸。
+  compiled = compiled.replace(
+    /import\s+\{[\s\S]*?\}\s+from\s+['"][^'"]*shared\/i18n\/locale\.ts['"]\s*/g,
+    'const { APP_LOCALES, normalizeLanguagePreference } = window.__i18nLocale\n'
+  )
+  compiled = compiled.replace(
+    /import\s+\{\s*useLocale\s*\}\s+from\s+['"][^'"]*app\/useLocale\.ts['"]\s*/g,
+    'const useLocale = window.__useLocale\n'
+  )
   assert.doesNotMatch(compiled, /^import\s/m, `${relativePath} fixture must not keep imports`)
   compiled = compiled.replace('export default', `window.${globalName} =`)
   const transpiled = typescript.transpileModule(compiled, {
@@ -121,9 +132,13 @@ function stubScript(): string {
       remoteControlEnabled: false,
       remoteControlPort: 0,
       launchAtLogin: false,
+      closeWindowBehavior: 'quit',
       closeToTray: false,
+      taskbarThumbarButtonsEnabled: false,
+      miniPlayer: { showInTaskbar: false },
       trackActivationMode: 'singleClick',
       startupHomePage: 'local',
+      language: 'system',
       proxyMode: 'auto',
       proxyHost: '',
       proxyPort: 0,
@@ -137,6 +152,23 @@ function stubScript(): string {
     window.__store = { settings, updateSettings, patches, toggleCalls, chooseAndInstallCalls }
     window.__useSettingsStore = () => ({ settings, updateSettings })
     window.__stubComponent = { name: 'FixtureStub', template: '<span class="fixture-stub"></span>' }
+    // i18n 替身：t() 回显 key，语言选择器因此能渲染且断言仍只看结构。
+    window.__i18nLocale = {
+      APP_LOCALES: ['zh-CN', 'en-US'],
+      normalizeLanguagePreference: (value) =>
+        value === 'zh-CN' || value === 'en-US' ? value : 'system'
+    }
+    window.__useLocale = () => ({
+      locale: Vue.computed(() => 'zh-CN'),
+      t: (key) => key,
+      errorText: (_error, fallbackKey) => fallbackKey || '',
+      errorDetail: (_error, fallbackKey) => ({
+        display: fallbackKey || '',
+        code: null,
+        developerMessage: '',
+        params: {}
+      })
+    })
   ` + stubApiScript()
   )
 }

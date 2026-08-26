@@ -118,10 +118,19 @@ test('now playing exposes independent lyric customization with live persisted pr
 
   assert.match(source, /import LyricsAppearanceCustomizer/)
   assert.match(source, /个性化歌词/)
+  // Each target keeps its own style object, but the per-row bindings read cached
+  // computeds instead of calling lyricStyleVars() again for every rendered line.
   assert.match(source, /:style="item\.singing \? lyricRowStyleActive : lyricRowStyleNormal"/)
   assert.match(source, /:translation-style="lyricTranslationStyle"/)
   assert.match(source, /:romanization-style="lyricRomanizationStyle"/)
   assert.match(source, /:harmony-style="lyricHarmonyStyle"/)
+  for (const target of ['active', 'normal', 'translation', 'romanization', 'harmony']) {
+    assert.match(
+      source,
+      new RegExp(`computed\\(\\(\\) => lyricStyleVars\\('${target}'\\)\\)`),
+      `${target} lyric styling must still resolve through lyricStyleVars`
+    )
+  }
   assert.match(source, /:align="lyricLineAlign\(item\.singing\)"/)
   assert.match(source, /lyricTextStyle\.value\[target\]\.align/)
   assert.doesNotMatch(source, /lyricAlignClass|lyricsAppearance\.value\.align|lyric-align-left/)
@@ -183,6 +192,36 @@ test('lyrics customizer survives slider drags while embedded in the HiFi sidebar
   assert.doesNotMatch(sidebar, /当前歌词高光|toggleLyricHighlight|lyricHighlightOn/)
   assert.doesNotMatch(manager, /lyric-style-controls|updateLyricsAppearance|LYRICS_RANGES/)
   assert.doesNotMatch(playerBar, /toggleLyricHighlight|lyricHighlightOn/)
+})
+
+test('the HiFi deck stands down while the lyrics customizer is open', () => {
+  const sidebar = readFileSync(new URL('./player-bar/HiFiSidebar.vue', import.meta.url), 'utf8')
+  const playerBar = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
+  const css = readFileSync(new URL('./player-bar/PlayerBar.css', import.meta.url), 'utf8')
+
+  // The deck occupies the right of the window, directly over the lyrics the
+  // customizer exists to tune, so it steps aside while the drawer is open.
+  assert.match(sidebar, /lyricsCustomizing: \[open: boolean\]/)
+  assert.match(
+    sidebar,
+    /watch\(lyricsCustomizerOpen, \(open\) => emit\('lyricsCustomizing', open\)\)/
+  )
+  assert.match(playerBar, /@lyrics-customizing="lyricsCustomizerActive = \$event"/)
+  assert.match(playerBar, /'is-lyrics-customizing': lyricsCustomizerActive/)
+  // Closing the deck by any route (outside click, toggle) must clear the flag,
+  // or reopening it would come back already invisible.
+  assert.match(playerBar, /if \(!open\) lyricsCustomizerActive\.value = false/)
+
+  // The deck may only be *hidden*: the customizer is Teleported from inside it,
+  // so dropping the `v-if` would unmount the drawer along with the deck.
+  assert.match(playerBar, /v-if="moreOpen"[\s\S]{0,120}is-lyrics-customizing/)
+
+  const standDown = css.match(/\.hifi-overlay\.is-lyrics-customizing \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.match(standDown, /opacity: 0/)
+  assert.match(standDown, /pointer-events: none/)
+  // `visibility: hidden` is what takes the deck's focusables out of the tab
+  // order; opacity alone would leave 40-odd invisible controls reachable.
+  assert.match(standDown, /visibility: hidden/)
 })
 
 test('font size is per layer, with an explicit action to unify it', () => {
@@ -346,6 +385,15 @@ test('player bar artist is a keyboard-accessible navigation button', () => {
   assert.match(app, /@open-artist="handlePlayerBarArtistClick"/)
   assert.match(app, /onSelectView\('artists', `artist:\$\{trackArtist\}`\)/)
   assert.match(app, /:artist-navigation-request="streamingArtistRequest"/)
+})
+
+test('player bar artist navigation carries the provider artist id', () => {
+  const app = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
+
+  // 同名歌手只能靠 provider 歌手 id 区分。展示串与曲目 artists 对不上时
+  // getPrimaryStreamingArtistId 返回 undefined，请求才退回按名字搜索。
+  assert.match(app, /getPrimaryStreamingArtistId\(trackArtist, track\.artists\)/)
+  assert.match(app, /\.\.\.\(artistId !== undefined \? \{ artistId \} : \{\}\)/)
 })
 
 test('player bar remounts the progress control for every queue entry', () => {

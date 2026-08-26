@@ -230,6 +230,10 @@ export async function updateAppSettings(patch: Partial<AppSettings>): Promise<Se
     applyDiscordRpcSetting(runtime.appSettings.discordRpcEnabled)
   }
 
+  if (Object.prototype.hasOwnProperty.call(patch, 'taskbarThumbarButtonsEnabled')) {
+    runtime.refreshSmtcButtons?.()
+  }
+
   if (
     Object.prototype.hasOwnProperty.call(patch, 'remoteControlEnabled') ||
     Object.prototype.hasOwnProperty.call(patch, 'remoteControlPort')

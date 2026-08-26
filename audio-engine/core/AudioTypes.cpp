@@ -161,6 +161,23 @@ std::string dsdPerfectReasonCode(const PerfectEvaluation& evaluation) {
   return "dsd_source_unsupported";
 }
 
+// Significant bits an integer PCM container carries. Formats that share a
+// payload width hold identical sample values, so a source in one reaches the
+// other untouched regardless of how many bytes the container spends on it.
+int integerPayloadBits(AudioSampleFormat format) {
+  switch (format) {
+    case AudioSampleFormat::Int16Interleaved:
+      return 16;
+    case AudioSampleFormat::Int24Interleaved:
+    case AudioSampleFormat::Int24In32Interleaved:
+      return 24;
+    case AudioSampleFormat::Int32Interleaved:
+      return 32;
+    default:
+      return 0;
+  }
+}
+
 }  // namespace
 
 std::string channelRoutingModeToString(ChannelRoutingMode mode) {
@@ -318,6 +335,19 @@ bool pcmFormatsExactMatch(const AudioFormat& left, const AudioFormat& right) {
          left.sampleFormat == right.sampleFormat;
 }
 
+bool sampleFormatsSameIntegerPayload(AudioSampleFormat left, AudioSampleFormat right) {
+  const int leftPayload = integerPayloadBits(left);
+  return leftPayload > 0 && leftPayload == integerPayloadBits(right);
+}
+
+bool pcmFormatsSemanticallyMatch(const AudioFormat& left, const AudioFormat& right) {
+  if (pcmFormatsExactMatch(left, right)) return true;
+  if (!sampleFormatsSameIntegerPayload(left.sampleFormat, right.sampleFormat)) return false;
+  return left.sampleRate > 0 && left.sampleRate == right.sampleRate && left.channelCount > 0 &&
+         left.channelCount == right.channelCount &&
+         effectivePcmBitDepth(left) == effectivePcmBitDepth(right);
+}
+
 bool isDsdSampleFormat(AudioSampleFormat format) {
   return format == AudioSampleFormat::DsdInt8Lsb1 || format == AudioSampleFormat::DsdInt8Msb1 ||
          format == AudioSampleFormat::DsdInt8Ner8;
@@ -374,7 +404,7 @@ PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation) {
   const bool dopCarrierMatched = evaluation.sourceDsd && evaluation.dsdMode == DsdMode::Dop &&
                                  dopCarrierMatchesExpected(evaluation);
   result.formatMatched = dsdFormatMatched || pcmFormatsExactMatch(decodedFormat, evaluation.outputFormat);
-  result.sourceFormatMatched = pcmFormatsExactMatch(evaluation.sourceFormat, evaluation.outputFormat);
+  result.sourceFormatMatched = pcmFormatsSemanticallyMatch(evaluation.sourceFormat, evaluation.outputFormat);
   result.resampled = evaluation.backendResampled || !result.formatMatched;
   result.processingActive =
       evaluation.loudnormActive || evaluation.replayGainActive || evaluation.eqActive || evaluation.convolverActive ||
@@ -385,9 +415,12 @@ PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation) {
       evaluation.routingMode,
       decodedFormat.channelCount,
       evaluation.outputFormat.channelCount);
+  // A 24-bit source reaching a 24-in-32 wire format keeps every bit, so only a
+  // payload change (int -> float, or a different significant-bit count) counts
+  // as losing the integer path.
   const bool losslessPcmDecodedConverted =
       !evaluation.sourceDsd && evaluation.sourceLossless &&
-      !pcmFormatsExactMatch(evaluation.sourceFormat, decodedFormat);
+      !pcmFormatsSemanticallyMatch(evaluation.sourceFormat, decodedFormat);
   result.pcmPassthrough = evaluation.pcmPassthrough && result.formatMatched && !evaluation.backendResampled &&
                           !losslessPcmDecodedConverted;
   const bool pcmOutputPerfect =
@@ -416,8 +449,25 @@ PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation) {
       result.perfectReasonCode = "routing_changes_semantics";
       result.perfectReason = "Channel routing changes DSD channel semantics";
     } else if (result.processingActive) {
-      result.perfectReasonCode = "dsd_processing_pcm_fallback";
-      result.perfectReason = "DSD processing active; falling back to PCM";
+      // Volume and playback rate are transport controls, not the DSP chain.
+      // Collapsing them into dsd_processing_pcm_fallback told the listener to
+      // "turn off DSP or enable direct mode" — advice that changes nothing when
+      // the real blocker is the 70% default software volume, which direct mode
+      // deliberately leaves alone (jumping to unity would be a +3dB surprise).
+      // Volume gets its own DSD code because it is the one blocker a listener
+      // hits by default; playback rate defaults to 1.0 and direct mode forces
+      // it, so the shared transport code carries enough for that edge case.
+      const std::string processingCode = processingReasonCode(evaluation);
+      if (processingCode == "volume_not_unity") {
+        result.perfectReasonCode = "dsd_volume_pcm_fallback";
+        result.perfectReason = "Software volume is not unity; DSD falls back to PCM";
+      } else if (processingCode == "playback_rate_not_unity") {
+        result.perfectReasonCode = processingCode;
+        result.perfectReason = processingReason(evaluation);
+      } else {
+        result.perfectReasonCode = "dsd_processing_pcm_fallback";
+        result.perfectReason = "DSD processing active; falling back to PCM";
+      }
     } else if (evaluation.dsdMode == DsdMode::Pcm && evaluation.dsdRate >= 256 &&
                evaluation.backendPerfectReason.empty()) {
       result.perfectReasonCode = "dsd_high_rate_pcm_fallback";

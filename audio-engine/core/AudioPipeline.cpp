@@ -1880,10 +1880,14 @@ TAE_Result AudioPipeline::playInternal(
       outputFormat = output->outputFormat();
     }
 
+    // A 24-bit source and a 24-in-32 wire format hold the same significant bits,
+    // so the decoder can fill the device buffer directly. Requiring an identical
+    // sample-format enum here sent every 24-bit track through Float32 on devices
+    // that only accept the 32-bit container.
     const bool canUseTypedPassthrough =
         !pcmToDsdPath && !active->stream.isDsd && !processingRequiresPcm &&
         backendCanTypedPassthrough(backendId) && formatCanTypedPassthrough(active->stream.sourceFormat) &&
-        pcmFormatsExactMatch(active->stream.sourceFormat, outputFormat);
+        pcmFormatsSemanticallyMatch(active->stream.sourceFormat, outputFormat);
     AudioFormat decodeFormat = pcmToDsdPath ? requestedPcmFormat : outputFormat;
     if (pcmToDsdPath) {
       decodeFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
@@ -2063,6 +2067,11 @@ TAE_Result AudioPipeline::playInternal(
         outputInfo_.diagnostics.dsdRouteBackend = dsdBackendId;
         outputInfo_.diagnostics.dsdRouteDevice = dsdDeviceId;
       }
+    } else {
+      // Plain PCM: only the pipeline knows whether the decoder's integer samples
+      // reach the device untouched, so the backend cannot report this on its own.
+      outputInfo_.diagnostics.typedRawPath = activeStream_->typedPassthrough;
+      outputInfo_.diagnostics.processingBypassed = activeStream_->typedPassthrough;
     }
     nativeDsdFallbackFacts_ =
         activeStream_->stream.isDsd && activeStream_->stream.dsdMode != DsdMode::Native &&
@@ -3580,6 +3589,25 @@ bool AudioPipeline::isDopPathActive() const {
 bool AudioPipeline::isNativeDsdPathActive() const {
   std::lock_guard lock(mutex_);
   return nativeDsdPathActive_;
+}
+
+/**
+ * Whether the current processing state would force a DSD source onto PCM.
+ *
+ * This is the same predicate the open path uses to decide whether Native DSD or
+ * DoP may even be attempted, exposed so the reroute decision can tell a
+ * re-negotiation that might succeed from one that provably cannot. Without it,
+ * a DSD track sitting in PCM fallback because software volume is below unity was
+ * restarted on every single volume change: the reroute reopened the device, the
+ * open path re-applied this very check, and playback landed back in PCM.
+ */
+bool AudioPipeline::processingForcesDsdPcmFallback() const {
+  std::lock_guard lock(mutex_);
+  return dspConfigProcessingRequiresPcm(
+      dspConfig_,
+      outputConfig_,
+      loadAtomicDouble(requestedVolumeBits_),
+      loadAtomicDouble(requestedPlaybackRateBits_));
 }
 
 bool AudioPipeline::needsPcmFallback(std::string* reason) const {

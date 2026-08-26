@@ -621,7 +621,10 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   outputInfo_.sourceExact = false;
   outputInfo_.outputPerfect = false;
   outputInfo_.pcmPassthrough = false;
-  outputInfo_.resampled = !sameAsioTransportFormat(requestedFormat, outputFormat_);
+  // A driver that hands back int24-in-32 for a 24-bit request widened the
+  // container without touching a bit, so that is not a conversion either.
+  outputInfo_.resampled = !sameAsioTransportFormat(requestedFormat, outputFormat_) &&
+                          !pcmFormatsSemanticallyMatch(requestedFormat, outputFormat_);
   outputInfo_.perfectReasonCode = outputInfo_.resampled ? "pcm_converted" : "";
   outputInfo_.perfectReason = outputInfo_.resampled ? "ASIO 输出格式已协商为驱动支持格式" : "";
   outputInfo_.outputSampleRate = outputFormat_.sampleRate;

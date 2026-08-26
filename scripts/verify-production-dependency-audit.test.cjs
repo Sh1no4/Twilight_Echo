@@ -3,6 +3,7 @@ const test = require('node:test')
 
 const {
   parseArgs,
+  readAdvisoryCounts,
   readVulnerabilityCounts,
   resolveBundledCorepackScript,
   resolvePnpmInvocation,
@@ -50,6 +51,39 @@ test('production audit rejects malformed vulnerability metadata', () => {
   )
 })
 
+test('production audit counts filtered advisories so ignoreGhsas matches pnpm itself', () => {
+  // pnpm leaves raw registry totals in metadata.vulnerabilities even after
+  // auditConfig.ignoreGhsas removes advisories from the report; the gate must
+  // follow the filtered advisories (as pnpm's own exit code does) so locally
+  // patched advisories pass without weakening any remaining finding.
+  const ignoredButStillCounted = {
+    ...report({ high: 1 }),
+    advisories: {}
+  }
+  assert.deepEqual(validateAuditReport(ignoredButStillCounted), {
+    info: 0,
+    low: 0,
+    moderate: 0,
+    high: 0,
+    critical: 0
+  })
+
+  const liveAdvisories = {
+    ...report({ moderate: 1, high: 1 }),
+    advisories: {
+      one: { severity: 'moderate' },
+      two: { severity: 'high' }
+    }
+  }
+  assert.throws(() => validateAuditReport(liveAdvisories), /moderate=1, high=1/)
+
+  assert.deepEqual(readAdvisoryCounts(report()), undefined)
+  assert.throws(
+    () => readAdvisoryCounts({ advisories: { bad: { severity: 'extreme' } } }),
+    /unknown severity/
+  )
+})
+
 test('production audit CLI accepts reproducible input and output paths only', () => {
   const options = parseArgs(['--', '--input', 'audit.json', '--output', 'evidence/audit.json'])
   assert.match(options.input, /audit\.json$/)
@@ -80,11 +114,17 @@ test('production audit locates Corepack from PATH when a bundled runtime has no 
     'win32',
     (candidate) => candidate.endsWith('node-install\\node_modules\\corepack\\dist\\corepack.js')
   )
-  assert.match(corepackScript, /node-install[\\/]node_modules[\\/]corepack[\\/]dist[\\/]corepack\.js$/)
-  assert.deepEqual(resolvePnpmInvocation({}, 'win32', 'C:/isolated-runtime/node.exe', corepackScript), {
-    command: 'C:/isolated-runtime/node.exe',
-    prefixArgs: [corepackScript, PNPM_PACKAGE_MANAGER]
-  })
+  assert.match(
+    corepackScript,
+    /node-install[\\/]node_modules[\\/]corepack[\\/]dist[\\/]corepack\.js$/
+  )
+  assert.deepEqual(
+    resolvePnpmInvocation({}, 'win32', 'C:/isolated-runtime/node.exe', corepackScript),
+    {
+      command: 'C:/isolated-runtime/node.exe',
+      prefixArgs: [corepackScript, PNPM_PACKAGE_MANAGER]
+    }
+  )
 })
 
 test('production audit fails explicitly when Windows Corepack cannot be located', () => {

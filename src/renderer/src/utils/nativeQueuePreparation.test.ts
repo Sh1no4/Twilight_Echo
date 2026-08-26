@@ -286,6 +286,154 @@ test('keeps CUE tracks on the referenced file while preserving distinct native r
   )
 })
 
+test('a queue past the native ceiling degrades to a current-only engine queue', async () => {
+  const { MAX_NATIVE_QUEUE_ITEMS } = await import(
+    new URL('../../../shared/nativeQueue.ts', import.meta.url).href
+  )
+  const oversized = Array.from({ length: MAX_NATIVE_QUEUE_ITEMS + 1 }, (_unused, index) =>
+    createTrack({ id: `local:${index}`, filePath: `D:\\Music\\${index}.flac` })
+  )
+  let authorizationCalls = 0
+
+  const prepared = await prepareNativeQueue({
+    queue: oversized,
+    currentTrack: oversized[42],
+    currentTarget: oversized[42].filePath,
+    currentIndex: 42,
+    isAudioFileAuthorized: async () => {
+      authorizationCalls += 1
+      return true
+    }
+  })
+
+  // Delegating the whole queue would be rejected by audioEngine:loadQueue before
+  // audioEngine:play is ever reached, which silences playback on every device.
+  assert.equal(prepared?.delegated, false)
+  assert.deepEqual(
+    prepared?.items.map((item) => item.source),
+    [oversized[42].filePath]
+  )
+  assert.equal(prepared?.startIndex, 0)
+  assert.equal(
+    authorizationCalls,
+    1,
+    'only the current track is authorized; the per-track fan-out is skipped'
+  )
+})
+
+test('a queue exactly at the native ceiling is still delegated in full', async () => {
+  const { MAX_NATIVE_QUEUE_ITEMS } = await import(
+    new URL('../../../shared/nativeQueue.ts', import.meta.url).href
+  )
+  const atLimit = Array.from({ length: MAX_NATIVE_QUEUE_ITEMS }, (_unused, index) =>
+    createTrack({ id: `local:${index}`, filePath: `D:\\Music\\${index}.flac` })
+  )
+
+  const prepared = await prepareNativeQueue({
+    queue: atLimit,
+    currentTrack: atLimit[0],
+    currentTarget: atLimit[0].filePath,
+    currentIndex: 0,
+    isAudioFileAuthorized: async () => true
+  })
+
+  assert.equal(prepared?.delegated, true)
+  assert.equal(prepared?.items.length, MAX_NATIVE_QUEUE_ITEMS)
+})
+
+test('a delegated queue authorizes every local target in one batch round-trip', async () => {
+  const tracks = Array.from({ length: 200 }, (_unused, index) =>
+    createTrack({ id: `local:${index}`, filePath: `D:/Music/${index}.flac` })
+  )
+  const batches: string[][] = []
+  let perFileCalls = 0
+
+  const prepared = await prepareNativeQueue({
+    queue: tracks,
+    currentTrack: tracks[7],
+    currentTarget: tracks[7].filePath,
+    currentIndex: 7,
+    isAudioFileAuthorized: async () => {
+      perFileCalls += 1
+      return true
+    },
+    areAudioFilesAuthorized: async (filePaths) => {
+      batches.push(filePaths)
+      return filePaths.map(() => true)
+    }
+  })
+
+  assert.equal(prepared?.delegated, true)
+  assert.equal(prepared?.items.length, 200)
+  assert.equal(batches.length, 1, 'the whole queue is authorized in one round-trip')
+  assert.equal(batches[0].length, 200)
+  // Only the current track still uses the single-file boundary.
+  assert.equal(perFileCalls, 1)
+})
+
+test('a batch verdict denying one track still degrades to the current-only queue', async () => {
+  const first = createTrack()
+  const second = createTrack({ id: 'local:two', filePath: 'D:/Music/two.flac' })
+
+  const prepared = await prepareNativeQueue({
+    queue: [first, second],
+    currentTrack: first,
+    currentTarget: first.filePath,
+    currentIndex: 0,
+    isAudioFileAuthorized: async () => true,
+    areAudioFilesAuthorized: async (filePaths) =>
+      filePaths.map((filePath) => filePath !== second.filePath)
+  })
+
+  assert.equal(prepared?.delegated, false)
+  assert.deepEqual(
+    prepared?.items.map((item) => item.source),
+    [first.filePath]
+  )
+})
+
+test('a batch answer that does not match the request falls back to the per-file boundary', async () => {
+  const first = createTrack()
+  const second = createTrack({ id: 'local:two', filePath: 'D:/Music/two.flac' })
+  const checked: string[] = []
+
+  const prepared = await prepareNativeQueue({
+    queue: [first, second],
+    currentTrack: first,
+    currentTarget: first.filePath,
+    currentIndex: 0,
+    isAudioFileAuthorized: async (filePath) => {
+      checked.push(filePath)
+      return true
+    },
+    // Short answer: the batch channel must not be trusted to line up by index.
+    areAudioFilesAuthorized: async () => [true]
+  })
+
+  assert.equal(prepared?.delegated, true)
+  assert.deepEqual(checked.slice(1).sort(), [first.filePath, second.filePath].sort())
+})
+
+test('repeated targets are authorized once', async () => {
+  const track = createTrack()
+  const duplicate = createTrack({ id: 'local:duplicate' })
+  let batched: string[] = []
+
+  await prepareNativeQueue({
+    queue: [track, duplicate],
+    currentTrack: track,
+    currentTarget: track.filePath,
+    currentIndex: 0,
+    isAudioFileAuthorized: async () => true,
+    areAudioFilesAuthorized: async (filePaths) => {
+      batched = filePaths
+      return filePaths.map(() => true)
+    }
+  })
+
+  assert.deepEqual(batched, [track.filePath])
+})
+
 test('prefetched NetEase stream URLs survive only inside their freshness window', async () => {
   const { stripStaleNcmStreamUrls, NCM_STREAM_URL_MAX_AGE_MS } = await import(
     new URL('./nativeQueuePreparation.ts', import.meta.url).href

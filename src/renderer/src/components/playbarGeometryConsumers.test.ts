@@ -20,9 +20,12 @@ interface FakeRect {
 
 function installDom(options: {
   playerBarHidden?: 'true' | 'false'
+  playerBarMenuOpen?: boolean
   playerBarRect?: FakeRect
   sideMenuRect?: FakeRect
   playerBarMissing?: boolean
+  /** Untransformed left edge, i.e. how far a preset floats the menu inward. */
+  sideMenuInset?: number
 }): void {
   const playerBarRect = options.playerBarRect ?? {
     top: 700,
@@ -40,9 +43,21 @@ function installDom(options: {
   }
   const playerBar = {
     dataset: { tePlaybarHidden: options.playerBarHidden ?? 'false' },
+    classList: {
+      contains: (name: string) => name === 'menu-open' && options.playerBarMenuOpen === true
+    },
     getBoundingClientRect: () => playerBarRect
   }
-  const sideMenu = { getBoundingClientRect: () => sideMenuRect }
+  /**
+   * `offsetLeft`/`offsetWidth` are the untransformed box, which is what the
+   * inline-end measurement reads: the menu is laid out in place and merely
+   * translated off-screen when closed, so these hold the open edge either way.
+   */
+  const sideMenu = {
+    offsetLeft: options.sideMenuInset ?? 0,
+    offsetWidth: 216,
+    getBoundingClientRect: () => sideMenuRect
+  }
   const g = globalThis as Record<string, unknown>
   g.window = { innerHeight: 800 }
   g.document = {
@@ -85,6 +100,41 @@ test('sidebar clearance drops to zero once the mini bar is tucked away', () => {
   assert.equal(measure({ playerBarHidden: 'true' }), 0)
 })
 
+test('the open local menu keeps its full height while the bar moves beside it', () => {
+  assert.equal(measure({ playerBarMenuOpen: true }), 0)
+})
+
+/**
+ * An edge-to-edge bar has to start after the menu's *right edge*, and CSS cannot
+ * name that: `--te-menu-width` is the menu's width alone, so a preset that floats
+ * the menu as an inset island (aurora-reference sets `left: clamp(10px, 1.4vw,
+ * 22px)`) puts its edge that much further right, and a width-based `left` leaves
+ * the bar covering the gap. Measured from the untransformed box so the value does
+ * not sweep while the menu slides in.
+ */
+test('the measured menu edge follows a preset that floats the menu inward', () => {
+  function inlineEnd(options: Parameters<typeof installDom>[0]): number {
+    installDom(options)
+    const clearance = useSideMenuClearance({
+      showLocalSidebar: ref(true),
+      hasPlayerBar: ref(true),
+      menuOpen: ref(true)
+    })
+    clearance.measureSideMenuClearance()
+    const edge = clearance.sideMenuInlineEnd.value
+    clearance.dispose()
+    return edge
+  }
+
+  // Flush against the window edge: the edge is just the width.
+  assert.equal(inlineEnd({}), 216)
+  // aurora-reference-style inset island: 21px further right than the token says.
+  assert.equal(inlineEnd({ sideMenuInset: 21 }), 237)
+  // A tucked-away bar must not suppress the edge — the menu is still there, and
+  // the shape that reads this can be revealed again at any moment.
+  assert.equal(inlineEnd({ sideMenuInset: 21, playerBarHidden: 'true' }), 237)
+})
+
 test('sidebar clearance still handles a missing playbar and a non-overlapping one', () => {
   assert.equal(measure({ playerBarMissing: true }), 0)
   assert.equal(
@@ -94,6 +144,65 @@ test('sidebar clearance still handles a missing playbar and a non-overlapping on
     }),
     0
   )
+})
+
+/**
+ * The browser feeds the applied clearance straight back into the next
+ * measurement: lifting the menu shortens it, so its measured bottom now clears
+ * the bar. Modelled with a live rect, because a static one cannot express that
+ * loop — and it is the loop a ResizeObserver on the menu would drive forever,
+ * flickering the menu between lifted and full height.
+ */
+test('sidebar clearance settles instead of oscillating once the menu is lifted', () => {
+  const NATURAL_BOTTOM = 760
+  const playerBarRect = { top: 700, bottom: 780, left: 0, right: 1200, height: 80 }
+  let appliedOffset = 0
+  const playerBar = {
+    dataset: { tePlaybarHidden: 'false' },
+    classList: { contains: () => false },
+    getBoundingClientRect: () => playerBarRect
+  }
+  const sideMenu = {
+    offsetLeft: 0,
+    offsetWidth: 216,
+    getBoundingClientRect: () => ({
+      top: 100,
+      bottom: NATURAL_BOTTOM - appliedOffset,
+      left: 0,
+      right: 240,
+      height: NATURAL_BOTTOM - appliedOffset - 100
+    })
+  }
+  const g = globalThis as Record<string, unknown>
+  g.window = { innerHeight: 800 }
+  g.document = {
+    hidden: false,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    querySelector: (selector: string) => {
+      if (selector === '.side-menu') return sideMenu
+      if (selector === '.player-bar-shell') return playerBar
+      return null
+    }
+  }
+  g.requestAnimationFrame = (): number => 1
+  g.cancelAnimationFrame = (): void => {}
+
+  const clearance = useSideMenuClearance({
+    showLocalSidebar: ref(true),
+    hasPlayerBar: ref(true),
+    menuOpen: ref(true)
+  })
+  const passes: number[] = []
+  for (let pass = 0; pass < 4; pass += 1) {
+    clearance.measureSideMenuClearance()
+    // What the DOM would look like on the next observer callback.
+    appliedOffset = clearance.sideMenuBottomOffset.value
+    passes.push(appliedOffset)
+  }
+  clearance.dispose()
+  // 800 viewport - 700 top + 10 gap, then held: no pass may drop back to 0.
+  assert.deepEqual(passes, [110, 110, 110, 110])
 })
 
 test('the now-playing lyric centring reads the same hidden flag', () => {

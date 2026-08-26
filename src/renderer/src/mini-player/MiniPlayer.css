@@ -639,22 +639,6 @@ html[data-te-motion='full'] .mini-track-meta {
   outline-offset: 2px;
 }
 
-.mini-tool-button:active,
-.mini-control-button:active,
-.mini-play-button:active {
-  transform: scale(0.88);
-}
-
-html[data-te-motion='full'] .mini-play-button.is-playing {
-  animation: mini-play-confirm var(--te-motion-press) var(--te-ease-spring) both;
-}
-
-@keyframes mini-play-confirm {
-  46% {
-    scale: 1.1;
-  }
-}
-
 .mini-progress-block {
   box-sizing: border-box;
   display: grid;

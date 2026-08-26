@@ -50,3 +50,30 @@ test('filters local grid items by card metadata and nested tracks', () => {
   assert.deepEqual(filterLocalGridItems(items, 'honey').map((item) => item.name), ['HoneyWorks'])
   assert.deepEqual(filterLocalGridItems(items, 'redial').map((item) => item.name), ['Vocaloid'])
 })
+
+test('matches tracks by pinyin initials', () => {
+  const items = [
+    {
+      name: '华语',
+      trackCount: 1,
+      cover: null,
+      tracks: [
+        {
+          id: 'p1',
+          title: '周杰伦',
+          artist: '周杰伦',
+          album: '范特西',
+          filePath: 'D:\\Music\\jt.flac',
+          fileName: 'jt.flac',
+          duration: 1,
+          size: 1,
+          cover: null,
+          lyrics: null
+        }
+      ]
+    }
+  ]
+
+  assert.deepEqual(filterLocalGridItems(items, 'zjl').map((item) => item.name), ['华语'])
+  assert.deepEqual(filterLocalGridItems(items, 'ftx').map((item) => item.name), ['华语'])
+})

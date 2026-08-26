@@ -30,6 +30,7 @@ const songlistOrder = [
   'albums',
   'genres',
   'playlists',
+  'aggregate',
   'folders',
   'recent'
 ] as const

@@ -9,6 +9,9 @@ const PASSIVE_CLICK_STOP_CLASSES = [
   'playlist-row-actions',
   'context-menu',
   'create-playlist-dialog',
+  'create-aggregate-dialog',
+  'aggregate-dialog',
+  'aggregate-variant-menu',
   'excluded-tracks-dialog',
   'streaming-context-menu'
 ]
@@ -58,7 +61,26 @@ test('motion stylesheet covers native and custom interactive controls', async ()
   assert.match(baseCss, /transition: translate var\(--te-motion-hover\)/)
   assert.match(baseCss, /--te-ease-spring/)
   assert.match(baseCss, /\[aria-disabled='true'\]/)
+  // Press feedback must retarget mid-flight: a transition, never a keyframe.
+  assert.match(baseCss, /transform: scale\(var\(--te-motion-press-scale\)\)/)
+  // Lyric rows drive their position through `transform` springs: the global
+  // press scale would replace that transform mid-press, teleport the row away
+  // from the pointer, and the click would land on the gap between rows, so
+  // lyric rows are excluded from every global press/hover transform rule.
+  const pressRule = baseCss.match(
+    /html\[data-te-motion='full'\][^{]*:active \{\s*transform: scale\(var\(--te-motion-press-scale\)\)/
+  )?.[0]
+  assert.ok(pressRule, 'global press rule should exist')
+  assert.match(pressRule, /:where\(:not\(\.lyric-row\)\)/)
+  assert.doesNotMatch(baseCss, /te-interactive-press/)
   assert.match(baseCss, /html\[data-te-motion='off'\]/)
+  // Reduced motion keeps property-scoped feedback instead of nuking everything.
+  assert.match(
+    baseCss,
+    /html\[data-te-motion='reduced'\][\s\S]{0,400}transition-property: opacity, color, background-color, border-color/
+  )
+  assert.match(baseCss, /html\[data-te-motion='reduced'\] \.pi-spin/)
+  assert.doesNotMatch(baseCss, /animation-iteration-count: 1 !important/)
   assert.match(playingMusic, /te-playing-artwork-arrive/)
   assert.match(playingMusic, /lyrics-column--depth/)
   assert.doesNotMatch(playingMusic, /transition: all/)

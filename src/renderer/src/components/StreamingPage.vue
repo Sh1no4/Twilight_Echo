@@ -1,5 +1,6 @@
 ﻿<script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue'
+import { useBackHandler } from '../app/useBackStack'
 import type { Track } from '../types/music'
 import {
   useNcmStore,
@@ -35,6 +36,8 @@ import StreamingPlaceholder from './streaming-page/StreamingPlaceholder.vue'
 import StreamingSocialStage from './streaming-page/StreamingSocialStage.vue'
 import StreamingLoadingStage from './streaming-page/StreamingLoadingStage.vue'
 import ProviderSidebar from './streaming-page/ProviderSidebar.vue'
+import AggregatePlaylistPage from './aggregate-playlist/AggregatePlaylistPage.vue'
+import CreateAggregatePlaylistDialog from './aggregate-playlist/CreateAggregatePlaylistDialog.vue'
 import NcmPlaylistDialogs from './streaming-page/NcmPlaylistDialogs.vue'
 import ProviderDownloadsPanel from './streaming-page/ProviderDownloadsPanel.vue'
 import StreamingContextMenu from './streaming-page/StreamingContextMenu.vue'
@@ -49,6 +52,8 @@ import {
 } from '../utils/streamingNavigation'
 import {
   findBestStreamingArtistMatch,
+  findStreamingArtistById,
+  matchStreamingArtistsByName,
   resolveLinkedStreamingArtist,
   type StreamingArtistNavigationRequest
 } from '../utils/streamingArtistResolution'
@@ -113,6 +118,25 @@ type DetailView =
   | { type: 'recent' }
   | { type: 'ranking' }
 
+// Loaded-detail state captured when navigating one level deeper, so walking
+// back restores the level underneath instead of refetching it.
+interface DetailSnapshot {
+  tracks: Track[]
+  users: NcmUserSummary[]
+  artistAlbumsList: MediaProviderAlbumSummary[]
+  artistPlaylistsList: MediaProviderPlaylistSummary[]
+  intro: string
+  followed: boolean | null
+  artistTab: ArtistDetailTab
+  liked: number | null
+  likedPaging: { nextOffset: number; total: number | null; hasMore: boolean }
+}
+
+interface DetailStackEntry {
+  view: DetailView
+  snapshot?: DetailSnapshot
+}
+
 const props = defineProps<{
   menuOpen: boolean
   hasPlayer: boolean
@@ -124,7 +148,15 @@ const props = defineProps<{
 const activeTab = ref<StreamingTab>(props.initialTab ?? 'home')
 const streamingContentRef = ref<HTMLElement | null>(null)
 const streamingTransitionName = ref('stream-page-down')
-const currentDetail = ref<DetailView | null>(null)
+
+// Details form a real stack so nested navigation (歌单 → 歌手 → 专辑) walks
+// back one level at a time. Read sites keep using `currentDetail` — simply
+// the stack top; writes go through pushDetail / replaceTopDetail / popDetail
+// / resetDetail so the transition and scroll machinery stay in sync.
+const detailStack = ref<DetailStackEntry[]>([])
+const currentDetail = computed<DetailView | null>(
+  () => detailStack.value[detailStack.value.length - 1]?.view ?? null
+)
 
 const streamingViewKey = computed(() => {
   const detail = currentDetail.value
@@ -366,7 +398,7 @@ const recSections = computed<RecSection[]>(() => [
 async function openRecSection(section: RecSection): Promise<void> {
   detailLoadToken++
   beginDetailTransition()
-  currentDetail.value = { type: 'rec', section }
+  pushDetail({ type: 'rec', section })
   detailTracks.value = section.tracks
   detailLoading.value = false
   detailError.value = ''
@@ -396,7 +428,7 @@ async function loadMorePersonalizedStream(
 
     const detail = currentDetail.value
     if (detail?.type === 'rec' && detail.section.key === key) {
-      currentDetail.value = { type: 'rec', section: { ...detail.section, tracks: merged } }
+      replaceTopDetail({ type: 'rec', section: { ...detail.section, tracks: merged } })
       detailTracks.value = merged
     }
 
@@ -561,13 +593,15 @@ function playHomeTrack(track: Track, trackQueue: Track[]): void {
 async function searchUnifiedSongs(
   keywords: string,
   limit?: number,
-  offset?: number
+  offset?: number,
+  options?: { signal?: AbortSignal }
 ): Promise<{ tracks: Track[]; total: number }> {
   const result = await mediaProviders.searchAllSongs({
     query: keywords,
     localTracks: musicStore.tracks.value,
     limit,
-    offset
+    offset,
+    signal: options?.signal
   })
   return {
     tracks: result.logicalItems.map((item) => item.preferredTrack),
@@ -581,9 +615,16 @@ async function searchProviderSongs(
   providerId: string,
   keywords: string,
   limit?: number,
-  offset?: number
+  offset?: number,
+  options?: { signal?: AbortSignal }
 ): Promise<{ tracks: Track[]; total: number }> {
-  const result = await mediaProviders.searchSongs(providerId, keywords, limit, offset)
+  const result = await mediaProviders.searchSongs(
+    providerId,
+    keywords,
+    limit,
+    offset,
+    options
+  )
   return { tracks: result.items, total: result.total }
 }
 
@@ -591,9 +632,16 @@ async function searchProviderPlaylists(
   providerId: string,
   keywords: string,
   limit?: number,
-  offset?: number
+  offset?: number,
+  options?: { signal?: AbortSignal }
 ): Promise<{ playlists: MediaProviderPlaylistSummary[]; total: number }> {
-  const result = await mediaProviders.searchPlaylists(providerId, keywords, limit, offset)
+  const result = await mediaProviders.searchPlaylists(
+    providerId,
+    keywords,
+    limit,
+    offset,
+    options
+  )
   return { playlists: result.items, total: result.total }
 }
 
@@ -601,9 +649,16 @@ async function searchProviderArtists(
   providerId: string,
   keywords: string,
   limit?: number,
-  offset?: number
+  offset?: number,
+  options?: { signal?: AbortSignal }
 ): Promise<{ artists: MediaProviderArtistSummary[]; total: number }> {
-  const result = await mediaProviders.searchArtists(providerId, keywords, limit, offset)
+  const result = await mediaProviders.searchArtists(
+    providerId,
+    keywords,
+    limit,
+    offset,
+    options
+  )
   return { artists: result.items, total: result.total }
 }
 
@@ -620,7 +675,7 @@ async function searchLocalPlaylists(
   limit: number = 30,
   offset: number = 0
 ): Promise<{ playlists: MediaProviderPlaylistSummary[]; total: number }> {
-  return searchLocalStreamingPlaylists(musicStore.playlists.value, keywords, limit, offset)
+  return searchLocalStreamingPlaylists(musicStore.localPlaylists.value, keywords, limit, offset)
 }
 
 async function searchLocalArtists(
@@ -1029,6 +1084,7 @@ function selectProvider(provider: string, persist = true): void {
 }
 
 function isSidebarItemActive(item: SidebarItem): boolean {
+  if (showAggregatePanel.value) return false
   if (item.tab === 'library') {
     return (
       activeTab.value === 'library' &&
@@ -1043,7 +1099,16 @@ function isSidebarItemActive(item: SidebarItem): boolean {
   })
 }
 
+// 聚合歌单在流媒体壳里就地渲染，刻意不走 activeTab —— 它不是某个 provider 的
+// 在线导航条目，掺进去会连带改动 buildStreamingSidebarItems 的语义和加载流程。
+const showAggregatePanel = ref(false)
+
+function selectAggregatePanel(): void {
+  showAggregatePanel.value = true
+}
+
 function selectSidebarItem(item: SidebarItem, options: { persistProvider?: boolean } = {}): void {
+  showAggregatePanel.value = false
   const persistProvider = options.persistProvider !== false
   if (item.tab === 'recent') {
     selectTab('recent')
@@ -1076,15 +1141,7 @@ function selectSidebarItem(item: SidebarItem, options: { persistProvider?: boole
   if (item.tab) selectTab(item.tab)
 }
 
-function resetDetail(options?: { animate?: boolean }): void {
-  detailLoadToken++
-  const animate = options?.animate !== false
-  if (animate && currentDetail.value) {
-    streamingTransitionName.value = 'stream-detail-back'
-    const el = streamingContentRef.value
-    if (el) el.scrollTop = 0
-  }
-  currentDetail.value = null
+function clearDetailState(): void {
   detailTracks.value = []
   detailUsers.value = []
   artistAlbums.value = []
@@ -1097,6 +1154,98 @@ function resetDetail(options?: { animate?: boolean }): void {
   resetLikedTracksPaging()
   followActionLoading.value = false
   followActionError.value = ''
+}
+
+function captureDetailState(): DetailSnapshot {
+  return {
+    tracks: detailTracks.value,
+    users: detailUsers.value,
+    artistAlbumsList: artistAlbums.value,
+    artistPlaylistsList: artistPlaylists.value,
+    intro: artistIntro.value,
+    followed: artistFollowed.value,
+    artistTab: activeArtistTab.value,
+    liked: likedCount.value,
+    likedPaging: {
+      nextOffset: likedTracksNextOffset.value,
+      total: likedTracksTotal.value,
+      hasMore: likedTracksHasMore.value
+    }
+  }
+}
+
+function applyDetailState(snapshot: DetailSnapshot | undefined): void {
+  if (!snapshot) {
+    clearDetailState()
+    return
+  }
+  detailTracks.value = snapshot.tracks
+  detailUsers.value = snapshot.users
+  artistAlbums.value = snapshot.artistAlbumsList
+  artistPlaylists.value = snapshot.artistPlaylistsList
+  artistIntro.value = snapshot.intro
+  artistFollowed.value = snapshot.followed
+  activeArtistTab.value = snapshot.artistTab
+  likedCount.value = snapshot.liked
+  likedTracksNextOffset.value = snapshot.likedPaging.nextOffset
+  likedTracksTotal.value = snapshot.likedPaging.total
+  likedTracksHasMore.value = snapshot.likedPaging.hasMore
+  detailLoading.value = false
+  detailError.value = ''
+  followActionLoading.value = false
+  followActionError.value = ''
+}
+
+// Navigates one level deeper. The outgoing level's loaded data is snapshotted
+// onto its own entry first, so back-navigation restores instead of refetching.
+function pushDetail(view: DetailView): void {
+  const top = detailStack.value[detailStack.value.length - 1]
+  if (top) top.snapshot = captureDetailState()
+  detailStack.value.push({ view })
+}
+
+// Replaces the top entry in place (same level, fresher data).
+function replaceTopDetail(view: DetailView): void {
+  const top = detailStack.value[detailStack.value.length - 1]
+  if (top) top.view = view
+}
+
+// Pops exactly one level and restores the level underneath, if any.
+function popDetail(): void {
+  if (detailStack.value.length === 0) return
+  detailLoadToken++
+  streamingTransitionName.value = 'stream-detail-back'
+  const el = streamingContentRef.value
+  if (el) el.scrollTop = 0
+  detailStack.value.pop()
+  const top = detailStack.value[detailStack.value.length - 1]
+  applyDetailState(top?.snapshot)
+  if (top) top.snapshot = undefined
+}
+
+// Drops matching entries wherever they sit in the stack (e.g. a playlist that
+// was just deleted), restoring the new top when the visible level went away.
+function removeDetailEntries(predicate: (view: DetailView) => boolean): void {
+  if (!detailStack.value.some((entry) => predicate(entry.view))) return
+  const removedTop = currentDetail.value ? predicate(currentDetail.value) : false
+  detailStack.value = detailStack.value.filter((entry) => !predicate(entry.view))
+  if (!removedTop) return
+  detailLoadToken++
+  const top = detailStack.value[detailStack.value.length - 1]
+  applyDetailState(top?.snapshot)
+  if (top) top.snapshot = undefined
+}
+
+function resetDetail(options?: { animate?: boolean }): void {
+  detailLoadToken++
+  const animate = options?.animate !== false
+  if (animate && currentDetail.value) {
+    streamingTransitionName.value = 'stream-detail-back'
+    const el = streamingContentRef.value
+    if (el) el.scrollTop = 0
+  }
+  detailStack.value = []
+  clearDetailState()
 }
 
 function resetLikedTracksPaging(): void {
@@ -1239,7 +1388,7 @@ async function openLikedTracks(force = false): Promise<void> {
     // No provider liked playlist: fall back to local unified favorites only.
     const unifiedTracks = unifiedFavoriteTracks.value
     beginDetailTransition()
-    currentDetail.value = { type: 'liked' }
+    pushDetail({ type: 'liked' })
     detailTracks.value = unifiedTracks
     likedCount.value = unifiedTracks.length
     detailError.value = ''
@@ -1250,7 +1399,7 @@ async function openLikedTracks(force = false): Promise<void> {
   // NCM: always load cloud liked tracks. Local "我收藏的音乐" is a separate
   // in-app playlist and must not short-circuit the provider liked list.
   beginDetailTransition()
-  currentDetail.value = { type: 'liked' }
+  pushDetail({ type: 'liked' })
   const token = beginDetailLoad()
 
   try {
@@ -1323,7 +1472,7 @@ async function ensureLikedTracksScrollable(): Promise<void> {
 
 async function openPlaylist(playlist: MediaProviderPlaylistSummary, force = false): Promise<void> {
   beginDetailTransition()
-  currentDetail.value = { type: 'playlist', playlist }
+  pushDetail({ type: 'playlist', playlist })
   const token = beginDetailLoad()
 
   try {
@@ -1345,7 +1494,7 @@ async function openPlaylist(playlist: MediaProviderPlaylistSummary, force = fals
 
 async function openAlbum(album: MediaProviderAlbumSummary): Promise<void> {
   beginDetailTransition()
-  currentDetail.value = { type: 'album', album }
+  pushDetail({ type: 'album', album })
   const token = beginDetailLoad()
 
   try {
@@ -1373,7 +1522,7 @@ async function openArtist(
   linkedUser?: NcmUserSummary
 ): Promise<void> {
   beginDetailTransition()
-  currentDetail.value = { type: 'artist', artist, user: linkedUser }
+  pushDetail({ type: 'artist', artist, user: linkedUser })
   activeArtistTab.value = 'songs'
   const token = beginDetailLoad()
 
@@ -1486,7 +1635,9 @@ async function openRequestedArtist(request: StreamingArtistNavigationRequest): P
 
   await providerStore.syncProviders().catch(() => undefined)
   const provider = mediaProviders.get(providerId)
-  if (!provider?.searchArtists || !provider.fetchArtistTopSongs) {
+  // 带歌手 id 时搜索只用来补头图等展示字段，provider 没有 searchArtists 也能开页；
+  // 只有回退到按名字定位才必须能搜。
+  if (!provider?.fetchArtistTopSongs || (request.artistId == null && !provider.searchArtists)) {
     if (token !== artistNavigationToken) return
     pushNotice({
       kind: 'error',
@@ -1501,12 +1652,38 @@ async function openRequestedArtist(request: StreamingArtistNavigationRequest): P
   }
 
   try {
-    const result = await mediaProviders.searchArtists(providerId, artistName, 8, 0)
+    const searchResult = provider.searchArtists
+      ? await mediaProviders.searchArtists(providerId, artistName, 8, 0).catch((error: unknown) => {
+          // 按名字定位时搜不到就彻底无从下手；带 id 时搜索失败只是少了头图。
+          if (request.artistId == null) throw error
+          return null
+        })
+      : null
     if (token !== artistNavigationToken) return
-    const artist = findBestStreamingArtistMatch(artistName, result.items)
+
+    if (request.artistId != null) {
+      // 选人只认 id，所以同名歌手里挑出的一定是曲目实际标注的那位。搜索结果仅用于
+      // 补 picUrl / albumSize 等展示字段，没有同 id 的候选就用最小信息开页。
+      const matched = searchResult
+        ? findStreamingArtistById(request.artistId, searchResult.items)
+        : null
+      await openArtist(matched ?? { id: request.artistId, name: artistName, picUrl: null })
+      return
+    }
+
+    const candidates = matchStreamingArtistsByName(artistName, searchResult?.items ?? [])
+    const artist = candidates[0]
     if (!artist) {
       pushNotice({ kind: 'error', message: `未找到歌手「${artistName}」` })
       return
+    }
+    if (candidates.length > 1) {
+      // 曲目没带歌手 id（旧快照 / provider 未提供），同名候选只能按搜索排序取第一个。
+      // 结果可能不是用户想要的那位，明说出来，别装作命中唯一。
+      pushNotice({
+        kind: 'info',
+        message: `有多位歌手叫「${artistName}」，已打开搜索结果中排最前的一位`
+      })
     }
     await openArtist(artist)
   } catch (error) {
@@ -1518,12 +1695,12 @@ async function openRequestedArtist(request: StreamingArtistNavigationRequest): P
 async function openUserList(listType: 'follows' | 'followers'): Promise<void> {
   if (!profile.value) return
   beginDetailTransition()
-  currentDetail.value = {
+  pushDetail({
     type: 'user_list',
     listType,
     users: [],
     title: listType === 'follows' ? '关注' : '粉丝'
-  }
+  })
   const token = beginDetailLoad()
 
   try {
@@ -1532,8 +1709,9 @@ async function openUserList(listType: 'follows' | 'followers'): Promise<void> {
     const users = await fetchFunc(uid, 100, 0)
     if (!isActiveDetailLoad(token)) return
     detailUsers.value = users
-    if (currentDetail.value.type === 'user_list') {
-      currentDetail.value.users = detailUsers.value
+    const userListView = currentDetail.value
+    if (userListView?.type === 'user_list') {
+      userListView.users = detailUsers.value
     }
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
@@ -1550,14 +1728,15 @@ async function openUserList(listType: 'follows' | 'followers'): Promise<void> {
 
 async function openUserPlaylists(user: NcmUserSummary): Promise<void> {
   beginDetailTransition()
-  currentDetail.value = { type: 'user_playlists', user, playlists: [] }
+  pushDetail({ type: 'user_playlists', user, playlists: [] })
   const token = beginDetailLoad()
 
   try {
     const playlists = await fetchUserPlaylistsByUid(user.id)
     if (!isActiveDetailLoad(token)) return
-    if (currentDetail.value.type === 'user_playlists') {
-      currentDetail.value.playlists = playlists
+    const userPlaylistsView = currentDetail.value
+    if (userPlaylistsView?.type === 'user_playlists') {
+      userPlaylistsView.playlists = playlists
     }
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
@@ -1571,7 +1750,7 @@ async function openUserPlaylists(user: NcmUserSummary): Promise<void> {
 
 async function openRecent(): Promise<void> {
   beginDetailTransition()
-  currentDetail.value = { type: 'recent' }
+  pushDetail({ type: 'recent' })
   const token = beginDetailLoad()
 
   try {
@@ -1610,7 +1789,7 @@ async function openRecent(): Promise<void> {
 
 async function openRanking(): Promise<void> {
   beginDetailTransition()
-  currentDetail.value = { type: 'ranking' }
+  pushDetail({ type: 'ranking' })
   const token = beginDetailLoad()
 
   try {
@@ -1692,8 +1871,24 @@ async function toggleCurrentDetailFollow(): Promise<void> {
 
 function goBack(): void {
   clearSelection()
-  resetDetail()
+  popDetail()
 }
+
+// The title-bar back button routes here through the global back stack (App.vue
+// registers the page-level layers). One entry covers this page's two deep
+// states with the same priority the old header back button had: an open
+// detail level first, then an active search. Gated on `active` because this
+// page stays mounted (v-show) while hidden behind local mode.
+useBackHandler(
+  computed(
+    () =>
+      props.active !== false && (detailStack.value.length > 0 || isSearching.value)
+  ),
+  () => {
+    if (detailStack.value.length > 0) goBack()
+    else clearSearch()
+  }
+)
 
 const streamingListTracks = computed(() => {
   if (isSearching.value && !currentDetail.value) return searchResults.value
@@ -1758,7 +1953,48 @@ const streamingContextAllFavorited = computed(() => {
 function closeStreamingContextMenu(): void {
   showStreamingContextMenu.value = false
   showStreamingPlaylistSubmenu.value = false
+  showStreamingAggregateSubmenu.value = false
   streamingContextMenuTrack.value = null
+}
+
+// ─── 添加到聚合歌单 ────────────────────────────────────────────────────────
+const showStreamingAggregateSubmenu = ref(false)
+const showCreateAggregateDialog = ref(false)
+const createAggregateTracks = ref<Track[]>([])
+
+const aggregatePlaylistOptions = computed(() =>
+  musicStore.aggregatePlaylists.value.map((playlist) => ({
+    id: playlist.id,
+    name: playlist.name
+  }))
+)
+
+function handleContextAddToAggregatePlaylist(playlistId: string): void {
+  const tracks = streamingContextActionTracks.value
+  const playlistName =
+    musicStore.aggregatePlaylists.value.find((playlist) => playlist.id === playlistId)?.name ?? ''
+  closeStreamingContextMenu()
+  if (tracks.length === 0) return
+  const added = musicStore.addTracksToPlaylistById(playlistId, tracks)
+  pushNotice({
+    kind: added > 0 ? 'success' : 'info',
+    message:
+      added > 0 ? `已加入「${playlistName}」${added} 首` : `「${playlistName}」里已经有这些歌了`
+  })
+}
+
+function handleContextCreateAggregatePlaylist(): void {
+  createAggregateTracks.value = streamingContextActionTracks.value
+  closeStreamingContextMenu()
+  showCreateAggregateDialog.value = true
+}
+
+function onAggregatePlaylistCreated(_playlistId: string, addedCount: number): void {
+  createAggregateTracks.value = []
+  pushNotice({
+    kind: 'success',
+    message: addedCount > 0 ? `已创建聚合歌单并加入 ${addedCount} 首` : '已创建聚合歌单'
+  })
 }
 
 useEscapeToClose(showStreamingContextMenu, closeStreamingContextMenu)
@@ -1770,6 +2006,7 @@ function onStreamingTrackContextMenu(track: Track, _index: number, event: MouseE
   streamingContextMenuX.value = event.clientX
   streamingContextMenuY.value = event.clientY
   showStreamingPlaylistSubmenu.value = false
+  showStreamingAggregateSubmenu.value = false
   showStreamingContextMenu.value = true
   void nextTick(() => {
     const menu = document.querySelector('.streaming-context-menu') as HTMLElement | null
@@ -2179,6 +2416,10 @@ async function favoriteStreamingTracks(tracks: Track[]): Promise<void> {
   const actionLabel = allLiked ? '取消收藏' : '收藏'
   let succeeded = 0
   let failed = 0
+  // The local favorites playlist can decline a write when an equivalent entry is
+  // already there. Reporting that as success is how a silently dropped favorite
+  // used to look like it worked.
+  let unchanged = 0
   for (const track of tracks) {
     if (track.ncmSongId != null) {
       if (likingTracks.value.has(track.ncmSongId)) continue
@@ -2194,11 +2435,11 @@ async function favoriteStreamingTracks(tracks: Track[]): Promise<void> {
         likingTracks.value = next
       }
     } else if (allLiked) {
-      musicStore.removeFavoriteTrack(track)
-      succeeded++
+      if (musicStore.removeFavoriteTrack(track)) succeeded++
+      else unchanged++
     } else {
-      musicStore.addFavoriteTrack(track)
-      succeeded++
+      if (musicStore.addFavoriteTrack(track)) succeeded++
+      else unchanged++
     }
   }
   if (failed > 0) {
@@ -2206,8 +2447,16 @@ async function favoriteStreamingTracks(tracks: Track[]): Promise<void> {
       kind: 'error',
       message: `${actionLabel}完成 ${succeeded}/${succeeded + failed} 首，${failed} 首失败`
     })
+  } else if (unchanged > 0 && succeeded === 0) {
+    pushNotice({
+      kind: 'info',
+      message: allLiked ? '这些歌曲不在收藏中' : '这些歌曲已在收藏中'
+    })
   } else if (tracks.length > 1) {
-    pushNotice({ kind: 'success', message: `已${actionLabel} ${succeeded} 首歌曲` })
+    pushNotice({
+      kind: 'success',
+      message: `已${actionLabel} ${succeeded} 首歌曲${unchanged > 0 ? `，${unchanged} 首无需改动` : ''}`
+    })
   }
 }
 
@@ -2287,13 +2536,9 @@ async function handleDeleteNcmPlaylist(playlist: MediaProviderPlaylistSummary): 
   deletingNcmPlaylistId.value = playlist.id
   try {
     await deleteNcmPlaylist(playlist.id)
-    if (
-      currentDetail.value?.type === 'playlist' &&
-      String(currentDetail.value.playlist.id) === String(playlist.id)
-    ) {
-      currentDetail.value = null
-      detailTracks.value = []
-    }
+    removeDetailEntries(
+      (view) => view.type === 'playlist' && String(view.playlist.id) === String(playlist.id)
+    )
   } catch (error) {
     libraryError.value = friendlyStreamingError(error, '删除歌单失败')
   } finally {
@@ -2352,13 +2597,13 @@ async function confirmAddTracksToNcmPlaylist(
         ...detailTracks.value,
         ...addToNcmPlaylistTracks.value.filter((track) => !existing.has(track.id))
       ]
-      currentDetail.value = {
+      replaceTopDetail({
         ...currentDetail.value,
         playlist: {
           ...currentDetail.value.playlist,
           trackCount: (currentDetail.value.playlist.trackCount ?? 0) + trackIds.length
         }
-      }
+      })
     }
     showAddToNcmPlaylistDialog.value = false
     addToNcmPlaylistTracks.value = []
@@ -2392,13 +2637,13 @@ async function removeStreamingTracks(selected: Track[]): Promise<void> {
       detailTracks.value = detailTracks.value.filter(
         (track) => track.ncmSongId == null || !removedSongIds.has(track.ncmSongId)
       )
-      currentDetail.value = {
+      replaceTopDetail({
         ...currentDetail.value,
         playlist: {
           ...currentDetail.value.playlist,
           trackCount: Math.max(0, (currentDetail.value.playlist.trackCount ?? 0) - trackIds.length)
         }
-      }
+      })
       clearSelection()
       pushNotice({
         kind: 'success',
@@ -2744,11 +2989,24 @@ onMounted(async () => {
       :menu-open="menuOpen"
       :items="sidebarItems"
       :is-active="isSidebarItemActive"
+      :aggregate-active="showAggregatePanel"
       @select="selectSidebarItem"
+      @select-aggregate="selectAggregatePanel"
       @back-to-local="emit('backToLocal')"
     />
 
-    <div ref="streamingContentRef" class="streaming-content" @scroll="onStreamingContentScroll">
+    <!-- 聚合歌单就地占据内容区。保留 streaming-content 类名，侧边栏那条相邻兄弟
+         规则（.streaming-sidebar.open + .streaming-content）才能继续给出偏移。 -->
+    <div v-if="showAggregatePanel" class="streaming-content">
+      <AggregatePlaylistPage :has-player="hasPlayer" surface="streaming" :active="active" />
+    </div>
+
+    <div
+      v-show="!showAggregatePanel"
+      ref="streamingContentRef"
+      class="streaming-content"
+      @scroll="onStreamingContentScroll"
+    >
       <StreamingContentHeader
         :is-detail="!!currentDetail"
         :is-searching="isSearching && !currentDetail"
@@ -2764,7 +3022,6 @@ onMounted(async () => {
         :logged-in="activeLoggedIn"
         :profile="activeProfile"
         @update:search-query="searchQuery = $event"
-        @back="currentDetail ? goBack() : clearSearch()"
         @clear-search="clearSearch"
         @login="emit('login', activeProvider)"
       />
@@ -3101,6 +3358,8 @@ onMounted(async () => {
       :can-remove-from-playlist="canMutateCurrentNcmPlaylist"
       :can-download="contextMenuCanDownload"
       :show-download-quality-menu="downloadQualityMenuOpen"
+      :aggregate-playlists="aggregatePlaylistOptions"
+      :show-aggregate-submenu="showStreamingAggregateSubmenu"
       @play="handleContextPlayTrack"
       @favorite="handleContextFavorite"
       @like="handleContextLikeTrack"
@@ -3112,6 +3371,16 @@ onMounted(async () => {
       @close="closeStreamingContextMenu"
       @toggle-playlist-submenu="showStreamingPlaylistSubmenu = $event"
       @toggle-download-quality-menu="downloadQualityMenuOpen = $event"
+      @add-to-aggregate-playlist="handleContextAddToAggregatePlaylist"
+      @create-aggregate-playlist="handleContextCreateAggregatePlaylist"
+      @toggle-aggregate-submenu="showStreamingAggregateSubmenu = $event"
+    />
+
+    <CreateAggregatePlaylistDialog
+      :show="showCreateAggregateDialog"
+      :tracks="createAggregateTracks"
+      @close="showCreateAggregateDialog = false"
+      @created="onAggregatePlaylistCreated"
     />
 
     <NcmPlaylistDialogs

@@ -217,6 +217,63 @@ test('loads remote index, records source status, and writes cache', async () => 
   assert.equal(status.cacheFormat, null)
 })
 
+test('serves fresh cache immediately and conditionally revalidates', async (t) => {
+  const fixture = await createIndexFixture()
+  const cachePath = join(fixture.root, 'cache', 'plugins.json')
+  const remoteUrl = DEFAULT_PLUGIN_INDEX_URL
+  let now = new Date('2026-07-16T08:00:00.000Z')
+  let requests = 0
+  const conditionalRequest = deferred<void>()
+  const conditionalRelease = deferred<void>()
+  const first = new PluginIndexService({
+    appVersion: '0.20.0',
+    localIndexPath: fixture.indexPath,
+    remoteIndexUrl: remoteUrl,
+    cacheIndexPath: cachePath,
+    now: () => now,
+    fetchImpl: async () =>
+      new Response(new Uint8Array(await readFile(fixture.indexPath)), {
+        headers: { Etag: '"index-v1"' }
+      })
+  })
+  await first.list()
+
+  const second = new PluginIndexService({
+    appVersion: '0.20.0',
+    localIndexPath: fixture.indexPath,
+    remoteIndexUrl: remoteUrl,
+    cacheIndexPath: cachePath,
+    now: () => now,
+    fetchImpl: async () => {
+      requests += 1
+      conditionalRequest.resolve()
+      await conditionalRelease.promise
+      return new Response(null, { status: 304, headers: { Etag: '"index-v1"' } })
+    }
+  })
+  const startedAt = Date.now()
+  const entries = await second.list()
+  assert.equal(entries[0].id, baseManifest.id)
+  assert.ok(Date.now() - startedAt < 100)
+
+  now = new Date('2026-07-16T09:00:00.000Z')
+  conditionalRelease.resolve()
+  await t.test('background conditional request refreshes timestamps on 304', async () => {
+    await conditionalRequest.promise
+    let cachedRaw: { fetchedAt: string; expiresAt: string; etag?: string } | undefined
+    for (let index = 0; index < 40; index += 1) {
+      cachedRaw = JSON.parse(await readFile(cachePath, 'utf-8')) as typeof cachedRaw
+      if (cachedRaw?.fetchedAt === now.toISOString()) break
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    assert.equal(requests, 1)
+    assert.ok(cachedRaw)
+    assert.equal(cachedRaw?.fetchedAt, now.toISOString())
+    assert.equal(cachedRaw?.expiresAt, '2026-07-17T09:00:00.000Z')
+    assert.equal(cachedRaw?.etag, '"index-v1"')
+  })
+})
+
 test('latest overlapping refresh owns memory and disk cache when an older response arrives last', async () => {
   const fixture = await createIndexFixture()
   const cachePath = join(fixture.root, 'cache', 'plugins.json')
@@ -484,9 +541,9 @@ for (const boundary of ['status', 'list', 'download'] as const) {
       assert.equal(harness.service.getStatus().expired, true)
       return
     }
+    ;(harness.service as unknown as { indexValidatedAt: number }).indexValidatedAt = 0
     const downloaded = await harness.service.downloadPackage(baseManifest.id)
     try {
-      // downloadPackage force-refreshes remote, so TTL expiry is cleared before install.
       assert.equal(downloaded.entry.verification.level, 'official')
       assert.equal(downloaded.evidence.expired, false)
     } finally {
@@ -561,6 +618,7 @@ test('download rejects when a concurrent refresh changes the expected package ha
   })
   await service.list()
 
+  ;(service as unknown as { indexValidatedAt: number }).indexValidatedAt = 0
   const download = service.downloadPackage(baseManifest.id)
   await packageRequested.promise
   await service.refresh()
@@ -611,6 +669,7 @@ test('download binds the complete index entry fingerprint even when checksum is 
   })
   await service.list()
 
+  ;(service as unknown as { indexValidatedAt: number }).indexValidatedAt = 0
   const download = service.downloadPackage(baseManifest.id)
   await packageRequested.promise
   await service.refresh()

@@ -174,6 +174,13 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   private maxInFlightRequests: number
   private stopped = false
   private restarting = false
+  // Set when the child reported a fatal startup contract failure (a missing or
+  // incomplete native addon). Such a child fails identically every time, so the
+  // binding latches here and refuses to fork again until something outside
+  // clears it — see restartAfterFatal(). Without the latch, call()'s lazy start
+  // silently re-forks on every poll, which both defeats handleFatal()'s
+  // no-restart contract and re-emits 'crash' about once a second.
+  private fatalReason = ''
   private generation = 0
   private slowPendingCount = 0
   private restartAttempts = 0
@@ -501,7 +508,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   }
 
   private start(): void {
-    if (this.stopped || this.child || this.restarting) return
+    if (this.stopped || this.child || this.restarting || this.fatalReason) return
     if (shouldUseNodeAudioService()) {
       this.startNodeChildProcess()
       return
@@ -718,6 +725,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   private handleFatal(reason: string): void {
     const child = this.child
     this.child = null
+    this.fatalReason = reason
     try {
       child?.kill()
     } catch {
@@ -726,13 +734,30 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     this.handleExit(reason, { restart: false })
   }
 
+  /**
+   * Clear the fatal latch so the next native call may fork a fresh child.
+   * The caller is responsible for having changed something that could plausibly
+   * fix the startup contract (a reinstalled addon, a user-driven retry).
+   */
+  restartAfterFatal(): boolean {
+    if (this.stopped || !this.fatalReason) return false
+    this.fatalReason = ''
+    this.restartAttempts = 0
+    this.start()
+    return true
+  }
+
+  get fatalStartupError(): string {
+    return this.fatalReason
+  }
+
   private handleExit(reason: string, options: { restart?: boolean } = {}): void {
     if (this.stopped) return
     this.recordFailure(reason)
     this.child = null
     this.generation += 1
     this.clearServiceDerivedCaches()
-    this.emit('crash', reason)
+    this.emit('crash', reason, { fatal: Boolean(this.fatalReason) })
     if (options.restart === false) return
     if (this.restarting) return
     this.restarting = true
@@ -959,6 +984,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   }
 
   private call(method: keyof NativeAudioBinding, args: unknown[]): Promise<unknown> {
+    if (this.fatalReason) return Promise.reject(new Error(this.fatalReason))
     if (!this.child && !this.restarting) this.start()
     const child = this.child
     if (!child) return Promise.reject(new Error('音频服务不可用'))

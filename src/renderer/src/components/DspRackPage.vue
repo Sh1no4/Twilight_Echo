@@ -23,8 +23,6 @@ import {
   singletonNodeTypes
 } from '@renderer/utils/dspNodeParams'
 
-const emit = defineEmits<{ back: [] }>()
-
 const state = ref<DspSceneState | null>(null)
 const status = ref<DspGraphStatus | null>(null)
 const selectedSceneId = ref<string | null>(null)
@@ -451,9 +449,6 @@ onBeforeUnmount(() => {
         >
           <i class="pi pi-download"></i>
         </button>
-        <button type="button" class="text-button" data-te-back-button="pill" @click="emit('back')">
-          返回
-        </button>
       </div>
     </header>
 
@@ -561,6 +556,7 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 :deep(.rack-header) {
+  position: relative;
   justify-content: space-between;
   max-width: 1540px;
   margin: 0 auto 18px;

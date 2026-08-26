@@ -29,6 +29,35 @@ const {
   prepareAsioMsvcNinjaToolchain,
   resolveAsioMsvcBuildDirectory
 } = require('./asio-msvc-toolchain.cjs')
+const { createMinimalPe } = require('./pe-fixture.cjs')
+
+// stage-audio-engine.cjs requires these siblings, so a fixture copy needs all of
+// them or the script dies with MODULE_NOT_FOUND before reaching its own checks.
+const STAGING_SCRIPT_FILES = Object.freeze([
+  'stage-audio-engine.cjs',
+  'audio-engine-toolchain.cjs',
+  'pe-imports.cjs'
+])
+
+function copyStagingScripts(fixtureScripts) {
+  mkdirSync(fixtureScripts, { recursive: true })
+  for (const file of STAGING_SCRIPT_FILES) {
+    copyFileSync(join(__dirname, file), join(fixtureScripts, file))
+  }
+}
+
+function nativeLibraryName() {
+  return process.platform === 'win32'
+    ? 'twilight-audio-engine.dll'
+    : process.platform === 'darwin'
+      ? 'libtwilight-audio-engine.dylib'
+      : 'libtwilight-audio-engine.so'
+}
+
+/** Staging parses import tables on Windows, so fixtures must be real PE files. */
+function writeRuntimeFixture(directory, file, options = {}) {
+  writeFileSync(join(directory, file), createMinimalPe(options))
+}
 
 function createExistsSync(paths) {
   const existing = new Set(paths.map((entry) => entry.replaceAll('\\', '/').toLowerCase()))
@@ -708,31 +737,18 @@ test('MinGW staging rejects an explicitly selected build directory instead of us
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }))
 
   const fixtureScripts = join(fixtureRoot, 'scripts')
-  mkdirSync(fixtureScripts, { recursive: true })
-  copyFileSync(
-    join(__dirname, 'stage-audio-engine.cjs'),
-    join(fixtureScripts, 'stage-audio-engine.cjs')
-  )
-  copyFileSync(
-    join(__dirname, 'audio-engine-toolchain.cjs'),
-    join(fixtureScripts, 'audio-engine-toolchain.cjs')
-  )
+  copyStagingScripts(fixtureScripts)
 
   const fallbackBuildDirs = [
     join(fixtureRoot, 'audio-engine', 'build', 'mingw-static'),
     join(fixtureRoot, 'audio-engine', 'build', 'windows-msvc'),
     join(fixtureRoot, 'audio-engine', 'build', 'default')
   ]
-  const nativeLibrary =
-    process.platform === 'win32'
-      ? 'twilight-audio-engine.dll'
-      : process.platform === 'darwin'
-        ? 'libtwilight-audio-engine.dylib'
-        : 'libtwilight-audio-engine.so'
+  const nativeLibrary = nativeLibraryName()
   for (const fallbackBuildDir of fallbackBuildDirs) {
     mkdirSync(fallbackBuildDir, { recursive: true })
     for (const file of [nativeLibrary, 'twilight_audio_node.node']) {
-      writeFileSync(join(fallbackBuildDir, file), 'fallback artifact')
+      writeRuntimeFixture(fallbackBuildDir, file, { trailer: 'fallback artifact' })
     }
   }
 
@@ -758,26 +774,13 @@ for (const fallbackName of ['windows-msvc', 'default']) {
     t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }))
 
     const fixtureScripts = join(fixtureRoot, 'scripts')
-    mkdirSync(fixtureScripts, { recursive: true })
-    copyFileSync(
-      join(__dirname, 'stage-audio-engine.cjs'),
-      join(fixtureScripts, 'stage-audio-engine.cjs')
-    )
-    copyFileSync(
-      join(__dirname, 'audio-engine-toolchain.cjs'),
-      join(fixtureScripts, 'audio-engine-toolchain.cjs')
-    )
+    copyStagingScripts(fixtureScripts)
 
-    const nativeLibrary =
-      process.platform === 'win32'
-        ? 'twilight-audio-engine.dll'
-        : process.platform === 'darwin'
-          ? 'libtwilight-audio-engine.dylib'
-          : 'libtwilight-audio-engine.so'
+    const nativeLibrary = nativeLibraryName()
     const fallbackBuildDir = join(fixtureRoot, 'audio-engine', 'build', fallbackName)
     mkdirSync(fallbackBuildDir, { recursive: true })
     for (const file of [nativeLibrary, 'twilight_audio_node.node']) {
-      writeFileSync(join(fallbackBuildDir, file), `artifact from ${fallbackName}`)
+      writeRuntimeFixture(fallbackBuildDir, file, { trailer: `artifact from ${fallbackName}` })
     }
 
     const result = spawnSync(process.execPath, [join(fixtureScripts, 'stage-audio-engine.cjs')], {
@@ -787,12 +790,93 @@ for (const fallbackName of ['windows-msvc', 'default']) {
     })
 
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
-    assert.equal(
-      readFileSync(join(fixtureRoot, 'resources', 'audio-engine', nativeLibrary), 'utf8'),
-      `artifact from ${fallbackName}`
+    assert.ok(
+      readFileSync(join(fixtureRoot, 'resources', 'audio-engine', nativeLibrary), 'latin1').includes(
+        `artifact from ${fallbackName}`
+      ),
+      `staged ${nativeLibrary} did not come from the ${fallbackName} build directory`
     )
   })
 }
+
+// The MinGW build links libstdc++/libgcc/mcfgthread dynamically, so those DLLs
+// must be staged beside the addon; without them dlopen fails on any machine that
+// lacks that exact toolchain and the app can only report "未加载
+// twilight_audio_node.node". Windows-only because the step parses PE imports.
+const windowsStagingOnly = process.platform === 'win32' ? {} : { skip: 'Windows-only staging step' }
+
+function stageRuntimeDependencyFixture(fixtureRoot, { provideRuntimeDll }) {
+  const fixtureScripts = join(fixtureRoot, 'scripts')
+  copyStagingScripts(fixtureScripts)
+
+  const nativeLibrary = nativeLibraryName()
+  const buildDir = join(fixtureRoot, 'audio-engine', 'build', 'default')
+  mkdirSync(buildDir, { recursive: true })
+  writeRuntimeFixture(buildDir, nativeLibrary, { imports: ['libstdc++-6.dll', 'KERNEL32.dll'] })
+  writeRuntimeFixture(buildDir, 'twilight_audio_node.node', {
+    imports: [nativeLibrary, 'libstdc++-6.dll']
+  })
+
+  const toolchainBin = join(fixtureRoot, 'toolchain', 'bin')
+  mkdirSync(toolchainBin, { recursive: true })
+  // Reachable only through libstdc++-6.dll, so staging has to walk the closure.
+  writeRuntimeFixture(toolchainBin, 'libmcfgthread-2.dll')
+  if (provideRuntimeDll) {
+    writeRuntimeFixture(toolchainBin, 'libstdc++-6.dll', { imports: ['libmcfgthread-2.dll'] })
+  }
+
+  const result = spawnSync(
+    process.execPath,
+    [join(fixtureScripts, 'stage-audio-engine.cjs'), '--runtime-dir', toolchainBin],
+    {
+      cwd: fixtureRoot,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        TAE_MINGW_BUILD_DIR: '',
+        TAE_MINGW_RUNTIME_DIR: '',
+        W64DEVKIT_ROOT: '',
+        TAE_W64DEVKIT_ROOT: ''
+      }
+    }
+  )
+  return { result, stagedDir: join(fixtureRoot, 'resources', 'audio-engine') }
+}
+
+test(
+  'Windows staging copies the whole toolchain runtime import closure',
+  windowsStagingOnly,
+  (t) => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'twilight-audio-runtime-'))
+    t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }))
+
+    const { result, stagedDir } = stageRuntimeDependencyFixture(fixtureRoot, {
+      provideRuntimeDll: true
+    })
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+    for (const file of ['libstdc++-6.dll', 'libmcfgthread-2.dll']) {
+      assert.ok(existsSync(join(stagedDir, file)), `${file} was not staged beside the addon`)
+    }
+  }
+)
+
+test(
+  'Windows staging fails loudly when a toolchain runtime DLL cannot be found',
+  windowsStagingOnly,
+  (t) => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'twilight-audio-runtime-missing-'))
+    t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }))
+
+    const { result, stagedDir } = stageRuntimeDependencyFixture(fixtureRoot, {
+      provideRuntimeDll: false
+    })
+
+    assert.notEqual(result.status, 0)
+    assert.match(`${result.stdout}\n${result.stderr}`, /libstdc\+\+-6\.dll/)
+    assert.equal(existsSync(join(stagedDir, 'libstdc++-6.dll')), false)
+  }
+)
 
 test('MinGW build runner stages from its selected external build directory', () => {
   const script = readFileSync(join(__dirname, 'run-audio-engine-mingw.cjs'), 'utf8')

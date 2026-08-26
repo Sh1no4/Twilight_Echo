@@ -13,11 +13,17 @@ import {
 } from '../security/ipcValidation.ts'
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
 import { setupNcmCloudTransferIpc } from './cloudTransfer.ts'
+import { Agent } from 'undici'
 
 export const NCM_API_PORT = 3100
 export const NCM_API_HOST = '127.0.0.1'
 export const NCM_OFFICIAL_LOGIN_TIMEOUT_MS = 180000
 export const NCM_API_REQUEST_TIMEOUT_MS = 25000
+const NCM_KEEP_ALIVE_AGENT = new Agent({
+  connections: 8,
+  keepAliveTimeout: 60_000,
+  keepAliveMaxTimeout: 120_000
+})
 const MAX_NCM_API_PATH_LENGTH = 4096
 const MAX_NCM_COOKIE_LENGTH = 16 * 1024
 const MAX_NCM_REMOTE_URL_LENGTH = 8192
@@ -28,6 +34,22 @@ export interface NcmApiRequestOptions {
   signal?: AbortSignal
   /** Forwarded to the local API gateway when it supports idempotent writes. */
   idempotencyKey?: string
+}
+
+const TIMESTAMPED_NCM_API_PATHS = [
+  '/login',
+  '/login/',
+  '/playlist/create',
+  '/playlist/delete',
+  '/playlist/tracks',
+  '/like',
+  '/follow'
+]
+
+function shouldTimestampNcmApiPath(path: string): boolean {
+  return TIMESTAMPED_NCM_API_PATHS.some(
+    (prefix) => path === prefix || path.startsWith(`${prefix}?`) || path.startsWith(`${prefix}/`)
+  )
 }
 
 export function bundledPluginPath(name: string): string {
@@ -58,8 +80,9 @@ export async function requestNcmApi(
     console.error('网易云音乐服务启动失败：', redactSensitiveText(message))
     return { code: -1, message }
   }
-  const sep = normalizedPath.includes('?') ? '&' : '?'
-  const url = `http://${NCM_API_HOST}:${NCM_API_PORT}${normalizedPath}${sep}timestamp=${Date.now()}`
+  const separator = normalizedPath.includes('?') ? '&' : '?'
+  const timestamp = shouldTimestampNcmApiPath(normalizedPath) ? `${separator}timestamp=${Date.now()}` : ''
+  const url = `http://${NCM_API_HOST}:${NCM_API_PORT}${normalizedPath}${timestamp}`
   const headers: Record<string, string> = {}
   const normalizedCookie = normalizeNcmCookie(cookie)
   if (normalizedCookie) {
@@ -79,7 +102,11 @@ export async function requestNcmApi(
   else options.signal?.addEventListener('abort', abortFromCaller, { once: true })
   const timer = setTimeout(() => controller.abort(), NCM_API_REQUEST_TIMEOUT_MS)
   try {
-    const res = await fetch(url, { signal: controller.signal, headers })
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers,
+      dispatcher: NCM_KEEP_ALIVE_AGENT
+    } as RequestInit)
     return await res.json()
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

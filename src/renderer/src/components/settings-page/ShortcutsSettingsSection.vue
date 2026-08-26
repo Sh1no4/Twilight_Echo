@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import type { GlobalShortcutSettings, PlayerShortcutStatus } from '../../types/settings'
 
 type BindingKey = keyof GlobalShortcutSettings
+type StatusTone = 'idle' | 'ok' | 'failed'
 
 const props = defineProps<{
   globalShortcuts: boolean
@@ -15,18 +16,44 @@ const emit = defineEmits<{
   'update:shortcutBindings': [patch: Partial<GlobalShortcutSettings>]
 }>()
 
-const EDITABLE_BINDINGS: { key: BindingKey; label: string; hint: string }[] = [
-  { key: 'previous', label: '上一首', hint: '默认 Ctrl+Alt+←' },
-  { key: 'next', label: '下一首', hint: '默认 Ctrl+Alt+→' },
-  { key: 'playPause', label: '播放 / 暂停', hint: '默认 Ctrl+Alt+空格' },
-  { key: 'toggleDesktopLyrics', label: '桌面歌词', hint: '默认 Ctrl+Alt+D' }
+/** 与 src/main/core/settings.ts 的 DEFAULT_GLOBAL_SHORTCUT_BINDINGS 保持一致。 */
+const DEFAULT_BINDINGS: GlobalShortcutSettings = {
+  previous: 'CommandOrControl+Alt+Left',
+  next: 'CommandOrControl+Alt+Right',
+  playPause: 'CommandOrControl+Alt+Space',
+  toggleDesktopLyrics: 'CommandOrControl+Alt+D'
+}
+
+const EDITABLE_BINDINGS: { key: BindingKey; label: string }[] = [
+  { key: 'previous', label: '上一首' },
+  { key: 'next', label: '下一首' },
+  { key: 'playPause', label: '播放 / 暂停' },
+  { key: 'toggleDesktopLyrics', label: '桌面歌词' }
 ]
 
-const EDIT_HINT =
-  '点击输入框后直接按下组合键即可保存；支持 Ctrl / Alt / Shift / Meta 与 字母、数字、F1-F24、方向键、空格等。'
+const IS_MAC = typeof navigator !== 'undefined' && /mac/i.test(navigator.userAgent)
 
-const focusedBinding = ref<BindingKey | null>(null)
+const KEY_LABELS: Record<string, string> = {
+  CommandOrControl: IS_MAC ? '⌘' : 'Ctrl',
+  Command: '⌘',
+  Cmd: '⌘',
+  Control: 'Ctrl',
+  Ctrl: 'Ctrl',
+  Alt: IS_MAC ? '⌥' : 'Alt',
+  Option: '⌥',
+  Shift: IS_MAC ? '⇧' : 'Shift',
+  Meta: IS_MAC ? '⌘' : 'Win',
+  Super: IS_MAC ? '⌘' : 'Win',
+  Space: '空格',
+  Left: '←',
+  Right: '→',
+  Up: '↑',
+  Down: '↓'
+}
+
+const recordingKey = ref<BindingKey | null>(null)
 const conflictBinding = ref<BindingKey | null>(null)
+const conflictWith = ref<BindingKey | null>(null)
 
 const bindingValues = computed<Record<BindingKey, string>>(() => ({
   previous: props.shortcutBindings.previous,
@@ -34,6 +61,74 @@ const bindingValues = computed<Record<BindingKey, string>>(() => ({
   playPause: props.shortcutBindings.playPause,
   toggleDesktopLyrics: props.shortcutBindings.toggleDesktopLyrics
 }))
+
+/** 自定义组合键与媒体键共用 action，靠 Media 前缀区分两组状态。 */
+const customStatuses = computed(() =>
+  props.shortcutStatuses.filter((status) => !status.accelerator.startsWith('Media'))
+)
+
+const mediaStatuses = computed(() =>
+  props.shortcutStatuses.filter((status) => status.accelerator.startsWith('Media'))
+)
+
+const modifiedKeys = computed(() =>
+  EDITABLE_BINDINGS.filter(
+    (item) => bindingValues.value[item.key] !== DEFAULT_BINDINGS[item.key]
+  ).map((item) => item.key)
+)
+
+const failedStatuses = computed(() =>
+  props.globalShortcuts ? props.shortcutStatuses.filter((status) => !status.registered) : []
+)
+
+const statusSummary = computed<{ tone: StatusTone; text: string }>(() => {
+  if (!props.globalShortcuts) {
+    return { tone: 'idle', text: '快捷键状态：已关闭，上方组合键当前不会向系统注册。' }
+  }
+  if (props.shortcutStatuses.length === 0) {
+    return { tone: 'idle', text: '快捷键状态：读取中…' }
+  }
+  if (failedStatuses.value.length > 0) {
+    const detail = failedStatuses.value
+      .map((status) => `${status.label}（${status.error || '注册失败'}）`)
+      .join('；')
+    return {
+      tone: 'failed',
+      text: `快捷键状态：${failedStatuses.value.length} 项注册失败 — ${detail}`
+    }
+  }
+  return { tone: 'ok', text: `快捷键状态：${props.shortcutStatuses.length} 项已全部注册。` }
+})
+
+const conflictTip = computed(() => {
+  if (!conflictBinding.value) return ''
+  const other = EDITABLE_BINDINGS.find((item) => item.key === conflictWith.value)
+  return other ? `与「${other.label}」的组合键重复，已保留原值` : '与其他快捷键冲突，已保留原值'
+})
+
+function formatAccelerator(accelerator: string): string {
+  const parts = accelerator.split('+').map((part) => KEY_LABELS[part] ?? part)
+  return IS_MAC ? parts.join('') : parts.join('+')
+}
+
+function statusToneOf(status: PlayerShortcutStatus | undefined): StatusTone {
+  if (!props.globalShortcuts || !status) return 'idle'
+  return status.registered ? 'ok' : 'failed'
+}
+
+function statusTitleOf(status: PlayerShortcutStatus | undefined): string {
+  if (!props.globalShortcuts) return '全局快捷键已关闭'
+  if (!status) return '状态读取中'
+  return status.registered ? '已注册' : status.error || '注册失败'
+}
+
+function customStatusOf(key: BindingKey): PlayerShortcutStatus | undefined {
+  return customStatuses.value.find((status) => status.action === key)
+}
+
+function mediaLabelOf(label: string): string {
+  return label.replace('（媒体键）', '')
+}
 
 function onToggle(): void {
   emit('update:globalShortcuts', !props.globalShortcuts)
@@ -48,8 +143,16 @@ function findConflict(key: BindingKey, accelerator: string): BindingKey | null {
 }
 
 function handleShortcutKeydown(key: BindingKey, event: KeyboardEvent): void {
+  // Tab 留给焦点移动，Esc 退出录制，其余按键都进入组合键捕获。
+  if (event.key === 'Tab') return
   event.preventDefault()
   event.stopPropagation()
+  if (event.key === 'Escape') {
+    recordingKey.value = null
+    const target = event.currentTarget as HTMLElement | null
+    target?.blur()
+    return
+  }
 
   const parts: string[] = []
   if (event.ctrlKey) parts.push('CommandOrControl')
@@ -87,34 +190,54 @@ function handleShortcutKeydown(key: BindingKey, event: KeyboardEvent): void {
     mainKey = keyName
   }
 
-  if (!/^[A-Za-z0-9]$/.test(mainKey) && !/^(F\d{1,2}|Left|Right|Up|Down|Space)$/.test(mainKey)) {
+  const isFunctionKey = /^F\d{1,2}$/.test(mainKey)
+  if (
+    !/^[A-Za-z0-9]$/.test(mainKey) &&
+    !isFunctionKey &&
+    !/^(Left|Right|Up|Down|Space)$/.test(mainKey)
+  ) {
     // Unsupported key; skip silently
     return
   }
+  // 录制按钮本身要用空格/回车激活，且裸键不该被全局占用：F1-F24 之外必须带修饰键。
+  if (parts.length === 0 && !isFunctionKey) return
 
-  const accelerator = [...parts, mainKey].join('+')
-  onBindingChange(key, accelerator)
+  applyBinding(key, [...parts, mainKey].join('+'))
 }
 
-function onBindingChange(key: BindingKey, value: string): void {
-  const trimmed = value.trim()
+function applyBinding(key: BindingKey, accelerator: string): void {
+  const trimmed = accelerator.trim()
   if (!trimmed) return
   const conflict = findConflict(key, trimmed)
-  conflictBinding.value = conflict
+  conflictBinding.value = conflict ? key : null
+  conflictWith.value = conflict
   if (conflict) return
   if (bindingValues.value[key] === trimmed) return
   emit('update:shortcutBindings', { [key]: trimmed })
 }
 
-function onBindingInputFocus(key: BindingKey): void {
-  focusedBinding.value = key
-  conflictBinding.value = null
+function resetBinding(key: BindingKey): void {
+  const conflict = findConflict(key, DEFAULT_BINDINGS[key])
+  conflictBinding.value = conflict ? key : null
+  conflictWith.value = conflict
+  if (conflict) return
+  emit('update:shortcutBindings', { [key]: DEFAULT_BINDINGS[key] })
 }
 
-function onBindingInputBlur(key: BindingKey): void {
-  if (focusedBinding.value === key) {
-    focusedBinding.value = null
-  }
+function resetAllBindings(): void {
+  conflictBinding.value = null
+  conflictWith.value = null
+  emit('update:shortcutBindings', { ...DEFAULT_BINDINGS })
+}
+
+function onRecorderFocus(key: BindingKey): void {
+  recordingKey.value = key
+  conflictBinding.value = null
+  conflictWith.value = null
+}
+
+function onRecorderBlur(key: BindingKey): void {
+  if (recordingKey.value === key) recordingKey.value = null
 }
 </script>
 
@@ -128,7 +251,7 @@ function onBindingInputBlur(key: BindingKey): void {
       <div class="setting-item">
         <div class="setting-copy">
           <strong>全局快捷键 (Global Shortcuts)</strong>
-          <span> 在应用位于后台时，依然响应系统媒体播放快捷键。下方可自定义各动作的组合键。 </span>
+          <span>应用位于后台时，依然响应下方组合键与系统媒体键。</span>
         </div>
         <span
           class="toggle-switch"
@@ -138,151 +261,264 @@ function onBindingInputBlur(key: BindingKey): void {
           @click="onToggle"
         ></span>
       </div>
-
-      <hr />
-      <div class="shortcut-bindings">
-        <p class="shortcut-hint">{{ EDIT_HINT }}</p>
-        <div v-for="item in EDITABLE_BINDINGS" :key="item.key" class="shortcut-binding-row">
-          <div class="shortcut-binding-label">
-            <span>{{ item.label }}</span>
-            <small>{{ item.hint }}</small>
-          </div>
-          <input
-            class="shortcut-input"
-            :class="{ conflict: conflictBinding === item.key }"
-            :value="bindingValues[item.key]"
-            :aria-label="`自定义全局快捷键：${item.label}`"
-            @focus="onBindingInputFocus(item.key)"
-            @blur="onBindingInputBlur(item.key)"
-            @keydown="handleShortcutKeydown(item.key, $event)"
-            @input="onBindingChange(item.key, ($event.target as HTMLInputElement).value)"
-          />
-        </div>
-        <p v-if="conflictBinding" class="shortcut-conflict-tip">与其他快捷键冲突，已保留原值</p>
-      </div>
-
-      <hr />
-      <div v-if="shortcutStatuses.length > 0" class="shortcut-grid">
-        <div v-for="shortcut in shortcutStatuses" :key="JSON.stringify(shortcut.action)">
-          <span>{{ shortcut.label }}</span>
-          <kbd>{{ shortcut.accelerator }}</kbd>
-        </div>
-      </div>
-      <div v-else class="shortcut-grid">
-        <div><span>快捷键状态</span><kbd>读取中</kbd></div>
-      </div>
-      <div v-if="shortcutStatuses.length > 0" class="shortcut-status-list">
-        <div
-          v-for="shortcut in shortcutStatuses"
-          :key="`${shortcut.action}:status`"
-          class="shortcut-status-row"
-          :class="{
-            registered: globalShortcuts && shortcut.registered,
-            failed: globalShortcuts && !shortcut.registered
-          }"
-        >
-          <span>
-            <i
-              :class="
-                !globalShortcuts
-                  ? 'pi pi-minus-circle'
-                  : shortcut.registered
-                    ? 'pi pi-check-circle'
-                    : 'pi pi-exclamation-circle'
-              "
-            ></i>
-            {{ shortcut.label }}
-          </span>
-          <small>
-            {{
-              !globalShortcuts
-                ? '未启用'
-                : shortcut.registered
-                  ? '已注册'
-                  : shortcut.error || '注册失败'
-            }}
-          </small>
-        </div>
-      </div>
     </div>
+
+    <div class="shortcut-panel">
+      <div class="shortcut-panel-head">
+        <h3>自定义组合键</h3>
+        <span class="shortcut-panel-hint">点击右侧按钮后直接按下组合键，Esc 取消</span>
+        <button
+          v-if="modifiedKeys.length > 0"
+          type="button"
+          class="shortcut-ghost-button"
+          @click="resetAllBindings"
+        >
+          全部恢复默认
+        </button>
+      </div>
+      <ul class="shortcut-rows">
+        <li
+          v-for="item in EDITABLE_BINDINGS"
+          :key="item.key"
+          class="shortcut-row"
+          :class="{ conflict: conflictBinding === item.key }"
+        >
+          <span
+            class="shortcut-state"
+            :class="statusToneOf(customStatusOf(item.key))"
+            :title="statusTitleOf(customStatusOf(item.key))"
+          ></span>
+          <span class="shortcut-label">{{ item.label }}</span>
+          <button
+            v-if="modifiedKeys.includes(item.key)"
+            type="button"
+            class="shortcut-revert"
+            :title="`恢复默认 ${formatAccelerator(DEFAULT_BINDINGS[item.key])}`"
+            :aria-label="`${item.label}：恢复默认组合键`"
+            @click="resetBinding(item.key)"
+          >
+            <i class="pi pi-undo"></i>
+          </button>
+          <button
+            type="button"
+            class="shortcut-key"
+            :class="{ recording: recordingKey === item.key }"
+            :aria-label="`自定义全局快捷键：${item.label}`"
+            :aria-pressed="recordingKey === item.key"
+            :title="bindingValues[item.key]"
+            @focus="onRecorderFocus(item.key)"
+            @blur="onRecorderBlur(item.key)"
+            @keydown="handleShortcutKeydown(item.key, $event)"
+          >
+            {{
+              recordingKey === item.key ? '按下组合键…' : formatAccelerator(bindingValues[item.key])
+            }}
+          </button>
+        </li>
+      </ul>
+      <p v-if="conflictBinding" class="shortcut-note failed">{{ conflictTip }}</p>
+    </div>
+
+    <div v-if="mediaStatuses.length > 0" class="shortcut-panel">
+      <div class="shortcut-panel-head">
+        <h3>系统媒体键</h3>
+        <span class="shortcut-panel-hint">键盘与耳机上的播放控制键，固定绑定</span>
+      </div>
+      <ul class="shortcut-rows">
+        <li v-for="status in mediaStatuses" :key="status.accelerator" class="shortcut-row">
+          <span
+            class="shortcut-state"
+            :class="statusToneOf(status)"
+            :title="statusTitleOf(status)"
+          ></span>
+          <span class="shortcut-label">{{ mediaLabelOf(status.label) }}</span>
+          <kbd class="shortcut-key static">{{ status.accelerator }}</kbd>
+        </li>
+      </ul>
+    </div>
+
+    <p class="shortcut-note" :class="statusSummary.tone">{{ statusSummary.text }}</p>
   </section>
 </template>
 
 <style scoped>
-.shortcut-bindings {
-  display: grid;
-  gap: 10px;
+.shortcut-panel {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 12px;
+  background: var(--te-subtle-bg);
 }
 
-.shortcut-hint {
-  margin: 0;
-  color: var(--te-settings-text-muted, #8a8f98);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.shortcut-binding-row {
+.shortcut-panel-head {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 44px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-bottom: 6px;
 }
 
-.shortcut-binding-label {
-  display: grid;
-  gap: 2px;
-}
-
-.shortcut-binding-label span {
-  color: var(--te-settings-text, #1a1a1a);
+.shortcut-panel-head h3 {
+  margin: 0;
+  color: var(--te-settings-text);
   font-size: 13px;
   font-weight: 600;
 }
 
-.shortcut-binding-label small {
-  color: var(--te-settings-text-muted, #8a8f98);
+.shortcut-panel-hint {
+  flex: 1 1 auto;
+  color: var(--te-settings-text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.shortcut-ghost-button {
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 999px;
+  background: var(--te-card-bg);
+  color: var(--te-settings-text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.shortcut-ghost-button:hover {
+  background: var(--te-hover-bg);
+  color: var(--te-settings-text);
+}
+
+.shortcut-rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(276px, 1fr));
+  gap: 2px 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  padding: 0 4px;
+  border-radius: 8px;
+}
+
+.shortcut-row.conflict {
+  background: var(--te-danger-soft-bg);
+}
+
+.shortcut-state {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--te-settings-text-muted) 45%, transparent);
+}
+
+.shortcut-state.ok {
+  background: var(--te-success-soft-fg);
+}
+
+.shortcut-state.failed {
+  background: var(--te-danger-soft-fg);
+}
+
+.shortcut-label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  min-width: 0;
+  color: var(--te-settings-text);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.shortcut-revert {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--te-settings-text-muted);
+  cursor: pointer;
   font-size: 11px;
 }
 
-.shortcut-input {
-  width: 220px;
-  height: 34px;
+.shortcut-revert:hover {
+  background: var(--te-hover-bg);
+  color: var(--te-settings-text);
+}
+
+.shortcut-key {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-width: 128px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
   padding: 0 10px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--te-settings-control-border);
   border-radius: 8px;
-  outline: none;
   background: var(--te-card-bg);
-  color: #374151;
+  color: var(--te-settings-text);
+  cursor: pointer;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   font-weight: 650;
-  text-align: center;
 }
 
-.shortcut-input:focus {
-  border-color: var(--brand-400, #3b82f6);
+.shortcut-key:hover,
+.shortcut-key:focus-visible {
+  border-color: rgba(var(--te-primary-rgb), 0.55);
+  outline: none;
 }
 
-.shortcut-input.conflict {
-  border-color: rgba(220, 38, 38, 0.5);
+.shortcut-key.recording {
+  border-color: rgba(var(--te-primary-rgb), 0.7);
+  background: rgba(var(--te-primary-rgb), 0.08);
+  color: var(--te-settings-text-muted);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
 }
 
-.shortcut-conflict-tip {
-  margin: 0;
-  color: #dc2626;
+.shortcut-row.conflict .shortcut-key {
+  border-color: var(--te-danger-soft-fg);
+}
+
+.shortcut-key.static {
+  color: var(--te-settings-text-muted);
+  cursor: default;
   font-size: 11px;
 }
 
-@media (max-width: 760px) {
-  .shortcut-binding-row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 6px;
-  }
+.shortcut-note {
+  margin: 10px 0 0;
+  color: var(--te-settings-text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
 
-  .shortcut-input {
-    width: 100%;
+.shortcut-note.failed {
+  color: var(--te-danger-soft-fg);
+}
+
+.shortcut-note.ok {
+  color: var(--te-success-soft-fg);
+}
+
+@media (max-width: 760px) {
+  .shortcut-key {
+    min-width: 108px;
   }
 }
 </style>

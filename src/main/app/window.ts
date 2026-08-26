@@ -12,6 +12,7 @@ import {
 } from '../core/settings'
 import { installAudioDeviceHotplugWatcher } from '../audio/deviceHotplug'
 import { destroyDesktopLyrics } from '../integrations/desktopLyrics'
+import { showMiniPlayer } from '../integrations/miniPlayer.ts'
 import { createSmtcButtons, destroySmtcButtons } from '../integrations/smtc.ts'
 import { ClosePersistenceAttemptGate } from './closePersistence.ts'
 import { isSafeExternalUrl } from '../security/externalUrl.ts'
@@ -178,9 +179,14 @@ export function createWindow(): void {
   })
 
   runtime.mainWindow.on('close', (event) => {
-    if (runtime.appSettings.closeToTray && !runtime.forceQuit) {
+    const closeBehavior = runtime.appSettings.closeWindowBehavior ?? 'quit'
+    if (!runtime.forceQuit && (closeBehavior === 'tray' || closeBehavior === 'miniPlayer')) {
       event.preventDefault()
-      runtime.mainWindow?.hide()
+      if (closeBehavior === 'miniPlayer') {
+        showMiniPlayer()
+      } else {
+        runtime.mainWindow?.hide()
+      }
       return
     }
 

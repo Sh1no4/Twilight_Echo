@@ -126,6 +126,38 @@ export function canShareLogicalTrack(left: Track, right: Track): boolean {
   return Math.abs(left.duration - right.duration) <= LOGICAL_DURATION_TOLERANCE_SECONDS
 }
 
+/**
+ * Whether two tracks that already share a logical key (same normalized title and
+ * artist) are actually the same recording, and so may collapse into one entry.
+ *
+ * Two different remote ids on one provider are always two different recordings —
+ * a provider never issues one song id twice — so that comparison is decisive.
+ * Local files carry no remote id, which is what keeps a local file standing in
+ * for the streaming entry of the same song.
+ */
+export function canShareTrackIdentity(left: Track, right: Track): boolean {
+  const leftRemote = getRemoteSongRef(left)
+  const rightRemote = getRemoteSongRef(right)
+  if (
+    leftRemote &&
+    rightRemote &&
+    leftRemote.provider === rightRemote.provider &&
+    leftRemote.id !== rightRemote.id
+  ) {
+    return false
+  }
+  return canShareLogicalTrack(left, right)
+}
+
+function getRemoteSongRef(track: Track): { provider: string; id: string } | null {
+  const source = getTrackSource(track)
+  if (source === 'local') return null
+  if (track.ncmSongId != null) return { provider: 'ncm', id: String(track.ncmSongId) }
+  const separatorIndex = track.id.indexOf(':')
+  const remoteId = separatorIndex > 0 ? track.id.slice(separatorIndex + 1).trim() : ''
+  return remoteId ? { provider: source, id: remoteId } : null
+}
+
 export function getTrackSource(
   track: Pick<Track, 'id' | 'source'>,
   fallback?: string

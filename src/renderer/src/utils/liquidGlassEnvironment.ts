@@ -33,6 +33,9 @@ export function resolveAdaptiveGlassTone(
 const MIN_ALPHA = 128
 const MAX_CONTEXT_ALPHA = 0.68
 const MIN_CONTEXT_ALPHA = 0.24
+// Solid-colour and fallback backdrops have nothing for the blur to refract, so a
+// near-opaque material there just reads as a grey slab. Cap those denser.
+const MAX_SOLID_CONTEXT_ALPHA = 0.42
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -66,7 +69,7 @@ function variablesFor(
   const density = clamp(
     0.3 + Math.abs(luminance - 0.5) * 0.28 + (busy ? 0.12 : 0) + (fallback ? 0.05 : 0),
     MIN_CONTEXT_ALPHA,
-    MAX_CONTEXT_ALPHA
+    fallback ? MAX_SOLID_CONTEXT_ALPHA : MAX_CONTEXT_ALPHA
   )
   const shadow = clamp(0.1 + (darkLabels ? 0.15 : 0.05) + (busy ? 0.11 : 0), 0.1, 0.36)
   const label = darkLabels ? '248 250 252' : '15 23 42'

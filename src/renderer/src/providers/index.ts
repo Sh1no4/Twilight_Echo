@@ -14,6 +14,8 @@ const mediaProviders = new MediaProviderRegistry()
 let defaultsRegistered = false
 let pluginProvidersSyncing: Promise<void> | null = null
 let pluginProviderHealthRefreshing: Promise<void> | null = null
+let pluginProviderHealthRefreshedAt = 0
+const PLUGIN_PROVIDER_HEALTH_REFRESH_INTERVAL_MS = 5_000
 
 export function useMediaProviders(): MediaProviderRegistry {
   registerDefaultProviders()
@@ -27,6 +29,12 @@ export function registerDefaultProviders(): void {
 }
 
 async function refreshPluginProviderHealth(): Promise<void> {
+  if (
+    Date.now() - pluginProviderHealthRefreshedAt <
+    PLUGIN_PROVIDER_HEALTH_REFRESH_INTERVAL_MS
+  ) {
+    return
+  }
   if (pluginProviderHealthRefreshing) return pluginProviderHealthRefreshing
   const api = window.api?.providers
   if (!api) return
@@ -47,6 +55,7 @@ async function refreshPluginProviderHealth(): Promise<void> {
       // Health refresh follows provider calls opportunistically; callers should keep their result.
     } finally {
       pluginProviderHealthRefreshing = null
+      pluginProviderHealthRefreshedAt = Date.now()
     }
   })()
 

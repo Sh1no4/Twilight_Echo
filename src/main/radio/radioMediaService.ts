@@ -38,11 +38,29 @@ const MAX_RADIO_STATIONS_BYTES = 4 * 1024 * 1024
 const MAX_PODCAST_SUBSCRIPTIONS_BYTES = 16 * 1024 * 1024
 const MAX_FEED_FETCH_BYTES = 8 * 1024 * 1024
 const DEFAULT_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000
+const FEED_FETCH_TIMEOUT_MS = 15_000
+const FEED_REFRESH_CONCURRENCY = 3
+
+interface PodcastFeedRequest {
+  ifNoneMatch?: string | null
+  ifModifiedSince?: string | null
+}
+
+interface PodcastFeedResponse {
+  body: string
+  status: number
+  etag?: string | null
+  lastModified?: string | null
+}
 
 export interface RadioMediaServiceOptions {
   userDataPath?: string
   now?: () => string
   fetchText?: (url: string) => Promise<string>
+  fetchFeed?: (
+    url: string,
+    request?: PodcastFeedRequest
+  ) => Promise<PodcastFeedResponse>
   refreshIntervalMs?: number
 }
 
@@ -60,14 +78,21 @@ export class RadioMediaService {
   private readonly radioStore: VersionedDataStore<RadioStationsDocument>
   private readonly podcastStore: VersionedDataStore<PodcastSubscriptionsDocument>
   private readonly now: () => string
-  private readonly fetchText: (url: string) => Promise<string>
+  private readonly fetchFeed: (
+    url: string,
+    request?: PodcastFeedRequest
+  ) => Promise<PodcastFeedResponse>
   private readonly refreshIntervalMs: number
   private refreshTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(options: RadioMediaServiceOptions = {}) {
     const userDataPath = resolveUserDataPath(options.userDataPath)
     this.now = options.now ?? (() => new Date().toISOString())
-    this.fetchText = options.fetchText ?? defaultFetchText
+    this.fetchFeed =
+      options.fetchFeed ??
+      (options.fetchText
+        ? async (url) => ({ body: await options.fetchText!(url), status: 200 })
+        : defaultFetchFeed)
     this.refreshIntervalMs = options.refreshIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS
 
     this.radioStore = new VersionedDataStore<RadioStationsDocument>({
@@ -257,21 +282,44 @@ export class RadioMediaService {
 
   async refreshAllSubscriptions(): Promise<PodcastSubscriptionsDocument> {
     const loaded = await this.loadPodcastSubscriptions()
-    let document = clonePodcastSubscriptionsDocument(loaded.data)
-    let revision = loaded.revision
-    for (const sub of [...document.subscriptions]) {
-      try {
-        const result = await this.refreshSubscription(sub.id)
-        document = result.document
-        revision = result.revision
-      } catch {
-        const latest = await this.loadPodcastSubscriptions()
-        document = latest.data
-        revision = latest.revision
+    const document = clonePodcastSubscriptionsDocument(loaded.data)
+    const subscriptions = [...document.subscriptions]
+    const results = await mapWithConcurrency(
+      subscriptions,
+      FEED_REFRESH_CONCURRENCY,
+      async (subscription): Promise<{
+        subscription: PodcastSubscription
+        refreshed?: PodcastSubscription
+        error?: string
+      }> => {
+        try {
+          return {
+            subscription,
+            refreshed: await this.buildSubscriptionFromFeed(subscription.feedUrl, subscription)
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          return { subscription, error: message.slice(0, 500) }
+        }
       }
+    )
+    document.subscriptions = results.map((result) =>
+      result.refreshed
+        ? result.refreshed
+        : {
+            ...result.subscription,
+            lastError: result.error,
+            updatedAt: this.now()
+          }
+    )
+
+    try {
+      const saved = await this.podcastStore.save(document, loaded.revision)
+      return saved.data
+    } catch {
+      const latest = await this.loadPodcastSubscriptions()
+      return latest.data
     }
-    void revision
-    return document
   }
 
   /**
@@ -307,7 +355,15 @@ export class RadioMediaService {
     feedUrl: string,
     previous?: PodcastSubscription
   ): Promise<PodcastSubscription> {
-    const xml = await this.fetchText(feedUrl)
+    const response = await this.fetchFeed(feedUrl, {
+      ifNoneMatch: previous?.feedEtag ?? null,
+      ifModifiedSince: previous?.feedLastModified ?? null
+    })
+    if (response.status === 304 && previous) {
+      const now = this.now()
+      return { ...previous, lastRefreshedAt: now, lastError: null, updatedAt: now }
+    }
+    const xml = response.body
     const parsed = parsePodcastFeedXml(xml)
     const now = this.now()
     const previousProgress = new Map(
@@ -328,6 +384,8 @@ export class RadioMediaService {
       coverUrl: parsed.coverUrl ?? previous?.coverUrl,
       homepage: parsed.homepage ?? previous?.homepage,
       lastRefreshedAt: now,
+      feedEtag: response.etag ?? previous?.feedEtag ?? null,
+      feedLastModified: response.lastModified ?? previous?.feedLastModified ?? null,
       lastError: null,
       episodes,
       createdAt: previous?.createdAt ?? now,
@@ -336,16 +394,22 @@ export class RadioMediaService {
   }
 }
 
-async function defaultFetchText(url: string): Promise<string> {
+async function defaultFetchFeed(
+  url: string,
+  request?: PodcastFeedRequest
+): Promise<PodcastFeedResponse> {
   const response = await fetch(url, {
     method: 'GET',
     redirect: 'follow',
     headers: {
       Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
-      'User-Agent': 'TwilightEcho/1.0 (podcast)'
-    }
+      'User-Agent': 'TwilightEcho/1.0 (podcast)',
+      ...(request?.ifNoneMatch ? { 'If-None-Match': request.ifNoneMatch } : {}),
+      ...(request?.ifModifiedSince ? { 'If-Modified-Since': request.ifModifiedSince } : {})
+    },
+    signal: AbortSignal.timeout(FEED_FETCH_TIMEOUT_MS)
   })
-  if (!response.ok) {
+  if (!response.ok && response.status !== 304) {
     throw new Error(`Podcast feed request failed (${response.status})`)
   }
   const lengthHeader = response.headers.get('content-length')
@@ -356,7 +420,30 @@ async function defaultFetchText(url: string): Promise<string> {
   if (buffer.byteLength > MAX_FEED_FETCH_BYTES) {
     throw new Error('Podcast feed response is too large')
   }
-  return buffer.toString('utf8')
+  return {
+    body: buffer.toString('utf8'),
+    status: response.status,
+    etag: response.headers.get('etag'),
+    lastModified: response.headers.get('last-modified')
+  }
+}
+
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  limit: number,
+  operation: (value: T) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(values.length)
+  let nextIndex = 0
+  await Promise.all(
+    Array.from({ length: Math.min(limit, values.length) }, async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex++
+        results[index] = await operation(values[index])
+      }
+    })
+  )
+  return results
 }
 
 export type { ImportedRadioEntry }

@@ -1,5 +1,21 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
-import type { AppSettings, NcmPlaybackQuality, PlaybackResumeMode } from '@renderer/types/settings'
+import type {
+  AppSettings,
+  CloseWindowBehavior,
+  MiniPlayerSettings,
+  MusicCachePolicySettings,
+  NcmPlaybackQuality,
+  PlaybackResumeMode,
+  PlayerBarSettings
+} from '@renderer/types/settings'
+import {
+  DEFAULT_MINI_PLAYER_SETTINGS,
+  cloneMiniPlayerSettings
+} from '../../../../shared/miniPlayer.ts'
+import {
+  DEFAULT_PLAYER_BAR_SETTINGS,
+  clonePlayerBarSettings
+} from '../../../../shared/playerBar.ts'
 
 export type OnboardingUsage = 'local' | 'streaming' | 'both'
 export type OnboardingStepId =
@@ -7,19 +23,33 @@ export type OnboardingStepId =
   | 'usage'
   | 'local'
   | 'streaming'
+  | 'player'
   | 'audio'
   | 'system'
   | 'finish'
 export type OnboardingDirection = 'forward' | 'back'
 export type OnboardingFinishAction = 'local' | 'streaming' | 'streaming-login'
 
+const DEFAULT_ONBOARDING_CACHE_POLICY: MusicCachePolicySettings = {
+  cover: true,
+  lyrics: true,
+  metadata: true,
+  streamingAudio: 'provider'
+}
+
 export interface OnboardingChoices {
   usage: OnboardingUsage | null
   audioExclusiveMode: boolean
-  closeToTray: boolean
+  closeWindowBehavior: CloseWindowBehavior
   launchAtLogin: boolean
+  playerBar: PlayerBarSettings
+  miniPlayer: MiniPlayerSettings
+  openMiniPlayerOnFinish: boolean
+  taskbarThumbarButtonsEnabled: boolean
   watchLibrary: boolean
   autoAnalyzeBpm: boolean
+  onlineLyricsFallback: boolean
+  cachePolicy: MusicCachePolicySettings
   globalShortcuts: boolean
   smtcEnabled: boolean
   discordRpcEnabled: boolean
@@ -31,14 +61,31 @@ export interface OnboardingChoices {
   wantsPluginMarket: boolean
 }
 
-export function createDefaultOnboardingChoices(): OnboardingChoices {
+export function createDefaultOnboardingChoices(
+  seed?: Pick<
+    AppSettings,
+    | 'closeWindowBehavior'
+    | 'launchAtLogin'
+    | 'taskbarThumbarButtonsEnabled'
+    | 'playerBar'
+    | 'miniPlayer'
+    | 'onlineLyricsFallback'
+    | 'cachePolicy'
+  >
+): OnboardingChoices {
   return {
     usage: null,
     audioExclusiveMode: false,
-    closeToTray: false,
-    launchAtLogin: false,
+    closeWindowBehavior: seed?.closeWindowBehavior ?? 'quit',
+    launchAtLogin: seed?.launchAtLogin ?? false,
+    playerBar: clonePlayerBarSettings(seed?.playerBar ?? DEFAULT_PLAYER_BAR_SETTINGS),
+    miniPlayer: cloneMiniPlayerSettings(seed?.miniPlayer ?? DEFAULT_MINI_PLAYER_SETTINGS),
+    openMiniPlayerOnFinish: false,
+    taskbarThumbarButtonsEnabled: seed?.taskbarThumbarButtonsEnabled !== false,
     watchLibrary: true,
     autoAnalyzeBpm: true,
+    onlineLyricsFallback: seed?.onlineLyricsFallback === true,
+    cachePolicy: { ...(seed?.cachePolicy ?? DEFAULT_ONBOARDING_CACHE_POLICY) },
     globalShortcuts: false,
     smtcEnabled: true,
     discordRpcEnabled: false,
@@ -53,7 +100,7 @@ export function resolveVisibleSteps(usage: OnboardingUsage | null): OnboardingSt
   const steps: OnboardingStepId[] = ['welcome', 'usage']
   if (usage === 'local' || usage === 'both') steps.push('local')
   if (usage === 'streaming' || usage === 'both') steps.push('streaming')
-  steps.push('audio', 'system', 'finish')
+  steps.push('player', 'audio', 'system', 'finish')
   return steps
 }
 
@@ -62,8 +109,12 @@ export function buildSettingsPatch(choices: OnboardingChoices): Partial<AppSetti
   if (choices.usage === null) return patch
   patch.startupHomePage = choices.usage === 'streaming' ? 'streaming' : 'local'
   patch.audioExclusiveMode = choices.audioExclusiveMode
-  patch.closeToTray = choices.closeToTray
+  patch.closeWindowBehavior = choices.closeWindowBehavior
+  patch.closeToTray = choices.closeWindowBehavior === 'tray'
   patch.launchAtLogin = choices.launchAtLogin
+  patch.playerBar = clonePlayerBarSettings(choices.playerBar)
+  patch.miniPlayer = cloneMiniPlayerSettings(choices.miniPlayer)
+  patch.taskbarThumbarButtonsEnabled = choices.taskbarThumbarButtonsEnabled
   patch.globalShortcuts = choices.globalShortcuts
   patch.smtcEnabled = choices.smtcEnabled
   patch.discordRpcEnabled = choices.discordRpcEnabled
@@ -71,9 +122,11 @@ export function buildSettingsPatch(choices: OnboardingChoices): Partial<AppSetti
   if (choices.usage !== 'streaming') {
     patch.watchLibrary = choices.watchLibrary
     patch.autoAnalyzeBpm = choices.autoAnalyzeBpm
+    patch.onlineLyricsFallback = choices.onlineLyricsFallback
   }
   if (choices.usage !== 'local') {
     patch.ncmPlaybackQuality = choices.ncmPlaybackQuality
+    patch.cachePolicy = { ...choices.cachePolicy }
   }
   return patch
 }
@@ -102,8 +155,10 @@ export interface OnboardingFlow {
   goTo: (index: number) => void
 }
 
-export function useOnboardingFlow(): OnboardingFlow {
-  const choices = ref<OnboardingChoices>(createDefaultOnboardingChoices())
+export function useOnboardingFlow(
+  seed?: Parameters<typeof createDefaultOnboardingChoices>[0]
+): OnboardingFlow {
+  const choices = ref<OnboardingChoices>(createDefaultOnboardingChoices(seed))
   const currentIndex = ref(0)
   const direction = ref<OnboardingDirection>('forward')
 

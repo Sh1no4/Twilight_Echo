@@ -35,7 +35,7 @@ const features: { icon: string; label: string }[] = [
 </script>
 
 <template>
-  <section class="onb-stage" data-scene="07">
+  <section class="onb-stage" data-scene="08">
     <div class="onb-notes" aria-hidden="true">
       <i class="ph ph-music-note"></i>
       <i class="ph ph-music-notes"></i>

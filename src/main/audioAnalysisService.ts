@@ -3,7 +3,10 @@ import {
   type AudioAnalysisWorkerMessage,
   type AudioAnalysisWorkerRequest
 } from '../shared/audioAnalysisContract.ts'
-import { loadNativeBinding } from './audio/nativeBinding.ts'
+import {
+  describeNativeBindingFailure,
+  loadNativeBindingWithDiagnostics
+} from './audio/nativeBinding.ts'
 import type { NativeAudioBinding } from './audio/audioEngineTypes.ts'
 
 type ParentPort = {
@@ -41,12 +44,13 @@ if (!parentPort) {
 }
 
 const servicePort = parentPort
-const native = loadNativeBinding()
+const nativeLoad = loadNativeBindingWithDiagnostics()
+const native = nativeLoad.binding
 const missingMethods = (['AnalyzeBpm', 'AnalyzeLoudness'] as const).filter(
   (method) => typeof native?.[method] !== 'function'
 )
 const startupError = !native
-  ? 'failed to load twilight_audio_node.node'
+  ? describeNativeBindingFailure(nativeLoad)
   : missingMethods.length > 0
     ? `native audio analysis binding is missing methods: ${missingMethods.join(', ')}`
     : ''

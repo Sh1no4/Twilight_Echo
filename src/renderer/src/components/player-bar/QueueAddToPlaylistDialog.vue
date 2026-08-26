@@ -88,6 +88,7 @@ useFocusTrap(dialogRef, () => props.open)
               placeholder="请输入歌单名称"
               :disabled="busy"
               autofocus
+              animate
             />
             <div class="queue-playlist-create-actions">
               <button type="button" :disabled="busy" @click="emit('cancelCreate')">取消</button>

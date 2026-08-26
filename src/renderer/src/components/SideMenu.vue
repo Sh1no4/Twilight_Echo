@@ -35,6 +35,7 @@ const menuItems: MenuItem[] = [
   { key: 'albums', label: '专辑', icon: 'navigation.albums' },
   { key: 'genres', label: '流派', icon: 'navigation.genres' },
   { key: 'playlists', label: '歌单', icon: 'navigation.playlists' },
+  { key: 'aggregate', label: '聚合歌单', icon: 'navigation.playlists' },
   { key: 'folders', label: '文件夹', icon: 'navigation.folders' },
   { key: 'recent', label: '最近播放', icon: 'navigation.recent' }
 ]
@@ -188,17 +189,25 @@ function handleImportClick(): void {
   flex-direction: column;
   top: 32px;
   left: 0;
-  bottom: 0;
+  /* App.vue measures how much of the bottom edge the playbar covers and publishes
+     it on `.app-shell-navigation`; the menu ends above the bar instead of running
+     underneath it. A custom property rather than an inline `bottom` so the custom
+     shell layout's `inset: auto !important` still wins. */
+  bottom: var(--te-side-menu-bottom, 0px);
   width: var(--te-menu-width);
-  /* Frosted surface: the bottom-most global background shows through. */
+  /* Frosted surface: the bottom-most global background shows through. The
+     blur is what keeps the split readable over a custom wallpaper — the page
+     draws its own cover-scaled copy of that image while the body carries the
+     window-wide one, and an unblurred seam between the two scales reads as the
+     menu sitting off-grid. Same recipe the streaming sidebar ships. */
   background: transparent;
   border-right: 1px solid var(--te-navigation-border);
   border-radius: 0 var(--te-navigation-radius) var(--te-navigation-radius) 0;
   z-index: 1000;
   overflow: hidden;
   box-shadow: var(--te-navigation-shadow);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
   transform: translate3d(-100%, 0, 0);
   transform-origin: left center;
   will-change: transform;

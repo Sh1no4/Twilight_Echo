@@ -245,7 +245,9 @@ function progressLabel(): string {
           >
             <div
               class="update-progress-fill"
-              :style="{ width: `${Math.max(0, Math.min(100, updateProgress.percent))}%` }"
+              :style="{
+                transform: `scaleX(${Math.max(0, Math.min(100, updateProgress.percent)) / 100})`
+              }"
             ></div>
           </div>
         </div>

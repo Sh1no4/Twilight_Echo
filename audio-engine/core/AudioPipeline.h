@@ -164,6 +164,8 @@ class AudioPipeline {
   bool isDopPathActive() const;
   bool isNativeDsdPathActive() const;
   bool needsPcmFallback(std::string* reason) const;
+  /** True when volume/rate/routing/DSP would force a DSD source onto PCM. */
+  bool processingForcesDsdPcmFallback() const;
   void setRerouteInProgress(bool active, const std::string& reason = {});
 
   // Deterministic diagnostics used by the native lifecycle stress gate.

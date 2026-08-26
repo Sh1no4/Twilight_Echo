@@ -58,19 +58,42 @@ test('back button tokens use a blue icon with neutral surfaces instead of the th
   assert.match(baseStyles, /\[data-te-back-button\]/)
 })
 
-test('all renderer back controls opt in to the shared minimal style', () => {
+test('in-flow back controls still opt in to the shared minimal style', () => {
+  // Only in-flow controls keep carrying a back affordance: the onboarding
+  // wizard stepper, the mini player's "return to main window", and the login
+  // page's error-state recovery CTA. Page-level chrome moved to the title bar.
   const componentSources = [
-    '../components/DspRackPage.vue',
-    '../components/EqualizerPage.vue',
     '../components/LoginPage.vue',
-    '../components/PluginExtensionPage.vue',
-    '../components/RadioPodcastPage.vue',
-    '../components/SongList.vue',
-    '../components/streaming-page/StreamingContentHeader.vue',
-    '../components/ThemeStudioPage.vue',
     '../components/onboarding/OnboardingWizard.vue',
     '../mini-player/MiniPlayerApp.vue'
   ].map((path) => readFileSync(new URL(path, import.meta.url), 'utf8'))
 
   for (const source of componentSources) assert.match(source, /data-te-back-button=/)
+})
+
+test('page-level back buttons are gone; the title bar owns the global back affordance', () => {
+  const componentSources = [
+    '../components/SongList.vue',
+    '../components/NetworkSourcesPage.vue',
+    '../components/RadioPodcastPage.vue',
+    '../components/LoginPage.vue',
+    '../components/PluginExtensionPage.vue',
+    '../components/ThemeStudioPage.vue',
+    '../components/DspRackPage.vue',
+    '../components/EqualizerPage.vue',
+    '../components/aggregate-playlist/AggregatePlaylistPage.vue',
+    '../components/streaming-page/StreamingContentHeader.vue'
+  ].map((path) => readFileSync(new URL(path, import.meta.url), 'utf8'))
+
+  for (const source of componentSources) assert.doesNotMatch(source, /data-te-page-back-button=/)
+
+  const titleBar = readFileSync(new URL('../components/TitleBar.vue', import.meta.url), 'utf8')
+  assert.match(titleBar, /useBackStack/)
+  assert.match(titleBar, /class="back-btn"/)
+  assert.match(titleBar, /\$emit\('back'\)/)
+
+  const appShell = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
+  assert.match(appShell, /backStack\.useBackHandler\(showPlayingPage, closePlayingPage\)/)
+  // Alt+Left is the keyboard path into the same stack.
+  assert.match(appShell, /onGlobalBackKeydown/)
 })

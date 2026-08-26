@@ -573,6 +573,76 @@ void testDsd64NegotiatesDopCarrier() {
   assert(pcmFormatsExactMatch(facts.candidateFormat, facts.actualFormat));
 }
 
+void testInt24SourceOnInt24In32OnlyDeviceIsNotReportedAsConverted() {
+  // Plenty of exclusive-mode drivers refuse packed 24-bit and only accept the
+  // 32-bit container with 24 valid bits. That widening keeps every source bit,
+  // so the negotiation must not be reported as a format conversion — otherwise
+  // the pipeline drops the 24-bit track into the Float32 path.
+  FakeAudioClient client({{48000, 24, 32}});
+  WasapiFormatNegotiator negotiator(&client);
+  std::string error;
+
+  AudioFormat source;
+  source.sampleRate = 48000;
+  source.channelCount = 2;
+  source.bitDepth = 24;
+  source.sampleFormat = AudioSampleFormat::Int24Interleaved;
+
+  assert(negotiator.negotiate(source, &error));
+  assert(error.empty());
+  assert(client.probes.size() == 2);
+  assert(client.probes[0].containerBits == 24);
+  assert(client.probes[1].containerBits == 32);
+
+  const AudioFormat output = negotiator.outputFormat();
+  assert(output.sampleRate == 48000);
+  assert(output.bitDepth == 24);
+  assert(output.sampleFormat == AudioSampleFormat::Int24In32Interleaved);
+
+  const OutputInfo info = negotiator.outputInfo();
+  assert(info.exclusive);
+  assert(info.supportsOutputPerfect);
+  assert(!info.resampled);
+  assert(info.perfectReasonCode.empty());
+  assert(info.perfectReason.empty());
+  assert(info.actualOutputFormat == "int24-in32");
+}
+
+void testPackedInt24DeviceStillWinsForInt24Source() {
+  FakeAudioClient client({{48000, 24, 24}, {48000, 24, 32}});
+  WasapiFormatNegotiator negotiator(&client);
+  std::string error;
+
+  AudioFormat source;
+  source.sampleRate = 48000;
+  source.channelCount = 2;
+  source.bitDepth = 24;
+  source.sampleFormat = AudioSampleFormat::Int24Interleaved;
+
+  assert(negotiator.negotiate(source, &error));
+  assert(negotiator.outputFormat().sampleFormat == AudioSampleFormat::Int24Interleaved);
+  assert(!negotiator.outputInfo().resampled);
+}
+
+void testBitDepthFallbackStillCountsAsConverted() {
+  // 16-bit-only device fed a 24-bit source: the payload really is reduced, so
+  // the relaxed sample-format rule must not hide it.
+  FakeAudioClient client({{48000, 16, 16}});
+  WasapiFormatNegotiator negotiator(&client);
+  std::string error;
+
+  AudioFormat source;
+  source.sampleRate = 48000;
+  source.channelCount = 2;
+  source.bitDepth = 24;
+  source.sampleFormat = AudioSampleFormat::Int24Interleaved;
+
+  assert(negotiator.negotiate(source, &error));
+  assert(negotiator.outputFormat().sampleFormat == AudioSampleFormat::Int16Interleaved);
+  assert(negotiator.outputInfo().resampled);
+  assert(negotiator.outputInfo().perfectReasonCode == "pcm_converted");
+}
+
 void testDsd128FailureReasonNamesDopCarrierFacts() {
   FakeAudioClient client({});
   WasapiFormatNegotiator negotiator(&client);
@@ -740,6 +810,9 @@ int main() {
   testPackedInt24PackerUsesSpecializedConversion();
   testInt32PackerUsesSpecializedConversion();
   testDsd64NegotiatesDopCarrier();
+  testInt24SourceOnInt24In32OnlyDeviceIsNotReportedAsConverted();
+  testPackedInt24DeviceStillWinsForInt24Source();
+  testBitDepthFallbackStillCountsAsConverted();
   testDsd128FailureReasonNamesDopCarrierFacts();
   testDsd256FailureReasonNamesDopCarrierFacts();
   testExclusiveBufferPolicyAvoidsMinimumPeriodForAuto();

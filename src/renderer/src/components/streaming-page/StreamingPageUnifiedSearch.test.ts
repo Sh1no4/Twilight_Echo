@@ -74,7 +74,6 @@ test('streaming detail, social, and HiFi surfaces compile working dark-theme sel
 test('streaming page resolves player-bar artist requests through the track provider', () => {
   assert.match(source, /artistNavigationRequest\?: StreamingArtistNavigationRequest \| null/)
   assert.match(source, /mediaProviders\.searchArtists\(providerId, artistName, 8, 0\)/)
-  assert.match(source, /findBestStreamingArtistMatch\(artistName, result\.items\)/)
   assert.match(source, /provider\.fetchArtistTopSongs\(artist\.id\)/)
   assert.match(
     source,
@@ -84,6 +83,17 @@ test('streaming page resolves player-bar artist requests through the track provi
     source,
     /if \(provider === NCM_PROVIDER_ID\) \{\s*fallbackProvider\.value = null/
   )
+})
+
+test('same-named artists are separated by provider artist id, never by search order', () => {
+  // 带歌手 id 时选人只认 id，搜索结果仅用于补 picUrl 等展示字段。
+  assert.match(source, /findStreamingArtistById\(request\.artistId, searchResult\.items\)/)
+  assert.match(source, /openArtist\(matched \?\? \{ id: request\.artistId/)
+  // 没有 id 才回退名字匹配，且要先拿到全部同名候选，由页面自己消歧并告知用户。
+  assert.match(source, /matchStreamingArtistsByName\(artistName, searchResult\?\.items \?\? \[\]\)/)
+  assert.match(source, /candidates\.length > 1/)
+  // 绝不能退回“搜索结果里第一个同名者即命中”——那正是同名歌手跳错页的成因。
+  assert.doesNotMatch(source, /findBestStreamingArtistMatch\(artistName, result\.items\)/)
 })
 
 test('streaming page keeps third-party providers on the generic provider library surface', () => {

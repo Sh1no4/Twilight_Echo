@@ -1119,7 +1119,7 @@ export const BUILT_IN_THEME_PRESETS: readonly ThemeProfileV2[] = Object.freeze([
         'shape.globalRadius': '4px',
         'shape.cardRadius': '6px',
         'motion.enter': 'cubic-bezier(0.2, 0, 0.4, 1)',
-        'motion.soft': 'linear',
+        'motion.soft': 'cubic-bezier(0.23, 1, 0.32, 1)',
         'library.table.shadow': 'none',
         'library.selection.indicator': '#c2410c',
         'library.selection.radius': '2px',
@@ -1182,7 +1182,7 @@ export const BUILT_IN_THEME_PRESETS: readonly ThemeProfileV2[] = Object.freeze([
         'shape.globalRadius': '4px',
         'shape.cardRadius': '6px',
         'motion.enter': 'cubic-bezier(0.2, 0, 0.4, 1)',
-        'motion.soft': 'linear',
+        'motion.soft': 'cubic-bezier(0.23, 1, 0.32, 1)',
         'library.table.shadow': 'none',
         'library.selection.indicator': '#3ddc97',
         'library.selection.radius': '2px',
@@ -1320,7 +1320,7 @@ export const BUILT_IN_THEME_PRESETS: readonly ThemeProfileV2[] = Object.freeze([
         'playback.equalizer.sliderTrack': 'rgba(38, 40, 42, 0.08)',
         'playback.equalizer.sliderFill': 'linear-gradient(to top, #47614f, #47614f)',
         'motion.enter': 'cubic-bezier(0.32, 0, 0.16, 1)',
-        'motion.soft': 'cubic-bezier(0.45, 0.05, 0.15, 1)'
+        'motion.soft': 'cubic-bezier(0.22, 1, 0.36, 1)'
       },
       dark: {
         'color.primary.500': '#9eb5a4',
@@ -1383,7 +1383,7 @@ export const BUILT_IN_THEME_PRESETS: readonly ThemeProfileV2[] = Object.freeze([
         'playback.equalizer.sliderTrack': 'rgba(255, 255, 255, 0.09)',
         'playback.equalizer.sliderFill': 'linear-gradient(to top, #9eb5a4, #9eb5a4)',
         'motion.enter': 'cubic-bezier(0.32, 0, 0.16, 1)',
-        'motion.soft': 'cubic-bezier(0.45, 0.05, 0.15, 1)'
+        'motion.soft': 'cubic-bezier(0.22, 1, 0.36, 1)'
       }
     },
     {

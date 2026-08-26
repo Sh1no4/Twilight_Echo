@@ -1,4 +1,7 @@
-import { loadNativeBinding } from './audio/nativeBinding.ts'
+import {
+  describeNativeBindingFailure,
+  loadNativeBindingWithDiagnostics
+} from './audio/nativeBinding.ts'
 import type { NativeAudioBinding } from './audio/audioEngineTypes.ts'
 import {
   createAudioServiceCapabilities,
@@ -64,7 +67,8 @@ if (!parentPort) {
 }
 
 const servicePort = parentPort
-const native = loadNativeBinding()
+const nativeLoad = loadNativeBindingWithDiagnostics()
+const native = nativeLoad.binding
 const nativeMethods = native
   ? Object.getOwnPropertyNames(native).filter(
       (method) => typeof native[method as keyof NativeAudioBinding] === 'function'
@@ -74,7 +78,7 @@ const missingDspMethods = REQUIRED_AUDIO_SERVICE_DSP_METHODS.filter(
   (method) => typeof native?.[method] !== 'function'
 )
 const nativeContractError = !native
-  ? '未加载 twilight_audio_node.node'
+  ? describeNativeBindingFailure(nativeLoad)
   : missingDspMethods.length > 0
     ? `native audio binding is missing required DSP methods: ${missingDspMethods.join(', ')}`
     : ''

@@ -1701,8 +1701,8 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'motion',
     'global',
     'easing',
-    'cubic-bezier(0.2, 0.8, 0.2, 1)',
-    'cubic-bezier(0.2, 0.8, 0.2, 1)'
+    'cubic-bezier(0.22, 1, 0.36, 1)',
+    'cubic-bezier(0.22, 1, 0.36, 1)'
   )
 ])
 export function variantFromDefaults(tone: ThemeTone): ThemeVariant {

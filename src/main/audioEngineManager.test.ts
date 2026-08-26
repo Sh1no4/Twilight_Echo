@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { EventEmitter } from 'node:events'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  describeNativeBindingFailure,
+  loadNativeBindingWithDiagnostics
+} from './audio/nativeBinding.ts'
 import type { DspGraphStatus, DspScene } from '../shared/dspGraph.ts'
 import type { DspStatePayload } from '../shared/audioServiceContract.ts'
 import { createSleepTimerState } from '../shared/sleepTimer.ts'
+import { deviceOptionsForOutput } from '../shared/audioDeviceRouting.ts'
 import { registerNativeSleepTimerBoundaries } from './audio/sleepTimerNativeBoundary.ts'
 import { SleepTimerService } from './sleepTimerCore.ts'
 
@@ -1671,6 +1678,41 @@ test('default audio service mode applies DSP graph revisions and exposes native 
   manager.destroy()
 })
 
+test('native binding failures name the real loader error instead of a bare 未加载', () => {
+  assert.equal(
+    describeNativeBindingFailure(loadNativeBindingWithDiagnostics(() => [])),
+    '未加载 twilight_audio_node.node（没有可用的模块路径）'
+  )
+  assert.match(
+    describeNativeBindingFailure(
+      loadNativeBindingWithDiagnostics(() => ['D:/twilight-absent/twilight_audio_node.node'])
+    ),
+    /1 个候选路径均不存在/
+  )
+
+  // A file that exists but cannot be dlopened needs a different repair from a
+  // file that is absent — on Windows it is almost always a runtime DLL missing
+  // beside the addon — so the reason has to carry the loader's own message.
+  const dir = mkdtempSync(join(tmpdir(), 'twilight-addon-'))
+  try {
+    const candidate = join(dir, 'twilight_audio_node.node')
+    writeFileSync(candidate, 'not a real addon')
+    const broken = loadNativeBindingWithDiagnostics(() => [candidate])
+    assert.equal(broken.binding, null)
+    assert.equal(broken.attempts.length, 1)
+    const described = describeNativeBindingFailure(broken)
+    assert.match(described, /^未加载 twilight_audio_node\.node（/)
+    assert.ok(described.includes(candidate), `the failing candidate must be named: ${described}`)
+    assert.ok(
+      described.length > '未加载 twilight_audio_node.node'.length + candidate.length + 2,
+      `the loader message must survive: ${described}`
+    )
+    assert.ok(!described.includes('\n'), 'the reason must stay on one line for the crash notice')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('direct native mode remains fail-closed when no addon candidate exists', () => {
   const previousServiceMode = process.env.TWILIGHT_AUDIO_SERVICE
   process.env.TWILIGHT_AUDIO_SERVICE = '0'
@@ -2823,7 +2865,13 @@ test('ASIO legacy display ids migrate only when the catalog has a unique canonic
     }
   )
 
-  assert.equal((await ambiguousManager.getAudioOutputState()).device, 'auto')
+  // An ambiguous legacy name stays unresolved so the backend reports it by name.
+  // It must not migrate to either candidate, and must not become 'auto': ASIO has
+  // no system-default endpoint, so that would bind whichever driver enumerates
+  // first without ever showing which one.
+  const ambiguousDevice = (await ambiguousManager.getAudioOutputState()).device
+  assert.equal(ambiguousDevice, 'asio:Studio ASIO')
+  assert.notEqual(ambiguousDevice, 'auto')
 })
 
 test('audio device options expose runtime-probed DSD support states without forcing boolean support', async () => {
@@ -2846,6 +2894,70 @@ test('audio device options expose runtime-probed DSD support states without forc
   assert.equal(dac?.supportsDop, undefined)
   assert.equal(dac?.dopSupportState, 'runtime-probed')
   assert.equal(dac?.nativeDsdSupportState, 'unsupported')
+})
+
+test('an unreadable ASIO catalog keeps the persisted driver instead of dropping to auto', async () => {
+  // The manager resolves the initial device in its constructor, before the audio
+  // service is up, so the catalog reads empty there. Rewriting the selection at
+  // that point discarded an explicit ASIO driver on every launch, and 'auto' then
+  // bound whichever driver enumerated first without ever showing which.
+  const persisted = 'asio:{6D241B5E-CF73-4043-A85F-EF11D4670955}'
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'asio',
+      audioDevice: persisted
+    },
+    {
+      nativeBinding: new FakeNativeBinding(undefined, []),
+      scheduler: TEST_SCHEDULER
+    }
+  )
+
+  const state = await manager.getAudioOutputState()
+  assert.equal(state.device, persisted)
+})
+
+test('a backend switch restores the device last used on that backend', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'dac-1'
+    },
+    nativeBinding
+  )
+
+  const onAsio = await manager.setAudioOutput('asio', 'asio:studio')
+  assert.equal(onAsio.device, 'asio:studio')
+
+  // Switching back used to hard-reset the device to auto, discarding the explicit
+  // WASAPI endpoint every time the user compared two backends.
+  const backOnWasapi = await manager.setAudioOutput('wasapi')
+  assert.equal(backOnWasapi.output, 'wasapi')
+  assert.equal(backOnWasapi.device, 'dac-1')
+
+  const backOnAsio = await manager.setAudioOutput('asio')
+  assert.equal(backOnAsio.output, 'asio')
+  assert.equal(backOnAsio.device, 'asio:studio')
+})
+
+test('the output device picker only offers devices the selected backend can open', () => {
+  // EnumerateDevices returns one merged list. Presenting it unfiltered lets a user
+  // pick an ASIO driver while WASAPI is selected — silently snapped back to the
+  // default — and offers a 系统默认 row under ASIO, which has no such endpoint.
+  const onWasapi = deviceOptionsForOutput('wasapi', DEVICE_OPTIONS)
+  assert.deepEqual(
+    onWasapi.map((option) => option.id),
+    ['auto', 'dac-1']
+  )
+
+  const onAsio = deviceOptionsForOutput('asio', DEVICE_OPTIONS)
+  assert.deepEqual(
+    onAsio.map((option) => option.id),
+    ['asio:studio']
+  )
 })
 
 test('setAudioOutput skips native calls and playback fanout when output and device are unchanged', async () => {
@@ -3297,7 +3409,9 @@ test('switching to ASIO does not keep a WASAPI endpoint device id', async () => 
   const info = await manager.getPlaybackInfo()
 
   assert.equal(state.output, 'asio')
-  assert.equal(state.device, 'auto')
+  // Binds an explicit driver rather than the inert 系统默认 row, which ASIO has no
+  // endpoint for and which would let whichever driver enumerates first win.
+  assert.equal(state.device, 'asio:studio')
   assert.equal(info.outputInfo.actualBackend, 'asio')
   assert.equal(info.outputInfo.devicePathKind, 'asio')
   assert.notEqual(
@@ -3493,7 +3607,9 @@ test('switching to shuffle preserves the active stream and only updates native p
   const after = await manager.getPlaybackInfo()
 
   assert.equal(nativeBinding.playModeCalls, playModeCalls + 1)
-  assert.equal(nativeBinding.playbackInfo.playMode, 'shuffle')
+  // The renderer already shuffled the queue it handed over, so shuffle rides the
+  // engine's listLoop: wrap that order, do not permute it a second time.
+  assert.equal(nativeBinding.playbackInfo.playMode, 'listLoop')
   assert.equal(nativeBinding.loadQueueCalls, loadQueueCalls)
   assert.equal(nativeBinding.playCalls.length, playCalls)
   assert.equal(nativeBinding.stopCalls, stopCalls)
@@ -3502,6 +3618,112 @@ test('switching to shuffle preserves the active stream and only updates native p
   assert.equal(after.queueIndex, before.queueIndex)
   assert.equal(after.position, before.position)
   assert.equal(after.state, before.state)
+})
+
+test('a native stop mid-queue is not reported as a queue end while an upcoming track exists', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const queue = [
+    { id: 'first', source: 'first.flac', title: 'First' },
+    { id: 'last', source: 'last.flac', title: 'Last' }
+  ]
+  const boundaries: Array<'trackEnd' | 'queueEnd'> = []
+  manager.on('sleep-timer-boundary', ({ boundary }) => boundaries.push(boundary))
+
+  await manager.loadQueue(queue, 1)
+  await manager.play(queue[1].source, 0)
+  // The engine reports a stop while it still has somewhere to go — a device
+  // hiccup or a repeating queue, not the end of playback. The old index-based
+  // check called this a queue end because the index was already the last one.
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    state: 'stopped',
+    queueIndex: 1,
+    upcomingTrack: { id: 'first', source: 'first.flac', title: 'First' }
+  }
+
+  const tickManager = manager as unknown as { tick: () => void }
+  tickManager.tick()
+  tickManager.tick()
+
+  assert.deepEqual(boundaries, [])
+})
+
+test('a delegated listLoop queue reports trackEnd then queueEnd when it wraps', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const queue = [
+    { id: 'first', source: 'first.flac', title: 'First' },
+    { id: 'last', source: 'last.flac', title: 'Last' }
+  ]
+  const boundaries: Array<'trackEnd' | 'queueEnd'> = []
+  manager.on('sleep-timer-boundary', ({ boundary }) => boundaries.push(boundary))
+
+  await manager.loadQueue(queue, 1)
+  await manager.setPlayMode('listLoop')
+  await manager.play(queue[1].source, 0)
+  // A looping engine never stops, so wrapping past the last entry is the only
+  // queue boundary it will ever produce. Without this a "stop at end of queue"
+  // timer would never fire once the queue is delegated.
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    state: 'playing',
+    source: queue[0].source,
+    queueIndex: 0,
+    upcomingTrack: { id: 'last', source: 'last.flac', title: 'Last' }
+  }
+
+  const tickManager = manager as unknown as { tick: () => void }
+  tickManager.tick()
+
+  assert.deepEqual(boundaries, ['trackEnd', 'queueEnd'])
+})
+
+test('a delegated sequential queue does not report a queue end on an ordinary advance', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const queue = [
+    { id: 'first', source: 'first.flac', title: 'First' },
+    { id: 'last', source: 'last.flac', title: 'Last' }
+  ]
+  const boundaries: Array<'trackEnd' | 'queueEnd'> = []
+  manager.on('sleep-timer-boundary', ({ boundary }) => boundaries.push(boundary))
+
+  await manager.loadQueue(queue, 0)
+  await manager.play(queue[0].source, 0)
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    state: 'playing',
+    source: queue[1].source,
+    queueIndex: 1,
+    upcomingTrack: null
+  }
+
+  const tickManager = manager as unknown as { tick: () => void }
+  tickManager.tick()
+
+  assert.deepEqual(boundaries, ['trackEnd'])
 })
 
 test('shuffle next accepts the native non-adjacent queue target', async () => {
@@ -4935,7 +5157,9 @@ test('native ASIO device names become labels and stale selected devices stay out
 
   const state = await manager.getAudioOutputState()
 
-  assert.equal(state.device, 'auto')
+  // A driver missing from a catalog we can read recovers onto a real driver id,
+  // not 'auto' — same endpoint as before, now visible in the picker.
+  assert.equal(state.device, canonicalAsioId)
   assert.equal(
     state.deviceOptions.find((device) => device.id === canonicalAsioId)?.label,
     'FiiO ASIO Driver'
@@ -6920,7 +7144,10 @@ test('failed service-mode queue load rolls the native queue back to the local mi
     }
   }
 
-  await assert.rejects(manager.loadQueue(secondQueue, 0), /原生播放模式同步失败/)
+  // The rejection now carries its catalog code as a `[TE-ERR:...]` sentinel
+  // instead of a pre-rendered Chinese sentence, so the renderer can translate it.
+  // Asserting the code keeps this test independent of the copy.
+  await assert.rejects(manager.loadQueue(secondQueue, 0), /TE-ERR:audio\.play_mode_sync_failed/)
   await new Promise((resolve) => setTimeout(resolve, 0))
 
   assert.deepEqual(service.queue, firstQueue)

@@ -936,7 +936,9 @@ onUnmounted(() => {
   border-radius: 12px;
   color: var(--te-neutral-600, #4b5563);
   cursor: pointer;
-  transition: all 0.2s;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
   font-weight: 500;
   font-size: 14px;
 }
@@ -1031,7 +1033,7 @@ onUnmounted(() => {
   border-radius: 100px;
   padding: 8px 16px;
   width: 300px;
-  transition: all 0.2s;
+  transition: background-color 0.2s var(--te-ease-soft);
 }
 
 .search-box:focus-within {
@@ -1071,7 +1073,10 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  transition: all 0.2s;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    border-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
   border: none;
 }
 
@@ -1165,7 +1170,9 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   position: relative;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition:
+    transform 0.2s var(--te-ease-enter),
+    border-color 0.2s var(--te-ease-enter);
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02);
 }
 
@@ -1371,7 +1378,9 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
 }
 
 .icon-btn:hover {

@@ -34,15 +34,13 @@
   padding: calc(32px + 30px) min(4.4vw, 48px) 132px;
   overflow-y: auto;
   overflow-x: hidden;
-  background-color: var(--te-local-bg);
+  /* Ambient tints only: the local wallpaper stays on the body (te-local-surface)
+     so the open sidebar and this list share one continuous image. */
+  background-color: transparent;
   background-image:
     radial-gradient(circle at 18% 7%, rgba(124, 77, 255, 0.045), transparent 34%),
     radial-gradient(circle at 53% 12%, rgba(255, 126, 182, 0.04), transparent 32%),
-    radial-gradient(circle at 86% 12%, rgba(104, 132, 255, 0.038), transparent 36%),
-    var(--te-local-bg-image);
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
+    radial-gradient(circle at 86% 12%, rgba(104, 132, 255, 0.038), transparent 36%);
   width: 100%;
   box-sizing: border-box;
   scrollbar-width: thin;
@@ -91,6 +89,7 @@
 
 .song-list-header {
   display: flex;
+  position: relative;
   align-items: flex-end;
   justify-content: space-between;
   gap: 24px;
@@ -254,6 +253,10 @@
 }
 
 .btn-back {
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block-end: 4px;
+  z-index: 1;
   width: 32px;
   height: 32px;
   cursor: pointer;
@@ -428,7 +431,10 @@
   backdrop-filter: blur(14px) saturate(140%);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    border-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
   user-select: none;
   white-space: nowrap;
 }
@@ -567,7 +573,10 @@
   backdrop-filter: blur(14px) saturate(140%);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    border-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
   user-select: none;
   white-space: nowrap;
 }
@@ -685,7 +694,11 @@
   padding: 6px 3px;
   border: 1px solid color-mix(in srgb, var(--te-neutral-300) 72%, transparent);
   border-radius: 14px;
-  background: color-mix(in srgb, var(--te-library-bg) 84%, transparent);
+  /* `--te-library-bg` is a gradient, and a gradient inside `color-mix()` makes the
+     whole declaration invalid, so this rail used to paint no fill at all — just a
+     border over a blur. `--te-card-bg` is a real colour and, unlike that gradient
+     (hardcoded white in both tones), it darkens with the theme. */
+  background: color-mix(in srgb, var(--te-card-bg) 84%, transparent);
   box-shadow: 0 12px 32px rgba(34, 42, 68, 0.12);
   backdrop-filter: blur(16px) saturate(140%);
 }
@@ -1130,8 +1143,6 @@
   align-items: center;
 }
 .track-row {
-  --track-pointer-x: 50%;
-  --track-pointer-y: 50%;
   position: relative;
   cursor: pointer;
   transition:
@@ -1179,17 +1190,15 @@
     );
 }
 
+/* Border geometry only. The pointer-following radial-gradient that used to fill
+   this box was removed together with its rAF writer, but the box itself still
+   draws the playing row's border (.track-playing::after): without `inset` an
+   absolutely positioned pseudo-element collapses to 0x0, and the mask pair is
+   what turns the filled box into a 1px outline. */
 .track-row::after {
   z-index: 2;
   inset: 0;
   padding: 1px;
-  background: radial-gradient(
-    circle 92px at var(--track-pointer-x) var(--track-pointer-y),
-    rgba(124, 77, 255, 0.4) 0%,
-    rgba(34, 211, 238, 0.3) 34%,
-    rgba(255, 126, 182, 0.24) 55%,
-    transparent 76%
-  );
   mask:
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
@@ -1199,6 +1208,7 @@
   mask-composite: exclude;
   -webkit-mask-composite: xor;
 }
+
 .virtual-spacer {
   display: flex;
   width: 100%;
@@ -1274,8 +1284,6 @@
     rgba(255, 126, 182, 0.82),
     rgba(124, 77, 255, 0.88)
   );
-  background-size: 260% 100%;
-  animation: border-gradient-flow 3.4s linear infinite;
 }
 
 /* The animated border is decorative. Pause it whenever the row is not the
@@ -1598,32 +1606,6 @@
   -webkit-backdrop-filter: blur(20px) saturate(150%);
 }
 
-@keyframes border-gradient-flow {
-  to {
-    background-position: 260% 0;
-  }
-}
-
-@keyframes hover-gradient-flow {
-  to {
-    background-position:
-      100% 0,
-      260% 0;
-  }
-}
-
-@keyframes pointer-border-pulse {
-  0%,
-  100% {
-    opacity: 0.72;
-    filter: saturate(1.05);
-  }
-  50% {
-    opacity: 1;
-    filter: saturate(1.24);
-  }
-}
-
 /* Search Box */
 .search-box {
   display: flex;
@@ -1651,7 +1633,12 @@
   }
   .song-list-header {
     gap: 16px;
-    padding: 0 10px;
+    padding: 52px 10px 0;
+  }
+
+  .btn-back {
+    inset-block: 0 auto;
+    inset-inline-start: 0;
   }
 
   .library-play-actions {
@@ -2162,7 +2149,10 @@
   font-weight: 600;
   letter-spacing: 0.01em;
   white-space: nowrap;
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    border-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
 }
 
 .excluded-tracks-trigger:hover {

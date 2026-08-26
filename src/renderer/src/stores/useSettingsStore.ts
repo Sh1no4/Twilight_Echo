@@ -115,11 +115,14 @@ const fallbackSettings: AppSettings = {
     streamingAudio: 'provider'
   },
   autoAnalyzeBpm: true,
+  closeWindowBehavior: 'quit',
   closeToTray: false,
+  taskbarThumbarButtonsEnabled: true,
   onboardingCompleted: false,
   developerMode: false,
   startupHomePage: 'local',
   trackActivationMode: 'singleClick',
+  language: 'system',
   theme: 'system',
   pluginThemeId: null,
   activeTheme: { kind: 'builtin', id: 'builtin:twilight-echo-default' },
@@ -241,6 +244,7 @@ const fallbackSettings: AppSettings = {
     align: 'center',
     showTranslation: true,
     layout: 'bilingual',
+    presentation: 'netease',
     lineSpacing: 1.6,
     shadow: true,
     shadowBlur: 8,
@@ -250,6 +254,7 @@ const fallbackSettings: AppSettings = {
     windowX: -1,
     windowY: -1,
     alwaysOnTop: true,
+    locked: false,
     clickThrough: false,
     maxLines: 2,
     lineOffset: 0
@@ -262,6 +267,28 @@ const fallbackSettings: AppSettings = {
   streamingActiveProvider: 'ncm',
   remoteControlEnabled: false,
   remoteControlPort: 0
+}
+
+/**
+ * Strip Vue's reactive proxies off a settings patch before it crosses the IPC
+ * bridge.
+ *
+ * `settings` is a deep `ref`, so any nested object read off `settings.value`
+ * comes back as a reactive Proxy. The usual patch idiom spreads one level
+ * (`{ ...settings.value.playerBar, mode }`), which copies that level's own
+ * values but hands every *nested* object over by reference — as a Proxy. The
+ * window runs `sandbox: true` + `contextIsolation: true`, so `window.api` is a
+ * contextBridge surface and arguments are structurally cloned at the boundary
+ * itself; a Proxy fails that clone with "An object could not be cloned" before
+ * any preload code runs. (The `JSON` round trip inside `settingsApi.update` sits
+ * on the far side of that boundary and can never help.)
+ *
+ * Patches that only carry primitives were fine by accident, which is why this
+ * only surfaced once `playerBar` grew a nested `layout`. Normalizing here rather
+ * than at each call site means a new nested setting cannot reintroduce the crash.
+ */
+function toWirePatch(patch: Partial<AppSettings>): Partial<AppSettings> {
+  return JSON.parse(JSON.stringify(patch)) as Partial<AppSettings>
 }
 
 const settings = ref<AppSettings>({ ...fallbackSettings })
@@ -607,7 +634,7 @@ export function useSettingsStore(): {
       applyDomSettings()
     }
     const runUpdate = settingsUpdateQueue.then(async () => {
-      const snapshot = await window.api.settings.update(patch)
+      const snapshot = await window.api.settings.update(toWirePatch(patch))
       if (sequence === settingsUpdateSequence) {
         applySnapshot(snapshot)
       }

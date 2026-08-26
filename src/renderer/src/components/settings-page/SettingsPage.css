@@ -125,8 +125,10 @@ html[data-theme='dark'][data-te-surface-material='liquidGlass'] .settings-previe
 }
 
 /* Liquid glass gives the fixed navigation its own readable surface. Keep the
-   filter on a pseudo-layer so the nav can remain fixed on desktop and sticky on
-   narrow layouts without changing its containing-block behaviour. */
+   blur on a pseudo-layer so the nav can remain fixed on desktop and sticky on
+   narrow layouts without changing its containing-block behaviour. No SVG
+   displacement here: co-located with backdrop-filter it makes Chromium abandon
+   the backdrop pass and repaint the whole nav per frame. */
 html:is([data-te-surface-material='liquidGlass'], [data-te-settings-navigation-liquid-glass='on'])
   .settings-preview-nav {
   isolation: isolate;
@@ -176,7 +178,6 @@ html:is([data-te-surface-material='liquidGlass'], [data-te-settings-navigation-l
   pointer-events: none;
   backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
   -webkit-backdrop-filter: blur(var(--te-lg-blur, 16px)) saturate(var(--te-lg-saturate, 140%));
-  filter: url(#te-lg-card);
 }
 
 html[data-te-liquid-glass-source='solid']:is(
@@ -2464,44 +2465,6 @@ html[data-te-motion='full'] .swatch.active {
   font-weight: 650;
 }
 
-.shortcut-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-  padding: 16px;
-  border: 1px solid rgba(229, 231, 235, 0.75);
-  border-radius: 12px;
-  background: #f9fafb;
-}
-
-.shortcut-grid div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.shortcut-grid span {
-  color: #374151;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.shortcut-grid kbd {
-  display: inline-flex;
-  min-height: 26px;
-  align-items: center;
-  padding: 4px 8px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  background: var(--te-card-bg);
-  color: #4b5563;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-  font-weight: 650;
-}
-
 .read-only-pill {
   display: inline-flex;
   min-width: 52px;
@@ -2515,65 +2478,6 @@ html[data-te-motion='full'] .swatch.active {
   color: #64748b;
   font-size: 11px;
   font-weight: 650;
-}
-
-.shortcut-status-list {
-  display: grid;
-  gap: 8px;
-}
-
-.shortcut-status-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 34px;
-  padding: 8px 12px;
-  border: 1px solid rgba(229, 231, 235, 0.75);
-  border-radius: 8px;
-  background: rgba(249, 250, 251, 0.68);
-}
-
-.shortcut-status-row span {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-  color: #374151;
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.shortcut-status-row i {
-  color: #9ca3af;
-  font-size: 13px;
-}
-
-.shortcut-status-row small {
-  color: #6b7280;
-  font-size: 12px;
-  font-weight: 650;
-  text-align: right;
-}
-
-.shortcut-status-row.registered {
-  border-color: rgba(16, 185, 129, 0.28);
-  background: rgba(16, 185, 129, 0.08);
-}
-
-.shortcut-status-row.registered i,
-.shortcut-status-row.registered small {
-  color: #059669;
-}
-
-.shortcut-status-row.failed {
-  border-color: rgba(220, 38, 38, 0.28);
-  background: rgba(220, 38, 38, 0.08);
-}
-
-.shortcut-status-row.failed i,
-.shortcut-status-row.failed small {
-  color: #dc2626;
 }
 
 .about-section {
@@ -2744,10 +2648,12 @@ html[data-te-motion='full'] .swatch.active {
 }
 
 .update-progress-fill {
+  width: 100%;
   height: 100%;
-  border-radius: 999px;
   background: linear-gradient(90deg, var(--brand-500, #2563eb), var(--brand-400, #38bdf8));
-  transition: width 120ms linear;
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  transition: transform 120ms linear;
 }
 
 .sponsor-card {
@@ -3512,8 +3418,7 @@ html[data-theme='dark'] .sponsor-dialog .sponsor-dialog-notice {
   .device-grid,
   .dsp-status-grid,
   .advanced-grid,
-  .decode-grid,
-  .shortcut-grid {
+  .decode-grid {
     grid-template-columns: 1fr;
   }
 
@@ -3531,15 +3436,8 @@ html[data-theme='dark'] .sponsor-dialog .sponsor-dialog-notice {
     flex-direction: column;
   }
 
-  .settings-command-actions .soft-button,
-  .shortcut-status-row {
+  .settings-command-actions .soft-button {
     width: 100%;
-  }
-
-  .shortcut-status-row {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 6px;
   }
 
   .theme-segment,
@@ -3659,6 +3557,81 @@ html[data-theme='dark'] .sponsor-dialog .sponsor-dialog-notice {
   color: #ef4444;
   font-size: 12px;
   font-weight: 650;
+}
+
+/* The verdict used to be unconditionally red, even while reporting a chain that
+   had in fact reached bit-perfect. Tone now follows the verdict. */
+.diagnostic-status[data-tone='success'] {
+  color: var(--te-success-500);
+}
+
+.diagnostic-status[data-tone='warning'] {
+  color: var(--te-warning-500);
+}
+
+/* ── Why the chain is not bit-perfect ── */
+.diagnostic-reason {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0 8px;
+  padding: 10px 12px;
+  border-left: 2px solid var(--te-warning-500);
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--te-warning-500) 7%, transparent);
+}
+
+.diagnostic-reason p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.diagnostic-reason-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--te-text-title);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.diagnostic-severity {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--te-warning-500) 16%, transparent);
+  color: var(--te-warning-500);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.diagnostic-severity[data-severity='blocking'] {
+  background: color-mix(in srgb, var(--te-danger-soft-bg) 70%, transparent);
+  color: var(--te-neutral-900);
+}
+
+.diagnostic-severity[data-severity='info'] {
+  background: color-mix(in srgb, var(--te-neutral-500) 14%, transparent);
+  color: var(--te-settings-text-muted);
+}
+
+.diagnostic-reason-explain {
+  color: var(--te-settings-text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.diagnostic-reason-fix {
+  color: var(--te-text-body);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.diagnostic-reason-fix i {
+  margin-right: 4px;
+  color: var(--te-warning-500);
 }
 
 .diagnostic-chain {
@@ -3830,7 +3803,7 @@ html[data-theme='dark'] .sponsor-dialog .sponsor-dialog-notice {
   height: 2px;
   min-width: 20px;
   border-bottom: 2px dashed #d1d5db;
-  transition: all 0.3s ease;
+  transition: border-color 0.3s var(--te-ease-soft);
 }
 
 .signal-line.active {
@@ -3903,7 +3876,10 @@ html[data-te-motion='full'] .signal-line.active::before {
   font-size: 13px;
   font-weight: 650;
   box-shadow: 0 1px 4px rgba(15, 23, 42, 0.04);
-  transition: all 0.16s ease;
+  transition:
+    background-color 0.16s var(--te-ease-soft),
+    border-color 0.16s var(--te-ease-soft),
+    color 0.16s var(--te-ease-soft);
 }
 
 .preset-btn:hover {

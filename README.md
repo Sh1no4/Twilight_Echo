@@ -5,230 +5,240 @@
 </p>
 
 <p align="center">
-  一款面向本地音乐收藏、在线音乐发现与 HiFi 播放的现代桌面音乐播放器。
+  一款为本地收藏、流媒体探索与 HiFi 播放打造的现代桌面音乐播放器。
 </p>
 
 <p align="center">
-  <a href="https://github.com/Bad0RANG3/Twilight_Echo">
-    <img alt="GitHub" src="https://img.shields.io/badge/repo-Bad0RANG3%2FTwilight_Echo-7c3aed?style=flat-square" />
-  </a>
-  <img alt="Current version" src="https://img.shields.io/badge/version-1.1.0--preview.0-0f766e?style=flat-square" />
+  <a href="https://github.com/asenyarzc-cpu/Twilight_Echo/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/asenyarzc-cpu/Twilight_Echo?display_name=tag&style=flat-square" /></a>
   <img alt="Windows" src="https://img.shields.io/badge/Windows-10%20%2F%2011-2563eb?style=flat-square&logo=windows11&logoColor=white" />
-  <a href="./LICENSE">
-    <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-64748b?style=flat-square" />
-  </a>
+  <img alt="Version" src="https://img.shields.io/badge/version-1.1.0-0f766e?style=flat-square" />
+  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-64748b?style=flat-square" /></a>
 </p>
 
 <p align="center">
-  <a href="#截图预览">截图预览</a>
+  <a href="https://github.com/asenyarzc-cpu/Twilight_Echo/releases/latest"><strong>下载最新版</strong></a>
   ·
   <a href="#功能一览">功能一览</a>
   ·
+  <a href="#界面预览">界面预览</a>
+  ·
   <a href="#支持的音频格式">格式支持</a>
   ·
-  <a href="#安装与运行">安装与运行</a>
-  ·
-  <a href="#原生音频引擎">原生音频引擎</a>
+  <a href="https://github.com/asenyarzc-cpu/Twilight_Echo/issues">问题反馈</a>
 </p>
 
-> 当前源码版本为 `1.1.0-preview.0`，以 Windows 10/11 为主要目标平台；macOS 与 Linux 后端仍在持续完善。
+![Twilight Echo 本地音乐主页](./assets/screenshots/local-dashboard.png)
 
-## 项目简介
+## 认识 Twilight Echo
 
-Twilight Echo 希望把散落在硬盘、歌单和不同音乐服务里的音乐，放回同一套清晰、流畅的聆听体验中。
+Twilight Echo 希望把散落在硬盘、歌单和不同音乐服务里的收藏，放回同一套清晰、流畅的聆听体验中。它既能管理大型本地音乐库，也能通过内置网易云音乐服务和可选扩展探索在线内容；播放端则由独立的 C++20 原生音频引擎负责，为 Windows 用户提供从日常共享模式到 WASAPI 独占、DSP 调音和 DSD 播放的一体化路径。
 
-- 本地模式适合管理大型本地音乐库：递归扫描、增量更新、虚拟化列表、元数据补全、封面和歌词管理。
-- 在线模式通过内置网易云音乐 provider 与扩展中心接入每日推荐、歌单、搜索、私人 FM、电台/播客等内容。
-- 播放端使用独立 C++20 原生音频引擎，提供 FFmpeg 解码、DSP 链、均衡器、ReplayGain、WASAPI/ASIO 输出、DSD/SACD 与 VST3 等能力。
-- 界面提供沉浸式歌词、桌面歌词、迷你播放器、主题定制、播放队列、睡眠定时、桌面歌词和远程控制等完整桌面体验。
+你可以把它当作一个开箱即用的桌面播放器，也可以进一步配置歌词、均衡器、主题、迷你播放器、播客、电台和扩展中心，搭建属于自己的音乐工作台。
 
 > [!NOTE]
-> 当前项目的主要目标平台是 Windows 10/11。macOS CoreAudio 与 Linux ALSA 后端已有实现，但尚未经过与 Windows 同等级别的正式发布验证。
+> Windows 10/11 是当前主要且验证最完整的平台。macOS 与 Linux 后端已有实现，但尚未达到正式发布验证标准。
 
-## 截图预览
+## 界面预览
 
-> 以下主界面截图采用浅色主题；沉浸式播放页保留封面取色背景，以呈现完整播放氛围。
+### 在线音乐与歌单发现
 
-### 本地音乐首页
+从每日推荐、私人 FM、私人雷达到分类歌单、搜索和个人收藏，在统一的播放器中继续聆听。
 
-![本地音乐首页](./assets/screenshots/local-dashboard-light.png)
+<table>
+  <tr>
+    <td width="50%"><img src="./assets/screenshots/streaming-home.png" alt="在线音乐主页与每日推荐" /></td>
+    <td width="50%"><img src="./assets/screenshots/playlist-discovery.png" alt="分类歌单发现" /></td>
+  </tr>
+  <tr>
+    <td align="center">每日推荐与个性化入口</td>
+    <td align="center">多维分类、语种、风格与场景筛选</td>
+  </tr>
+</table>
 
-### 本地音乐库
-
-大型列表采用虚拟化渲染，支持歌曲、艺术家、专辑、流派、文件夹、歌单、最近播放、搜索与筛选。
-
-![本地音乐库](./assets/screenshots/local-library-light.png)
-
-### 在线音乐
-
-内置网易云音乐 provider，提供每日推荐、私人 FM、私人雷达、歌单发现、音乐库与云盘入口。
-
-![在线音乐主页](./assets/screenshots/streaming-home-light.png)
+![流媒体歌单与播放队列](./assets/screenshots/streaming-playlist.png)
 
 ### 沉浸式歌词
 
-逐行、逐词高亮，支持翻译歌词、封面取色与深色/浅色主题，也可以切换桌面歌词或迷你播放器。
+逐词与逐行同步歌词、翻译歌词、封面取色与深浅主题共同组成专注的正在播放页面；也可以切换桌面歌词或迷你播放器，在其他应用上方继续查看进度。
 
-![沉浸式歌词](./assets/screenshots/immersive-lyrics-light.png)
-
-### DSP 与输出诊断
-
-信号链、处理模块、输入/输出格式与实际设备状态可以实时查看。
-
-![DSP 处理器](./assets/screenshots/dsp-processor-light.png)
-
-### 均衡器与耳机校正
-
-提供图形均衡器、参数均衡器、OPRA/AutoEQ 耳机补偿和预设管理。
-
-![图形均衡器与 AutoEQ](./assets/screenshots/equalizer-autoeq-light.png)
-
-### 扩展中心
-
-通过 `.tep` 安装包启用、更新或移除扩展；网易云音乐源是内置 provider，第三方音源与 UI 能力可由独立扩展提供。
-
-![扩展中心](./assets/screenshots/extension-center-light.png)
-
-### 设置页
-
-媒体库、播放引擎、DSP、缓存、网络代理、外观、桌面歌词与快捷键均可集中配置。
-
-![设置页](./assets/screenshots/settings-light.png)
-
-## 功能一览
+![沉浸式双语歌词界面](./assets/screenshots/immersive-lyrics.png)
 
 ### 本地音乐库
 
-- 递归扫描多个音乐文件夹，并通过路径、大小、修改时间做增量更新。
-- 按歌曲、艺术家、专辑、流派、歌单、文件夹和最近播放浏览。
-- 读取标签、内嵌封面、歌词；支持完整重扫、暂停、继续和取消。
-- 大型歌曲列表虚拟化，支持多选、搜索、筛选、重复检测和播放会话恢复。
-- 支持设置导出/导入、库重置、音乐文件夹管理和扫描状态查看。
+音乐会按歌曲、艺术家、专辑、流派、歌单和文件夹组织。大型列表采用虚拟化呈现，增量扫描避免每次启动都重新解析整座音乐库。
 
-### 在线内容与扩展
+![本地音乐库歌曲视图](./assets/screenshots/local-library.png)
 
-- 内置网易云音乐 provider，提供登录、每日推荐、私人 FM、私人雷达、搜索、歌单和音乐云盘。
-- 扩展中心支持 `.tep` 插件安装、启用、更新、移除和开发者模式。
-- 插件系统提供统一 provider、主题插件、插件 API 和离线索引。
-- 还提供电台/播客、网络音乐源（WebDAV、FTP、SMB、SFTP、NFS、DLNA 等）能力。
+### HiFi、DSP 与耳机校正
 
-### 原生音频与 HiFi
+信号链状态、输入/输出格式与处理模块清晰可见。图形均衡器、参数均衡器和 OPRA/AutoEQ 耳机校正既可以直接使用，也能作为 DSP Rack 的一部分组合。
 
-- C++20/CMake/Node-API 原生音频引擎，通过独立 audio service 进程隔离崩溃影响。
-- FFmpeg 解码，支持常见国内/国际格式以及 DSF、DFF、SACD ISO、APE、WV、MQA（作为 FLAC 兼容容器）等。
-- 输出后端：WASAPI Shared/Exclusive、ASIO；CoreAudio 与 ALSA 后端已有实现，但验证程度低于 Windows。
-- DSP：图形/参数均衡器、Crossfeed、卷积混响、ReplayGain、Loudnorm、通道路由、分频、动态增强、限幅器和立体声增强。
-- DSD：Auto/PCM/DoP/Native 模式、SACD Program 与 DSD 兼容层路由。
-- 输出诊断：实时显示后端、设备、位深、采样率、缓冲、延迟、underrun/drop 和 DSP 处理状态。
-- 支持 VST3 插件扫描/加载、频谱与可视化、BPM/响度离线分析。
+<table>
+  <tr>
+    <td width="50%"><img src="./assets/screenshots/dsp-processor.png" alt="DSP 处理器与信号链" /></td>
+    <td width="50%"><img src="./assets/screenshots/equalizer-autoeq.png" alt="图形均衡器与 OPRA AutoEQ 耳机校正" /></td>
+  </tr>
+  <tr>
+    <td align="center">处理状态、旁路与输出诊断</td>
+    <td align="center">图形/参数均衡器与耳机补偿</td>
+  </tr>
+</table>
 
-### 使用体验
+![音频频谱、波形与响度可视化](./assets/screenshots/audio-visualizer.png)
 
-- 沉浸式歌词、逐词 Karaoke、翻译歌词、双语/多行布局和桌面歌词。
-- 迷你播放器、播放队列、播放模式、睡眠定时、音量曲线和统一输出设置。
-- 主题工作室、卡片背景、液态玻璃、字体、密度和动效设置。
-- 托盘、快捷键、Discord RPC、远程控制（DLNA/Chromecast/HTTP 播放接口）。
-- 安全 IPC、网络源鉴权、播放源策略、缓存和设置备份。
+### 扩展中心
+
+通过 <code>.tep</code> 包安装、启用、更新或移除扩展。除内置网易云音乐源外，其他在线音乐源和 UI 能力可由独立扩展提供。
+
+![Twilight Echo 扩展中心](./assets/screenshots/extension-center.png)
+
+> 截图中的 Bilibili 与 YouTube Music 音源是可选第三方扩展示例，并非应用内置服务；可用性取决于扩展版本、所在地区、登录状态及对应平台服务条款。
+
+## 功能一览
+
+### 本地音乐库与收藏管理
+
+- 递归扫描多个音乐文件夹，启动时按路径、大小和修改时间增量更新；已授权目录的文件变化会被自动监听，减少手动刷新。
+- 按歌曲、艺术家、专辑、流派、文件夹、歌单和最近播放浏览；大型列表虚拟滚动，适合上万首规模的本地曲库。
+- 读取歌曲信息、内嵌封面和歌词；支持手动完整重扫、暂停、继续与取消，也可一键重置媒体库索引（不删除任何文件）。
+- 支持本地标签批量编辑、重复歌曲检测与整理，以及 CUE 分轨：整轨音频按曲目区间加入音乐库并正确跳转播放。
+- 收藏、最近播放、播放统计和上次播放会话持久保存；收藏按录音身份去重，同名同歌手的不同录音不会互相顶掉。
+- 创建、编辑、导入与导出播放列表，并对并发修改进行保护。
+
+### 在线音乐、广播与播客
+
+- 内置网易云音乐提供者：二维码登录、每日推荐、私人 FM、私人雷达、搜索、歌单、艺人、收藏与双语歌词；登录 Cookie 仅保存在内存，不落盘。
+- 网易云云盘传输：本地音频上传云盘、云盘歌曲下载，支持进度显示与取消。
+- 播放地址内存缓存并在播放后段预取下一首地址，切歌更快；歌曲缓存流式落盘并带容量上限。
+- 本地内容与不同提供者的搜索结果可以统一展示，收藏和最近播放会按歌曲身份合并。
+- 发现歌单支持语种、风格、场景、情感与主题等多维筛选。
+- 网络电台搜索、收藏和播放；RSS 播客订阅、节目浏览与收听。
+- 通过扩展中心接入更多 provider、主题、工具或受宿主约束的界面入口。
+
+### 播放、队列与歌词
+
+- 播放/暂停、进度跳转、音量、队列管理与播放模式：顺序播放、列表循环、单曲循环与随机播放。
+- 变速不变调播放（WSOLA）与原生 A-B 区间循环。
+- 支持 Apple Music 风格的 AML/TTML 逐词歌词：逐词计时、对唱与背景和声声部、翻译与音译分层。
+- 同步歌词、翻译歌词与逐字歌词展示；本地歌词导入、保存与来源管理；歌词文件支持 UTF-8 / GBK / GB18030 解码。
+- 歌词外观自定义器提供外观预设、系统字体选择与对齐方式；桌面歌词拥有独立字体设置。
+- 沉浸式正在播放页面、桌面歌词、托盘播放器和可定制迷你播放器。
+- 播放栏提供迷你胶囊形态，可见性可按页面设为常显、自动隐藏或完全隐藏。
+- 全局快捷键可自定义绑定；系统媒体控件（SMTC）与任务栏缩略图按钮走原生实现，另有托盘控制和 Discord Rich Presence。
+- 窗口关闭行为可选：直接退出、最小化到托盘或变为迷你播放器。
+- 恢复播放会话；音频服务异常重启后由用户确认继续，避免意外自动出声。
+- 睡眠定时器支持结束前渐弱，并正确处理静音和音量恢复。
+
+### 原生音频与输出设备
+
+- 自研 C++20 原生音频引擎，使用独立服务进程隔离播放与离线分析任务。
+- Windows 支持 WASAPI Shared 与 WASAPI Exclusive；共享模式经过系统混音，独占模式可在设备允许时进行格式直通。
+- DSD 播放由专用 ASIO 后端/设备承载，与 PCM 输出路径解耦；支持 DoP 以及 SACD ISO、DSF、DFF 等 DSD 内容，具体可用模式由音频设备、驱动和当前后端决定。
+- Windows x64 包含独立的 ASIO 兼容层；当前属于实验性能力，需要兼容设备和显式启用，不作为默认可用承诺。
+- 输出后端、设备、采样格式、缓冲设置与设备能力诊断均可在应用内查看和切换。
+- WASAPI 与 CoreAudio 没有平台级 native DSD 通道，会使用 DoP 或 PCM 回退；Linux 仅在兼容的 ALSA <code>hw:</code> 设备上尝试 native DSD。
+- 音频服务崩溃可重启并恢复输出配置、DSP 状态和队列，但不会擅自自动续播。
+
+### DSP、均衡器与音频分析
+
+- 图形均衡器与参数均衡器，支持预设、频响曲线和高级滤波参数。
+- OPRA/AutoEQ 耳机校正资料，可搜索设备型号并叠加校正曲线。
+- 可编排 DSP Rack：包括 ReplayGain/Loudnorm、均衡器、动态均衡器、卷积、交叉馈送、声道矩阵、压缩器、多段压缩、立体声场、响度轮廓、True Peak Limiter 等模块。
+- 导入 REW、Equalizer APO、AutoEq 配置和卷积脉冲响应。
+- 防破音、预增益、缺失 ReplayGain 标签时的回退增益、耳机保护与 DSP 一键旁路。
+- 本地曲目 BPM 与响度后台分析和缓存，不阻塞实时播放链路。
+- 独立音频可视化页面显示频谱、波形、播放位置、BPM、动态范围、响度与文件参数。
+- DSD 与 passthrough 路径会自动绕过不安全的 PCM DSP，避免错误处理原始数据流。
+- VST3 宿主仅在完整的 Windows x64 构建中可用，实际兼容性取决于第三方插件。
+
+### 外观、主题与桌面体验
+
+- 浅色、深色与跟随系统主题，并支持从当前封面提取强调色。
+- 液态玻璃材质系统：基于 SVG 位移贴图的真折射、跟随指针的镜面高光与明暗自适应，可在设置中调参或整体关闭。
+- 主题工作室可调整颜色、字体、背景、材质、圆角、导航、歌曲列表、播放器、歌词和独立窗口外观，支持预览、撤销/重做、导入、导出与恢复默认值。
+- 主窗口、迷你播放器、托盘播放器和桌面歌词可共享主题，也可以分别覆盖部分样式。
+- 尊重系统减少动态效果设置，并保留键盘焦点和可访问性提示。
+
+### 扩展、安全与更新
+
+- 扩展在隔离的宿主进程中运行，只能通过版本化的 Twilight API 访问被授权能力。
+- 支持本地 <code>.tep</code> 安装、静态扩展索引、启用/禁用、更新、卸载、依赖检查、权限展示和日志查看；提供插件开发者模式与下载管理器。
+- provider 扩展负责在线音乐来源；主题扩展只提供受限样式，不执行任意主题脚本。
+- 应用可检查 GitHub Releases 更新，下载完整安装程序并在安装前核对可用的 SHA-256。
+- 设置提供缓存策略、设置备份/还原、快捷键状态和输出诊断。
 
 ## 支持的音频格式
 
-`.mp3` `.flac` `.wav` `.wave` `.aac` `.ogg` `.wma` `.m4a` `.mp4` `.aiff` `.aif` `.opus` `.webm` `.alac` `.ape` `.wv` `.dsf` `.dff` `.mqa`
+<code>.mp3</code> <code>.flac</code> <code>.wav</code> <code>.wave</code> <code>.aac</code> <code>.ogg</code> <code>.wma</code> <code>.m4a</code> <code>.mp4</code> <code>.aiff</code> <code>.aif</code> <code>.opus</code> <code>.webm</code> <code>.alac</code> <code>.ape</code> <code>.wv</code> <code>.dsf</code> <code>.dff</code> <code>.mqa</code>
 
-实际解码和输出能力取决于操作系统、构建中的解码器、音频驱动与硬件设备。Windows 是目前覆盖最完整的平台。
+实际解码与输出能力取决于操作系统、构建中包含的解码器、音频驱动和设备。Windows 是当前覆盖最完整的平台。
 
-> `.mqa` 按 FLAC 兼容容器进行扫描与解码；项目不提供、也不宣称 MQA unfold、认证或授权能力。
+> <code>.mqa</code> 会按 FLAC 兼容容器进行扫描与解码；Twilight Echo 不提供或宣称 MQA unfold、认证或授权能力。
 
-## 安装与运行
+## 下载与安装
 
-### 构建安装包
+### Windows 10 / 11
 
-当前仓库以源码方式提供。Windows 工具链配置完成后，可以构建本地安装包：
+1. 前往 [Releases](https://github.com/asenyarzc-cpu/Twilight_Echo/releases/latest)。
+2. 下载名称以 <code>-setup.exe</code> 结尾的安装程序。
+3. 如果 Release 同时提供 <code>.sha256</code> 文件，请在安装前核对校验值。
+4. 运行安装程序并按向导完成安装。
 
-- 运行 `pnpm run build:win`
-- 构建产物位于 `dist/`
-- 安装包由个人开发者构建，没有商业代码签名证书，Windows SmartScreen 可能显示“未知发布者”。请在本地核对文件 SHA-256。
+当前 Windows 安装包由个人开发者发布，**没有商业代码签名证书**，因此 Windows SmartScreen 可能显示“未知发布者”。请只从本项目的 GitHub Releases 下载，并核对发布页提供的 SHA-256。可在 PowerShell 中运行：
 
-### 从源码运行
+<pre><code>Get-FileHash ./TwilightEcho-1.1.0-setup.exe -Algorithm SHA256</code></pre>
 
-需要 Node.js 22+、pnpm 11.7.0 和 Git：
+项目发布检查仍会验证安装包品牌信息、依赖闭包、原生二进制剥离、体积预算和 SHA-256 生成；代码签名不属于个人项目的发布门槛。
 
-```bash
-git clone https://github.com/Bad0RANG3/Twilight_Echo.git
-cd Twilight_Echo
-corepack enable
+### macOS / Linux
+
+CoreAudio 与 ALSA 后端已存在，但目前没有经过与 Windows 同等级别的发布和真实设备验证。现阶段建议普通用户使用 Windows 版本；macOS/Linux 构建仅供开发、测试和贡献使用。
+
+## 使用提示与限制
+
+- 在线音乐、歌词、电台和播客依赖网络、内容提供者及所在地区；接口或平台策略变化可能影响可用性。网易云音乐能力由随应用提供的 provider 服务实现，账号登录与内容使用应遵守对应服务条款。
+- 可选第三方扩展由各自作者维护。本项目不保证截图中所有第三方服务在每个地区长期可用。
+- WASAPI Shared 会经过 Windows 系统混音，这是该模式的正常行为；追求设备直通时可在兼容设备上尝试 Exclusive。
+- Native DSD、DoP、ASIO、WASAPI Exclusive、SACD ISO 与 VST3 都高度依赖真实硬件、驱动、曲目和插件，请以应用中的设备能力与输出诊断为准。
+- 应用不会将 <code>.mqa</code> 文件描述为已完成 MQA 解码或认证。
+
+## 扩展与开发
+
+普通用户可在应用的“扩展中心”管理插件。插件作者和项目贡献者可以从以下文档开始：
+
+- [开发者文档](./docs/DEVELOPER_README.md)
+- [插件开发指南](./docs/PLUGIN_README.md)
+- [插件规范](./docs/twilight-echo-plugin-spec.md)
+- [Windows 发布检查](./docs/windows-release-gate.md)
+- [第三方插件仓库](https://github.com/asenyarzc-cpu/Twilight-Echo-plugins)
+
+从源码运行需要 Node.js 22 与项目锁定的 <code>pnpm@11.7.0</code>：
+
+<pre><code>corepack enable
 pnpm install --frozen-lockfile
-pnpm run dev
-```
+pnpm run dev</code></pre>
 
-如果开发过程中需要原生音频引擎，先在 Windows 上配置 MinGW、CMake、Ninja、vcpkg 和 GNU patch，然后执行：
+原生音频引擎和各平台打包还需要额外工具链；请勿把上述三条命令视为完整发布构建说明。
 
-```powershell
-$env:VCPKG_ROOT = 'C:\path\to\vcpkg'
-$env:W64DEVKIT_ROOT = 'C:\path\to\w64devkit'
-$env:TWILIGHT_GNU_PATCH = 'C:\Program Files\Git\usr\bin\patch.exe'
+## 反馈与贡献
 
-pnpm run configure:audio-engine:mingw
-pnpm run build:audio-engine:mingw
-pnpm run test:audio-engine:mingw
-```
+- 遇到问题或希望提出建议：[提交 Issue](https://github.com/asenyarzc-cpu/Twilight_Echo/issues)
+- 下载历史版本：[查看 Releases](https://github.com/asenyarzc-cpu/Twilight_Echo/releases)
+- 提交代码前请先阅读开发者文档，并使用项目规定的 pnpm 工作流。
 
-> 默认开发命令会优先加载 `resources/audio-engine/` 中的原生文件；如果没有这些文件，请先执行上面两条构建命令。更完整的工具链说明见 [docs/DEVELOPER_README.md](./docs/DEVELOPER_README.md) 与 [docs/windows-release-gate.md](./docs/windows-release-gate.md)。
+反馈问题时，建议附上 Twilight Echo 版本、Windows 版本、音频输出后端、设备/驱动名称、复现步骤和相关日志；音频问题如涉及 DSD、ASIO 或独占模式，也请注明文件格式与采样参数。
 
-## 原生音频引擎
+## 致谢
 
-Twilight Echo 的原生音频链路大致为：
+- 沉浸式歌词舞台基于 [AMLL / Apple Music-like Lyrics](https://github.com/amll-dev/applemusic-like-lyrics) 的歌词渲染能力实现。感谢 AMLL 项目维护者和贡献者提供出色的开源歌词动画与逐词渲染方案。
+- AMLL 以 **AGPL-3.0-only** 许可证发布；本项目使用该依赖时应同时遵守其许可证要求。
 
-```text
-Renderer
-  -> preload API
-  -> main IPC
-  -> audioEngineManager
-  -> audioService（utility process）
-  -> twilight_audio_node.node
-  -> twilight-audio-engine.dll
-  -> FFmpeg decode -> DSP chain -> platform output
-```
+## License
 
-- `twilight_audio_node.node`：Node-API addon，提供播放、队列、DSP、设备、分析和 VST3 接口。
-- `twilight-audio-engine.dll`：C++20 音频引擎，包含解码、DSP、输出后端与设备管理。
-- 音频服务崩溃后会自动重启并恢复输出配置、DSP 状态和队列，但不会擅自自动续播。
+Twilight Echo 采用 [Apache License 2.0](./LICENSE) 开源。
 
-Windows 原生构建的产物位于：
+第三方依赖、字体、图标、在线服务接口、插件和内容素材分别受各自许可证或服务条款约束。项目名称或界面中出现的第三方服务商标归其权利人所有；Twilight Echo 与这些服务不存在官方隶属或背书关系。
 
-```text
-audio-engine/build/mingw-static/
-  twilight-audio-engine.dll
-  twilight_audio_node.node
-```
+## 支持与赞助
 
-开发时也可以手动暂存到 `resources/audio-engine/`：
-
-```bash
-node scripts/stage-audio-engine.cjs --build-dir audio-engine/build/mingw-static
-```
-
-## 开发与贡献
-
-- 阅读 [开发者文档](./docs/DEVELOPER_README.md)
-- 阅读 [音频引擎 API](./docs/audio-engine-api.md)
-- 阅读 [插件开发指南](./docs/PLUGIN_README.md)
-- 阅读 [插件规范](./docs/twilight-echo-plugin-spec.md)
-- 常用命令：`pnpm run typecheck`、`pnpm run lint`、`pnpm run test:app`、`pnpm run test:audio-engine:mingw`
-- 反馈问题可以到 [本仓库 Issues](https://github.com/Bad0RANG3/Twilight_Echo/issues)。
-
-## 注意事项
-
-- 在线音乐、歌词、电台与播客依赖网络、内容提供者与所在地区；平台策略变化可能影响可用性。
-- 网易云音乐能力由项目内置 provider 实现，登录与内容使用应遵守对应平台服务条款。
-- 第三方扩展由各自作者维护，项目不保证第三方服务长期可用。
-- WASAPI Shared 会经过系统混音；追求直通时可在兼容设备上尝试 Exclusive。
-- DSD、DoP、ASIO、WASAPI Exclusive、SACD ISO 与 VST3 高度依赖真实硬件、驱动和曲目，请以应用中的设备能力与输出诊断为准。
-- macOS/Linux 后端属于开发/测试实现，尚未达到正式发布验证标准。
-
-## 致谢与许可证
-
-- 沉浸式歌词渲染基于 [AMLL / Apple Music-like Lyrics](https://github.com/amll-dev/applemusic-like-lyrics) 实现；AMLL 以 **AGPL-3.0-only** 发布，使用本项目时应遵守其许可证要求。
-- 本项目采用 [Apache License 2.0](./LICENSE) 开源。
-- 第三方依赖、字体、图标、在线服务接口、插件和内容素材分别受各自许可证或服务条款约束；第三方服务商标归其权利人所有。
-
-如果你喜欢 Twilight Echo，欢迎通过 [爱发电](https://afdian.com/a/pxasen) 支持项目。
+如果你喜欢 Twilight Echo，欢迎通过 [爱发电](https://afdian.com/a/pxasen) 支持本项目。你的支持将帮助它持续改进，感谢每一位用户与贡献者。

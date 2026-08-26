@@ -41,13 +41,6 @@ export interface PlaybackClockOptions {
   transitionGuardMs?: number
   maxPredictionGapMs?: number
   rewindToleranceSeconds?: number
-  /**
-   * Engine samples this far behind the interpolated playhead are treated as
-   * transport lag, not a rewind. Quantized or delayed `time-pos` events otherwise
-   * sawtooth the presentation clock and make karaoke / line highlighting jump
-   * backward at every boundary.
-   */
-  laggingSampleToleranceSeconds?: number
 }
 
 export type PlaybackClockRejectReason =
@@ -101,7 +94,6 @@ export function createPlaybackSessionClock(options: PlaybackClockOptions): Playb
   const confirmationToleranceSeconds = options.confirmationToleranceSeconds ?? 1.5
   const transitionGuardMs = options.transitionGuardMs ?? 3_000
   const rewindToleranceSeconds = options.rewindToleranceSeconds ?? 0.05
-  const laggingSampleToleranceSeconds = options.laggingSampleToleranceSeconds ?? 0.5
 
   let current: PlaybackClockSnapshot = {
     trackId: '',
@@ -245,9 +237,16 @@ export function createPlaybackSessionClock(options: PlaybackClockOptions): Playb
       (sample.state ?? current.state) === 'playing' || (sample.state ?? current.state) === 'loading'
     if (interpolating && !sample.expectedRewind && !rewind) {
       const behind = positionAt(at) - position
-      if (behind > 0 && behind <= laggingSampleToleranceSeconds) {
+      if (behind > 0 && advanced) {
         // The engine is alive but late. Keep interpolating from the last
         // presentation anchor so karaoke and the playhead never walk backward.
+        //
+        // Do not cap this to the former 500ms allowance. A busy renderer or a
+        // delayed IPC batch can leave a sample further behind. Re-anchoring to
+        // that sample makes the lyric clock jump back, and repeating that
+        // correction is perceived as an ever-growing delay.
+        // An advancing sample is still a valid heartbeat; it just must not
+        // replace the newer presentation position.
         lastProgressAt = at
         return { accepted: true, snapshot: current, advanced: false }
       }

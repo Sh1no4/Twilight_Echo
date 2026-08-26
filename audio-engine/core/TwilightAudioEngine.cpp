@@ -1140,6 +1140,11 @@ TAE_Result TwilightAudioEngine::setDspConfig(const std::string& dspJson) {
         const bool modeChanged = previousConfig.dsdOutputMode != nextConfig.dsdOutputMode || routeChanged;
         const bool dopActive = pipeline_->isDopPathActive();
         const bool nativeActive = pipeline_->isNativeDsdPathActive();
+        // Entering a DSD transport is pointless while processing still forces
+        // PCM: the open path applies the same check and lands back in PCM, so
+        // the listener only hears the gap. Leaving a DSD transport is never
+        // gated — a fallback must always be able to take effect.
+        const bool processingForcesPcm = pipeline_->processingForcesDsdPcmFallback();
         if ((dopActive || nativeActive) && wantsPcm) {
           rerouteReason = "DSD output mode forced PCM";
           reroutePosition = info_.positionSeconds;
@@ -1152,11 +1157,11 @@ TAE_Result TwilightAudioEngine::setDspConfig(const std::string& dspJson) {
           reroutePosition = info_.positionSeconds;
           rerouteState = info_.state;
           rerouteReason = "DSD compatibility route changed";
-        } else if (modeChanged && wantsNative && !nativeActive) {
+        } else if (modeChanged && wantsNative && !nativeActive && !processingForcesPcm) {
           reroutePosition = info_.positionSeconds;
           rerouteState = info_.state;
           rerouteReason = "Re-enter Native DSD output mode";
-        } else if (modeChanged && wantsDop && !dopActive && !nativeActive) {
+        } else if (modeChanged && wantsDop && !dopActive && !nativeActive && !processingForcesPcm) {
           reroutePosition = info_.positionSeconds;
           rerouteState = info_.state;
           rerouteReason = wantsNative ? "Re-enter Native DSD output mode" : "Re-enter DoP output mode";
@@ -1263,6 +1268,9 @@ TAE_Result TwilightAudioEngine::applyDspState(
         const bool modeChanged = previousConfig.dsdOutputMode != nextConfig.dsdOutputMode || routeChanged;
         const bool dopActive = pipeline_->isDopPathActive();
         const bool nativeActive = pipeline_->isNativeDsdPathActive();
+        // See setDspConfig: entering a DSD transport while processing still
+        // forces PCM only costs the listener a restart and ends up in PCM again.
+        const bool processingForcesPcm = pipeline_->processingForcesDsdPcmFallback();
         if ((dopActive || nativeActive) && wantsPcm) {
           rerouteReason = "DSD output mode forced PCM";
           reroutePosition = info_.positionSeconds;
@@ -1275,11 +1283,11 @@ TAE_Result TwilightAudioEngine::applyDspState(
           rerouteReason = "DSD compatibility route changed";
           reroutePosition = info_.positionSeconds;
           rerouteState = info_.state;
-        } else if (modeChanged && wantsNative && !nativeActive) {
+        } else if (modeChanged && wantsNative && !nativeActive && !processingForcesPcm) {
           rerouteReason = "Re-enter Native DSD output mode";
           reroutePosition = info_.positionSeconds;
           rerouteState = info_.state;
-        } else if (modeChanged && wantsDop && !dopActive && !nativeActive) {
+        } else if (modeChanged && wantsDop && !dopActive && !nativeActive && !processingForcesPcm) {
           rerouteReason = wantsNative ? "Re-enter Native DSD output mode" :
                                         "Re-enter DoP output mode";
           reroutePosition = info_.positionSeconds;
@@ -2109,6 +2117,12 @@ bool TwilightAudioEngine::shouldReroutePipelineLocked(
                           config.dsdOutputMode == DsdOutputMode::Native;
     const bool dopActive = pipeline_->isDopPathActive();
     const bool nativeActive = pipeline_->isNativeDsdPathActive();
+    // Re-entering a DSD transport reopens the device. That only makes sense when
+    // the current processing state would actually let the open path choose DSD;
+    // the open path re-applies this very check, so restarting while it still
+    // holds lands back in PCM. A DSD track parked in PCM fallback by the 70%
+    // default software volume used to restart on every single volume tick.
+    const bool processingForcesPcm = pipeline_->processingForcesDsdPcmFallback();
     if ((dopActive || nativeActive) && wantsPcm) {
       if (reason) {
         *reason = "DSD output mode forced PCM";
@@ -2123,13 +2137,13 @@ bool TwilightAudioEngine::shouldReroutePipelineLocked(
       if (state) *state = info_.state;
       return true;
     }
-    if (!nativeActive && wantsNative && info_.dsdMode == "pcm") {
+    if (!nativeActive && wantsNative && info_.dsdMode == "pcm" && !processingForcesPcm) {
       if (reason) *reason = "Re-enter Native DSD output mode";
       if (position) *position = info_.positionSeconds;
       if (state) *state = info_.state;
       return true;
     }
-    if (!dopActive && !nativeActive && info_.dsdMode == "pcm" && wantsDop) {
+    if (!dopActive && !nativeActive && info_.dsdMode == "pcm" && wantsDop && !processingForcesPcm) {
       if (reason) *reason = "Re-enter DoP output mode";
       if (position) *position = info_.positionSeconds;
       if (state) *state = info_.state;

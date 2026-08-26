@@ -23,6 +23,8 @@ import { useMediaProviders } from '../providers'
 import { normalizeAccentColor } from '../utils/colorExtractor'
 import { useSmoothedValue } from '../utils/useSmoothedValue'
 import { HIFI_STATUS_COPY } from '../../../shared/audioProcessingOptions.ts'
+import { resolveReasonCode } from '../../../shared/audio/reasonCodes.ts'
+import { useLocale } from '../app/useLocale.ts'
 import type { LyricLayerSourceSelection } from '../../../shared/lyricsManagement.ts'
 import CoverImg from './CoverImg.vue'
 import HiFiSidebar from './player-bar/HiFiSidebar.vue'
@@ -39,11 +41,17 @@ import { useFavoriteButton } from './player-bar/useFavoriteButton'
 import { useFloatingPanels } from './player-bar/useFloatingPanels'
 import { usePlaybarAutoHide } from './player-bar/usePlaybarAutoHide.ts'
 import { resolveSeekTargetSeconds, type PlayerBarMode } from '../../../shared/playerBar.ts'
+import {
+  resolvePlayerBarRegions,
+  PLAYER_BAR_REGION_NAMES,
+  type PlayerBarRegionName
+} from '../../../shared/playerBarLayout.ts'
 import { useEscapeToClose } from '../app/useDismissLayer.ts'
 import { usePlaybackQueueVirtualScroll } from './player-bar/usePlaybackQueueVirtualScroll'
 import { usePlaybackQueueDrawerActions } from './player-bar/usePlaybackQueueDrawerActions'
 import { useQueueAddToPlaylist } from './player-bar/useQueueAddToPlaylist'
 import QueueAddToPlaylistDialog from './player-bar/QueueAddToPlaylistDialog.vue'
+import CompactPlayerBarVisualizer from './player-bar/CompactPlayerBarVisualizer.vue'
 import { useAppNoticeStore } from '../stores/useAppNoticeStore'
 import { syncPluginProviders } from '../providers'
 import type {
@@ -59,12 +67,18 @@ const props = withDefaults(
     glass?: boolean
     menuOpen?: boolean
     preview?: boolean
-    /** Standard = full bar; mini is a long flat progress strip with utility tools. */
+    /** Show the expanded artwork and waveform stage on the actual lyrics page. */
+    visualizerVisible?: boolean
+    /**
+     * Standard = full bar; mini is a long flat progress strip with utility
+     * tools; compact spans the window edge to edge with its progress on the
+     * top edge. Which controls each shape shows is the layout's business.
+     */
     mode?: PlayerBarMode
-    /** Hide until the pointer approaches the bottom edge. Mini shape only. */
+    /** Hide until the pointer approaches the bottom edge. Mini and compact only. */
     autoHide?: boolean
     /**
-     * Fully hidden: no reveal gesture at all, either shape. Named `hiddenBar`
+     * Fully hidden: no reveal gesture at all, any shape. Named `hiddenBar`
      * rather than `hidden` so Vue does not fall the global `hidden` attribute
      * through onto the shell, which would `display: none` the element the
      * geometry consumers query.
@@ -73,6 +87,7 @@ const props = withDefaults(
   }>(),
   {
     preview: false,
+    visualizerVisible: false,
     mode: 'standard',
     autoHide: false,
     hiddenBar: false
@@ -80,6 +95,10 @@ const props = withDefaults(
 )
 
 const isMini = computed(() => props.mode === 'mini')
+const isStandard = computed(() => props.mode === 'standard')
+/** Edge-to-edge strip flush with the window bottom; progress rides its top edge. */
+const isCompact = computed(() => props.mode === 'compact')
+const showCompactVisualizer = computed(() => isCompact.value && props.visualizerVisible)
 
 const {
   currentTrack,
@@ -101,7 +120,7 @@ const {
   audioOutput,
   audioOutputOptions,
   audioDevice,
-  audioDeviceOptions,
+  audioOutputDeviceOptions,
   audioProcessing,
   audioOutputConfig,
   dspOutputStage,
@@ -109,6 +128,7 @@ const {
   playbackInfo,
   loudnormStatus,
   outputInfo,
+  visualizationData,
   cyclePlayMode,
   togglePlay,
   next,
@@ -163,7 +183,7 @@ const playerLeftKey = computed(
     `pl:${currentTrack.value?.id ?? 'none'}:${currentTrack.value?.queueEntryId ?? ''}:${currentTrack.value?.cover ?? ''}`
 )
 const {
-  playlists,
+  localPlaylists,
   addToPlaylist,
   addTracksToPlaylist,
   removeFromPlaylist,
@@ -175,6 +195,9 @@ const {
 } = useMusicStore()
 const mediaProviders = useMediaProviders()
 const { pushNotice } = useAppNoticeStore()
+// Reason-code copy is resolved per locale, so the chip labels re-render when the
+// language preference changes rather than freezing whatever was active at mount.
+const { locale } = useLocale()
 
 const coverRef = ref<HTMLElement | null>(null)
 const playerBarShellRef = ref<HTMLElement | null>(null)
@@ -184,18 +207,36 @@ const playerBarButtons = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'playerBarButton')
 )
 const { settings } = useSettingsStore()
-/* Mini is deliberately a flat control strip, so it opts out of the material
-   entirely rather than wearing it with the refracting layer switched off.
-   `.player-bar-liquid` claims `background`, `border-color` and the rim
-   `box-shadow` with `!important`, which a mini bar cannot out-rank: the strip
-   rendered as a transparent pane ringed by the rim highlight — a white outline
-   drawn around glass that was not there. Gating it here also skips the warp
-   element and the per-pointer-move variable writes for mini. */
+/* Only the standard bar wears the material. Mini and compact are deliberately
+   flat control strips, so they opt out entirely rather than wearing it with the
+   refracting layer switched off. `.player-bar-liquid` claims `background`,
+   `border-color` and the rim `box-shadow` with `!important`, which neither strip
+   can out-rank: they rendered as a transparent pane ringed by the rim highlight
+   — a white outline drawn around glass that was not there. Gating it here also
+   skips the warp element and the per-pointer-move variable writes for them. */
 const liquidGlassActive = computed(
   () =>
-    !isMini.value &&
+    isStandard.value &&
     (settings.value.surfaceMaterial === 'liquidGlass' || settings.value.liquidGlass.playbarEnabled)
 )
+/**
+ * Which controls this shape puts in each region, resolved through the shared
+ * layout contract. The class names are fixed (`player-left` / `player-center` /
+ * `player-right`): the six preset theme layouts and this component's own
+ * stylesheet both address the bar through them, so only the contents move.
+ */
+const barRegions = computed(() => {
+  const regions = resolvePlayerBarRegions(settings.value.playerBar.layout, props.mode)
+  return PLAYER_BAR_REGION_NAMES.map((name: PlayerBarRegionName) => ({
+    name,
+    className: `player-${name}`,
+    // The left rail still remounts on track change — that remount is what fixed
+    // stale covers — so its key carries the track identity, not just the region.
+    key: name === 'left' ? `left:${playerLeftKey.value}` : name,
+    items: regions[name]
+  }))
+})
+
 const lyricsManagement = useLyricsManagement()
 const desktopLyricsOn = ref(settings.value.desktopLyrics.enabled)
 const miniPlayerOpening = ref(false)
@@ -247,14 +288,42 @@ function onArtistClick(): void {
   emit('openArtist')
 }
 
-function onCoverClick(): void {
-  const el = coverRef.value
-  if (el) {
-    const r = el.getBoundingClientRect()
+/**
+ * A function ref, because the cover now renders inside the region `v-for` and a
+ * string `ref` there would collect into an array instead of the element.
+ */
+function setCoverRef(element: Element | ComponentPublicInstance | null): void {
+  coverRef.value = element instanceof HTMLElement ? element : null
+}
+
+/** The now-playing page zooms out of whatever was clicked, so pass its rect. */
+function emitOpenPlayingPage(origin: HTMLElement | null): void {
+  if (origin) {
+    const r = origin.getBoundingClientRect()
     emit('clickCover', { x: r.left, y: r.top, w: r.width, h: r.height })
-  } else {
-    emit('clickCover', { x: 24, y: window.innerHeight - 60, w: 48, h: 48 })
+    return
   }
+  emit('clickCover', { x: 24, y: window.innerHeight - 60, w: 48, h: 48 })
+}
+
+function onCoverClick(): void {
+  emitOpenPlayingPage(coverRef.value)
+}
+
+/**
+ * The cover is the way into the now-playing page, but an arrangement can leave
+ * it out — compact's default does, and any shape can have it removed — which
+ * would strand the page behind no entry point at all. The title takes the role
+ * over exactly when no region placed a cover, so there is always one way in and
+ * never two competing ones.
+ */
+const trackTitleOpensPlayingPage = computed(
+  () => !props.preview && !barRegions.value.some((region) => region.items.includes('cover'))
+)
+
+function onTrackTitleClick(event: Event): void {
+  if (!trackTitleOpensPlayingPage.value) return
+  emitOpenPlayingPage(event.currentTarget instanceof HTMLElement ? event.currentTarget : null)
 }
 
 function onProgressInput(event: Event): void {
@@ -263,8 +332,11 @@ function onProgressInput(event: Event): void {
   seek(Number(target.value))
 }
 
-/** Border rail carries a 0..1 ratio so its width never has to match the timeline. */
-function onMiniRailInput(event: Event): void {
+/**
+ * The flat rails carry a 0..1 ratio so their width never has to match the
+ * timeline. Shared by mini's long middle rail and compact's top-edge hairline.
+ */
+function onFlatRailInput(event: Event): void {
   if (isLiveStream.value) return
   const target = event.target as HTMLInputElement
   const seconds = resolveSeekTargetSeconds(Number(target.value), effectiveDuration.value)
@@ -528,7 +600,7 @@ const sleepTimerStatus = computed(() => {
 
 const queueAddToPlaylist = useQueueAddToPlaylist({
   queue,
-  playlists,
+  playlists: localPlaylists,
   mediaProviders,
   addTracksToPlaylist,
   createPlaylistWithTracks,
@@ -568,8 +640,19 @@ const {
   isDismissBlocked: () => queueAddToPlaylist.open.value
 })
 
+/*
+ * The lyrics customizer opens as a left-edge drawer over the now-playing lyrics,
+ * and this deck occupies the right of the same window — right where the lyrics
+ * being tuned are. While it is open the deck stands down: still mounted (the
+ * customizer is Teleported from inside it), just invisible and click-through.
+ */
+const lyricsCustomizerActive = ref(false)
+
 watch(moreOpen, (open) => {
   if (open) void playbackBookmarks.ensureLoaded()
+  // Closing the deck by any route (outside click, toggle, Esc) leaves no deck to
+  // stand down, so drop the flag rather than trusting the child's teardown.
+  if (!open) lyricsCustomizerActive.value = false
 })
 
 const {
@@ -654,7 +737,7 @@ const {
   toggleFavorite
 } = useFavoriteButton({
   currentTrack,
-  playlists,
+  playlists: localPlaylists,
   mediaProviders,
   addToPlaylist,
   removeFromPlaylist,
@@ -685,46 +768,13 @@ const backendLabels: Record<string, string> = {
   'coreaudio-exclusive': 'CoreAudio Hog',
   alsa: 'ALSA'
 }
-const reasonCodeLabels: Record<string, string> = {
-  shared_mixer: '共享输出经过系统混音器',
-  processing_active: '当前处理链正在改变样本',
-  replaygain_active: 'ReplayGain 正在改变样本',
-  loudnorm_active: HIFI_STATUS_COPY.loudnormActive,
-  eq_active: 'EQ 正在改变样本',
-  convolver_active: 'Convolver 正在改变样本',
-  crossfeed_active: 'Crossfeed 正在改变声道内容',
-  crossfade_active: 'Crossfade 正在改变播放连续性',
-  volume_not_unity: HIFI_STATUS_COPY.volumeNotUnity,
-  playback_rate_not_unity: HIFI_STATUS_COPY.playbackRateNotUnity,
-  routing_changes_semantics: '声道路由或通道语义发生变化',
-  hog_mode_failed: '无法获取 CoreAudio Hog Mode 独占访问',
-  sample_rate_unsupported: '设备不支持请求的采样率',
-  pcm_converted: 'PCM 格式或采样率发生转换',
-  integer_passthrough_unavailable: '源格式与设备实际输出格式不一致，无法 PCM 直通',
-  source_lossy: '源文件是有损格式，不能 Source Exact',
-  source_format_differs: '源格式与输出链不一致',
-  backend_not_output_perfect: '当前输出路径未声明 bit-perfect 能力',
-  output_not_perfect: '当前输出链尚未验证为直通',
-  visualization_inactive: '当前没有可视化采样数据',
-  dsd_processing_pcm_fallback: 'DSD 因处理链启用而回退到 PCM',
-  dsd_high_rate_pcm_fallback: 'DSD 因采样率或驱动限制回退到 PCM',
-  dsd_converted_to_pcm: 'DSD 当前已转换为 PCM 输出',
-  dsd_source_unsupported: '当前 DSD 源或模式不受支持',
-  sacd_iso_unsupported: 'SACD ISO 不含可播放的未压缩 DSD 区域',
-  dst_dsd_provider_unavailable: 'SACD DST 需要保留 DSD 的 provider，当前不可用',
-  dst_dsd_provider_failed: 'SACD DST 保 DSD provider 解码失败',
-  dsd_dop: '当前 DSD 正在通过 DoP 载波传输',
-  dop_carrier_mismatch: 'DoP 载波格式与目标 DSD 速率不匹配',
-  dop_passthrough_unproven: 'DoP 输出路径未能证明直通',
-  plugin_path: '当前设备路径包含插件或混音层',
-  device_not_found: '当前后端没有找到请求设备',
-  format_not_supported: '当前设备不支持请求的输出格式',
-  backend_open_failure: '输出后端打开失败',
-  backend_start_failure: '输出后端启动失败',
-  buffer_failure: '输出缓冲失败或发生 underrun',
-  device_lost: '输出设备已断开，需要恢复',
-  driver_restart: '驱动发生重启或重置'
-}
+// The reason-code labels used to be an inline map here, unreachable from
+// Settings or the diagnostics export — and five codes the native engine actually
+// emits (dop_marker_mismatch, native_dsd_runtime_unproven,
+// native_dsd_typed_callback_missing, unsupported_asio_sample_type,
+// topology_rollback_failed) had no entry at all, so they surfaced as raw English
+// identifiers. They now resolve through the shared registry, which a repository
+// gate keeps in step with the C++ sources.
 const accessModeLabels: Record<string, string> = {
   shared: 'Shared',
   exclusive: 'Exclusive',
@@ -760,13 +810,28 @@ function formatPerfectReason(reason: string): string {
 
 function resolvePerfectReasonText(): string {
   const code = outputInfo.value?.perfectReasonCode || playbackInfo.value?.perfectReasonCode || ''
-  if (code && reasonCodeLabels[code]) return reasonCodeLabels[code]
+  if (code) {
+    const resolved = resolveReasonCode(locale.value, code)
+    if (resolved.known) return resolved.label
+  }
   const capabilityReason = outputInfo.value?.capabilityReason?.trim() || ''
   if (capabilityReason) return capabilityReason
   return formatPerfectReason(
     outputInfo.value?.perfectReason || playbackInfo.value?.perfectReason || ''
   )
 }
+
+/**
+ * The full explanation behind the current non-perfect state: what is happening
+ * and what to do about it. The registry has carried this copy all along; the
+ * chip tooltips only ever showed the one-line label.
+ */
+const perfectReasonDetail = computed(() => {
+  const code = outputInfo.value?.perfectReasonCode || playbackInfo.value?.perfectReasonCode || ''
+  if (!code) return null
+  const resolved = resolveReasonCode(locale.value, code)
+  return resolved.known ? resolved : null
+})
 
 function nativeDsdRuntimeTone(state: string): 'success' | 'warning' | 'muted' {
   if (state === 'proven') return 'success'
@@ -1396,7 +1461,10 @@ onBeforeUnmount(() => {
     v-if="currentTrack"
     ref="playerBarShellRef"
     class="player-bar-shell"
-    :class="{ 'menu-open': menuOpen, 'is-geometry-animating': geometryAnimating }"
+    :class="{
+      'menu-open': menuOpen,
+      'is-geometry-animating': geometryAnimating
+    }"
     v-bind="shellDataAttrs"
   >
     <!-- 播放列表面板（向上抽屉） -->
@@ -1582,7 +1650,9 @@ onBeforeUnmount(() => {
       :class="{
         'player-bar-glass': glass,
         'player-bar-liquid': liquidGlassActive,
-        'player-bar-mini': isMini
+        'player-bar-mini': isMini,
+        'player-bar-compact': isCompact,
+        'player-bar-compact-visualizer': showCompactVisualizer
       }"
       :style="{
         '--accent-color': dominantColor,
@@ -1599,112 +1669,321 @@ onBeforeUnmount(() => {
            content so controls and text are never displaced by the filter. -->
       <span v-if="liquidGlassActive" class="player-bar-warp" aria-hidden="true"></span>
 
-      <button
-        v-if="isMini"
-        type="button"
-        class="mini-play-button"
-        :class="{ 'is-playing': isPlaying }"
-        :title="isPlaying ? '暂停' : '播放'"
-        :aria-label="isPlaying ? '暂停' : '播放'"
-        @click="togglePlay"
-      >
-        <i :class="isPlaying ? 'pi pi-pause' : 'pi pi-play'" aria-hidden="true"></i>
-      </button>
+      <CompactPlayerBarVisualizer
+        v-if="showCompactVisualizer"
+        :spectrum="visualizationData.spectrum"
+        :waveform="visualizationData.waveform"
+        :active="visualizationData.active"
+        :playing="isPlaying"
+      />
 
-      <!-- 迷你模式：用扁平长进度轨替代标准内联进度区。 -->
-      <div v-if="isMini" class="mini-progress-rail">
-        <div class="mini-progress-track" aria-hidden="true">
-          <div class="mini-progress-fill" :style="progressFillStyle"></div>
+      <!-- 紧凑形态的进度读数：贴着播放条顶边的一条细线。它属于形态固有 chrome，
+           不参与区域编排——三种形态的进度呈现差异太大（标准内联、迷你中列长轨、
+           紧凑顶边通栏），做成可搬运的控件只会得到渲染不出来的编排。 -->
+      <div v-if="isCompact" class="compact-progress-rail">
+        <div class="compact-progress-track" aria-hidden="true">
+          <div class="compact-progress-fill" :style="progressFillStyle"></div>
         </div>
-        <span class="mini-progress-time" aria-hidden="true">
-          {{ isLiveStream ? 'LIVE' : `${formatTime(currentTime)} / ${formatTime(effectiveDuration)}` }}
-        </span>
         <input
           type="range"
-          class="mini-progress-slider"
-          @input="onMiniRailInput"
+          class="compact-progress-slider"
+          @input="onFlatRailInput"
           min="0"
           max="1"
           step="0.0005"
           :value="effectiveDuration > 0 ? currentTime / effectiveDuration : 0"
           :disabled="isLiveStream || effectiveDuration <= 0"
           aria-label="播放进度"
-          :aria-valuetext="isLiveStream ? 'LIVE' : `${formatTime(currentTime)} / ${formatTime(effectiveDuration)}`"
+          :aria-valuetext="
+            isLiveStream ? 'LIVE' : `${formatTime(currentTime)} / ${formatTime(effectiveDuration)}`
+          "
         />
       </div>
 
-      <!-- 标准模式才需要左侧曲目信息；迷你模式不渲染曲目元数据。 -->
-      <div v-if="!isMini" :key="playerLeftKey" class="player-left">
-        <div
-          v-if="!isMini"
-          ref="coverRef"
-          class="player-cover-slot player-artwork-slot"
-          data-te-interactive
-          title="打开播放页面"
-          @click="onCoverClick"
-        >
-          <CoverImg
-            v-if="currentTrack.cover || currentTrack.coverSource"
-            :cover="currentTrack.cover"
-            :cover-source="currentTrack.coverSource"
-            :identity="currentTrack.id"
-            class="player-cover"
-            alt=""
-          />
-          <div v-else class="player-cover-placeholder">
-            <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
-          </div>
-        </div>
-        <div class="player-track-info">
-          <div class="player-title-row">
-            <div class="player-title">{{ currentTrack.title }}</div>
-            <span
-              v-if="isLiveStream || isStreamBuffering"
-              class="live-badge"
-              :class="{ buffering: isStreamBuffering }"
-              title="实时流媒体"
-              >{{ isStreamBuffering && !isLiveStream ? '缓冲中' : liveBadgeLabel }}</span
-            >
-          </div>
-          <button
-            type="button"
-            class="player-artist"
-            data-te-interactive
-            :disabled="preview || !currentTrack.artist.trim()"
-            :title="currentTrack.artist ? `打开歌手：${currentTrack.artist}` : undefined"
-            @click.stop="onArtistClick"
-          >
-            {{ currentTrack.artist }}
-          </button>
-          <div
-            v-if="streamNowPlaying && isLiveStream && !isMini"
-            class="player-stream-now-playing"
-            :title="streamNowPlaying"
-          >
-            {{ streamNowPlaying }}
-          </div>
-        </div>
-      </div>
+      <!-- 三个区域的类名固定为 player-left / player-center / player-right：本组件的
+           样式表和 assets/theme-layouts/ 里的 6 套预设布局都按这三个类名改写播放
+           条，所以只有装在里面的东西会动。装什么、什么顺序由
+           shared/playerBarLayout.ts 的编排决定。
 
-      <!-- 标准模式的播放控制与内联进度；迷你模式不渲染这组 transport。 -->
-      <div v-if="!isMini" class="player-center">
-        <div class="player-controls">
-          <button class="ctrl-btn previous-button" aria-label="上一首" @click="prev">
-            <img :src="previousTrackIcon" alt="上一首" />
-          </button>
+           下面那条 v-if / v-else-if 链故意不夹注释——每个分支的类名已经说明了它
+           是什么，而分支之间插节点是最容易把链拆断的写法。 -->
+      <div
+        v-for="region in barRegions"
+        :key="region.key"
+        :class="region.className"
+        :data-te-playbar-region="region.name"
+      >
+        <template v-for="control in region.items" :key="control">
+          <div
+            v-if="control === 'cover'"
+            :ref="setCoverRef"
+            class="player-cover-slot player-artwork-slot"
+            data-te-interactive
+            title="打开播放页面"
+            @click="onCoverClick"
+          >
+            <CoverImg
+              v-if="currentTrack.cover || currentTrack.coverSource"
+              :cover="currentTrack.cover"
+              :cover-source="currentTrack.coverSource"
+              :identity="currentTrack.id"
+              class="player-cover"
+              alt=""
+            />
+            <div v-else class="player-cover-placeholder">
+              <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
+            </div>
+          </div>
+
+          <div v-else-if="control === 'trackInfo'" class="player-track-info">
+            <div class="player-title-row">
+              <!-- The cover slot is the usual way into the now-playing page, but a
+                   shape can leave it out — compact does by default. Rather than
+                   stranding those arrangements with no way in, the title takes the
+                   entry over exactly when no cover is placed, so every bar has one
+                   and no bar has two. -->
+              <div v-if="!trackTitleOpensPlayingPage" class="player-title">
+                {{ currentTrack.title }}
+              </div>
+              <button
+                v-else
+                type="button"
+                class="player-title player-title-button"
+                data-te-interactive
+                title="打开播放页面"
+                @click="onTrackTitleClick"
+              >
+                {{ currentTrack.title }}
+              </button>
+              <span
+                v-if="isLiveStream || isStreamBuffering"
+                class="live-badge"
+                :class="{ buffering: isStreamBuffering }"
+                title="实时流媒体"
+                >{{ isStreamBuffering && !isLiveStream ? '缓冲中' : liveBadgeLabel }}</span
+              >
+            </div>
+            <button
+              type="button"
+              class="player-artist"
+              data-te-interactive
+              :disabled="preview || !currentTrack.artist.trim()"
+              :title="currentTrack.artist ? `打开歌手：${currentTrack.artist}` : undefined"
+              @click.stop="onArtistClick"
+            >
+              {{ currentTrack.artist }}
+            </button>
+            <div
+              v-if="streamNowPlaying && isLiveStream && !isMini"
+              class="player-stream-now-playing"
+              :title="streamNowPlaying"
+            >
+              {{ streamNowPlaying }}
+            </div>
+          </div>
+
+          <div v-else-if="control === 'transport'" class="player-controls">
+            <button class="ctrl-btn previous-button" aria-label="上一首" @click="prev">
+              <img :src="previousTrackIcon" alt="上一首" />
+            </button>
+            <button
+              class="ctrl-btn btn-play"
+              :class="{ 'is-playing': isPlaying }"
+              aria-label="播放/暂停"
+              @click="togglePlay"
+            >
+              <img :src="isPlaying ? pauseIcon : playIcon" :alt="isPlaying ? '暂停' : '播放'" />
+            </button>
+            <button class="ctrl-btn next-button" aria-label="下一首" @click="next">
+              <img :src="nextTrackIcon" alt="下一首" />
+            </button>
+          </div>
+
           <button
-            class="ctrl-btn btn-play"
+            v-else-if="control === 'playPause'"
+            type="button"
+            class="mini-play-button"
             :class="{ 'is-playing': isPlaying }"
-            aria-label="播放/暂停"
+            :title="isPlaying ? '暂停' : '播放'"
+            :aria-label="isPlaying ? '暂停' : '播放'"
             @click="togglePlay"
           >
-            <img :src="isPlaying ? pauseIcon : playIcon" :alt="isPlaying ? '暂停' : '播放'" />
+            <i :class="isPlaying ? 'pi pi-pause' : 'pi pi-play'" aria-hidden="true"></i>
           </button>
-          <button class="ctrl-btn next-button" aria-label="下一首" @click="next">
-            <img :src="nextTrackIcon" alt="下一首" />
+
+          <span
+            v-else-if="control === 'time'"
+            class="player-time-readout"
+            :aria-label="
+              isLiveStream
+                ? '实时流媒体'
+                : `已播放 ${formatTime(currentTime)}，共 ${formatTime(effectiveDuration)}`
+            "
+          >
+            {{
+              isLiveStream ? 'LIVE' : `${formatTime(currentTime)}/${formatTime(effectiveDuration)}`
+            }}
+          </span>
+
+          <button
+            v-else-if="control === 'favorite' && favoriteButtonVisible"
+            class="icon-btn favorite-btn player-misc-icon"
+            :class="{ active: favoriteButtonLiked }"
+            :title="favoriteButtonTitle"
+            :aria-label="favoriteButtonTitle"
+            :aria-pressed="favoriteButtonLiked"
+            :disabled="favoriteButtonLoading"
+            @click="toggleFavorite"
+          >
+            <i
+              :class="
+                favoriteButtonLoading
+                  ? 'pi pi-spin pi-spinner'
+                  : favoriteButtonLiked
+                    ? 'pi pi-heart-fill'
+                    : 'pi pi-heart'
+              "
+            ></i>
           </button>
-        </div>
-        <div v-if="activeResumeOffer" class="resume-offer" role="status">
+
+          <button
+            v-else-if="control === 'playMode'"
+            class="ctrl-btn mode-btn-right player-misc-icon"
+            :class="{ 'heart-mode-active': playMode === 'heart' }"
+            :title="modeTitle"
+            :aria-label="modeTitle"
+            @click="cyclePlayMode"
+          >
+            <img v-if="playMode === 'sequential'" :src="sequentialIcon" alt="顺序" />
+            <img v-else-if="playMode === 'listLoop'" :src="listLoopIcon" alt="列表循环" />
+            <img v-else-if="playMode === 'repeat'" :src="repeatIcon" alt="单曲循环" />
+            <img v-else-if="playMode === 'heart'" :src="heartModeIcon" alt="心动模式" />
+            <img v-else :src="shuffleIcon" alt="随机" />
+          </button>
+
+          <div
+            v-else-if="control === 'volume'"
+            class="volume-anchor player-misc-icon"
+            @wheel="onVolumeWheel"
+          >
+            <Transition name="volume-drawer">
+              <div v-if="volumeOpen" class="volume-drawer" :class="{ 'drawer-glass': glass }">
+                <div class="volume-drawer-slider-wrap">
+                  <input
+                    type="range"
+                    :value="volume"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    class="volume-drawer-slider"
+                    aria-label="音量"
+                    :style="{ '--range-value': `${volume * 100}%` }"
+                    @input="onVolumeInput"
+                  />
+                </div>
+                <span class="volume-drawer-val">{{ Math.round(volume * 100) }}</span>
+                <button
+                  v-if="volume < 0.999 || showVolumeNotUnityCta"
+                  type="button"
+                  class="volume-unity-btn"
+                  :class="{ accent: showVolumeNotUnityCta }"
+                  :disabled="volume >= 0.999"
+                  title="Unity：固定软件音量 100%（bit-perfect 需要）"
+                  @click="setUnityVolume"
+                >
+                  {{ HIFI_STATUS_COPY.unityButtonShort }}
+                </button>
+              </div>
+            </Transition>
+            <button
+              type="button"
+              class="volume-control-button icon-btn"
+              :class="{ active: volumeOpen }"
+              title="音量控制"
+              aria-label="音量控制"
+              :aria-expanded="volumeOpen"
+              @click="toggleVolume"
+            >
+              <i :class="volume <= 0.001 ? 'pi pi-volume-off' : 'pi pi-volume-up'"></i>
+            </button>
+          </div>
+
+          <button
+            v-else-if="control === 'queue'"
+            class="icon-btn track-menu-button"
+            :class="{ active: playlistOpen }"
+            title="播放列表"
+            aria-label="播放列表"
+            @click="togglePlaylist"
+          >
+            <i class="pi pi-list"></i>
+          </button>
+
+          <button
+            v-else-if="control === 'hifi'"
+            class="icon-btn player-misc-icon hifi-toggle-button"
+            :class="{ active: moreOpen }"
+            title="HiFi 控制台"
+            aria-label="HiFi 控制台"
+            @click="toggleMore"
+          >
+            <i class="ph ph-faders"></i>
+          </button>
+
+          <button
+            v-else-if="control === 'equalizer'"
+            class="icon-btn equalizer-btn player-misc-icon"
+            title="均衡器"
+            aria-label="均衡器"
+            @click="openEqualizerPage"
+          >
+            <i class="ph ph-sliders" aria-hidden="true"></i>
+          </button>
+
+          <button
+            v-else-if="control === 'desktopLyrics'"
+            class="icon-btn desktop-lyrics-btn player-misc-icon"
+            :class="{ active: desktopLyricsOn }"
+            title="桌面歌词"
+            aria-label="桌面歌词"
+            :aria-pressed="desktopLyricsOn"
+            @click="toggleDesktopLyrics"
+          >
+            <span class="desktop-lyrics-icon" aria-hidden="true">词</span>
+          </button>
+
+          <button
+            v-else-if="control === 'miniPlayer'"
+            class="icon-btn mini-player-btn player-misc-icon"
+            title="切换到迷你播放器"
+            aria-label="切换到迷你播放器"
+            :disabled="miniPlayerOpening"
+            @click="openMiniPlayer"
+          >
+            <i
+              :class="miniPlayerOpening ? 'pi pi-spin pi-spinner' : 'ph ph-picture-in-picture'"
+            ></i>
+          </button>
+
+          <button
+            v-else-if="control === 'exitPlayingPage' && glass"
+            type="button"
+            class="icon-btn playing-page-exit-button"
+            title="退出播放页"
+            aria-label="退出播放页"
+            @click="emit('exitPlayingPage')"
+          >
+            <i class="ph ph-arrows-out-simple" aria-hidden="true"></i>
+          </button>
+        </template>
+
+        <!-- 形态固有 chrome，永远排在编排出来的控件之后。迷你条 40px 高，塞不下
+             续播提示，所以它在迷你形态里仍然不渲染——和这套编排之前的行为一致。 -->
+        <div
+          v-if="region.name === 'center' && activeResumeOffer && !isMini"
+          class="resume-offer"
+          role="status"
+        >
           <span class="resume-offer__text"
             >从 {{ formatTime(activeResumeOffer.positionSeconds) }} 继续</span
           >
@@ -1712,7 +1991,7 @@ onBeforeUnmount(() => {
           <button type="button" class="resume-offer__dismiss" @click="onDismissResume">忽略</button>
         </div>
         <div
-          v-if="!isMini"
+          v-if="region.name === 'center' && isStandard"
           :key="`progress:${currentTrack.id}:${currentTrack.queueEntryId || ''}`"
           class="progress-area"
           :data-track-id="currentTrack.id"
@@ -1751,149 +2030,44 @@ onBeforeUnmount(() => {
             isLiveStream ? 'LIVE' : formatTime(effectiveDuration)
           }}</span>
         </div>
-      </div>
-
-      <!-- 右侧 -->
-      <div class="player-right">
-        <button
-          v-if="!isMini && favoriteButtonVisible"
-          class="icon-btn favorite-btn player-misc-icon"
-          :class="{ active: favoriteButtonLiked }"
-          :title="favoriteButtonTitle"
-          :aria-label="favoriteButtonTitle"
-          :aria-pressed="favoriteButtonLiked"
-          :disabled="favoriteButtonLoading"
-          @click="toggleFavorite"
-        >
-          <i
-            :class="
-              favoriteButtonLoading
-                ? 'pi pi-spin pi-spinner'
-                : favoriteButtonLiked
-                  ? 'pi pi-heart-fill'
-                  : 'pi pi-heart'
+        <div v-if="region.name === 'center' && isMini" class="mini-progress-rail">
+          <div class="mini-progress-track" aria-hidden="true">
+            <div class="mini-progress-fill" :style="progressFillStyle"></div>
+          </div>
+          <span class="mini-progress-time" aria-hidden="true">
+            {{
+              isLiveStream
+                ? 'LIVE'
+                : `${formatTime(currentTime)} / ${formatTime(effectiveDuration)}`
+            }}
+          </span>
+          <input
+            type="range"
+            class="mini-progress-slider"
+            @input="onFlatRailInput"
+            min="0"
+            max="1"
+            step="0.0005"
+            :value="effectiveDuration > 0 ? currentTime / effectiveDuration : 0"
+            :disabled="isLiveStream || effectiveDuration <= 0"
+            aria-label="播放进度"
+            :aria-valuetext="
+              isLiveStream
+                ? 'LIVE'
+                : `${formatTime(currentTime)} / ${formatTime(effectiveDuration)}`
             "
-          ></i>
-        </button>
-
-        <button
-          class="ctrl-btn mode-btn-right player-misc-icon"
-          :class="{ 'heart-mode-active': playMode === 'heart' }"
-          :title="modeTitle"
-          :aria-label="modeTitle"
-          @click="cyclePlayMode"
-        >
-          <img v-if="playMode === 'sequential'" :src="sequentialIcon" alt="顺序" />
-          <img v-else-if="playMode === 'listLoop'" :src="listLoopIcon" alt="列表循环" />
-          <img v-else-if="playMode === 'repeat'" :src="repeatIcon" alt="单曲循环" />
-          <img v-else-if="playMode === 'heart'" :src="heartModeIcon" alt="心动模式" />
-          <img v-else :src="shuffleIcon" alt="随机" />
-        </button>
-
-        <!-- 独立音量控件：点击仅展开滑杆，不切换静音 -->
-        <div class="volume-anchor player-misc-icon" @wheel="onVolumeWheel">
-          <Transition name="volume-drawer">
-            <div v-if="volumeOpen" class="volume-drawer" :class="{ 'drawer-glass': glass }">
-              <div class="volume-drawer-slider-wrap">
-                <input
-                  type="range"
-                  :value="volume"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  class="volume-drawer-slider"
-                  aria-label="音量"
-                  :style="{ '--range-value': `${volume * 100}%` }"
-                  @input="onVolumeInput"
-                />
-              </div>
-              <span class="volume-drawer-val">{{ Math.round(volume * 100) }}</span>
-              <button
-                v-if="volume < 0.999 || showVolumeNotUnityCta"
-                type="button"
-                class="volume-unity-btn"
-                :class="{ accent: showVolumeNotUnityCta }"
-                :disabled="volume >= 0.999"
-                title="Unity：固定软件音量 100%（bit-perfect 需要）"
-                @click="setUnityVolume"
-              >
-                {{ HIFI_STATUS_COPY.unityButtonShort }}
-              </button>
-            </div>
-          </Transition>
-          <button
-            type="button"
-            class="volume-control-button icon-btn"
-            :class="{ active: volumeOpen }"
-            title="音量控制"
-            aria-label="音量控制"
-            :aria-expanded="volumeOpen"
-            @click="toggleVolume"
-          >
-            <i :class="volume <= 0.001 ? 'pi pi-volume-off' : 'pi pi-volume-up'"></i>
-          </button>
+          />
         </div>
-
-        <button
-          class="icon-btn track-menu-button"
-          :class="{ active: playlistOpen }"
-          title="播放列表"
-          aria-label="播放列表"
-          @click="togglePlaylist"
-        >
-          <i class="pi pi-list"></i>
-        </button>
-
-        <button
-          v-if="!isMini"
-          class="icon-btn mini-player-btn player-misc-icon"
-          title="切换到迷你播放器"
-          aria-label="切换到迷你播放器"
-          :disabled="miniPlayerOpening"
-          @click="openMiniPlayer"
-        >
-          <i :class="miniPlayerOpening ? 'pi pi-spin pi-spinner' : 'ph ph-picture-in-picture'"></i>
-        </button>
-
-        <button
-          v-if="!isMini"
-          class="icon-btn desktop-lyrics-btn player-misc-icon"
-          :class="{ active: desktopLyricsOn }"
-          title="桌面歌词"
-          aria-label="桌面歌词"
-          :aria-pressed="desktopLyricsOn"
-          @click="toggleDesktopLyrics"
-        >
-          <span class="desktop-lyrics-icon" aria-hidden="true">词</span>
-        </button>
-
-        <!-- HiFi 控制台入口 -->
-        <button
-          class="icon-btn player-misc-icon hifi-toggle-button"
-          :class="{ active: moreOpen }"
-          title="HiFi 控制台"
-          aria-label="HiFi 控制台"
-          @click="toggleMore"
-        >
-          <i class="ph ph-faders"></i>
-        </button>
-
-        <button
-          v-if="isMini && glass"
-          type="button"
-          class="icon-btn playing-page-exit-button"
-          title="退出播放页"
-          aria-label="退出播放页"
-          @click="emit('exitPlayingPage')"
-        >
-          <i class="ph ph-arrows-out-simple" aria-hidden="true"></i>
-        </button>
       </div>
     </div>
 
     <!-- HiFi 右侧覆盖面板 -->
     <Transition name="hifi-overlay">
-      <div v-if="moreOpen" class="hifi-overlay" :class="{ glass }">
+      <div
+        v-if="moreOpen"
+        class="hifi-overlay"
+        :class="{ glass, 'is-lyrics-customizing': lyricsCustomizerActive }"
+      >
         <HiFiSidebar
           :glass="glass"
           :accent-color="playButtonColor"
@@ -1902,7 +2076,7 @@ onBeforeUnmount(() => {
           :audio-output="audioOutput"
           :audio-output-options="audioOutputOptions"
           :audio-device="audioDevice"
-          :audio-device-options="audioDeviceOptions"
+          :audio-device-options="audioOutputDeviceOptions"
           :audio-processing="audioProcessing"
           :audio-output-config="audioOutputConfig"
           :dsp-output-stage="dspOutputStage"
@@ -1911,6 +2085,8 @@ onBeforeUnmount(() => {
           :status-chips="audioStatusChips"
           :non-perfect-reason="nonPerfectReason"
           :perfect-reason-code="perfectReasonCode"
+          :perfect-reason-explain="perfectReasonDetail?.explain || ''"
+          :perfect-reason-fix="perfectReasonDetail?.fix || ''"
           :volume="volume"
           :gapless-active="playbackInfo?.gaplessActive === true"
           :preload-ready="playbackInfo?.preloadReady === true"
@@ -1992,6 +2168,7 @@ onBeforeUnmount(() => {
           @update-rename-draft="renameDraft = $event"
           @cancel-rename-bookmark="cancelRenameBookmark"
           @delete-bookmark="deleteBookmark"
+          @lyrics-customizing="lyricsCustomizerActive = $event"
         />
       </div>
     </Transition>

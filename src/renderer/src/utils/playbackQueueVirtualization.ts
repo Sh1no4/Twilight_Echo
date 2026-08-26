@@ -27,6 +27,7 @@ export function toPlaybackQueueSnapshot(track: Track): Track {
     queueEntryId: track.queueEntryId,
     title: track.title,
     artist: track.artist,
+    artists: track.artists,
     album: track.album,
     filePath: track.filePath,
     fileName: track.fileName,

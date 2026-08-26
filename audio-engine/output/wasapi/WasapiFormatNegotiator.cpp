@@ -504,10 +504,13 @@ std::string WasapiFormatNegotiator::buildFailureReason(
 
 bool WasapiFormatNegotiator::sameSourceFormat(const AudioFormat& sourceFormat, const AudioFormat& outputFormat) const {
   if (wantsDopCarrier(sourceFormat)) return false;
+  // int24 -> int24-in-32 only widens the container; every significant bit
+  // survives, so negotiating it is not a conversion of the source.
   return sourceFormat.sampleRate == outputFormat.sampleRate &&
          sourceFormat.channelCount == outputFormat.channelCount &&
          normalizeBitDepth(sourceFormat.bitDepth) == outputFormat.bitDepth &&
-         sourceFormat.sampleFormat == outputFormat.sampleFormat;
+         (sourceFormat.sampleFormat == outputFormat.sampleFormat ||
+          sampleFormatsSameIntegerPayload(sourceFormat.sampleFormat, outputFormat.sampleFormat));
 }
 
 }  // namespace twilight::audio

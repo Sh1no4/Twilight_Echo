@@ -70,6 +70,7 @@ useFocusTrap(addDialogRef, () => props.showAdd)
             placeholder="请输入歌单名称"
             :disabled="createBusy"
             autofocus
+            animate
             @keyup.enter="emit('confirmCreate')"
           />
           <p v-if="createError" class="ncm-playlist-dialog-error">{{ createError }}</p>

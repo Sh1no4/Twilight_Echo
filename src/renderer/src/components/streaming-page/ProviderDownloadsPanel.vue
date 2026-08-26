@@ -1,11 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ProviderDownloadTaskSnapshot } from '../../../../shared/providerDownloads.ts'
-import {
-  downloadStatusLabel,
-  filterActiveDownloadTasks,
-  formatDownloadProgress
-} from './streamingDownloads.ts'
+import { downloadStatusLabel, filterActiveDownloadTasks } from './streamingDownloads.ts'
 
 const props = defineProps<{
   show: boolean
@@ -82,7 +78,7 @@ function formatFileSize(bytes: number): string {
                 >
                   <div
                     class="provider-download-progress-fill"
-                    :style="{ width: formatDownloadProgress(task.progress) }"
+                    :style="{ transform: `scaleX(${Math.max(0, Math.min(1, task.progress))})` }"
                   ></div>
                 </div>
                 <small v-if="task.error" class="provider-download-error">{{ task.error }}</small>
@@ -294,10 +290,12 @@ function formatFileSize(bytes: number): string {
 }
 
 .provider-download-progress-fill {
+  width: 100%;
   height: 100%;
-  border-radius: inherit;
   background: var(--te-primary-500);
-  transition: width var(--te-motion-panel) var(--te-ease-soft);
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  transition: transform var(--te-motion-panel) var(--te-ease-soft);
 }
 
 .provider-download-error {

@@ -206,10 +206,24 @@ export type TwilightMediaProviderCapability =
   | 'login'
   | 'download'
 
+/**
+ * A single artist's provider-side identity. Same-named artists are
+ * indistinguishable from the `artist` display string, so providers should
+ * return this whenever the upstream payload carries stable artist ids.
+ * Entry order must match the ' / ' segments of `artist`, and entries with an
+ * unknown `id` must still be kept so positions stay aligned.
+ */
+export interface TrackArtistRef {
+  id?: string | number
+  name: string
+}
+
 export interface Track {
   id: string
   title: string
   artist: string
+  /** Structured artist identities behind the `artist` display string. */
+  artists?: TrackArtistRef[]
   album: string
   filePath: string
   fileName: string

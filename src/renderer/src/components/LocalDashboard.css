@@ -31,11 +31,10 @@
   box-sizing: border-box;
   scrollbar-gutter: stable;
   color: var(--home-ink);
-  background-color: var(--te-local-bg);
-  background-image: var(--te-local-bg-image);
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: cover;
+  /* Transparent on purpose: the body carries the one window-wide local wallpaper
+     (body.te-local-surface), so the open sidebar and this page share a single
+     image instead of two cover-scaled copies meeting at the sidebar edge. */
+  background: transparent;
   font-family: var(--te-font-sans, sans-serif);
 }
 
@@ -635,6 +634,8 @@
   height: 14px;
   padding: 5px 0;
   border: none;
+  border-radius: 999px;
+  overflow: hidden;
   background: transparent;
   cursor: pointer;
 }
@@ -650,9 +651,12 @@
 .hero-progress-track span {
   position: absolute;
   inset: 5px auto 5px 0;
-  border-radius: 999px;
+  width: 100%;
   background: linear-gradient(90deg, var(--home-accent), var(--te-accent-cyan));
-  transition: width 0.2s linear;
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  will-change: transform;
+  transition: none;
 }
 
 .hero-progress-track:hover::before {
@@ -2536,14 +2540,17 @@ html[data-te-home-liquid-glass='on'] .home {
   --home-lg-blur: var(--te-lg-blur, 16px);
   --home-lg-saturate: var(--te-lg-saturate, 140%);
   --home-lg-specular: var(--te-lg-specular, 0.44);
-  --home-lg-filter: url(#te-lg-card);
+  /* SVG displacement dropped from cards: on the same layer as backdrop-filter it
+     makes Chromium abandon the backdrop pass (grey slab) and costs a full filter
+     pass per card per frame. The CSS sheen above carries the glass look. */
+  --home-lg-filter: none;
 }
 
 html[data-te-home-liquid-glass='on'] .home {
   --home-lg-blur: var(--te-home-lg-blur, var(--te-lg-blur, 16px));
   --home-lg-saturate: var(--te-home-lg-saturate, var(--te-lg-saturate, 140%));
   --home-lg-specular: var(--te-home-lg-specular, var(--te-lg-specular, 0.44));
-  --home-lg-filter: url(#te-lg-home-card);
+  --home-lg-filter: none;
 }
 
 /* ── Clear material recipe for the media hero ─────────────────────────── */

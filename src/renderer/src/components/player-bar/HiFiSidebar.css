@@ -297,7 +297,10 @@ html[data-theme='dark'] .deck .deck-rate-num {
   border-radius: 13px;
   background: transparent;
   color: var(--d-muted);
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    border-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
 }
 
 .deck-rail-btn i {
@@ -591,6 +594,20 @@ html[data-theme='dark'] .deck .deck-card {
   color: var(--d-success);
 }
 
+/* The actionable half of a diagnostic: reads as guidance, not as another
+   warning, so it takes the accent rather than the warn colour. */
+.deck-note.fix {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--d-accent);
+}
+
+.deck-note.fix > .pi {
+  flex: none;
+  font-size: 10px;
+}
+
 /* ===== Unity ===== */
 .deck-unity {
   display: flex;
@@ -767,7 +784,10 @@ html[data-theme='dark'] .deck .deck-card {
   border: 1px solid var(--d-line);
   background: var(--d-well);
   color: var(--d-muted);
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    border-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
   min-width: 0;
 }
 
@@ -832,7 +852,9 @@ html[data-theme='dark'] .deck .deck-card {
   border: 1px solid var(--d-line-strong);
   background: var(--d-well);
   flex-shrink: 0;
-  transition: all 0.22s ease;
+  transition:
+    background-color 0.22s var(--te-ease-soft),
+    border-color 0.22s var(--te-ease-soft);
 }
 
 .deck-switch-knob {
@@ -842,8 +864,11 @@ html[data-theme='dark'] .deck .deck-card {
   width: 16px;
   height: 16px;
   border-radius: 50%;
+  transform: translateX(0);
   background: var(--d-faint);
-  transition: all 0.22s cubic-bezier(0.34, 1.4, 0.64, 1);
+  transition:
+    transform 0.22s cubic-bezier(0.34, 1.4, 0.64, 1),
+    background-color 0.22s cubic-bezier(0.34, 1.4, 0.64, 1);
 }
 
 .deck-switch.active {
@@ -853,7 +878,7 @@ html[data-theme='dark'] .deck .deck-card {
 }
 
 .deck-switch.active .deck-switch-knob {
-  left: 20px;
+  transform: translateX(18px);
   background: var(--d-accent);
   box-shadow: 0 0 8px var(--d-glow);
 }
@@ -868,7 +893,10 @@ html[data-theme='dark'] .deck .deck-card {
   font-size: 11.5px;
   font-weight: 500;
   letter-spacing: 0.03em;
-  transition: all 0.18s ease;
+  transition:
+    background-color 0.18s var(--te-ease-soft),
+    border-color 0.18s var(--te-ease-soft),
+    color 0.18s var(--te-ease-soft);
   white-space: nowrap;
 }
 
@@ -927,7 +955,10 @@ html[data-theme='dark'] .deck .deck-card {
   font-size: 11.5px;
   font-weight: 500;
   letter-spacing: 0.02em;
-  transition: all 0.18s ease;
+  transition:
+    background-color 0.18s var(--te-ease-soft),
+    border-color 0.18s var(--te-ease-soft),
+    color 0.18s var(--te-ease-soft);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -962,7 +993,10 @@ html[data-theme='dark'] .deck .deck-card {
   background: var(--d-well);
   text-align: left;
   color: var(--d-ink);
-  transition: all 0.18s ease;
+  transition:
+    background-color 0.18s var(--te-ease-soft),
+    border-color 0.18s var(--te-ease-soft),
+    color 0.18s var(--te-ease-soft);
 }
 
 .deck-device > i {
@@ -1280,7 +1314,10 @@ html[data-theme='dark'] .deck .deck-select {
   background: var(--d-well);
   color: var(--d-muted);
   font-size: 11.5px;
-  transition: all 0.18s ease;
+  transition:
+    background-color 0.18s var(--te-ease-soft),
+    border-color 0.18s var(--te-ease-soft),
+    color 0.18s var(--te-ease-soft);
 }
 
 .deck-inline-toggle.on {
@@ -1316,7 +1353,10 @@ html[data-theme='dark'] .deck .deck-select {
   background: var(--d-card);
   color: var(--d-ink);
   text-align: left;
-  transition: all 0.18s ease;
+  transition:
+    background-color 0.18s var(--te-ease-soft),
+    border-color 0.18s var(--te-ease-soft),
+    color 0.18s var(--te-ease-soft);
 }
 
 .deck-action > i {
@@ -1417,7 +1457,10 @@ html[data-theme='dark'] .deck .deck-select {
   background: var(--d-well);
   color: var(--d-ink);
   text-align: left;
-  transition: all 0.18s ease;
+  transition:
+    background-color 0.18s var(--te-ease-soft),
+    border-color 0.18s var(--te-ease-soft),
+    color 0.18s var(--te-ease-soft);
 }
 
 .deck-cast-item > i {
@@ -1528,7 +1571,10 @@ html[data-theme='dark'] .deck .deck-select {
   background: var(--d-well);
   color: var(--d-ink);
   text-align: left;
-  transition: all 0.18s ease;
+  transition:
+    background-color 0.18s var(--te-ease-soft),
+    border-color 0.18s var(--te-ease-soft),
+    color 0.18s var(--te-ease-soft);
 }
 
 .deck-extension strong {

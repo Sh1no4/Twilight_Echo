@@ -27,7 +27,9 @@ export function useSongListContextMenu({
   deletePlaylist,
   playNext,
   viewArtist,
-  viewAlbum
+  viewAlbum,
+  addToAggregatePlaylist,
+  createAggregatePlaylist
 }: UseSongListContextMenuOptions): {
   showContextMenu: Ref<boolean>
   menuX: Ref<number>
@@ -58,12 +60,16 @@ export function useSongListContextMenu({
   completeCreatePlaylistDialog: () => void
   handleCreatePlaylistFromMenu: () => void
   handleDeletePlaylist: (playlistId: string, event: MouseEvent | KeyboardEvent) => void
+  showAggregateSubmenu: Ref<boolean>
+  handleAddToAggregatePlaylist: (playlistId: string) => void
+  handleCreateAggregatePlaylistFromMenu: () => void
 } {
   const showContextMenu = ref(false)
   const menuX = ref(0)
   const menuY = ref(0)
   const selectedTrack = ref<Track | null>(null)
   const showPlaylistSubmenu = ref(false)
+  const showAggregateSubmenu = ref(false)
   const showCreatePlaylistDialog = ref(false)
   const newPlaylistName = ref('')
   const createPlaylistForTrack = ref<Track | null>(null)
@@ -95,6 +101,7 @@ export function useSongListContextMenu({
     menuY.value = event.clientY
     showContextMenu.value = true
     showPlaylistSubmenu.value = false
+    showAggregateSubmenu.value = false
 
     nextTick(() => {
       const menu = document.querySelector('.context-menu') as HTMLElement
@@ -113,7 +120,20 @@ export function useSongListContextMenu({
   function closeContextMenu(): void {
     showContextMenu.value = false
     showPlaylistSubmenu.value = false
+    showAggregateSubmenu.value = false
     selectedTrack.value = null
+  }
+
+  function handleAddToAggregatePlaylist(playlistId: string): void {
+    if (!addToAggregatePlaylist) return
+    addToAggregatePlaylist(playlistId)
+    closeContextMenu()
+  }
+
+  function handleCreateAggregatePlaylistFromMenu(): void {
+    if (!createAggregatePlaylist) return
+    createAggregatePlaylist()
+    closeContextMenu()
   }
 
   function handleDelete(): void {
@@ -255,7 +275,10 @@ export function useSongListContextMenu({
     handleCreatePlaylist,
     completeCreatePlaylistDialog,
     handleCreatePlaylistFromMenu,
-    handleDeletePlaylist
+    handleDeletePlaylist,
+    showAggregateSubmenu,
+    handleAddToAggregatePlaylist,
+    handleCreateAggregatePlaylistFromMenu
   }
 }
 

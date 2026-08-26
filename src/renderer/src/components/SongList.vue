@@ -18,6 +18,7 @@ import { resolveUnifiedRecentTracks } from '../utils/unifiedRecentTracks'
 import { getTrackSearchBlob, normalizeSearchText } from '../utils/localLibrarySearch'
 import { getTrackSource as getLogicalTrackSource } from '../utils/logicalTrackModel'
 import { useEscapeToClose } from '../app/useDismissLayer.ts'
+import { useBackHandler } from '../app/useBackStack.ts'
 import { buildMetadataMatchCandidates } from '../utils/musicMetadataMatching'
 import {
   applyLibraryCollectionView,
@@ -49,6 +50,7 @@ import {
   type LibraryViewState
 } from '../utils/libraryViewPreferences.ts'
 import CoverImg from './CoverImg.vue'
+import CreateAggregatePlaylistDialog from './aggregate-playlist/CreateAggregatePlaylistDialog.vue'
 import LocalLibraryTagManager from './LocalLibraryTagManager.vue'
 import ThemeIcon from './ThemeIcon.vue'
 import { formatDuration } from './song-list/formatDuration'
@@ -77,7 +79,8 @@ const {
   artists,
   albums,
   genres,
-  playlists,
+  localPlaylists,
+  aggregatePlaylists,
   folders,
   libraryRepairReport,
   excludedTracks,
@@ -97,6 +100,7 @@ const {
   createPlaylist,
   createPlaylistWithTracks,
   deletePlaylist,
+  addTracksToPlaylistById,
   isFavoriteTrack,
   setFavoriteTracks
 } = useMusicStore()
@@ -408,7 +412,7 @@ function trackListNumber(track: Track, visibleIndex: number): number {
 
 const currentPlaylist = computed(() =>
   currentPlaylistName.value
-    ? (playlists.value.find((playlist) => playlist.name === currentPlaylistName.value) ?? null)
+    ? (localPlaylists.value.find((playlist) => playlist.name === currentPlaylistName.value) ?? null)
     : null
 )
 const repairMessage = ref('')
@@ -497,9 +501,14 @@ const unifiedSearchStatusText = computed(() => {
 
 const showDetailBackButton = computed(() => {
   // Top-level views (including recent / all songs) are reached from the side
-  // menu; a back button that only clears the filter is a no-op there.
+  // menu; a back action that only clears the filter is a no-op there.
   return !!props.filter
 })
+
+// The title-bar back button clears the active filter (same action as the old
+// in-page back button's selectView emit). SongList unmounts whenever another
+// full-screen surface takes over, so this layer always cleans itself up.
+useBackHandler(showDetailBackButton, () => emit('selectView', props.category, null))
 
 const showGrid = computed(() => {
   if (props.category === 'allSongs' || props.category === 'recent') return false
@@ -567,7 +576,7 @@ watch(
 const currentGridItems = computed<GridItem[]>(() => {
   if (isCollectionGrid.value) return collectionGridItems.value
   if (props.category === 'genres') return genres.value
-  if (props.category === 'playlists') return playlists.value
+  if (props.category === 'playlists') return localPlaylists.value
   if (props.category === 'folders') return folders.value
   return []
 })
@@ -806,7 +815,10 @@ const {
   handleCreatePlaylist,
   completeCreatePlaylistDialog,
   handleDeletePlaylist,
-  closeContextMenu
+  closeContextMenu,
+  showAggregateSubmenu,
+  handleAddToAggregatePlaylist,
+  handleCreateAggregatePlaylistFromMenu
 } = useSongListContextMenu({
   currentPlaylistName,
   removeTrack,
@@ -833,8 +845,30 @@ const {
     )
     if (!albumItem?.id) return
     emit('selectView', 'albums', `album:${albumItem.id}`)
+  },
+  addToAggregatePlaylist: (playlistId) => {
+    const targets = contextActionTracks.value
+    const playlist = aggregatePlaylists.value.find((item) => item.id === playlistId)
+    if (!playlist || targets.length === 0) return
+    const added = addTracksToPlaylistById(playlistId, targets)
+    repairMessage.value =
+      added > 0
+        ? `已加入聚合歌单「${playlist.name}」${added} 首`
+        : `聚合歌单「${playlist.name}」里已经有这些歌了`
+  },
+  createAggregatePlaylist: () => {
+    createAggregateTracks.value = contextActionTracks.value
+    showCreateAggregateDialog.value = true
   }
 })
+
+const showCreateAggregateDialog = ref(false)
+const createAggregateTracks = ref<Track[]>([])
+
+function onAggregatePlaylistCreated(_playlistId: string, addedCount: number): void {
+  createAggregateTracks.value = []
+  repairMessage.value = addedCount > 0 ? `已创建聚合歌单并加入 ${addedCount} 首` : '已创建聚合歌单'
+}
 
 useEscapeToClose(showContextMenu, closeContextMenu)
 
@@ -847,7 +881,6 @@ const {
   totalHeight,
   paddingTop,
   onScroll,
-  onRowPointerMove,
   updateViewportHeight,
   scrollTop,
   viewportHeight
@@ -1381,7 +1414,10 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
             <p class="empty-text">暂无流派</p>
             <p class="empty-hint">导入带流派标签的音乐，或完整重扫媒体库以回填</p>
           </div>
-          <div v-else-if="category === 'playlists' && playlists.length === 0" class="empty-state">
+          <div
+            v-else-if="category === 'playlists' && localPlaylists.length === 0"
+            class="empty-state"
+          >
             <p class="empty-text">暂无歌单</p>
             <p class="empty-hint">点击下方卡片创建你的第一个歌单</p>
           </div>
@@ -1582,15 +1618,6 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
         <template v-else>
           <div class="song-list-header">
             <div class="header-left">
-              <button
-                v-if="showDetailBackButton"
-                class="btn-back"
-                data-te-back-button="icon"
-                title="返回"
-                @click="emit('selectView', category, null)"
-              >
-                <i class="pi pi-arrow-left"></i>
-              </button>
               <div class="title-group">
                 <div class="title-line">
                   <h2 class="song-list-title">{{ viewTitle }}</h2>
@@ -2100,7 +2127,6 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   @dragstart="handlePlaylistDragStart($event, track)"
                   @dragover.prevent
                   @drop="handlePlaylistDrop($event, track)"
-                  @pointermove="onRowPointerMove"
                   @contextmenu="onTrackContextMenu($event, track)"
                 >
                   <td class="col-index">
@@ -2321,13 +2347,47 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                       <i class="pi pi-plus" style="font-size: 14px; margin-right: 6px"></i>
                       <span>创建新歌单</span>
                     </div>
-                    <div v-if="playlists.length === 0" class="menu-item disabled">暂无歌单</div>
+                    <div v-if="localPlaylists.length === 0" class="menu-item disabled">
+                      暂无歌单
+                    </div>
                     <div
-                      v-for="pl in playlists"
+                      v-for="pl in localPlaylists"
                       :key="pl.id"
                       class="menu-item"
                       data-te-interactive
                       @click="handleContextAddToPlaylist(pl.name)"
+                    >
+                      {{ pl.name }}
+                    </div>
+                  </div>
+                </div>
+                <div
+                  class="menu-item"
+                  @mouseenter="showAggregateSubmenu = true"
+                  @mouseleave="showAggregateSubmenu = false"
+                >
+                  <i class="pi pi-sitemap"></i>
+                  <span>添加到聚合歌单{{ contextActionLabel }}</span>
+                  <i class="pi pi-chevron-right submenu-icon"></i>
+
+                  <div v-if="showAggregateSubmenu" class="submenu">
+                    <div
+                      class="menu-item create-playlist-menu-item"
+                      data-te-interactive
+                      @click="handleCreateAggregatePlaylistFromMenu"
+                    >
+                      <i class="pi pi-plus" style="font-size: 14px; margin-right: 6px"></i>
+                      <span>新建聚合歌单…</span>
+                    </div>
+                    <div v-if="aggregatePlaylists.length === 0" class="menu-item disabled">
+                      暂无聚合歌单
+                    </div>
+                    <div
+                      v-for="pl in aggregatePlaylists"
+                      :key="pl.id"
+                      class="menu-item"
+                      data-te-interactive
+                      @click="handleAddToAggregatePlaylist(pl.id)"
                     >
                       {{ pl.name }}
                     </div>
@@ -2357,6 +2417,13 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
       accept="image/png,image/jpeg,image/webp"
       hidden
       @change="handlePlaylistCover"
+    />
+
+    <CreateAggregatePlaylistDialog
+      :show="showCreateAggregateDialog"
+      :tracks="createAggregateTracks"
+      @close="showCreateAggregateDialog = false"
+      @created="onAggregatePlaylistCreated"
     />
 
     <!-- Create Playlist Dialog -->

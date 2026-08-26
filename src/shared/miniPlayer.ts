@@ -78,6 +78,8 @@ export interface MiniPlayerSettings {
   windowWidth: number
   windowHeight: number
   alwaysOnTop: boolean
+  /** Whether the satellite window owns an independent Windows taskbar entry. */
+  showInTaskbar: boolean
   positionLocked: boolean
   activeStyleId: string
   profiles: Record<string, MiniPlayerThemeProfile>
@@ -153,7 +155,13 @@ export type MiniPlayerCommand =
 export type MiniPlayerSettingsPatch = Partial<
   Pick<
     MiniPlayerSettings,
-    'alwaysOnTop' | 'positionLocked' | 'activeStyleId' | 'profiles' | 'windowWidth' | 'windowHeight'
+    | 'alwaysOnTop'
+    | 'showInTaskbar'
+    | 'positionLocked'
+    | 'activeStyleId'
+    | 'profiles'
+    | 'windowWidth'
+    | 'windowHeight'
   >
 >
 
@@ -273,6 +281,7 @@ export const DEFAULT_MINI_PLAYER_SETTINGS: Readonly<MiniPlayerSettings> = Object
   windowWidth: 480,
   windowHeight: 300,
   alwaysOnTop: false,
+  showInTaskbar: true,
   positionLocked: false,
   activeStyleId: DEFAULT_MINI_PLAYER_STYLE_ID,
   profiles: {
@@ -393,6 +402,7 @@ export function normalizeMiniPlayerSettings(raw: unknown): MiniPlayerSettings {
       true
     ),
     alwaysOnTop: value.alwaysOnTop === true,
+    showInTaskbar: value.showInTaskbar !== false,
     positionLocked: value.positionLocked === true,
     activeStyleId,
     profiles

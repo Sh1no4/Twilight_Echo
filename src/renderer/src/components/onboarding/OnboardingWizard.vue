@@ -5,6 +5,7 @@ import StepWelcome from './steps/StepWelcome.vue'
 import StepUsage from './steps/StepUsage.vue'
 import StepLocal from './steps/StepLocal.vue'
 import StepStreaming from './steps/StepStreaming.vue'
+import StepPlayer from './steps/StepPlayer.vue'
 import StepAudio from './steps/StepAudio.vue'
 import StepSystem from './steps/StepSystem.vue'
 import StepFinish from './steps/StepFinish.vue'
@@ -24,11 +25,14 @@ export interface OnboardingFinishResult {
   action: OnboardingFinishAction
   /** StepStreaming CTA: open the plugin market after the wizard closes. */
   openPluginMarket: boolean
+  /** StepPlayer CTA: switch straight into the mini player when it is safe. */
+  openMiniPlayer: boolean
 }
 
 const emit = defineEmits<{ finish: [result: OnboardingFinishResult] }>()
 
-const flow = useOnboardingFlow()
+const { settings } = useSettingsStore()
+const flow = useOnboardingFlow(settings.value)
 const {
   choices,
   visibleSteps,
@@ -48,12 +52,12 @@ const STEP_TITLES: Record<OnboardingStepId, string> = {
   usage: '听歌习惯',
   local: '本地曲库',
   streaming: '流媒体',
+  player: '播放器形态',
   audio: '声音输出',
-  system: '系统集成',
+  system: '任务栏与后台',
   finish: '完成'
 }
 
-const { settings } = useSettingsStore()
 const hasCustomBackdrop = computed(() => settings.value.appBackground.global.kind === 'image')
 
 const transitionName = computed(() => (direction.value === 'forward' ? 'onb-fwd' : 'onb-back'))
@@ -88,7 +92,14 @@ function finish(): void {
   emit('finish', {
     patch: buildSettingsPatch(choices.value),
     action: resolveFinishAction(choices.value),
-    openPluginMarket: choices.value.usage !== null && choices.value.wantsPluginMarket
+    openPluginMarket: choices.value.usage !== null && choices.value.wantsPluginMarket,
+    // A login page or plugin-market handoff needs the main window; mini mode
+    // only wins when no other finish-time destination asks for it.
+    openMiniPlayer:
+      choices.value.usage !== null &&
+      choices.value.openMiniPlayerOnFinish &&
+      !choices.value.wantsStreamingLogin &&
+      !choices.value.wantsPluginMarket
   })
 }
 
@@ -172,13 +183,22 @@ onBeforeUnmount(() => {
           key="local"
           v-model:watch-library="choices.watchLibrary"
           v-model:auto-analyze-bpm="choices.autoAnalyzeBpm"
+          v-model:online-lyrics-fallback="choices.onlineLyricsFallback"
         />
         <StepStreaming
           v-else-if="currentStep === 'streaming'"
           key="streaming"
           v-model:wants-login="choices.wantsStreamingLogin"
           v-model:quality="choices.ncmPlaybackQuality"
+          v-model:cache-policy="choices.cachePolicy"
           v-model:wants-plugin-market="choices.wantsPluginMarket"
+        />
+        <StepPlayer
+          v-else-if="currentStep === 'player'"
+          key="player"
+          v-model:player-bar="choices.playerBar"
+          v-model:mini-player="choices.miniPlayer"
+          v-model:open-on-finish="choices.openMiniPlayerOnFinish"
         />
         <StepAudio
           v-else-if="currentStep === 'audio'"
@@ -188,7 +208,8 @@ onBeforeUnmount(() => {
         <StepSystem
           v-else-if="currentStep === 'system'"
           key="system"
-          v-model:close-to-tray="choices.closeToTray"
+          v-model:close-window-behavior="choices.closeWindowBehavior"
+          v-model:taskbar-thumbar-buttons-enabled="choices.taskbarThumbarButtonsEnabled"
           v-model:launch-at-login="choices.launchAtLogin"
           v-model:resume-mode="choices.playbackResumeMode"
           v-model:global-shortcuts="choices.globalShortcuts"

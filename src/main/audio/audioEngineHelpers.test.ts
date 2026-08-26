@@ -86,8 +86,12 @@ test('MAX_SOFT_PLAYBACK_CLOCK_GAP_SECONDS is 1.5', () => {
 test('nativePlayMode maps supported modes and falls back otherwise', () => {
   assert.equal(nativePlayMode('sequential'), 'sequential')
   assert.equal(nativePlayMode('repeat'), 'repeat')
-  assert.equal(nativePlayMode('shuffle'), 'shuffle')
-  assert.equal(nativePlayMode('listLoop'), 'sequential')
+  // Both looping modes ride native listLoop: the renderer hands over an already
+  // shuffled queue, so the engine must wrap that order rather than re-permute it.
+  assert.equal(nativePlayMode('listLoop'), 'listLoop')
+  assert.equal(nativePlayMode('shuffle'), 'listLoop')
+  // heart loads only the current track and lets the renderer own every boundary.
+  assert.equal(nativePlayMode('heart'), 'sequential')
   assert.equal(nativePlayMode('unknown' as Parameters<typeof nativePlayMode>[0]), 'sequential')
 })
 

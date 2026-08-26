@@ -1,10 +1,15 @@
 /**
  * Player bar presentation — shared contract.
  *
- * The playbar has two shapes. `standard` is the full bar (cover, inline
- * progress, time labels). `mini` is a compact control strip: it drops cover,
- * track metadata and previous/next controls, leaving play/pause at the far left,
- * a long flat progress rail in the middle and utility tools on the right.
+ * The playbar has three shapes. `standard` is the full bar (cover, inline
+ * progress, time labels). `mini` is a compact control strip: play/pause at the
+ * far left, a long flat progress rail in the middle and utility tools on the
+ * right. `compact` spans the window edge to edge flush with the bottom, keeping
+ * a single row of controls with the progress readout as a hairline along its
+ * own top edge.
+ *
+ * Which controls each shape puts where is a separate contract in
+ * `playerBarLayout.ts`; this module only decides which shape applies.
  *
  * Visibility is a separate dimension from shape, with three steps: `visible`
  * keeps the bar on screen, `autoHide` tucks it away until the pointer
@@ -15,17 +20,25 @@
  * decides what applies, so the shell only reads the resolved value.
  */
 
-export type PlayerBarMode = 'standard' | 'mini'
+import {
+  DEFAULT_PLAYER_BAR_LAYOUT,
+  clonePlayerBarLayout,
+  normalizePlayerBarLayout,
+  type PlayerBarLayoutSettings
+} from './playerBarLayout.ts'
+
+export type PlayerBarMode = 'standard' | 'mini' | 'compact'
 
 /** Playing-page shape; `inherit` follows the global `mode`. */
 export type PlayerBarPageMode = PlayerBarMode | 'inherit'
 
-export const PLAYER_BAR_MODES: readonly PlayerBarMode[] = ['standard', 'mini']
+export const PLAYER_BAR_MODES: readonly PlayerBarMode[] = ['standard', 'mini', 'compact']
 
 /**
- * `autoHide` still needs the mini shape to resolve (a standard bar's inline
- * progress row is its only progress readout, so it never tucks away), while
- * `hidden` applies to both shapes — nothing is revealed, so nothing is lost.
+ * `autoHide` needs a shape that carries its own progress readout, so it resolves
+ * for `mini` (long middle rail) and `compact` (top-edge hairline) but not for
+ * `standard`, whose inline progress row is the only readout it has. `hidden`
+ * applies to every shape — nothing is revealed, so nothing is lost.
  */
 export type PlayerBarVisibility = 'visible' | 'autoHide' | 'hidden'
 
@@ -47,6 +60,8 @@ export interface PlayerBarSettings {
   visibility: PlayerBarVisibility
   /** Visibility used on the now-playing page. */
   playingPageVisibility: PlayerBarPageVisibility
+  /** Which controls each shape puts in its left / centre / right region. */
+  layout: PlayerBarLayoutSettings
   /** Pointer must come within this many px of the viewport bottom to reveal. */
   revealThresholdPx: number
   /** Delay before hiding once the pointer leaves the reveal zone. */
@@ -68,6 +83,9 @@ export const DEFAULT_PLAYER_BAR_SETTINGS: PlayerBarSettings = {
   playingPageMode: 'inherit',
   visibility: 'visible',
   playingPageVisibility: 'inherit',
+  // Cloned rather than aliased: the default layout is reachable from here, and
+  // an in-place edit of a settings object would otherwise rewrite the default.
+  layout: clonePlayerBarLayout(DEFAULT_PLAYER_BAR_LAYOUT),
   revealThresholdPx: 120,
   hideDelayMs: 900
 }
@@ -78,11 +96,11 @@ function clamp(value: unknown, bound: Bound, fallback: number): number {
 }
 
 export function normalizePlayerBarMode(value: unknown): PlayerBarMode {
-  return value === 'mini' ? 'mini' : 'standard'
+  return value === 'mini' || value === 'compact' ? value : 'standard'
 }
 
 export function normalizePlayerBarPageMode(value: unknown): PlayerBarPageMode {
-  if (value === 'mini' || value === 'standard') return value
+  if (value === 'mini' || value === 'standard' || value === 'compact') return value
   return 'inherit'
 }
 
@@ -115,6 +133,7 @@ export function normalizePlayerBarSettings(raw: unknown): PlayerBarSettings {
     playingPageMode: normalizePlayerBarPageMode(value.playingPageMode),
     visibility: normalizePlayerBarVisibility(value.visibility),
     playingPageVisibility: resolvePlayingPageVisibility(value),
+    layout: normalizePlayerBarLayout(value.layout),
     revealThresholdPx: clamp(
       value.revealThresholdPx,
       PLAYER_BAR_BOUNDS.revealThresholdPx,
@@ -128,8 +147,9 @@ export function normalizePlayerBarSettings(raw: unknown): PlayerBarSettings {
   }
 }
 
+/** The layout holds arrays, so a shallow spread would share them between copies. */
 export function clonePlayerBarSettings(value: PlayerBarSettings): PlayerBarSettings {
-  return { ...value }
+  return { ...value, layout: clonePlayerBarLayout(value.layout) }
 }
 
 export interface PlayerBarPresentation {
@@ -148,10 +168,11 @@ export interface PlayerBarContext {
  * Resolve both dimensions for the current page, then narrow the visibility step
  * to what the shape can actually do:
  *
- * - `hidden` always wins and applies to either shape — nothing is revealed, so
+ * - `hidden` always wins and applies to every shape — nothing is revealed, so
  *   the standard bar loses nothing it could have shown.
- * - `autoHide` additionally needs the mini shape, because a standard bar's
- *   inline progress row is its only progress readout. On a standard bar it
+ * - `autoHide` additionally needs a shape that carries its own progress readout:
+ *   mini has its long middle rail, compact its top-edge hairline. On a standard
+ *   bar the inline progress row is the only readout there is, so auto-hide
  *   degrades to plainly visible rather than silently hiding the progress.
  *
  * The two flags are mutually exclusive: `hidden` implies not `autoHide`.
@@ -175,7 +196,16 @@ export function resolvePlayerBarPresentation(
     : settings.visibility
 
   const hidden = visibility === 'hidden'
-  return { mode, autoHide: !hidden && visibility === 'autoHide' && mode === 'mini', hidden }
+  return {
+    mode,
+    autoHide: !hidden && visibility === 'autoHide' && playerBarShapeCanAutoHide(mode),
+    hidden
+  }
+}
+
+/** Shapes with their own progress readout, the precondition for auto-hide. */
+export function playerBarShapeCanAutoHide(mode: PlayerBarMode): boolean {
+  return mode !== 'standard'
 }
 
 /** Whether `autoHide` can take effect for a page, for disabling dependent UI. */

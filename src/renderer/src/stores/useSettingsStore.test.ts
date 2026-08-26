@@ -45,6 +45,11 @@ test('settings chrome no longer dual-writes theme-owned CSS variables', () => {
     new URL('../components/song-list/SongList.css', import.meta.url),
     'utf8'
   )
+  const localDashboardSource = readFileSync(
+    new URL('../components/LocalDashboard.css', import.meta.url),
+    'utf8'
+  )
+  const baseSource = readFileSync(new URL('../assets/base.css', import.meta.url), 'utf8')
 
   assert.match(source, /THEME_OWNED_INLINE_STYLE_VARS/)
   assert.match(source, /clearLegacyThemeOwnedInlineStyles/)
@@ -62,7 +67,16 @@ test('settings chrome no longer dual-writes theme-owned CSS variables', () => {
   )
   assert.match(themeSource, /applyAppBackgroundVariables\(tone, variables\)/)
   assert.doesNotMatch(appSource, /body\s*\{\s*background:\s*transparent/)
-  assert.match(songListSource, /background-image:[\s\S]*var\(--te-local-bg-image\)/)
+  // The local background choice lands on the one window-wide body surface
+  // (te-local-surface), never on the page boxes: a second cover-scaled copy on
+  // a page would meet the sidebar edge as a visible seam.
+  assert.match(
+    baseSource,
+    /body\.te-local-surface[\s\S]*?background-image:\s*var\(--te-local-bg-image\) !important/
+  )
+  assert.match(appSource, /classList\.toggle\('te-local-surface', !visible\)/)
+  assert.doesNotMatch(songListSource, /var\(--te-local-bg-image\)/)
+  assert.doesNotMatch(localDashboardSource, /var\(--te-local-bg-image\)/)
 })
 
 test('the global font setting reaches the theme runtime instead of dying in the store', () => {
@@ -175,6 +189,7 @@ function readSettingsPageSources(): string {
     'settings-page/ThemeControlsSettings.vue',
     'settings-page/BackgroundEditorSettings.vue',
     'settings-page/PlayerBarSettings.vue',
+    'settings-page/PlayerBarLayoutSettings.vue',
     'settings-page/LiquidGlassSettings.vue',
     'settings-page/CardAppearanceSettings.vue'
   ]
@@ -656,6 +671,31 @@ test('playbar shape persists across settings layers and flips without an IPC rou
   )
 })
 
+/**
+ * `settings` is a deep `ref`, so anything nested read off `settings.value` comes
+ * back as a reactive Proxy, and the standard patch idiom
+ * `{ ...settings.value.playerBar, mode }` hands the nested `layout` over by
+ * reference — still a Proxy. `window.api` is a contextBridge surface
+ * (`sandbox: true` + `contextIsolation: true`), so arguments are structurally
+ * cloned at the boundary itself and a Proxy fails with "An object could not be
+ * cloned" before any preload code runs — the JSON round trip inside
+ * `settingsApi.update` sits on the far side and cannot help. Patches carrying
+ * only primitives were safe by accident; `playerBar.layout` was the first
+ * nested one, and saving any playbar setting threw. Detaching at the store's
+ * single exit means the next nested setting cannot reintroduce it.
+ */
+test('settings patches are detached from Vue reactivity before crossing the IPC bridge', () => {
+  const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
+
+  assert.match(
+    storeSource,
+    /function toWirePatch\(patch: Partial<AppSettings>\): Partial<AppSettings>/
+  )
+  assert.match(storeSource, /window\.api\.settings\.update\(toWirePatch\(patch\)\)/)
+  // Every path out of the store must go through it — a raw patch must not remain.
+  assert.doesNotMatch(storeSource, /window\.api\.settings\.update\(patch\)/)
+})
+
 test('playbar settings UI exposes shape and visibility as independent dimensions', () => {
   const source = readSettingsPageSources()
 
@@ -671,14 +711,18 @@ test('playbar settings UI exposes shape and visibility as independent dimensions
   assert.match(source, /setPlayerBarVisibility\(option\.value\)/)
   assert.match(source, /setPlayerBarPlayingPageVisibility\(/)
   // The page override must round-trip through the shared normalizer, so a stale
-  // stored value cannot reach the settings patch.
+  // stored value cannot reach the settings patch. The same goes for the shape.
   assert.match(source, /normalizePlayerBarPageVisibility\(value\)/)
+  assert.match(source, /normalizePlayerBarPageMode\(value\)/)
 
-  // Auto-hide only means something on a mini bar, so that one step is marked
-  // unavailable per scope instead of being silently ineffective.
-  assert.match(source, /const globalResolvesMini = computed/)
-  assert.match(source, /const playingPageResolvesMini = computed/)
-  assert.match(source, /bar\.playingPageMode === 'inherit' \? bar\.mode === 'mini'/)
+  // Auto-hide needs a shape with its own progress readout (mini's rail, compact's
+  // top edge), so that one step is marked unavailable per scope instead of being
+  // silently ineffective — and the precondition comes from the shared policy.
+  assert.match(source, /playerBarShapeCanAutoHide\(settings\.value\.playerBar\.mode\)/)
+  assert.match(
+    source,
+    /playerBarShapeCanAutoHide\(\s*bar\.playingPageMode === 'inherit' \? bar\.mode : bar\.playingPageMode\s*\)/
+  )
   assert.match(source, /function visibilityOptionDisabled/)
   assert.match(source, /function pageVisibilityOptionDisabled/)
   assert.match(source, /:disabled="visibilityOptionDisabled\(option\.value\)"/)
@@ -699,6 +743,43 @@ test('playbar settings UI exposes shape and visibility as independent dimensions
   // The removed legacy toggle must not linger anywhere in the settings sources.
   assert.doesNotMatch(source, /togglePlayerBarAutoHide/)
   assert.doesNotMatch(source, /autoHideOnPlayingPage/)
+})
+
+test('playbar control placement is editable per shape and written through the normalizer', () => {
+  const source = readSettingsPageSources()
+
+  // Which shape's arrangement is being edited is a local choice in the editor —
+  // it must never write `mode`, or opening the panel would switch the live shape.
+  assert.match(
+    source,
+    /const editingShape = ref<PlayerBarMode>\(settings\.value\.playerBar\.mode\)/
+  )
+  assert.match(source, /@click="editingShape = option\.value"/)
+  // Three regions, from the shared region list rather than hand-written names.
+  assert.match(source, /v-for="region in playerBarRegionOptions"/)
+  assert.match(source, /playerBarControlOptions/)
+  // Reorder, remove and place, all keyboard-reachable buttons plus one select.
+  assert.match(source, /moveControl\(region\.value, index, -1\)/)
+  assert.match(source, /moveControl\(region\.value, index, 1\)/)
+  assert.match(source, /removeControl\(region\.value, index\)/)
+  assert.match(
+    source,
+    /placeControl\(region\.value, \(\$event\.target as HTMLSelectElement\)\.value\)/
+  )
+  // Placing a control lifts it out of every other region, so the same button can
+  // never end up in two places and the dedupe order never has to be relied on.
+  assert.match(
+    source,
+    /next\[name\.value\] = next\[name\.value\]\.filter\(\(item\) => item !== id\)/
+  )
+  // Every write goes through the shared normalizer and the deep clone, so a
+  // layout missing its play control is repaired before it reaches the bar, and
+  // the region arrays are never shared with the previous settings object.
+  assert.match(source, /layout: normalizePlayerBarLayout\(layout\)/)
+  assert.match(source, /clonePlayerBarLayout\(settings\.value\.playerBar\.layout\)/)
+  // Reset is per shape, and disabled once this shape already matches the default.
+  assert.match(source, /DEFAULT_PLAYER_BAR_LAYOUT\[editingShape\.value\]/)
+  assert.match(source, /:disabled="shapeIsDefault"/)
 })
 
 test('the download directory setting stays authorized from the picker to the download manager', () => {

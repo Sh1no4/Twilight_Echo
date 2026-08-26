@@ -4,8 +4,16 @@ import test from 'node:test'
 
 import { compileStyle } from '@vue/compiler-sfc'
 
+import { DEFAULT_PLAYER_BAR_LAYOUT } from '../../../../shared/playerBarLayout.ts'
+
 const playerBar = readFileSync(new URL('../PlayerBar.vue', import.meta.url), 'utf8')
 const playerBarCss = readFileSync(new URL('./PlayerBar.css', import.meta.url), 'utf8')
+/**
+ * Same source with comments removed. An assertion that a rule does *not* set
+ * some property has to read this one: a rule that explains in prose why it
+ * leaves the property alone would otherwise satisfy a raw match on it.
+ */
+const playerBarCssDeclarations = playerBarCss.replace(/\/\*[\s\S]*?\*\//g, '')
 const app = readFileSync(new URL('../../App.vue', import.meta.url), 'utf8')
 
 type Specificity = [ids: number, classes: number, types: number]
@@ -130,48 +138,94 @@ test('App.vue resolves the shape through the shared policy rather than inline lo
 })
 
 test('the mini shape drops cover and the standard inline progress row', () => {
-  for (const marker of [
-    /v-if="!isMini"[\s\S]{0,120}class="player-cover-slot player-artwork-slot"/,
-    /v-if="!isMini"[\s\S]{0,200}class="progress-area"/,
-    /v-if="streamNowPlaying && isLiveStream && !isMini"[\s\S]{0,80}class="player-stream-now-playing"/
-  ]) {
-    assert.match(playerBar, marker)
+  // Which controls a shape shows is the layout's business now, and mini's
+  // default arrangement places neither the cover nor the track metadata.
+  const miniDefaults = [
+    ...DEFAULT_PLAYER_BAR_LAYOUT.mini.left,
+    ...DEFAULT_PLAYER_BAR_LAYOUT.mini.center,
+    ...DEFAULT_PLAYER_BAR_LAYOUT.mini.right
+  ]
+  for (const id of ['cover', 'trackInfo'] as const) {
+    assert.equal(miniDefaults.includes(id), false, `mini must not default to ${id}`)
   }
+  // Each control renders from its own branch, so an id the layout leaves out
+  // produces no DOM at all rather than being hidden with CSS.
+  assert.match(
+    playerBar,
+    /v-if="control === 'cover'"[\s\S]{0,200}class="player-cover-slot player-artwork-slot"/
+  )
+  assert.match(playerBar, /v-else-if="control === 'trackInfo'" class="player-track-info"/)
+  // The inline progress row belongs to the standard shape alone: mini has its
+  // long middle rail and compact its top-edge line.
+  assert.match(
+    playerBar,
+    /v-if="region\.name === 'center' && isStandard"[\s\S]{0,200}class="progress-area"/
+  )
   // Standard time labels live inside .progress-area, so gating that block removes them too.
   const progressBlock = playerBar.slice(playerBar.indexOf('class="progress-area"'))
   assert.match(progressBlock.slice(0, 600), /class="time-label"/)
-  // Metadata is omitted from the mini DOM rather than merely hidden with CSS.
-  assert.match(playerBar, /<div v-if="!isMini" :key="playerLeftKey" class="player-left">/)
+  // A third metadata line has no room on a 40px strip, whoever places trackInfo.
+  assert.match(
+    playerBar,
+    /v-if="streamNowPlaying && isLiveStream && !isMini"[\s\S]{0,80}class="player-stream-now-playing"/
+  )
 })
 
 test('the mini shape keeps compact play/pause, utility controls and an exit', () => {
-  assert.match(playerBar, /<div v-if="!isMini" class="player-center">/)
-  assert.match(playerBar, /v-if="isMini"[\s\S]{0,100}class="mini-play-button"/)
+  assert.deepEqual(DEFAULT_PLAYER_BAR_LAYOUT.mini.left, ['playPause'])
+  assert.deepEqual(DEFAULT_PLAYER_BAR_LAYOUT.mini.right, [
+    'playMode',
+    'volume',
+    'queue',
+    'hifi',
+    'exitPlayingPage'
+  ])
+  assert.match(
+    playerBar,
+    /v-else-if="control === 'playPause'"[\s\S]{0,200}class="mini-play-button"/
+  )
   assert.match(playerBar, /@click="togglePlay"/)
   assert.match(
     playerBar,
-    /class="player-right"[\s\S]{0,1400}class="ctrl-btn mode-btn-right player-misc-icon"/
+    /v-else-if="control === 'playMode'"[\s\S]{0,120}class="ctrl-btn mode-btn-right player-misc-icon"/
   )
-  assert.match(playerBar, /class="icon-btn track-menu-button"/)
-  assert.match(playerBar, /class="volume-anchor player-misc-icon"/)
-  assert.match(playerBar, /class="icon-btn player-misc-icon hifi-toggle-button"/)
   assert.match(
     playerBar,
-    /v-if="isMini && glass"[\s\S]{0,120}class="icon-btn playing-page-exit-button"/
+    /v-else-if="control === 'queue'"[\s\S]{0,120}class="icon-btn track-menu-button"/
+  )
+  assert.match(
+    playerBar,
+    /v-else-if="control === 'volume'"[\s\S]{0,120}class="volume-anchor player-misc-icon"/
+  )
+  assert.match(
+    playerBar,
+    /v-else-if="control === 'hifi'"[\s\S]{0,120}class="icon-btn player-misc-icon hifi-toggle-button"/
+  )
+  // The exit only means anything while the now-playing page is open, so it stays
+  // a runtime gate rather than something the layout can grant.
+  assert.match(
+    playerBar,
+    /v-else-if="control === 'exitPlayingPage' && glass"[\s\S]{0,200}class="icon-btn playing-page-exit-button"/
   )
   assert.match(playerBar, /@click="emit\('exitPlayingPage'\)"/)
   assert.match(app, /@exit-playing-page="handleExitPlayingPage"/)
   assert.match(app, /function handleExitPlayingPage\(\): void \{[\s\S]{0,80}closePlayingPage\(\)/)
-  // These controls stay available in the standard bar, but are absent from mini.
-  assert.match(playerBar, /v-if="!isMini && favoriteButtonVisible"/)
-  assert.match(playerBar, /v-if="!isMini"[\s\S]{0,200}class="icon-btn mini-player-btn/)
-  assert.match(playerBar, /v-if="!isMini"[\s\S]{0,200}class="icon-btn desktop-lyrics-btn/)
+  // These stay in the standard bar's defaults and out of mini's.
+  assert.deepEqual(DEFAULT_PLAYER_BAR_LAYOUT.standard.right, [
+    'favorite',
+    'playMode',
+    'volume',
+    'queue',
+    'miniPlayer',
+    'desktopLyrics',
+    'hifi'
+  ])
   assert.doesNotMatch(playerBar, /mini-lyrics-btn/)
 })
 
 test('the mini progress rail is always present and disables seeking for live streams', () => {
-  assert.match(playerBar, /v-if="isMini"[\s\S]{0,80}class="mini-progress-rail"/)
-  assert.match(playerBar, /class="mini-progress-slider"[\s\S]{0,320}@input="onMiniRailInput"/)
+  assert.match(playerBar, /v-if="region\.name === 'center' && isMini" class="mini-progress-rail"/)
+  assert.match(playerBar, /class="mini-progress-slider"[\s\S]{0,320}@input="onFlatRailInput"/)
   // The rail speaks in 0..1, so its pixel width never has to match the timeline.
   assert.match(playerBar, /min="0"[\s\S]{0,60}max="1"/)
   assert.match(
@@ -203,6 +257,17 @@ test('mini geometry out-specifies the preset theme layouts without !important', 
   assert.match(rule, /border-radius:\s*16px/)
   // Play/pause stays left, the rail stretches in the middle, tools stay right.
   assert.match(rule, /grid-template-columns:\s*auto minmax\(0, 1fr\) auto/)
+  // The strip must not clip: `.volume-drawer` is `bottom: 100%` *inside* the bar,
+  // so a clipping strip cut the whole drawer away and the volume slider could
+  // never be reached from the mini bar. Nothing here needs the clip — the
+  // progress track clips its own fill, and no child reaches the rounded corners.
+  // Read from the comment-stripped source: the rule explains in prose why it does
+  // not clip, and that prose would satisfy a raw match on the declaration.
+  const declarationsOnly = playerBarCssDeclarations.match(
+    /\.player-bar-shell\[data-te-playbar-mode='mini'\]\s*\.player-bar\.player-bar-mini\.player-bar-mini\.player-bar-mini\s*\{[^}]*\}/
+  )
+  assert.ok(declarationsOnly)
+  assert.doesNotMatch(declarationsOnly[0], /overflow:\s*hidden/)
 })
 
 test('mini keeps a visible outline only where the system palette takes over', () => {
@@ -217,16 +282,17 @@ test('the mini shape opts out of the liquid glass material at the source', () =>
   // `.player-bar-liquid` claims background, border-color and the rim box-shadow
   // with `!important`, so a mini bar that kept the class could not win its own
   // surface back: it rendered as a transparent pane ringed by the rim highlight.
+  // Compact is a flat strip for the same reason, so only standard wears it.
   assert.match(
     playerBar,
-    /liquidGlassActive = computed\(\s*\(\)\s*=>\s*!isMini\.value\s*&&[\s\S]{0,160}liquidGlass\.playbarEnabled/
+    /liquidGlassActive = computed\(\s*\(\)\s*=>\s*isStandard\.value\s*&&[\s\S]{0,160}liquidGlass\.playbarEnabled/
   )
-  // Which also means mini mounts no refracting layer and runs no pointer writes.
+  // Which also means neither strip mounts a refracting layer or runs pointer writes.
   assert.match(playerBar, /v-if="liquidGlassActive" class="player-bar-warp"/)
   assert.match(playerBar, /shouldTrack =\s*\n?\s*liquidGlassActive\.value/)
 })
 
-test('no preset theme layout can out-specify a mini rule on a property mini sets', () => {
+test('no preset theme layout can out-specify a shape rule on a property that shape sets', () => {
   const layoutDir = new URL('../../assets/theme-layouts/', import.meta.url)
   const themeRules = readdirSync(layoutDir)
     .filter((name) => name.endsWith('.css') && name !== 'index.css')
@@ -235,27 +301,39 @@ test('no preset theme layout can out-specify a mini rule on a property mini sets
     )
   assert.ok(themeRules.length > 100, 'theme layout parsing produced suspiciously few rules')
 
-  const miniRules = parseRules(playerBarCss).filter(
-    (rule) => /player-bar-mini|mini-progress/.test(rule.selector) && !rule.selector.includes('::')
+  const shapeMarkers =
+    /player-bar-mini|mini-progress|player-bar-compact|compact-progress|player-time-readout/
+  const shapeRules = parseRules(playerBarCss).filter(
+    (rule) => shapeMarkers.test(rule.selector) && !rule.selector.includes('::')
   )
-  assert.ok(miniRules.length > 10, 'mini rule parsing produced suspiciously few rules')
+  assert.ok(shapeRules.length > 10, 'shape rule parsing produced suspiciously few rules')
+  // Both shapes have to be in the sample, or one of them slips past this guard.
+  for (const marker of ['player-bar-mini', 'player-bar-compact']) {
+    assert.ok(
+      shapeRules.some((rule) => rule.selector.includes(marker)),
+      `no ${marker} rules were collected`
+    )
+  }
 
+  // The shape's own marker class is what makes its rule win, so a theme rule
+  // ending on it is not a competitor — every other shared subject class is.
+  const ownMarkers = new Set(['player-bar-mini', 'player-bar-compact'])
   const collisions: string[] = []
-  for (const mini of miniRules) {
-    const miniSubject = subjectClasses(mini.selector)
-    if (miniSubject.size === 0) continue
+  for (const shape of shapeRules) {
+    const shapeSubject = subjectClasses(shape.selector)
+    if (shapeSubject.size === 0) continue
     for (const theme of themeRules) {
       if (theme.selector.includes('::')) continue
-      // Same subject element: the theme rule ends on a class mini also ends on.
-      const shared = [...miniSubject].filter(
-        (name) => subjectClasses(theme.selector).has(name) && name !== 'player-bar-mini'
+      // Same subject element: the theme rule ends on a class the shape also ends on.
+      const shared = [...shapeSubject].filter(
+        (name) => subjectClasses(theme.selector).has(name) && !ownMarkers.has(name)
       )
       if (shared.length === 0) continue
-      const contested = mini.properties.filter((property) => theme.properties.includes(property))
+      const contested = shape.properties.filter((property) => theme.properties.includes(property))
       if (contested.length === 0) continue
-      if (compareSpecificity(theme.specificity, mini.specificity) < 0) continue
+      if (compareSpecificity(theme.specificity, shape.specificity) < 0) continue
       collisions.push(
-        `${contested.join(', ')}: mini (${mini.specificity}) "${mini.selector}" vs ` +
+        `${contested.join(', ')}: shape (${shape.specificity}) "${shape.selector}" vs ` +
           `${theme.name} (${theme.specificity}) "${theme.selector}"`
       )
     }
@@ -263,7 +341,7 @@ test('no preset theme layout can out-specify a mini rule on a property mini sets
   assert.deepEqual(
     collisions,
     [],
-    `preset layouts tie or beat mini on properties mini sets:\n${collisions.join('\n')}`
+    `preset layouts tie or beat a shape rule on properties it sets:\n${collisions.join('\n')}`
   )
 })
 
@@ -275,6 +353,12 @@ test('the hidden state translates the bar away and stops swallowing pointer inpu
   assert.match(hidden[0], /transform:\s*translateY\(/)
   assert.match(hidden[0], /pointer-events:\s*none/)
   assert.match(hidden[0], /opacity:\s*0/)
+  // Shape-agnostic: auto-hide resolves for every shape with its own progress
+  // readout, and naming one shape here left the compact strip with the flag set
+  // and nothing moving. The repeated class still beats the preset layouts.
+  assert.doesNotMatch(hidden[0].split('{')[0], /player-bar-mini|player-bar-compact/)
+  assert.match(hidden[0], /\.player-bar\.player-bar\.player-bar/)
+  assert.doesNotMatch(hidden[0], /!important/)
 })
 
 test('fully hidden works on either shape and leaves the tab order', () => {
@@ -304,10 +388,15 @@ test('fully hidden works on either shape and leaves the tab order', () => {
 })
 
 test('the mini rail stays visible as a flat, long seeking target', () => {
-  // The rail is a real grid item so it can occupy the long middle of the pill.
-  assert.match(playerBarCss, /\.player-bar\.player-bar-mini\s*>\s*\.mini-progress-rail\s*\{/)
+  // The rail sits inside the centre region — every shape renders the three
+  // region wrappers — so the region class stands where a direct child of
+  // `.player-bar` used to, and still has to beat `.player-center`'s column flow.
+  assert.match(
+    playerBarCss,
+    /\.player-bar\.player-bar-mini\s+\.player-center\s*>\s*\.mini-progress-rail\s*\{/
+  )
   const rail = playerBarCss.match(
-    /\.player-bar\.player-bar-mini\s*>\s*\.mini-progress-rail\s*\{[^}]*\}/
+    /\.player-bar\.player-bar-mini\s+\.player-center\s*>\s*\.mini-progress-rail\s*\{[^}]*\}/
   )
   assert.ok(rail)
   assert.match(rail[0], /display:\s*flex/)
@@ -318,29 +407,67 @@ test('the mini rail stays visible as a flat, long seeking target', () => {
   assert.match(playerBarCss, /\.mini-progress-track\s*\{[^}]*height:\s*2px/)
   assert.match(playerBarCss, /\.mini-progress-fill\s*\{[^}]*background:\s*var\(--accent-color/)
   assert.match(playerBarCss, />\s*\.mini-play-button\s*\{[^}]*width:\s*26px/)
+  // And the region has to be a row with full height, or the rail cannot stretch.
+  const center = playerBarCss.match(
+    /\.player-bar-shell\[data-te-playbar-mode='mini'\]\s*\.player-bar-mini\.player-bar-mini\.player-bar-mini\s*\.player-center\s*\{[^}]*\}/
+  )
+  assert.ok(center, 'mini must turn the centre region into a full-height row')
+  assert.match(center[0], /flex-direction:\s*row/)
+  assert.match(center[0], /height:\s*100%/)
 })
 
-test('the dark main-window mini strip carries a fill it can be seen by', () => {
+test('the flat strips share one surface language, declared in exactly one place', () => {
+  // Mini and compact are both flat strips and deliberately look the same. The
+  // shared block is what keeps them from drifting, and what keeps the colours no
+  // theme token covers from being duplicated per shape.
+  assert.match(
+    playerBarCss,
+    /\.player-bar\.player-bar-mini,\s*\.player-bar\.player-bar-compact\s*\{/
+  )
+  assert.match(
+    playerBarCss,
+    /--te-flat-bar-dark-lift:\s*color-mix\(in srgb, var\(--te-card-bg\) 95%, #fff 5%\)/
+  )
+  assert.match(playerBarCss, /--te-flat-bar-glass-bg:\s*#141722/)
+  assert.match(playerBarCss, /--te-flat-bar-control:\s*rgba\(255, 255, 255, 0\.78\)/)
+})
+
+test('the dark main-window flat strips carry a fill they can be seen by', () => {
   // Without the hairline, a card colour that sits a step from the page
-  // background (#181818 on #17181a) would leave the strip with no visible edge.
-  assert.match(
-    playerBarCss,
-    /html\[data-theme='dark'\][\s\S]{0,240}\.player-bar-mini\.player-bar-mini\.player-bar-mini:not\(\.player-bar-glass\)\s*\{[^}]*background:\s*color-mix\([^)]*var\(--te-card-bg/
-  )
+  // background (#181818 on #17181a) would leave the strip with no visible edge,
+  // so the lifted fill is the whole separation — for both flat shapes.
+  for (const shape of ['mini', 'compact']) {
+    const rule = playerBarCss.match(
+      new RegExp(
+        `html\\[data-theme='dark'\\][^{]*\\.player-bar-${shape}\\.player-bar-${shape}\\.player-bar-${shape}:not\\(\\.player-bar-glass\\)\\s*\\{[^}]*\\}`
+      )
+    )
+    assert.ok(rule, `${shape} needs a dark-theme fill`)
+    assert.match(rule[0], /background:\s*var\(--te-flat-bar-dark-lift\)/)
+  }
 })
 
-test('the playing-page mini bar stays dark even under the light app theme', () => {
-  const darkGlassRule = playerBarCss.match(
-    /\.player-bar-shell\[data-te-playbar-mode='mini'\][\s\S]{0,120}\.player-bar\.player-bar-glass\.player-bar-mini\.player-bar-mini\.player-bar-mini\s*\{[^}]*\}/
-  )
-  assert.ok(darkGlassRule, 'playing-page mini override must exist')
-  assert.match(darkGlassRule[0], /background:\s*#141722/)
-  assert.match(darkGlassRule[0], /background-image:\s*none/)
-  // The fill is the whole separation from the page — no border of any kind.
-  assert.doesNotMatch(darkGlassRule[0], /border/)
+test('the playing-page flat strips stay dark even under the light app theme', () => {
+  // PlayingMusic supplies `glass=true` even when the app theme is light, so each
+  // strip needs the playing-page dark surface; otherwise the flat rule's card
+  // token wins and turns the bar white. No border on either: the fill is what
+  // separates the strip from the page.
+  for (const shape of ['mini', 'compact']) {
+    const rule = playerBarCss.match(
+      new RegExp(
+        `\\.player-bar-shell\\[data-te-playbar-mode='${shape}'\\][^{]*\\.player-bar\\.player-bar-glass\\.player-bar-${shape}\\.player-bar-${shape}\\.player-bar-${shape}\\s*\\{[^}]*\\}`
+      )
+    )
+    assert.ok(rule, `playing-page ${shape} override must exist`)
+    assert.match(rule[0], /background:\s*var\(--te-flat-bar-glass-bg\)/)
+    assert.match(rule[0], /background-image:\s*none/)
+    assert.doesNotMatch(rule[0], /border/)
+  }
+  // Controls on the dark strip read the shared control colour rather than their
+  // own copy of it.
   assert.match(
     playerBarCss,
-    /\.player-bar\.player-bar-glass\.player-bar-mini\.player-bar-mini\.player-bar-mini\s*\.player-right \.icon-btn[\s\S]{0,180}color:\s*rgba\(255, 255, 255, 0\.78\)/
+    /\.player-bar\.player-bar-glass\.player-bar-mini\.player-bar-mini\.player-bar-mini\s*\.player-right \.icon-btn[^{]*\{[^}]*color:\s*var\(--te-flat-bar-control\)/
   )
 })
 

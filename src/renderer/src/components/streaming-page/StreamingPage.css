@@ -11,6 +11,16 @@
   background-repeat: no-repeat;
 }
 
+/* Clearing the open sidebar animates `padding-left` and never `transform`. The
+   box is `flex-basis: 100%` under a global `border-box`, so its right edge is the
+   window's; a translate carries that edge along with the left one, which started
+   the already-narrowed box a full sidebar-width inside the frame and swept it
+   back out — the page appeared to flinch on its right side.
+
+   Padding rather than `width` for the same reason, one layer in: this box is the
+   scroller, so its scrollbar rides the right edge of the border box. Narrowing it
+   drags the scrollbar inward; padding leaves the scrollbar where it is and insets
+   only the content. The identity transform stays as a compositing hint. */
 .streaming-content {
   flex: 0 0 100%;
   display: flex;
@@ -18,11 +28,11 @@
   overflow-x: hidden;
   overflow-y: auto;
   width: 100%;
+  padding-left: 0;
   transform: translate3d(0, 0, 0);
-  will-change: transform;
   scrollbar-width: thin;
   scrollbar-color: var(--te-scrollbar-thumb) transparent;
-  transition: transform 0.32s var(--te-ease-soft);
+  transition: padding-left 0.32s var(--te-ease-soft);
 }
 
 .streaming-content-header {
@@ -604,7 +614,9 @@
   background-color: rgba(255, 255, 255, 0.42);
   border: 1px solid rgba(255, 255, 255, 0.5);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
   user-select: none;
 }
 
@@ -643,7 +655,9 @@
   background: var(--te-card-bg);
   border: 1px solid var(--te-card-border, #eef1f6);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
   user-select: none;
   white-space: nowrap;
 }
@@ -725,7 +739,9 @@
   background: var(--te-card-bg);
   border: 1px solid var(--te-card-border, #eef1f6);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition:
+    background-color 0.2s var(--te-ease-soft),
+    color 0.2s var(--te-ease-soft);
   user-select: none;
   white-space: nowrap;
 }

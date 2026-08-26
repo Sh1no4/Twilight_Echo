@@ -245,6 +245,20 @@ function buildReport() {
   }
 }
 
+function buildDetailedReport() {
+  const mainEntries = readAll(walk(path.join(ROOT, 'src', 'main')))
+  const preloadEntries = readAll(walk(path.join(ROOT, 'src', 'preload')))
+  const rendererEntries = readAll(walk(path.join(ROOT, 'src', 'renderer')))
+
+  return {
+    main: collectMain(mainEntries),
+    preloadInvokes: collectPreloadInvoke(preloadEntries),
+    preloadSends: collectPreloadSend(preloadEntries),
+    preloadEvents: collectPreloadEvents(preloadEntries),
+    rendererApiUses: collectRendererApiUses(rendererEntries)
+  }
+}
+
 function printTables(report) {
   const line = (cells) => cells.join(' | ')
   const s = report.summary
@@ -303,4 +317,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { buildReport }
+module.exports = { buildReport, buildDetailedReport }

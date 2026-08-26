@@ -2,6 +2,7 @@
 import QRCode from 'qrcode'
 import { createVisibilityPollingController } from '../utils/visibilityPolling.ts'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useBackHandler } from '../app/useBackStack'
 import AnimatedInput from './AnimatedInput.vue'
 import { useNcmStore } from '../stores/useNcmStore'
 import { useProviderStore, type ProviderInfo } from '../stores/useProviderStore'
@@ -13,7 +14,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  back: []
   loginSuccess: []
   configure: []
 }>()
@@ -626,14 +626,13 @@ function backToAccounts(): void {
   clearAccountLoginFeedback()
 }
 
-function handleBack(): void {
-  if (activeProviderId.value) {
-    backToAccounts()
-    return
-  }
-  stopPolling()
-  emit('back')
-}
+// 账号详情/扫码登录是登录页内部的一层：标题栏返回键先退到平台列表，再退出
+// 登录页本身（页面层由 App.vue 按 showLoginPage 注册）。
+useBackHandler(
+  computed(() => activeProviderId.value !== null),
+  backToAccounts,
+  '返回平台列表'
+)
 
 async function enterAfterLoggedIn(): Promise<void> {
   if (activeProviderId.value) {
@@ -677,23 +676,6 @@ onUnmounted(() => {
       <div class="sky-blob sky-blob-b"></div>
       <div class="sky-halo"></div>
     </div>
-
-    <button class="lp-close" data-te-back-button="pill" title="返回" @click="handleBack">
-      <svg
-        width="17"
-        height="17"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <path d="M19 12H5" />
-        <path d="M12 19l-7-7 7-7" />
-      </svg>
-      <span>返回</span>
-    </button>
 
     <div class="lp-shell">
       <main class="lp-stage">
@@ -1264,37 +1246,6 @@ onUnmounted(() => {
   to {
     transform: translate(-28px, 22px) scale(1.08);
   }
-}
-
-/* ─── 返回按钮 ─────────────────────────────── */
-
-.lp-close {
-  position: absolute;
-  top: 44px;
-  left: 24px;
-  z-index: 3;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 36px;
-  padding: 0 16px 0 12px;
-  border: 1px solid var(--lp-line);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--lp-surface) 78%, transparent);
-  backdrop-filter: blur(10px);
-  color: var(--lp-muted);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    color var(--te-motion-hover),
-    transform var(--te-motion-return) var(--te-ease-out-quint),
-    box-shadow var(--te-motion-return) var(--te-ease-out-quint);
-}
-
-.lp-close:hover {
-  transition-duration: var(--te-motion-settle);
-  transform: translateX(-2px);
 }
 
 /* ─── 主壳体 ──────────────────────────────── */
@@ -2332,10 +2283,6 @@ onUnmounted(() => {
 @media (max-height: 600px) {
   .lp-shell {
     max-height: calc(100vh - 72px);
-  }
-
-  .lp-close {
-    top: 40px;
   }
 }
 

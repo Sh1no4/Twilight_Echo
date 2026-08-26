@@ -4,6 +4,7 @@ import type {
   NcmCloudTransferProgress
 } from '../../../shared/ncmCloud.ts'
 import type { Track } from '../types/music'
+import { useMediaProviders } from '../providers'
 
 export interface NcmProfile {
   userId: number
@@ -368,9 +369,13 @@ function markProviderUnavailable(error: unknown): void {
   resetLibraryState()
 }
 
-async function callNcmProvider<T>(method: string, args: unknown[] = []): Promise<T> {
+async function callNcmProvider<T>(
+  method: string,
+  args: unknown[] = [],
+  options?: { signal?: AbortSignal }
+): Promise<T> {
   try {
-    const value = (await window.api.providers.call(NCM_PROVIDER_ID, method as never, args)) as T
+    const value = await useMediaProviders().call<T>(NCM_PROVIDER_ID, method, args, options)
     markProviderAvailable()
     return value
   } catch (error) {
@@ -667,24 +672,27 @@ export function useNcmStore(): NcmStore {
   async function searchSongs(
     keywords: string,
     limit = 30,
-    offset = 0
+    offset = 0,
+    options?: { signal?: AbortSignal }
   ): Promise<{ tracks: Track[]; total: number }> {
-    const result = await callNcmProvider<{ items: Track[]; total: number }>('searchSongs', [
-      keywords,
-      limit,
-      offset
-    ])
+    const result = await callNcmProvider<{ items: Track[]; total: number }>(
+      'searchSongs',
+      [keywords, limit, offset],
+      options
+    )
     return { tracks: result.items, total: result.total }
   }
 
   async function searchPlaylists(
     keywords: string,
     limit = 30,
-    offset = 0
+    offset = 0,
+    options?: { signal?: AbortSignal }
   ): Promise<{ playlists: NcmPlaylistSummary[]; total: number }> {
     const result = await callNcmProvider<{ items: NcmPlaylistSummary[]; total: number }>(
       'searchPlaylists',
-      [keywords, limit, offset]
+      [keywords, limit, offset],
+      options
     )
     return { playlists: result.items, total: result.total }
   }
@@ -692,11 +700,13 @@ export function useNcmStore(): NcmStore {
   async function searchArtists(
     keywords: string,
     limit = 30,
-    offset = 0
+    offset = 0,
+    options?: { signal?: AbortSignal }
   ): Promise<{ artists: NcmArtistSummary[]; total: number }> {
     const result = await callNcmProvider<{ items: NcmArtistSummary[]; total: number }>(
       'searchArtists',
-      [keywords, limit, offset]
+      [keywords, limit, offset],
+      options
     )
     return { artists: result.items, total: result.total }
   }

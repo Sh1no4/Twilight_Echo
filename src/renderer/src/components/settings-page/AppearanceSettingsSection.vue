@@ -4,6 +4,7 @@ import ThemeControlsSettings from './ThemeControlsSettings.vue'
 import BackgroundEditorSettings from './BackgroundEditorSettings.vue'
 import LyricsStyleSettings from './LyricsStyleSettings.vue'
 import PlayerBarSettings from './PlayerBarSettings.vue'
+import PlayerBarLayoutSettings from './PlayerBarLayoutSettings.vue'
 import LiquidGlassSettings from './LiquidGlassSettings.vue'
 import CardAppearanceSettings from './CardAppearanceSettings.vue'
 import { useSettingsStore } from '../../stores/useSettingsStore'
@@ -93,6 +94,8 @@ function toggleSetting(key: BooleanSettingKey): void {
       <MiniPlayerSettingsSection />
       <hr />
       <PlayerBarSettings />
+      <hr />
+      <PlayerBarLayoutSettings />
       <hr />
       <LiquidGlassSettings />
       <hr />

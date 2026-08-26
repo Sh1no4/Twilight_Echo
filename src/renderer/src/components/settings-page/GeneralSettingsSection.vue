@@ -12,8 +12,29 @@ import type {
   TrackActivationMode
 } from '../../types/settings'
 import type { BooleanSettingKey, PluginSettingsForm } from './types'
+import { APP_LOCALES, normalizeLanguagePreference } from '../../../../shared/i18n/locale.ts'
+import { useLocale } from '../../app/useLocale.ts'
 
-const { settings } = useSettingsStore()
+const { settings, updateSettings: persistSettings } = useSettingsStore()
+const { t } = useLocale()
+
+/**
+ * Switching language takes effect immediately: the locale is a computed off this
+ * setting, so every surface re-renders without a restart.
+ */
+function setLanguage(event: Event): void {
+  const value = normalizeLanguagePreference((event.target as HTMLSelectElement).value)
+  void persistSettings({ language: value })
+}
+
+function toggleMiniPlayerShowInTaskbar(): void {
+  void persistSettings({
+    miniPlayer: {
+      ...settings.value.miniPlayer,
+      showInTaskbar: !settings.value.miniPlayer.showInTaskbar
+    }
+  })
+}
 
 defineProps<{
   libraryWatcherStatus: LibraryWatcherStatusSnapshot | null
@@ -325,6 +346,23 @@ const emit = defineEmits<{
             @click="toggleSetting('smtcEnabled')"
           ></span>
         </div>
+        <hr />
+        <div class="setting-item">
+          <div class="setting-copy">
+            <strong>任务栏缩略图按钮</strong>
+            <span>在 Windows 任务栏窗口预览中直接控制上一首、播放与下一首。</span>
+          </div>
+          <span
+            class="toggle-switch"
+            :class="{
+              active: settings.taskbarThumbarButtonsEnabled,
+              inactive: !settings.taskbarThumbarButtonsEnabled
+            }"
+            role="switch"
+            :aria-checked="settings.taskbarThumbarButtonsEnabled"
+            @click="toggleSetting('taskbarThumbarButtonsEnabled')"
+          ></span>
+        </div>
       </div>
     </div>
 
@@ -397,17 +435,48 @@ const emit = defineEmits<{
         <hr />
         <div class="setting-item">
           <div class="setting-copy">
+            <strong>{{ t('settings.language.title') }}</strong>
+            <span>{{ t('settings.language.description') }}</span>
+          </div>
+          <select class="preview-select" :value="settings.language" @change="setLanguage">
+            <option value="system">{{ t('settings.language.system') }}</option>
+            <option v-for="option in APP_LOCALES" :key="option" :value="option">
+              {{ t(`settings.language.${option}`) }}
+            </option>
+          </select>
+        </div>
+        <hr />
+        <div class="setting-item">
+          <div class="setting-copy">
             <strong>关闭主窗口时</strong>
             <span>选择点击关闭按钮后的应用行为。</span>
           </div>
           <select
             class="preview-select"
-            :value="settings.closeToTray ? 'tray' : 'quit'"
+            :value="settings.closeWindowBehavior"
             @change="setCloseBehavior"
           >
             <option value="tray">最小化到系统托盘</option>
+            <option value="miniPlayer">切换为迷你播放器</option>
             <option value="quit">退出应用</option>
           </select>
+        </div>
+        <hr />
+        <div class="setting-item">
+          <div class="setting-copy">
+            <strong>迷你播放器显示在任务栏</strong>
+            <span>开启后可从任务栏独立唤回迷你播放器；关闭后仅剩下悬浮小窗。</span>
+          </div>
+          <span
+            class="toggle-switch"
+            :class="{
+              active: settings.miniPlayer.showInTaskbar,
+              inactive: !settings.miniPlayer.showInTaskbar
+            }"
+            role="switch"
+            :aria-checked="settings.miniPlayer.showInTaskbar"
+            @click="toggleMiniPlayerShowInTaskbar"
+          ></span>
         </div>
         <hr />
         <div class="setting-item">

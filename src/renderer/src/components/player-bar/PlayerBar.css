@@ -1,4 +1,19 @@
-﻿/* ===== Shell ===== */
+﻿/* ===== Shell =====
+
+   Clearing the open side menu animates `left` — this shell's own inset — and
+   never `transform`. Both insets are pinned, so the distance between them *is*
+   the bar's width: a translate carries the right edge along with the left,
+   which starts the already-narrowed bar a full menu-width inside the frame and
+   sweeps it back out. That read as the bar flinching on its right side. The
+   inset transition costs a layout pass per frame instead, and it is a small
+   subtree — `.is-geometry-animating` below drops the glass blur for the
+   duration so the per-frame cost stays in layout rather than re-compositing.
+
+   Never add `will-change: transform` here. With a transform-like value this
+   shell becomes a permanent containing block for its `position: fixed`
+   descendants — the full-height `.hifi-overlay` and the viewport-wide
+   `.player-panel-dismiss` — collapsing both into this bottom strip. That is
+   what once made the HiFi deck open as a sliver across the playbar. */
 .player-bar-shell {
   position: fixed;
   bottom: 14px;
@@ -6,7 +21,6 @@
   right: 18px;
   z-index: 1002;
   pointer-events: none;
-  will-change: left;
   transition: left 0.32s var(--te-ease-soft);
 }
 
@@ -567,15 +581,6 @@
   border-color: color-mix(in srgb, var(--te-primary-500) 16%, transparent);
 }
 
-:global(html[data-te-motion='full'] .playlist-item.active) {
-  animation: queue-item-confirm var(--te-motion-panel) var(--te-ease-spring) both;
-}
-
-@keyframes queue-item-confirm {
-  48% {
-    scale: 1.012;
-  }
-}
 .panel-glass .playlist-item.active {
   background: linear-gradient(
     90deg,
@@ -1034,6 +1039,41 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   text-overflow: ellipsis;
   min-width: 0;
 }
+
+/* When no cover is placed, the title becomes the way into the now-playing page.
+   It is still the same line of text, so this only strips what the UA adds to a
+   <button> that the <div> never had — box, centring, and the pointer. Same
+   approach as `.player-artist`, which has always been a button styled as text.
+   Both stay on `.player-title`, so every preset theme layout that restyles the
+   title keeps reaching it. */
+.player-title-button {
+  display: block;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  text-align: inherit;
+  cursor: pointer;
+  transition: color 0.16s ease;
+}
+
+.player-title-button:hover,
+.player-title-button:focus-visible {
+  color: var(--accent-color, var(--te-primary-500));
+}
+
+.player-title-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent-color, var(--te-primary-500)) 52%, transparent);
+  outline-offset: 2px;
+}
+
+.player-bar-glass .player-title-button:hover,
+.player-bar-glass .player-title-button:focus-visible {
+  color: #fff;
+}
+
 .live-badge {
   flex-shrink: 0;
   display: inline-flex;
@@ -1232,8 +1272,10 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 .ctrl-btn:hover {
   background: #f0f0f0;
 }
+/* Press scale comes from the global :active rule in base.css; a local
+   transform: scale() would multiply with it (scale and transform are separate
+   properties) and overshoot the 0.95–0.98 press range. */
 .ctrl-btn:active {
-  transform: scale(0.88);
   transition-duration: 0.1s;
 }
 .ctrl-btn img {
@@ -1260,26 +1302,6 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   box-shadow: none;
 }
 
-:global(html[data-te-motion='full'] .player-left) {
-  animation: player-track-arrive var(--te-motion-panel) var(--te-ease-spring) both;
-}
-
-@keyframes player-track-arrive {
-  from {
-    opacity: 0;
-    translate: -10px 0;
-  }
-}
-
-:global(html[data-te-motion='full'] .btn-play.is-playing) {
-  animation: player-play-confirm var(--te-motion-panel) var(--te-ease-spring) both;
-}
-
-@keyframes player-play-confirm {
-  46% {
-    scale: 1.1;
-  }
-}
 .btn-play i {
   font-size: 18px;
   line-height: 1;
@@ -1773,7 +1795,6 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 }
 
 .mode-btn-right:active {
-  transform: scale(0.88);
   transition-duration: 0.1s;
 }
 
@@ -1871,7 +1892,6 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
 }
 
 .icon-btn:active {
-  transform: scale(0.88);
   transition-duration: 0.1s;
 }
 
@@ -1942,7 +1962,12 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
     inset 1px 0 0 rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(32px) saturate(160%);
   -webkit-backdrop-filter: blur(32px) saturate(160%);
-  transition: width 0.32s var(--te-ease-soft);
+  /* opacity/transform are here for the return leg of the stand-down below; Vue's
+     own enter/leave classes declare their own transition and override this. */
+  transition:
+    width 0.32s var(--te-ease-soft),
+    opacity var(--te-motion-panel) ease,
+    transform var(--te-motion-panel) var(--te-ease-soft);
 }
 
 .hifi-overlay.glass {
@@ -1954,6 +1979,22 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   box-shadow:
     -24px 0 70px rgba(0, 0, 0, 0.45),
     inset 1px 0 0 rgba(255, 255, 255, 0.05);
+}
+
+/* The lyrics customizer is a left-edge drawer for tuning the lyrics that this
+   deck sits on top of, so the deck steps aside while it is open. It stays
+   mounted — the customizer is Teleported from inside it, so unmounting the deck
+   would take the drawer down too — and is merely made invisible, inert and
+   unreachable by keyboard (`visibility: hidden` also drops its focusables). */
+.hifi-overlay.is-lyrics-customizing {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(28px);
+  transition:
+    opacity var(--te-motion-hover) ease,
+    transform var(--te-motion-panel) var(--te-ease-enter),
+    visibility 0s linear var(--te-motion-panel);
 }
 
 .hifi-overlay-enter-active {
@@ -3599,31 +3640,31 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
        of a 1180px bar the "accent" was a 118px wash across the left third of the
        surface, which is haze rather than a lit edge. */
     linear-gradient(
-      var(--te-lg-angle, 135deg),
-      color-mix(
-          in srgb,
-          white calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 40%),
-          transparent
-        )
-        0,
-      transparent 22px,
-      transparent calc(100% - 22px),
-      color-mix(
-          in srgb,
-          var(--te-lg-shade) calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 16%),
-          transparent
-        )
-        100%
-    ),
+        var(--te-lg-angle, 135deg),
+        color-mix(
+            in srgb,
+            white calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 40%),
+            transparent
+          )
+          0,
+        transparent 22px,
+        transparent calc(100% - 22px),
+        color-mix(
+            in srgb,
+            var(--te-lg-shade) calc(var(--te-lg-specular, var(--te-lg-rim-strength)) * 16%),
+            transparent
+          )
+          100%
+      ),
     /* Vertical thickness cue: a hairline catch along the top lip and a slight
        settling at the bottom. Held to the outer fifth so the middle stays open. */
     linear-gradient(
-      180deg,
-      rgba(var(--te-lg-sheen-rgb), var(--te-lg-top-wash-alpha)) 0%,
-      transparent 20%,
-      transparent 80%,
-      rgba(var(--te-lg-shade-rgb), var(--te-lg-bottom-density-alpha)) 100%
-    ),
+        180deg,
+        rgba(var(--te-lg-sheen-rgb), var(--te-lg-top-wash-alpha)) 0%,
+        transparent 20%,
+        transparent 80%,
+        rgba(var(--te-lg-shade-rgb), var(--te-lg-bottom-density-alpha)) 100%
+      ),
     rgba(var(--te-lg-surface-rgb), var(--te-lg-surface-alpha, 0.12));
   /* The SVG chain belongs in the *backdrop* list, not in `filter`. `filter` only
      ever sees this element's own rendering — the gradient layers above — and
@@ -3665,10 +3706,7 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
    no image to read is working from the app's flat background colour alone.
    Overriding `background-color` keeps the gradient layers above intact. */
 html[data-te-liquid-glass-source='solid'] .player-bar-liquid .player-bar-warp {
-  background-color: rgba(
-    var(--te-lg-surface-rgb),
-    calc(var(--te-lg-surface-alpha, 0.12) + 0.02)
-  );
+  background-color: rgba(var(--te-lg-surface-rgb), calc(var(--te-lg-surface-alpha, 0.12) + 0.02));
 }
 
 /* Grid children are not positioned by default, so they would paint below a z-index 0
@@ -3765,6 +3803,27 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
   }
 }
 
+/* ===== Flat strip surface language =====
+
+   Mini and compact are both flat control strips, and they deliberately share one
+   surface: the same playing-page fill, the same control colours, the same hover.
+   Declaring the values once keeps the two shapes from drifting apart, and keeps
+   the handful of colours no theme token covers (the playing-page strip is dark
+   under every app theme, so it cannot follow the card tokens) in one place.
+
+   `--te-flat-bar-dark-lift` is a `color-mix` over a token, which resolves at use
+   time, so it still follows whatever `--te-card-bg` the active theme sets. */
+.player-bar.player-bar-mini,
+.player-bar.player-bar-compact {
+  --te-flat-bar-glass-bg: #141722;
+  --te-flat-bar-glass-text: rgba(255, 255, 255, 0.86);
+  --te-flat-bar-control: rgba(255, 255, 255, 0.78);
+  --te-flat-bar-control-hover-bg: rgba(255, 255, 255, 0.1);
+  --te-flat-bar-control-hover-text: rgba(255, 255, 255, 0.98);
+  --te-flat-bar-muted: rgba(255, 255, 255, 0.56);
+  --te-flat-bar-dark-lift: color-mix(in srgb, var(--te-card-bg) 95%, #fff 5%);
+}
+
 /* ===== Mini shape =====
 
    Geometry is keyed off the shell's data attribute so it can out-specify preset
@@ -3797,7 +3856,11 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  overflow: hidden;
+  /* Not `overflow: hidden`, even though the 16px rounding invites it: the volume
+     drawer is a child of the bar and opens *upward* out of it, so clipping here
+     cut the drawer away entirely on a mini bar. Nothing else needs the clip —
+     `.mini-progress-track` rounds and clips its own fill, and no child reaches
+     the rounded corners. */
   transition:
     background 0.3s,
     border-color 0.3s,
@@ -3819,9 +3882,13 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
 /* Auto-hide tucks the bar below the viewport. Layout height is unchanged by a
    transform, so `useSideMenuClearance` / `measurePlaybarReservedPx` read the
    shell's data-te-playbar-hidden flag instead of measuring. pointer-events must
-   go too, or the tucked bar keeps swallowing clicks along the bottom edge. */
-.player-bar-shell[data-te-playbar-hidden='true']
-  .player-bar.player-bar-mini.player-bar-mini.player-bar-mini {
+   go too, or the tucked bar keeps swallowing clicks along the bottom edge.
+
+   Shape-agnostic, like the fully-hidden rule below: auto-hide resolves for every
+   shape that carries its own progress readout, so naming one shape here left the
+   compact strip with the flag set and nothing moving. The repeated class beats
+   the preset theme layouts, same trick as the shape geometry rules. */
+.player-bar-shell[data-te-playbar-hidden='true'] .player-bar.player-bar.player-bar {
   transform: translateY(calc(100% + 24px));
   opacity: 0;
   pointer-events: none;
@@ -3851,8 +3918,29 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
   pointer-events: none;
 }
 
+/* Mini's play button and long rail live inside the region wrappers now — every
+   shape renders `.player-left` / `.player-center` / `.player-right` so the
+   layout contract can move controls between them — so the region class sits in
+   the selector where a direct `>` child of `.player-bar` used to. */
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar-mini.player-bar-mini.player-bar-mini
+  .player-left {
+  align-self: center;
+  gap: 4px;
+}
+
+.player-bar-shell[data-te-playbar-mode='mini']
+  .player-bar-mini.player-bar-mini.player-bar-mini
+  .player-center {
+  flex-direction: row;
+  align-items: center;
+  height: 100%;
+  transform: none;
+}
+
+.player-bar-shell[data-te-playbar-mode='mini']
+  .player-bar-mini.player-bar-mini.player-bar-mini
+  .player-left
   > .mini-play-button {
   display: inline-flex;
   align-items: center;
@@ -3872,6 +3960,7 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
 
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar-mini.player-bar-mini.player-bar-mini
+  .player-left
   > .mini-play-button:hover {
   background: color-mix(in srgb, var(--te-shell-control-text, #475569) 8%, transparent);
 }
@@ -3886,10 +3975,10 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
    The rail owns the flexible middle grid column and spans nearly the full pill
    width. Its visible line is intentionally flat and quiet; the larger wrapper
    preserves a comfortable hit target for seeking. The compound
-   `.player-bar.player-bar-mini >` prefix is needed to out-specify the liquid
-   glass rule `.player-bar-liquid > *:not(.player-bar-warp)`, which would
-   otherwise force `position: relative` on it. */
-.player-bar.player-bar-mini > .mini-progress-rail {
+   `.player-bar.player-bar-mini .player-center >` prefix out-specifies
+   `.player-center`'s own `position: relative` / column flow, which would
+   otherwise leave the rail stacked instead of stretched. */
+.player-bar.player-bar-mini .player-center > .mini-progress-rail {
   position: relative;
   left: auto;
   right: auto;
@@ -4002,40 +4091,47 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
 
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right .mode-btn-right {
+  .player-right
+  .mode-btn-right {
   order: 1;
 }
 
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right .track-menu-button {
+  .player-right
+  .track-menu-button {
   order: 2;
 }
 
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right .hifi-toggle-button {
+  .player-right
+  .hifi-toggle-button {
   order: 3;
 }
 
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right .volume-anchor {
+  .player-right
+  .volume-anchor {
   order: 4;
 }
 
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right .playing-page-exit-button {
+  .player-right
+  .playing-page-exit-button {
   order: 5;
 }
 
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right .icon-btn,
+  .player-right
+  .icon-btn,
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right .mode-btn-right {
+  .player-right
+  .mode-btn-right {
   width: 24px;
   height: 24px;
   border-radius: 5px;
@@ -4044,22 +4140,29 @@ html[data-window-transparent='on'][data-platform='linux'] .player-bar-liquid .pl
 
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right .icon-btn:hover,
+  .player-right
+  .icon-btn:hover,
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right .mode-btn-right:hover {
+  .player-right
+  .mode-btn-right:hover {
   background: color-mix(in srgb, var(--te-shell-control-text, #475569) 8%, transparent);
   color: var(--te-shell-control-text, #475569);
 }
 
+/* Under a dark theme, 22% accent over transparent leaves the unfilled part of
+   the rail barely there, so both flat shapes lift their track the same way. */
+html[data-theme='dark'] .player-bar-compact .compact-progress-track,
 html[data-theme='dark'] .player-bar-mini .mini-progress-track {
   background: color-mix(in srgb, var(--accent-color, #60a5fa) 30%, rgba(255, 255, 255, 0.14));
 }
 
+.player-bar-glass .compact-progress-track,
 .player-bar-glass .mini-progress-track {
   background: rgba(255, 255, 255, 0.28);
 }
 
+.player-bar-glass .compact-progress-fill,
 .player-bar-glass .mini-progress-fill {
   background: rgba(255, 255, 255, 0.9);
 }
@@ -4072,7 +4175,13 @@ html[data-theme='dark'] .player-bar-mini .mini-progress-track {
 html[data-theme='dark']
   .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar.player-bar-mini.player-bar-mini.player-bar-mini:not(.player-bar-glass) {
-  background: color-mix(in srgb, var(--te-card-bg, #181818) 95%, #fff 5%);
+  background: var(--te-flat-bar-dark-lift);
+}
+
+html[data-theme='dark']
+  .player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar.player-bar-compact.player-bar-compact.player-bar-compact:not(.player-bar-glass) {
+  background: var(--te-flat-bar-dark-lift);
 }
 
 /* PlayingMusic supplies `glass=true` even when the app theme is light. Mini
@@ -4081,40 +4190,54 @@ html[data-theme='dark']
    what separates the strip from the page. */
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini {
-  background: #141722;
+  background: var(--te-flat-bar-glass-bg);
   background-image: none;
-  color: rgba(255, 255, 255, 0.86);
+  color: var(--te-flat-bar-glass-text);
 }
 
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini
+  .player-left
   > .mini-play-button,
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right .icon-btn,
+  .player-right
+  .icon-btn,
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right .mode-btn-right {
-  color: rgba(255, 255, 255, 0.78);
+  .player-right
+  .mode-btn-right {
+  color: var(--te-flat-bar-control);
+}
+
+/* Keep a direct descendant form for the shared strip contract. The shell-scoped
+   selectors above carry the stronger geometry specificity; these declarations
+   make the control colour invariant explicit for both flat shapes. */
+.player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini .player-right .icon-btn,
+.player-bar.player-bar-glass.player-bar-compact.player-bar-compact.player-bar-compact .player-right .icon-btn {
+  color: var(--te-flat-bar-control);
 }
 
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right .icon-btn:hover,
+  .player-right
+  .icon-btn:hover,
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini
-  .player-right .mode-btn-right:hover,
+  .player-right
+  .mode-btn-right:hover,
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini
+  .player-left
   > .mini-play-button:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.98);
+  background: var(--te-flat-bar-control-hover-bg);
+  color: var(--te-flat-bar-control-hover-text);
 }
 
 .player-bar-shell[data-te-playbar-mode='mini']
   .player-bar.player-bar-glass.player-bar-mini.player-bar-mini.player-bar-mini
   .mini-progress-time {
-  color: rgba(255, 255, 255, 0.56);
+  color: var(--te-flat-bar-muted);
 }
 
 @media (max-width: 680px) {
@@ -4133,20 +4256,516 @@ html[data-theme='dark']
 
   .player-bar-shell[data-te-playbar-mode='mini']
     .player-bar-mini.player-bar-mini.player-bar-mini
-    .player-right .icon-btn,
+    .player-right
+    .icon-btn,
   .player-bar-shell[data-te-playbar-mode='mini']
     .player-bar-mini.player-bar-mini.player-bar-mini
-    .player-right .mode-btn-right {
+    .player-right
+    .mode-btn-right {
     width: 22px;
     height: 22px;
   }
 
-  .player-bar.player-bar-mini > .mini-progress-rail .mini-progress-track {
+  .player-bar.player-bar-mini .player-center > .mini-progress-rail .mini-progress-track {
     right: 72px;
   }
 
   .mini-progress-time {
     right: 8px;
     font-size: 8px;
+  }
+}
+
+/* ===== Compact shape =====
+
+   A strip that spans the window edge to edge, flush with the bottom, with its
+   progress readout as a hairline along its own top edge. That hairline is also
+   the bar's edge: like mini it carries no border, because a 1px light line on a
+   flat strip reads as an outline drawn around the bar rather than as its top.
+
+   Geometry repeats `.player-bar-compact` for the same reason mini does —
+   `theme-layouts/aurora-reference.css` rewrites the playbar with
+   `html[…] body .player-bar-shell .player-bar.player-bar`, (0,5,2), and sets
+   exactly the four properties below, so compact has to win all four on class
+   count without `!important`.
+
+   Motion tiers need no variants here: base.css already collapses transition
+   durations under html[data-te-motion='reduced'|'off'] for every element. */
+
+/* Compact also claims the shell's insets, which mini never does: the strip is
+   meant to sit against the window edges and four of the six preset layouts move
+   the shell away from them. Three `.player-bar-shell` compounds plus the
+   attribute land at (0,4,0), beating aurora's
+   `html[…] body .player-bar-shell.player-bar-shell` at (0,3,2) on class count.
+
+   `html[data-te-shell-layout='custom']` in App.vue overrides this with
+   `inset: auto !important`, which is correct: in a theme-supplied shell the
+   playbar is a grid row that already spans the width, so it must not go back to
+   being fixed to the viewport. */
+.player-bar-shell[data-te-playbar-mode='compact'].player-bar-shell.player-bar-shell {
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+/* Start after the open menu's real right edge, not after its width. A preset may
+   float the menu as an inset island — aurora-reference sets
+   `left: clamp(10px, 1.4vw, 22px)` — which puts its edge ~21px further right
+   than `--te-menu-width` implies, and a width-based `left` left the strip
+   covering that gap. App.vue publishes the measured edge on the player wrapper;
+   the token is the fallback for the first frame, before the measurement lands,
+   and for any consumer that renders the bar without the clearance monitor. */
+.player-bar-shell[data-te-playbar-mode='compact'].player-bar-shell.player-bar-shell.menu-open {
+  left: max(var(--te-side-menu-inline-end, 0px), var(--te-menu-width));
+  right: 0;
+}
+
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar.player-bar-compact.player-bar-compact.player-bar-compact {
+  --te-compact-visualizer-height: 138px;
+  position: relative;
+  height: 216px;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0 18px;
+  /* Metadata left, transport centred against the window, tools right. The two
+     1fr side columns are what keeps the centre cluster actually centred rather
+     than merely between the other two. */
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  column-gap: 16px;
+  border: 0;
+  border-radius: 0;
+  background: var(--te-neutral-100);
+  background-image: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  /* Deliberately not `overflow: hidden` (mini's choice): the volume drawer opens
+     upward out of the bar and would be clipped away. Nothing here overflows —
+     the rail sits inside the top edge and the corners are square. */
+  transition:
+    background 0.3s,
+    border-color 0.3s,
+    box-shadow 0.3s,
+    transform var(--te-motion-panel) var(--te-ease-soft),
+    opacity var(--te-motion-panel) ease;
+}
+
+/* Forced colors replaces the flat surface with a system colour, so the strip
+   needs an edge back or it dissolves into the page — the one mode where an
+   outline is wanted, because the palette is the user's, not ours. */
+@media (forced-colors: active) {
+  .player-bar-shell[data-te-playbar-mode='compact']
+    .player-bar.player-bar-compact.player-bar-compact.player-bar-compact {
+    border-top: 1px solid CanvasText;
+  }
+}
+
+/* ===== Compact top-edge progress rail =====
+
+   The visible line is 2px; the wrapper is taller so seeking has a real hit
+   target. Real DOM track/fill for the same reason as `.progress-track` and
+   `.mini-progress-track`: Chromium does not reliably repaint
+   ::-webkit-slider-runnable-track when only a custom property changes. */
+.player-bar.player-bar-compact > .compact-progress-rail {
+  position: absolute;
+  top: var(--te-compact-visualizer-height, 138px);
+  left: 0;
+  right: 0;
+  height: 9px;
+  z-index: 4;
+  pointer-events: auto;
+}
+
+/* The volume drawer is the one floating panel that lives *inside* the bar (the
+   queue panel and the HiFi overlay are siblings of it), and it opens upward with
+   its bottom edge tucked a few px into the bar — every shape does that. On a
+   compact bar those px land inside the rail's 9px hit band, and the rail is the
+   higher layer: the 2px progress line drew across the drawer, and a click near
+   the drawer's bottom scrubbed the track instead. `.volume-anchor` is already
+   `position: relative`, and neither it nor `.player-right` establishes a
+   stacking context, so z-index here competes directly with the rail inside
+   `.player-bar` — lifting the anchor takes the whole drawer above the line. */
+.player-bar.player-bar-compact .volume-anchor {
+  z-index: 5;
+}
+
+/* The visualizer is an explicit z=0 layer. Raise only the region contents, not
+   the region wrappers: `.volume-anchor` must keep competing with the z=4 seek
+   rail in the bar's own stacking context so its upward drawer stays on top. */
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .player-left
+  > *,
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .player-center
+  > *,
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .player-right
+  > :not(.volume-anchor) {
+  position: relative;
+  z-index: 1;
+}
+
+.compact-progress-track {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: color-mix(in srgb, var(--accent-color, var(--te-primary-500)) 22%, transparent);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.compact-progress-fill {
+  height: 100%;
+  width: 100%;
+  background: var(--accent-color, var(--te-primary-500));
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  will-change: transform;
+  transition: none;
+}
+
+.compact-progress-slider {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.compact-progress-slider:disabled {
+  cursor: default;
+}
+
+.compact-progress-slider::-webkit-slider-runnable-track {
+  height: 100%;
+  background: transparent;
+}
+
+.compact-progress-slider::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 0;
+  height: 0;
+}
+
+.compact-progress-slider::-moz-range-track {
+  height: 100%;
+  background: transparent;
+}
+
+.compact-progress-slider::-moz-range-progress {
+  height: 0;
+  background: transparent;
+}
+
+.compact-progress-slider::-moz-range-thumb {
+  width: 0;
+  height: 0;
+  border: 0;
+  background: transparent;
+}
+
+.compact-progress-slider:focus-visible {
+  outline: 2px solid var(--accent-color, var(--te-primary-500));
+  outline-offset: -2px;
+}
+
+/* Every compact region is centred within its control deck. The visualizer state
+   creates that deck with top padding below, so these rules work identically on
+   the home page and the lyrics page. */
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .player-left,
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .player-center,
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .player-right {
+  align-self: center;
+  margin-block: 0;
+  min-width: 0;
+}
+
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .player-left {
+  gap: 12px;
+}
+
+/* A row, not the standard bar's column: compact has no inline progress area to
+   stack underneath the transport cluster. */
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .player-center {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  width: auto;
+  transform: none;
+}
+
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .player-right {
+  gap: 6px;
+}
+
+/* Two tight lines rather than the standard bar's three-line block. */
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .player-title {
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .player-artist {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* The artwork the shape leads with. Smaller than the standard bar's 48px so it
+   stays visually subordinate to the full-width spectrum stage above.
+   All three selectors are needed — the slot, a loaded image, and the placeholder
+   each carry their own box in the base rules. */
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .player-cover-slot,
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .player-cover,
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .player-cover-placeholder {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+}
+
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .player-controls {
+  gap: 8px;
+}
+
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .player-controls
+  .ctrl-btn {
+  width: 34px;
+  height: 34px;
+  padding: 7px;
+}
+
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .player-controls
+  .ctrl-btn
+  img {
+  width: 17px;
+}
+
+/* The filled circle the shape is recognised by: bigger than its neighbours, and
+   the only control carrying the accent fill. */
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .player-controls
+  .btn-play {
+  width: 40px;
+  height: 40px;
+  padding: 10px;
+}
+
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .player-controls
+  .btn-play
+  img {
+  width: 16px;
+}
+
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .icon-btn,
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .mode-btn-right {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+}
+
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar-compact.player-bar-compact.player-bar-compact
+  .mini-play-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--te-shell-control-text);
+  cursor: pointer;
+}
+
+.player-time-readout {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--te-shell-control-text) 62%, transparent);
+}
+
+/* PlayingMusic supplies `glass=true` even under a light app theme, so compact
+   needs the playing-page dark surface explicitly or the flat rule's card token
+   wins and turns the strip white. */
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar.player-bar-glass.player-bar-compact.player-bar-compact.player-bar-compact {
+  background: var(--te-flat-bar-glass-bg);
+  background-image: none;
+  color: var(--te-flat-bar-glass-text);
+}
+
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar.player-bar-glass.player-bar-compact.player-bar-compact.player-bar-compact
+  .icon-btn,
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar.player-bar-glass.player-bar-compact.player-bar-compact.player-bar-compact
+  .mode-btn-right,
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar.player-bar-glass.player-bar-compact.player-bar-compact.player-bar-compact
+  .mini-play-button {
+  color: var(--te-flat-bar-control);
+}
+
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar.player-bar-glass.player-bar-compact.player-bar-compact.player-bar-compact
+  .icon-btn:hover,
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar.player-bar-glass.player-bar-compact.player-bar-compact.player-bar-compact
+  .mode-btn-right:hover,
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar.player-bar-glass.player-bar-compact.player-bar-compact.player-bar-compact
+  .mini-play-button:hover {
+  background: var(--te-flat-bar-control-hover-bg);
+  color: var(--te-flat-bar-control-hover-text);
+}
+
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar.player-bar-glass.player-bar-compact.player-bar-compact.player-bar-compact
+  .player-time-readout {
+  color: var(--te-flat-bar-muted);
+}
+
+@media (max-width: 760px) {
+  .player-bar-shell[data-te-playbar-mode='compact']
+    .player-bar.player-bar-compact.player-bar-compact.player-bar-compact {
+    --te-compact-visualizer-height: 96px;
+    height: 174px;
+    padding: 0 10px;
+    column-gap: 8px;
+  }
+
+  .player-bar-shell[data-te-playbar-mode='compact']
+    .player-bar-compact.player-bar-compact.player-bar-compact
+    .player-right {
+    gap: 2px;
+  }
+
+  .player-bar-shell[data-te-playbar-mode='compact']
+    .player-bar-compact.player-bar-compact.player-bar-compact
+    .icon-btn,
+  .player-bar-shell[data-te-playbar-mode='compact']
+    .player-bar-compact.player-bar-compact.player-bar-compact
+    .mode-btn-right {
+    width: 28px;
+    height: 28px;
+  }
+}
+
+/* The expanded stage is only part of the lyrics-page presentation. Its top
+   padding reserves the visualizer while the remaining 78px grid content box
+   keeps exactly the same three-column layout and vertical centring as home.
+   Repeating the state class keeps the stage transparent over glass themes. */
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar.player-bar-compact.player-bar-compact.player-bar-compact.player-bar-compact-visualizer.player-bar-compact-visualizer {
+  height: 216px;
+  padding-top: var(--te-compact-visualizer-height, 138px);
+  background: transparent;
+  background-image: none;
+}
+
+/* Auto-hide removes the compact controls but keeps the lyrics-page visualizer
+   stage anchored at the bottom. The fully-hidden state intentionally does not
+   use this override, so it can still remove the visualizer altogether. */
+.player-bar-shell[data-te-playbar-hidden='true'][data-te-playbar-visibility='auto']
+  .player-bar.player-bar-compact.player-bar-compact.player-bar-compact-visualizer {
+  transform: none;
+  opacity: 1;
+  pointer-events: none;
+}
+
+/* The retained visualizer is the only part of an auto-hidden compact bar that
+   remains visible. Collapse the former lyrics-page control deck around it so
+   its bottom edge is the window bottom instead of floating above the shell's
+   old 216px stage. The repeated classes out-specify the expanded-stage rule. */
+.player-bar-shell[data-te-playbar-hidden='true'][data-te-playbar-visibility='auto']
+  .player-bar.player-bar-compact.player-bar-compact.player-bar-compact.player-bar-compact-visualizer.player-bar-compact-visualizer {
+  height: var(--te-compact-visualizer-height, 138px);
+  padding-top: 0;
+}
+
+.player-bar-shell[data-te-playbar-hidden='true'][data-te-playbar-visibility='auto']
+  .player-bar.player-bar-compact.player-bar-compact.player-bar-compact-visualizer
+  > :not(.compact-visualizer) {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Without the stage, compact is just the normal 72px transport strip. The
+   boundary rail remains useful, but it belongs on the strip's top edge. */
+.player-bar-shell[data-te-playbar-mode='compact']
+  .player-bar.player-bar-compact.player-bar-compact.player-bar-compact:not(
+    .player-bar-compact-visualizer
+  ) {
+  height: 72px;
+}
+
+.player-bar.player-bar-compact:not(.player-bar-compact-visualizer) > .compact-progress-rail {
+  top: 0;
+}
+
+@media (max-width: 760px) {
+  .player-bar-shell[data-te-playbar-mode='compact']
+    .player-bar.player-bar-compact.player-bar-compact.player-bar-compact.player-bar-compact-visualizer {
+    height: 174px;
+  }
+
+  .player-bar-shell[data-te-playbar-mode='compact']
+    .player-bar.player-bar-compact.player-bar-compact.player-bar-compact:not(
+      .player-bar-compact-visualizer
+    ) {
+    height: 72px;
   }
 }

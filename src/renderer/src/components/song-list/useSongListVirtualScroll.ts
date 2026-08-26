@@ -25,7 +25,6 @@ export function useSongListVirtualScroll({
   totalHeight: ComputedRef<number>
   paddingTop: ComputedRef<number>
   onScroll: (e: Event) => void
-  onRowPointerMove: (event: PointerEvent) => void
   updateViewportHeight: () => void
   resetScrollAndMeasure: () => void
   scrollTop: Ref<number>
@@ -37,8 +36,6 @@ export function useSongListVirtualScroll({
   const viewportHeight = ref(0)
   const tableOffsetTop = ref(0)
   const rowHeight = ROW_HEIGHT
-  let pointerMoveRafId: number | null = null
-  let lastPointerEvent: PointerEvent | null = null
 
   const visibleRange = computed(() =>
     getSongListVirtualRange({
@@ -60,23 +57,6 @@ export function useSongListVirtualScroll({
   function onScroll(e: Event): void {
     const target = e.target as HTMLElement
     scrollTop.value = target.scrollTop
-  }
-
-  function flushPointerMove(): void {
-    const event = lastPointerEvent
-    pointerMoveRafId = null
-    if (!event) return
-    const row = event.currentTarget as HTMLElement
-    const rect = row.getBoundingClientRect()
-    row.style.setProperty('--track-pointer-x', `${event.clientX - rect.left}px`)
-    row.style.setProperty('--track-pointer-y', `${event.clientY - rect.top}px`)
-  }
-
-  function onRowPointerMove(event: PointerEvent): void {
-    lastPointerEvent = event
-    if (pointerMoveRafId === null) {
-      pointerMoveRafId = requestAnimationFrame(flushPointerMove)
-    }
   }
 
   function updateViewportHeight(): void {
@@ -105,7 +85,6 @@ export function useSongListVirtualScroll({
 
   onUnmounted(() => {
     window.removeEventListener('resize', updateViewportHeight)
-    if (pointerMoveRafId !== null) cancelAnimationFrame(pointerMoveRafId)
   })
 
   watch(resetSources, resetScrollAndMeasure, { flush: 'post' })
@@ -129,7 +108,6 @@ export function useSongListVirtualScroll({
     totalHeight,
     paddingTop,
     onScroll,
-    onRowPointerMove,
     updateViewportHeight,
     resetScrollAndMeasure,
     scrollTop,

@@ -24,11 +24,17 @@
   --te-glow-cyan: rgba(34, 211, 238, 0.18);
   --color-text: var(--te-neutral-900);
   --te-ease-enter: cubic-bezier(0.4, 0, 0.2, 1);
-  /* Soft = out-quint: fast start, long settling tail (osu!lazer-style motion). */
+  /* Soft = out-quint: fast start, long settling tail (osu!lazer-style motion).
+     Runtime authority is the `motion.soft` token in src/shared/themeTokens.ts:
+     useThemeStore injects it into :root with !important, so this declaration
+     only covers the frames before the theme runtime lands. Keep both values
+     identical. */
   --te-ease-soft: var(--te-ease-out-quint);
   --te-ease-spring: cubic-bezier(0.22, 1.14, 0.36, 1);
   --te-ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
   --te-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Strong ease-out for UI enter/exit (AUDIT §2). */
+  --te-ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
   --te-motion-press: 90ms;
   --te-motion-hover: 160ms;
   --te-motion-panel: 280ms;
@@ -36,7 +42,7 @@
   /* Asymmetric motion: hover-in settles on a long out-quint tail, hover-out returns fast. */
   --te-motion-settle: 500ms;
   --te-motion-return: 220ms;
-  --te-motion-press-scale: 0.96;
+  --te-motion-press-scale: 0.97;
   --te-motion-hover-translate: -1px;
   --te-ui-scale: 0.94;
   --te-menu-width: clamp(132px, 18vw, 216px);
@@ -44,15 +50,14 @@
   --te-surface-opacity: 100%;
   /* Latin: Inter. CJK: packaged MiSans unicode-range subsets. */
   --te-font-display:
-    'Inter', 'Plus Jakarta Sans', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei',
-    'PingFang SC', 'Hiragino Sans GB', system-ui, sans-serif;
+    'Inter', 'Plus Jakarta Sans', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC',
+    'Hiragino Sans GB', system-ui, sans-serif;
   --te-font-rounded:
-    'Inter', 'Plus Jakarta Sans', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei',
-    'PingFang SC', 'Hiragino Sans GB', system-ui, sans-serif;
+    'Inter', 'Plus Jakarta Sans', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC',
+    'Hiragino Sans GB', system-ui, sans-serif;
   --te-font-sans:
-    'Inter', 'Plus Jakarta Sans', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei',
-    'PingFang SC', 'Hiragino Sans GB', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
-    sans-serif;
+    'Inter', 'Plus Jakarta Sans', 'MiSans', 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC',
+    'Hiragino Sans GB', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --te-text-title: 500;
   --te-text-body: 400;
   --te-text-meta: 400;
@@ -297,6 +302,11 @@
   outline-color: var(--te-back-button-color) !important;
 }
 
+/* `data-te-page-back-button` has been retired: page-level back navigation now
+   lives on the title bar (TitleBar.vue) driven by app/useBackStack.ts. The
+   styles above remain for in-flow controls (onboarding stepper, mini player,
+   login error recovery). */
+
 /* Shared back-to-top control. scrollToTopButton.ts keeps exactly one of these in
    the document and anchors it to whichever container is scrolled, so `left`/`top`
    are written from script while everything else stays theme-owned here. */
@@ -365,33 +375,48 @@
   opacity: 0.52;
 }
 
+/* Press feedback is a transition, not a keyframe: a transition retargets from
+   the current scale when the button is tapped again mid-flight, and it holds the
+   pressed state for as long as the pointer is down. Asymmetric on purpose —
+   `:active` presses in over --te-motion-press (90ms) and the release rides the
+   longer base duration (160ms) below.
+
+   Every part of this selector is wrapped in :where() so the whole thing weighs
+   zero, exactly like the base rule above. This is a `transition` shorthand, so
+   any specificity here would replace — not merge with — the transition list of
+   every button that declares its own. `:where()` zeroes out but `:not()` does
+   not: unwrapped, this selector scores (0,3,1) and silently deletes the
+   background/color/opacity fades of 16 component rules, including the shared
+   back-to-top control (a real <button>, see utils/scrollToTopButton.ts). */
+:where(html[data-te-motion='full'])
+  :where(button, [role='button'], [role='switch'], [data-te-interactive]):where(
+    :not(:disabled)
+  ):where(:not([aria-disabled='true'])):where(:not(.lyric-row)) {
+  transition:
+    translate var(--te-motion-hover) var(--te-ease-soft),
+    transform 160ms var(--te-ease-soft);
+}
+
 html[data-te-motion='full']
   :where(button, [role='button'], [role='switch'], [data-te-interactive]):not(:disabled):not(
     [aria-disabled='true']
-  ):active {
-  animation: te-interactive-press var(--te-motion-press) var(--te-ease-soft);
+  ):where(:not(.lyric-row)):active {
+  transform: scale(var(--te-motion-press-scale));
+  transition-duration: var(--te-motion-hover), var(--te-motion-press);
 }
 
 @media (hover: hover) {
   html[data-te-motion='full']
     :where(button, [role='button'], [role='switch'], [data-te-interactive]):not(:disabled):not(
       [aria-disabled='true']
-    ):hover {
+    ):where(:not(.lyric-row)):hover {
     translate: 0 var(--te-motion-hover-translate);
   }
 }
 
-@keyframes te-interactive-press {
-  0%,
-  100% {
-    scale: 1;
-  }
-
-  48% {
-    scale: var(--te-motion-press-scale);
-  }
-}
-
+/* Duration tokens still drop so any rule that reads them directly gets the
+   gentler value; the press-scale / hover-translate resets stay as belt-and-braces
+   for future rules that are not gated on [data-te-motion='full']. */
 html[data-te-motion='reduced'] {
   --te-motion-press: 0ms;
   --te-motion-hover: 100ms;
@@ -401,18 +426,51 @@ html[data-te-motion='reduced'] {
   --te-motion-hover-translate: 0px;
 }
 
-/* Near-zero durations (not e.g. 100ms): a non-zero universal transition-duration
-   would give every element an implicit `transition-property: all` tween, adding
-   motion instead of reducing it. Delays are zeroed so staggered entrances with
-   `fill: both` don't leave content invisible until their delay elapses. */
+/* Reduced motion means fewer and gentler animations, not zero. Two rules do the
+   work:
+   1. This block kills keyframe motion outright (`animation: none`, like the
+      'off' tier) so a frozen decorative loop lands on its static declaration
+      instead of "finishing" a 0.01ms run with no fill-mode.
+   2. The next block hands interactive elements a short, property-scoped
+      transition back. It must stay property-scoped: a non-zero universal
+      transition-duration would give every element an implicit
+      `transition-property: all` tween, adding motion instead of reducing it. */
 html[data-te-motion='reduced'] *,
 html[data-te-motion='reduced'] *::before,
 html[data-te-motion='reduced'] *::after {
-  animation-duration: 0.01ms !important;
-  animation-delay: 0ms !important;
-  animation-iteration-count: 1 !important;
+  animation: none !important;
   transition-duration: 0.01ms !important;
   transition-delay: 0ms !important;
+}
+
+/* Feedback survives: opacity and colour confirm the press/hover without moving
+   anything. transform/translate are deliberately absent — position changes are
+   exactly what this tier removes. */
+html[data-te-motion='reduced']
+  :where(
+    button,
+    [role='button'],
+    [role='switch'],
+    [role='radio'],
+    [role='tab'],
+    [data-te-interactive],
+    a,
+    input,
+    select,
+    textarea,
+    label
+  ) {
+  transition-property: opacity, color, background-color, border-color !important;
+  transition-duration: 120ms !important;
+  transition-timing-function: var(--te-ease-soft) !important;
+}
+
+/* Motion that carries information keeps running in the reduced tier; freezing it
+   removes meaning rather than movement. The loading spinner would become a
+   static icon (no way to tell "loading" from "hung"), so it keeps turning at
+   half speed. */
+html[data-te-motion='reduced'] .pi-spin {
+  animation: fa-spin 4s infinite linear !important;
 }
 
 html[data-te-motion='off'] *,
@@ -736,6 +794,18 @@ html[data-theme='pureWhite'] body.te-streaming-surface {
   background-repeat: no-repeat;
 }
 
+/* The local shell keeps its wallpaper on the body alone: one cover-scaled copy
+   spanning the window, so the open sidebar and the content share one image and
+   the menu reads as squeezing the content inward — not splitting it. */
+body.te-local-surface,
+html[data-theme='pureWhite'] body.te-local-surface {
+  background-color: var(--te-local-bg) !important;
+  background-image: var(--te-local-bg-image) !important;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
 html[data-theme='dark'] body {
   background-color: var(--te-app-bg);
   background-image: var(--te-app-bg-image);
@@ -933,11 +1003,11 @@ html[data-theme='pureWhite'] .title-bar:not(.title-bar-glass) .control-btn:hover
 
 html[data-theme='pureWhite'] .side-menu {
   border-right-color: rgba(17, 24, 39, 0.06);
-  /* Only the bottom-most global background renders; no separate surface. */
+  /* Only the bottom-most global background renders; no separate surface. The
+     base frosted blur stays on so a custom wallpaper's page/body scale seam
+     never shows through the split. */
   background: transparent;
   box-shadow: 8px 0 24px rgba(15, 23, 42, 0.04);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
 }
 
 html[data-theme='pureWhite'] .menu-item:hover,
@@ -1238,6 +1308,14 @@ html[data-theme='dark'] body.te-streaming-surface {
   background-repeat: no-repeat;
 }
 
+html[data-theme='dark'] body.te-local-surface {
+  background-color: var(--te-local-bg) !important;
+  background-image: var(--te-local-bg-image) !important;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
 html[data-theme='dark'] body::before {
   display: none;
 }
@@ -1329,12 +1407,10 @@ html[data-theme='dark'] .streaming-menu-label {
   color: rgba(226, 232, 240, 0.9);
 }
 
+/* Dark mode must not repaint the local wallpaper here: the body already carries
+   the one window-wide copy (te-local-surface), and a second cover-scaled one on
+   the list box would reopen the seam at the sidebar edge. */
 html[data-theme='dark'] .song-list {
-  background-color: var(--te-local-bg);
-  background-image: var(--te-local-bg-image);
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
   scrollbar-color: var(--te-scrollbar-thumb) transparent;
 }
 
@@ -2108,7 +2184,6 @@ html[data-theme='dark'] .diagnostic-chain {
   color: rgba(248, 250, 252, 0.95);
 }
 
-html[data-theme='dark'] .settings-preview-layout .shortcut-grid span,
 html[data-theme='dark'] .settings-preview-layout .setting-value,
 html[data-theme='dark'] .plugin-page .plugin-summary,
 html[data-theme='dark'] .plugin-page .plugin-empty,
@@ -2137,7 +2212,6 @@ html[data-theme='dark'] .settings-preview-layout {
 
 html[data-theme='dark'] .preview-select,
 html[data-theme='dark'] .preview-select.wide,
-html[data-theme='dark'] .shortcut-grid,
 html[data-theme='dark'] .range-pill {
   background: var(--te-subtle-bg);
   border-color: var(--te-card-border);
@@ -2185,7 +2259,6 @@ html[data-theme='dark'] .settings-preview-layout .dsp-module-card,
 html[data-theme='dark'] .settings-preview-layout .path-control input,
 html[data-theme='dark'] .settings-preview-layout .background-options span,
 html[data-theme='dark'] .settings-preview-layout .range-pill,
-html[data-theme='dark'] .settings-preview-layout .shortcut-grid,
 html[data-theme='dark'] .settings-preview-layout .update-card,
 html[data-theme='dark'] .settings-preview-layout .wasapi-push-row,
 html[data-theme='dark'] .settings-preview-layout .output-diagnostic-panel,
@@ -2443,18 +2516,7 @@ html[data-theme='dark'] .plugin-page .builtin-label {
   color: rgba(148, 163, 184, 0.62);
 }
 
-/* --- Settings page: about section & shortcut kbd dark mode --- */
-html[data-theme='dark'] .settings-preview-layout .shortcut-grid kbd {
-  border-color: var(--te-card-border);
-  background: var(--te-card-bg);
-  color: rgba(203, 213, 225, 0.88);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
-}
-
-html[data-theme='dark'] .settings-preview-layout .shortcut-grid span {
-  color: rgba(203, 213, 225, 0.88);
-}
-
+/* --- Settings page: about section dark mode --- */
 html[data-theme='dark'] .settings-preview-layout .about-copy h3 {
   color: rgba(248, 250, 252, 0.95);
 }
@@ -2677,7 +2739,8 @@ html[data-window-transparent='on'][data-theme='dark'] body,
 html[data-window-transparent='on'][data-theme='pureWhite'],
 html[data-window-transparent='on'][data-theme='pureWhite'] body,
 html[data-window-transparent='on'] body.te-settings-surface,
-html[data-window-transparent='on'] body.te-streaming-surface {
+html[data-window-transparent='on'] body.te-streaming-surface,
+html[data-window-transparent='on'] body.te-local-surface {
   background-color: rgba(var(--te-tp-surface-rgb), var(--te-tp-base-alpha, 0.78)) !important;
   background-image: var(--te-app-bg-image) !important;
 }
@@ -3079,12 +3142,14 @@ html[data-te-effects-mode='reduced'][data-te-background-treatment='image'] body:
    data-te-surface-material. Tuning lives in --te-lg-* (written by the theme
    runtime) and --te-lg-angle (written by the pointer tracker).
 
-   Structure: the refracting layer is the card's ::after, carrying both
-   backdrop-filter and filter: url(#te-lg-expanded-card). Putting the SVG filter on the card
-   itself would displace its cover art and text too, so the warp is confined to a
-   dedicated layer. At z-index -1 inside an isolated stacking context it paints
-   above the card's own background but below all in-flow content, which keeps
-   content sharp without editing any of the card components.
+   Structure: the refracting layer is the card's ::after, carrying backdrop-filter
+   plus a CSS sheen stack. The SVG displacement chain was removed from cards (it
+   now only serves the playbar): Chromium hostile-interacts `filter: url()` with
+   backdrop-filter on the same element — it can abandon the backdrop pass and even
+   paint an unfiltered grey slab — and the feDisplacementMap chain costs one full
+   filter pass per card per frame. At z-index -1 inside an isolated stacking
+   context the layer paints above the card's own background but below all in-flow
+   content, which keeps content sharp without editing any of the card components.
 
    ::before is deliberately untouched — five of these classes already use it for
    hover glows and layers. */
@@ -3194,19 +3259,19 @@ html[data-te-liquid-glass-coverage='expanded']
     /* A small, directional highlight is enough to communicate curvature. The old
        full-card bloom made large settings panes read as white molded plastic. */
     radial-gradient(
-      112% 126% at var(--te-lg-light-x, 50%) var(--te-lg-light-y, 42%),
-      rgba(
-          var(--te-lg-sheen-rgb),
-          calc(var(--te-lg-expanded-specular, var(--te-lg-rim-strength)) * 0.17)
-        )
-        0%,
-      rgba(
-          var(--te-lg-sheen-rgb),
-          calc(var(--te-lg-expanded-specular, var(--te-lg-rim-strength)) * 0.055)
-        )
-        21%,
-      transparent 55%
-    ),
+        112% 126% at var(--te-lg-light-x, 50%) var(--te-lg-light-y, 42%),
+        rgba(
+            var(--te-lg-sheen-rgb),
+            calc(var(--te-lg-expanded-specular, var(--te-lg-rim-strength)) * 0.17)
+          )
+          0%,
+        rgba(
+            var(--te-lg-sheen-rgb),
+            calc(var(--te-lg-expanded-specular, var(--te-lg-rim-strength)) * 0.055)
+          )
+          21%,
+        transparent 55%
+      ),
     linear-gradient(
       var(--te-lg-angle, 135deg),
       rgba(var(--te-lg-sheen-rgb), 0) 0%,
@@ -3234,14 +3299,10 @@ html[data-te-liquid-glass-coverage='expanded']
     saturate(var(--te-lg-expanded-saturate, 150%));
   -webkit-backdrop-filter: blur(var(--te-lg-expanded-blur, 16px))
     saturate(var(--te-lg-expanded-saturate, 150%));
-  filter: url(#te-lg-expanded-card);
   opacity: 1;
   transition:
     opacity 180ms ease,
-    transform 180ms ease,
-    filter 180ms ease,
-    backdrop-filter 180ms ease,
-    -webkit-backdrop-filter 180ms ease;
+    transform 180ms ease;
 }
 
 /* A flat colour has no pixels for backdrop-filter to refract. Give those

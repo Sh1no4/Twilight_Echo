@@ -12,11 +12,19 @@ const {
 )) as typeof import('./useOnboardingFlow')
 
 test('visible steps adapt to the usage choice', () => {
-  assert.deepEqual(resolveVisibleSteps(null), ['welcome', 'usage', 'audio', 'system', 'finish'])
+  assert.deepEqual(resolveVisibleSteps(null), [
+    'welcome',
+    'usage',
+    'player',
+    'audio',
+    'system',
+    'finish'
+  ])
   assert.deepEqual(resolveVisibleSteps('local'), [
     'welcome',
     'usage',
     'local',
+    'player',
     'audio',
     'system',
     'finish'
@@ -25,6 +33,7 @@ test('visible steps adapt to the usage choice', () => {
     'welcome',
     'usage',
     'streaming',
+    'player',
     'audio',
     'system',
     'finish'
@@ -34,6 +43,7 @@ test('visible steps adapt to the usage choice', () => {
     'usage',
     'local',
     'streaming',
+    'player',
     'audio',
     'system',
     'finish'
@@ -89,11 +99,13 @@ test('a streaming user lands on the streaming page without local-library churn',
   choices.wantsStreamingLogin = true
 
   choices.ncmPlaybackQuality = 'lossless'
+  choices.cachePolicy.streamingAudio = 'off'
   const patch = buildSettingsPatch(choices)
   assert.equal(patch.onboardingCompleted, true)
   assert.equal(patch.startupHomePage, 'streaming')
   assert.equal(patch.audioExclusiveMode, true)
   assert.equal(patch.ncmPlaybackQuality, 'lossless')
+  assert.equal(patch.cachePolicy?.streamingAudio, 'off')
   assert.equal('watchLibrary' in patch, false)
   assert.equal('autoAnalyzeBpm' in patch, false)
   assert.equal(resolveFinishAction(choices), 'streaming-login')
@@ -107,8 +119,14 @@ test('local and both users keep library preferences; dual-use home stays local',
   choices.usage = 'both'
   choices.watchLibrary = false
   choices.autoAnalyzeBpm = false
-  choices.closeToTray = true
+  choices.onlineLyricsFallback = true
+  choices.closeWindowBehavior = 'tray'
   choices.launchAtLogin = true
+  choices.playerBar.mode = 'mini'
+  choices.playerBar.visibility = 'autoHide'
+  choices.miniPlayer.showInTaskbar = false
+  choices.miniPlayer.alwaysOnTop = true
+  choices.taskbarThumbarButtonsEnabled = false
 
   choices.playbackResumeMode = 'trackAndPosition'
   choices.globalShortcuts = true
@@ -118,8 +136,15 @@ test('local and both users keep library preferences; dual-use home stays local',
   assert.equal(patch.startupHomePage, 'local')
   assert.equal(patch.watchLibrary, false)
   assert.equal(patch.autoAnalyzeBpm, false)
+  assert.equal(patch.onlineLyricsFallback, true)
+  assert.equal(patch.closeWindowBehavior, 'tray')
   assert.equal(patch.closeToTray, true)
   assert.equal(patch.launchAtLogin, true)
+  assert.equal(patch.playerBar?.mode, 'mini')
+  assert.equal(patch.playerBar?.visibility, 'autoHide')
+  assert.equal(patch.miniPlayer?.showInTaskbar, false)
+  assert.equal(patch.miniPlayer?.alwaysOnTop, true)
+  assert.equal(patch.taskbarThumbarButtonsEnabled, false)
   assert.equal(patch.playbackResumeMode, 'trackAndPosition')
   assert.equal(patch.globalShortcuts, true)
   assert.equal(patch.smtcEnabled, false)
@@ -136,11 +161,17 @@ test('system integration flags never persist when the wizard is skipped', () => 
   assert.equal('globalShortcuts' in patch, false)
   assert.equal('smtcEnabled' in patch, false)
   assert.equal('discordRpcEnabled' in patch, false)
+  assert.equal('playerBar' in patch, false)
+  assert.equal('miniPlayer' in patch, false)
+  assert.equal('taskbarThumbarButtonsEnabled' in patch, false)
 })
 
 test('a local-only user never writes streaming quality', () => {
   const choices = createDefaultOnboardingChoices()
   choices.usage = 'local'
   choices.ncmPlaybackQuality = 'hires'
-  assert.equal('ncmPlaybackQuality' in buildSettingsPatch(choices), false)
+  choices.cachePolicy.streamingAudio = 'off'
+  const patch = buildSettingsPatch(choices)
+  assert.equal('ncmPlaybackQuality' in patch, false)
+  assert.equal('cachePolicy' in patch, false)
 })

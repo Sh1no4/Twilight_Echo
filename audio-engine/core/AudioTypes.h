@@ -305,6 +305,21 @@ size_t audioFormatBytesPerFrame(const AudioFormat& format);
 int normalizedPcmBitDepth(int bitDepth);
 int effectivePcmBitDepth(const AudioFormat& format);
 bool pcmFormatsExactMatch(const AudioFormat& left, const AudioFormat& right);
+/**
+ * Whether two integer PCM sample formats hold the same significant bits.
+ * int24 (3 packed bytes) and int24-in-32 (24 significant bits MSB-aligned in a
+ * 4-byte word) carry the same 24-bit payload; float32 and DSD carry none.
+ */
+bool sampleFormatsSameIntegerPayload(AudioSampleFormat left, AudioSampleFormat right);
+/**
+ * Whether both formats represent identical sample values, even when the byte
+ * container differs — i.e. a source in one can reach the other bit for bit.
+ *
+ * Callers that copy or size raw bytes must keep using pcmFormatsExactMatch:
+ * int24 and int24-in-32 are 3 and 4 bytes per sample, so their buffer layouts
+ * are not interchangeable even though their payloads are.
+ */
+bool pcmFormatsSemanticallyMatch(const AudioFormat& left, const AudioFormat& right);
 bool isDsdSampleFormat(AudioSampleFormat format);
 bool dsdFormatsExactMatch(const AudioFormat& left, const AudioFormat& right);
 std::optional<AudioFormat> dopCarrierFormatForDsd(int dsdRate, int sourceSampleRate, int channelCount);

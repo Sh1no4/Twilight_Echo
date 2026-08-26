@@ -34,7 +34,7 @@ test('liquid glass settings navigation has its own readable surface layer', () =
   )
   assert.match(
     styles,
-    /\[data-te-settings-navigation-liquid-glass='on'\][\s\S]{0,240}\.settings-preview-nav::after\s*\{[\s\S]*?backdrop-filter:\s*blur\(var\(--te-lg-blur, 16px\)\)[\s\S]*?filter:\s*url\(#te-lg-card\)/
+    /\[data-te-settings-navigation-liquid-glass='on'\][\s\S]{0,240}\.settings-preview-nav::after\s*\{[\s\S]*?backdrop-filter:\s*blur\(var\(--te-lg-blur, 16px\)\)\s*saturate\(var\(--te-lg-saturate, 140%\)\)/
   )
   assert.match(
     styles,

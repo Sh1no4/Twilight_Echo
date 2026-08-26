@@ -5,10 +5,11 @@ import { runtime } from '../core/runtime'
 import type { DesktopLyricsSettings } from '../core/types'
 import type { DesktopLyricsTrackPayload } from '../../shared/lyricsManagement.ts'
 import { resolveDesktopLyricsFontFamily } from '../../shared/desktopLyricsFont.ts'
-import { normalizeDesktopLyrics, writeAppSettings } from '../core/settings'
+import { createSettingsSnapshot, normalizeDesktopLyrics, writeAppSettings } from '../core/settings'
 import { assertTrustedIpcSender, shouldAcceptIpcEvent } from '../security/electronSecurity.ts'
 
 let moveSaveTimer: NodeJS.Timeout | null = null
+let temporarilyInteractive = false
 
 function clearMoveSaveTimer(): void {
   if (!moveSaveTimer) return
@@ -24,11 +25,19 @@ function persistDesktopLyricsPosition(win: BrowserWindow): void {
   writeAppSettings(runtime.appSettings)
 }
 
+function applyDesktopLyricsMouseMode(): void {
+  const win = runtime.desktopLyricsWindow
+  if (!win || win.isDestroyed()) return
+  const shouldIgnoreMouseEvents =
+    runtime.appSettings.desktopLyrics.locked && !temporarilyInteractive
+  win.setIgnoreMouseEvents(shouldIgnoreMouseEvents, { forward: true })
+}
+
 export function getEffectiveDesktopLyricsSettings(): DesktopLyricsSettings {
   const settings = runtime.appSettings.desktopLyrics
   return {
     ...settings,
-    fontFamily: resolveDesktopLyricsFontFamily(
+    resolvedFontFamily: resolveDesktopLyricsFontFamily(
       settings.fontFamily,
       runtime.appSettings.lyricsAppearance.styles.active
     )
@@ -41,7 +50,7 @@ export function syncDesktopLyricsSettings(): void {
 
   const settings = runtime.appSettings.desktopLyrics
   win.setAlwaysOnTop(settings.alwaysOnTop, 'screen-saver')
-  win.setIgnoreMouseEvents(settings.clickThrough, { forward: true })
+  applyDesktopLyricsMouseMode()
   if (
     settings.windowWidth !== win.getBounds().width ||
     settings.windowHeight !== win.getBounds().height
@@ -103,9 +112,7 @@ function createDesktopLyricsWindow(): void {
   })
 
   runtime.desktopLyricsWindow.setAlwaysOnTop(dl.alwaysOnTop, 'screen-saver')
-  if (dl.clickThrough) {
-    runtime.desktopLyricsWindow.setIgnoreMouseEvents(true, { forward: true })
-  }
+  applyDesktopLyricsMouseMode()
 
   runtime.desktopLyricsWindow.on('ready-to-show', () => {
     runtime.desktopLyricsWindow?.show()
@@ -114,6 +121,7 @@ function createDesktopLyricsWindow(): void {
 
   runtime.desktopLyricsWindow.on('closed', () => {
     clearMoveSaveTimer()
+    temporarilyInteractive = false
     runtime.desktopLyricsWindow = null
   })
 
@@ -197,6 +205,19 @@ export function applyDesktopLyricsSettings(settings: DesktopLyricsSettings): voi
 }
 
 export function setupDesktopLyricsIpc(): void {
+  ipcMain.on('desktopLyrics:setInteractive', (event, interactive: boolean) => {
+    if (!shouldAcceptIpcEvent(event, 'desktop lyrics IPC')) return
+    if (
+      !runtime.desktopLyricsWindow ||
+      runtime.desktopLyricsWindow.isDestroyed() ||
+      event.sender !== runtime.desktopLyricsWindow.webContents
+    ) {
+      return
+    }
+    temporarilyInteractive = interactive === true
+    applyDesktopLyricsMouseMode()
+  })
+
   // Forward track/time updates from renderer to lyrics window
   ipcMain.on('desktopLyrics:updateTrack', (_event, data: DesktopLyricsTrackPayload) => {
     if (!shouldAcceptIpcEvent(_event, 'desktop lyrics IPC')) return
@@ -218,9 +239,20 @@ export function setupDesktopLyricsIpc(): void {
     }
   })
 
-  ipcMain.on('desktopLyrics:updateSettings', (_event, settings: DesktopLyricsSettings) => {
+  ipcMain.on('desktopLyrics:updateSettings', (_event, settings: Partial<DesktopLyricsSettings>) => {
     if (!shouldAcceptIpcEvent(_event, 'desktop lyrics IPC')) return
-    applyDesktopLyricsSettings(settings)
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return
+    const fromDesktopLyricsWindow =
+      runtime.desktopLyricsWindow &&
+      !runtime.desktopLyricsWindow.isDestroyed() &&
+      _event.sender === runtime.desktopLyricsWindow.webContents
+    applyDesktopLyricsSettings({ ...runtime.appSettings.desktopLyrics, ...settings })
+    if (fromDesktopLyricsWindow) {
+      runtime.mainWindow?.webContents.send(
+        'settings:changed',
+        createSettingsSnapshot(runtime.appSettings, runtime.launchSettings)
+      )
+    }
   })
 
   ipcMain.handle('desktopLyrics:toggle', async (event) => {

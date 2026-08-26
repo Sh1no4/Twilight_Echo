@@ -63,13 +63,10 @@ test(
       assert.match(result.stdout, /Production dependency audit passed/)
       assert.ok(existsSync(outputPath), 'the real candidate audit must emit its JSON report')
       const report = JSON.parse(readFileSync(outputPath, 'utf8'))
-      assert.deepEqual(report.metadata.vulnerabilities, {
-        info: 0,
-        low: 0,
-        moderate: 0,
-        high: 0,
-        critical: 0
-      })
+      // metadata.vulnerabilities keeps the raw registry totals even when
+      // auditConfig.ignoreGhsas filters advisories; the gate counts the filtered
+      // advisories map, so that is what the candidate report must prove empty.
+      assert.deepEqual(Object.keys(report.advisories ?? {}), [])
     } finally {
       rmSync(outputRoot, { recursive: true, force: true })
       assert.equal(existsSync(outputPath), false, 'integration audit output must be removed')

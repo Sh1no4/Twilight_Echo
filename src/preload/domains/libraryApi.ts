@@ -75,6 +75,8 @@ export const libraryAndFileSystemApi = {
       ipcRenderer.invoke('fs:getAudioFileUrl', filePath),
     isAudioFileAuthorized: (filePath: string): Promise<boolean> =>
       ipcRenderer.invoke('fs:isAudioFileAuthorized', filePath),
+    areAudioFilesAuthorized: (filePaths: string[]): Promise<boolean[]> =>
+      ipcRenderer.invoke('fs:areAudioFilesAuthorized', filePaths),
     onScanProgress: (cb: (progress: { current: number; total: number }) => void): (() => void) => {
       const handler = (_event, data: { current: number; total: number }): void => cb(data)
       ipcRenderer.on('fs:scanProgress', handler)

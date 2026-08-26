@@ -13,6 +13,9 @@ import SideMenu from './components/SideMenu.vue'
 const PlayerBar = defineAsyncComponent(() => import('./components/PlayerBar.vue'))
 const LocalDashboard = defineAsyncComponent(() => import('./components/LocalDashboard.vue'))
 const SongList = defineAsyncComponent(() => import('./components/SongList.vue'))
+const AggregatePlaylistPage = defineAsyncComponent(
+  () => import('./components/aggregate-playlist/AggregatePlaylistPage.vue')
+)
 const PlayingMusic = defineAsyncComponent(() => import('./components/PlayingMusic.vue'))
 const StreamingPage = defineAsyncComponent(() => import('./components/StreamingPage.vue'))
 const RadioPodcastPage = defineAsyncComponent(() => import('./components/RadioPodcastPage.vue'))
@@ -40,16 +43,19 @@ import { getStartupSnapshot } from './app/startupSnapshot'
 import { useExtensionRegistry } from './extensions/registry'
 import { syncPluginProviders, useMediaProviders } from './providers'
 import { useAppNavigation } from './app/useAppNavigation'
+import { useBackStack } from './app/useBackStack'
 import { createPlaybackSessionPersistence } from './app/usePlaybackSessionPersistence'
 import { useSideMenuClearance } from './app/useSideMenuClearance'
 import { useMiniPlayerSync } from './app/useMiniPlayerSync'
 import { useFavoriteButton } from './components/player-bar/useFavoriteButton'
 import { useMotionPreference } from './app/useMotionPreference'
+import { useLanguagePreference } from './app/useLocale'
 import { useLiquidGlassEnvironment } from './composables/useLiquidGlassEnvironment'
 import { useAppNoticeStore } from './stores/useAppNoticeStore'
 import { getTrackSource } from './utils/logicalTrackModel'
 import { scheduleIdleTask, type IdleTaskHandle } from './app/scheduleIdleTask'
 import {
+  getPrimaryStreamingArtistId,
   getPrimaryStreamingArtistName,
   type StreamingArtistNavigationRequest
 } from './utils/streamingArtistResolution'
@@ -116,6 +122,26 @@ const {
   openSettingsPage
 } = navigation
 const { pushNotice } = useAppNoticeStore()
+
+// One global back affordance on the title bar. Every full-screen page
+// registers a single base layer here; deeper in-page states (streaming
+// details, login QR flow, EQ advanced settings, …) push themselves on top of
+// it, so the button always resolves the innermost layer first.
+const backStack = useBackStack()
+backStack.useBackHandler(showPlayingPage, closePlayingPage)
+backStack.useBackHandler(showSettingsPage, closeSettingsPage)
+// ThemeStudio 不在此注册：未应用的修改需要确认，由 ThemeStudioPage 自己挂载
+// 期间注册 closeStudio。
+backStack.useBackHandler(showPluginPage, hidePluginPage)
+backStack.useBackHandler(showEqualizerPage, closeEqualizerPage)
+backStack.useBackHandler(showDspRackPage, closeDspRackPage)
+backStack.useBackHandler(showRadioPodcastPage, closeRadioPodcastPage)
+backStack.useBackHandler(showNetworkSourcesPage, closeNetworkSourcesPage)
+backStack.useBackHandler(showLoginPage, closeLoginPage)
+backStack.useBackHandler(
+  computed(() => activePluginPage.value !== null),
+  closePluginPage
+)
 const toggleMenu = navigation.createToggleMenuHandler()
 const toggleSettingsPage = navigation.createToggleSettingsHandler()
 const togglePluginPage = navigation.createTogglePluginHandler()
@@ -155,11 +181,22 @@ const titleMenuOpen = computed(() =>
 )
 
 function handleTitleBack(): void {
-  if (activePluginPage.value) {
-    closePluginPage()
-    return
+  backStack.goBack()
+}
+
+function onGlobalBackKeydown(event: KeyboardEvent): void {
+  // Browser-style back on Alt+Left. Plain ArrowLeft keeps its existing
+  // meanings (text fields, sliders) and Escape stays with overlay dismissal.
+  if (
+    event.key === 'ArrowLeft' &&
+    event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.shiftKey &&
+    backStack.goBack()
+  ) {
+    event.preventDefault()
   }
-  closePlayingPage()
 }
 
 function openPlayingPage(rect: { x: number; y: number; w: number; h: number }): void {
@@ -219,6 +256,16 @@ async function handleOnboardingFinish(result: OnboardingFinishResult): Promise<v
     // No-op on first run; returns home when the wizard was reopened from
     // settings while the streaming page was active.
     returnToLocalMode()
+  }
+  if (result.openMiniPlayer) {
+    try {
+      await window.api.miniPlayer.open()
+    } catch (error) {
+      pushNotice({
+        kind: 'warning',
+        message: `打开迷你播放器失败：${error instanceof Error ? error.message : String(error)}`
+      })
+    }
   }
   if (result.action === 'streaming-login') {
     openLoginPage('ncm')
@@ -298,11 +345,14 @@ function handlePlayerBarArtistClick(): void {
 
   const artistName = getPrimaryStreamingArtistName(trackArtist)
   if (!artistName) return
+  // 同名歌手只能靠 provider 歌手 id 区分；曲目没带 id 时才让流媒体页按名字搜。
+  const artistId = getPrimaryStreamingArtistId(trackArtist, track.artists)
   streamingInitialTab.value = 'home'
   streamingArtistRequest.value = {
     key: ++streamingArtistRequestKey,
     providerId: source,
-    artistName
+    artistName,
+    ...(artistId !== undefined ? { artistId } : {})
   }
   enterStreamingMode()
 }
@@ -310,7 +360,7 @@ function handlePlayerBarArtistClick(): void {
 const { favoriteButtonVisible, favoriteButtonLiked, favoriteButtonLoading, toggleFavorite } =
   useFavoriteButton({
     currentTrack,
-    playlists: musicStore.playlists,
+    playlists: musicStore.localPlaylists,
     mediaProviders,
     addToPlaylist: musicStore.addToPlaylist,
     removeFromPlaylist: musicStore.removeFromPlaylist,
@@ -353,6 +403,7 @@ useMiniPlayerSync({
 })
 const { loadSettings, hydrateStartupSnapshot, settings, updateSettings } = useSettingsStore()
 useMotionPreference(computed(() => settings.value.motionPreference))
+useLanguagePreference(computed(() => settings.value.language))
 const { uiContributions, syncExtensions } = useExtensionRegistry()
 const STREAMING_ACCOUNT_PAGE_KEYS = new Set(['com.twilightecho.provider.ytmusic:ytmusic-account'])
 const sidebarPages = computed(() =>
@@ -406,6 +457,13 @@ const sideMenuActiveKey = computed(() =>
 )
 const mainContentMinHeight = computed(() => '100vh')
 
+const sidebarMenuOpen = computed(() => {
+  // PlayingMusic hides the local sidebar, so its preserved open state must not
+  // shift the full-width compact bar and leave a blank gutter on the left.
+  if (showPlayingPage.value) return false
+  return showStreamingPage.value ? streamingMenuOpen.value : menuOpen.value
+})
+
 const playbackSessionPersistence = createPlaybackSessionPersistence({
   settings,
   currentTrack,
@@ -424,11 +482,16 @@ const playbackSessionPersistence = createPlaybackSessionPersistence({
 })
 const {
   sideMenuBottomOffset,
+  sideMenuInlineEnd,
   startSideMenuMonitor,
   stopSideMenuMonitor,
   resetSideMenuClearance,
   dispose: disposeSideMenuClearance
-} = useSideMenuClearance({ showLocalSidebar, hasPlayerBar, menuOpen })
+} = useSideMenuClearance({
+  showLocalSidebar,
+  hasPlayerBar,
+  menuOpen
+})
 
 let removePlaybackSessionSaveListener: (() => void) | null = null
 let removeAppNavigationListener: (() => void) | null = null
@@ -598,6 +661,7 @@ onMounted(async () => {
   pageHideFlushHandler = flushPendingPersistenceForExit
   window.addEventListener('beforeunload', quitFlushHandler)
   window.addEventListener('pagehide', pageHideFlushHandler)
+  window.addEventListener('keydown', onGlobalBackKeydown)
 })
 
 watch(
@@ -654,6 +718,13 @@ watch(
   showStreamingSurface,
   (visible) => {
     document.body.classList.toggle('te-streaming-surface', visible)
+    // One continuous wallpaper for the whole local shell: the body paints the
+    // local background once, window-wide, and the sidebar plus every page sit
+    // transparent on top. Pages that each carried their own cover-scaled copy
+    // opened a seam at the sidebar edge — two scales of the same image reading
+    // as a split surface. Mutually exclusive with the streaming surface, which
+    // owns the body in its mode.
+    document.body.classList.toggle('te-local-surface', !visible)
   },
   { immediate: true }
 )
@@ -678,12 +749,14 @@ onBeforeUnmount(() => {
   removeCoversMissingListener = null
   if (quitFlushHandler) window.removeEventListener('beforeunload', quitFlushHandler)
   if (pageHideFlushHandler) window.removeEventListener('pagehide', pageHideFlushHandler)
+  window.removeEventListener('keydown', onGlobalBackKeydown)
   quitFlushHandler = null
   pageHideFlushHandler = null
   stopSideMenuMonitor()
   disposeSideMenuClearance()
   document.body.classList.remove('te-settings-surface')
   document.body.classList.remove('te-streaming-surface')
+  document.body.classList.remove('te-local-surface')
 })
 
 const coverTransformOrigin = computed(() => `${coverOrigin.value.x}px ${coverOrigin.value.y}px`)
@@ -723,7 +796,7 @@ useLiquidGlassEnvironment({
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :style="{ '--te-side-menu-bottom': `${sideMenuBottomOffset}px` }">
     <LiquidGlassDefs
       :active="liquidGlassActive"
       :follow-pointer="settings.liquidGlass.followPointer"
@@ -779,6 +852,12 @@ useLiquidGlassEnvironment({
             @select-view="onSelectView"
             @open-library-settings="openSettingsPage('general')"
           />
+          <AggregatePlaylistPage
+            v-else-if="localViewVisible && activeCategory === 'aggregate'"
+            key="local-aggregate"
+            :has-player="hasPlayerBar"
+            surface="local"
+          />
           <SongList
             v-else-if="localViewVisible"
             key="local-songlist"
@@ -794,7 +873,6 @@ useLiquidGlassEnvironment({
           <PlayingMusic
             v-if="showPlayingPage"
             :style="{ transformOrigin: coverTransformOrigin }"
-            @back="closePlayingPage"
             @customize-appearance="openThemeStudioPage('player')"
           />
         </Transition>
@@ -810,20 +888,19 @@ useLiquidGlassEnvironment({
           @back-to-local="returnToLocalMode"
           @login="handleStreamingLogin"
         />
-        <RadioPodcastPage v-if="showRadioPodcastPage" @back="closeRadioPodcastPage" />
-        <NetworkSourcesPage v-if="showNetworkSourcesPage" @back="closeNetworkSourcesPage" />
+        <RadioPodcastPage v-if="showRadioPodcastPage" />
+        <NetworkSourcesPage v-if="showNetworkSourcesPage" />
         <Transition name="login-page">
           <LoginPage
             v-if="showLoginPage"
             :force-profile="loginPageMode === 'profile'"
             :initial-provider-id="loginInitialProviderId"
-            @back="closeLoginPage"
             @login-success="handleLoginSuccess"
             @configure="handleLoginConfigure"
           />
         </Transition>
         <Transition name="settings-page">
-          <PluginPage v-if="showPluginPage" @back="hidePluginPage" />
+          <PluginPage v-if="showPluginPage" />
         </Transition>
         <Transition name="settings-page">
           <ThemeStudioPage
@@ -833,24 +910,30 @@ useLiquidGlassEnvironment({
           />
         </Transition>
         <Transition name="settings-page">
-          <DspRackPage v-if="showDspRackPage" @back="closeDspRackPage" />
+          <DspRackPage v-if="showDspRackPage" />
         </Transition>
         <Transition name="login-page">
-          <EqualizerPage v-if="showEqualizerPage" @back="closeEqualizerPage" />
+          <EqualizerPage v-if="showEqualizerPage" />
         </Transition>
         <Transition name="login-page">
-          <PluginExtensionPage
-            v-if="activePluginPage"
-            :page="activePluginPage"
-            @back="closePluginPage"
-          />
+          <PluginExtensionPage v-if="activePluginPage" :page="activePluginPage" />
         </Transition>
       </div>
     </div>
-    <div class="app-shell-player">
+    <!-- Where the open side menu's right edge actually lands, measured rather than
+         derived: `--te-menu-width` is only the menu's width, and a preset layout
+         may float the menu inward as an island (aurora-reference insets it ~21px),
+         which leaves a width-based `left` short by that inset. The edge-to-edge
+         shapes start after this so they never cover the menu. -->
+    <div
+      class="app-shell-player"
+      :style="{ '--te-side-menu-inline-end': `${sideMenuInlineEnd}px` }"
+    >
       <PlayerBar
         v-if="hasPlayerBar"
         :glass="showPlayingPage"
+        :visualizer-visible="showPlayingPage"
+        :menu-open="sidebarMenuOpen"
         :mode="playerBarPresentation.mode"
         :auto-hide="playerBarPresentation.autoHide"
         :hidden-bar="playerBarPresentation.hidden"
@@ -868,7 +951,6 @@ useLiquidGlassEnvironment({
       <SettingsPage
         v-if="showSettingsPage"
         :initial-section="settingsInitialSection"
-        @back="closeSettingsPage"
         @open-equalizer="openEqualizerPage"
         @open-dsp-rack="openDspRackPage"
         @open-theme-studio="openThemeStudioPage"
@@ -1038,6 +1120,21 @@ html[data-te-shell-layout='custom']
   }
 }
 
+/* The clearance is animated on `padding-left` itself, deliberately, even though
+   that reflows this subtree every frame of the 0.32s slide.
+
+   The alternative — land the padding instantly and give the distance back with a
+   composited `translate` — is cheaper but geometrically wrong here. This box is
+   `width: 100%` and `border-box`, so its right edge is pinned to the window and
+   only its width changes; a translate moves *both* edges, so the right edge
+   snapped inward by the clearance on the first frame and slid back over the
+   remaining ones. That read as the content flashing on the right, and on the
+   collapsing direction it overhung the window and flickered a scrollbar in.
+
+   Pinning the right edge while the left one moves *is* a width change, and a
+   width change is a layout. There is no compositor-only spelling of it: only
+   `scaleX` alters visual width, and that stretches the glyphs. So the cost is
+   the intended trade, not an oversight — keep the layout property here. */
 .main-content {
   display: grid;
   box-sizing: border-box;
@@ -1046,7 +1143,6 @@ html[data-te-shell-layout='custom']
   min-height: 100vh;
   padding-left: 0;
   transform: translateZ(0);
-  will-change: padding-left;
   transition: padding-left 0.32s var(--te-ease-soft);
   overflow: hidden;
   position: relative;

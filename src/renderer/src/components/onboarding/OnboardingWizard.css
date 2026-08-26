@@ -424,7 +424,10 @@ body.te-no-blur .onb-scene-no-leave-to {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  /* Never justify-content: center here — it clips the overflowed top of tall
+     scenes behind the progress dots, unreachable by scroll. Auto margins on
+     the first/last children keep short scenes centered while tall scenes
+     scroll from the very top (see below). */
   gap: 18px;
   padding: 24px clamp(24px, 8vw, 120px) 16px;
   box-sizing: border-box;
@@ -432,6 +435,14 @@ body.te-no-blur .onb-scene-no-leave-to {
   overflow-y: auto;
   scrollbar-width: none;
   text-align: center;
+}
+
+.onb-stage > :first-child:not(.onb-notes) {
+  margin-top: auto;
+}
+
+.onb-stage > :last-child {
+  margin-bottom: auto;
 }
 
 /* Two-level cascade: direct children float in one after another with a
@@ -852,10 +863,6 @@ html[data-theme='dark'] .onb-card::before {
   transform: scale(1.16);
 }
 
-.onb-swatch:active {
-  transform: scale(0.94);
-}
-
 .onb-swatch.is-selected {
   outline: 3px solid rgba(var(--onb-accent-rgb), 0.85);
   outline-offset: 3px;
@@ -1124,6 +1131,40 @@ body.te-no-blur .onb-segmented {
 
 .onb-card.is-compact {
   padding: 20px 18px 18px;
+}
+
+.onb-player-shape-cards .onb-card,
+.onb-close-behavior-cards .onb-card {
+  width: clamp(154px, 16vw, 190px);
+  gap: 8px;
+  padding: 22px 16px 18px;
+}
+
+.onb-player-shape-cards .onb-card-icon,
+.onb-close-behavior-cards .onb-card-icon {
+  font-size: 36px;
+}
+
+.onb-visibility-panel {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.onb-visibility-panel .onb-toggle-copy {
+  padding-left: 12px;
+}
+
+@media (max-width: 720px) {
+  .onb-visibility-panel {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .onb-visibility-panel .onb-segmented {
+    justify-content: center;
+  }
 }
 
 .onb-card:disabled {
@@ -1855,6 +1896,42 @@ body.te-no-blur .onb-back-leave-to {
   filter: none !important;
 }
 
+/* Short windows: the tall player/system scenes crowd the title strip — trim
+   the scene density so the content keeps breathing room before it scrolls. */
+@media (max-height: 880px) {
+  .onb-progress {
+    padding-top: 14px;
+  }
+
+  .onb-stage {
+    gap: 14px;
+    padding-top: 18px;
+    padding-bottom: 12px;
+  }
+
+  .onb-card {
+    padding: 22px 18px 18px;
+  }
+
+  .onb-player-shape-cards .onb-card,
+  .onb-close-behavior-cards .onb-card {
+    padding: 16px 14px 14px;
+  }
+
+  .onb-panel {
+    padding: 10px 12px;
+  }
+
+  .onb-toggle-row {
+    padding: 7px 12px;
+  }
+
+  .onb-footer {
+    padding-top: 10px;
+    padding-bottom: 18px;
+  }
+}
+
 html[data-density='compact'] .onb-stage {
   gap: 12px;
   padding-top: 16px;
@@ -1887,10 +1964,14 @@ html[data-density='compact'] .onb-bg-swatch {
   height: 28px;
 }
 
-html[data-density='comfortable'] .onb-stage {
-  gap: 26px;
-  padding-top: 34px;
-  padding-bottom: 24px;
+/* The comfortable density only stretches the scene on tall windows — on
+   short ones the max-height trim above keeps the scroll relief. */
+@media (min-height: 881px) {
+  html[data-density='comfortable'] .onb-stage {
+    gap: 26px;
+    padding-top: 34px;
+    padding-bottom: 24px;
+  }
 }
 
 html[data-density='comfortable'] .onb-theme-chip {

@@ -41,11 +41,14 @@ export function bindDesktopLyricsIpcEvents(): void {
     }
   })
 
-  ipcRenderer.on('desktopLyrics:loadFailed', (_event, payload: { code: number; description: string }) => {
-    for (const cb of desktopLyricsLoadFailedCallbacks) {
-      cb(payload)
+  ipcRenderer.on(
+    'desktopLyrics:loadFailed',
+    (_event, payload: { code: number; description: string }) => {
+      for (const cb of desktopLyricsLoadFailedCallbacks) {
+        cb(payload)
+      }
     }
-  })
+  )
 }
 
 export const desktopLyricsApi = {
@@ -58,8 +61,12 @@ export const desktopLyricsApi = {
   updateTime: (time: number): void => {
     ipcRenderer.send('desktopLyrics:updateTime', time)
   },
-  updateSettings: (settings: DesktopLyricsSettings): void => {
+  updateSettings: (settings: Partial<DesktopLyricsSettings>): void => {
     ipcRenderer.send('desktopLyrics:updateSettings', settings)
+  },
+  listInstalledFonts: (): Promise<string[]> => ipcRenderer.invoke('fonts:listInstalled'),
+  setInteractive: (interactive: boolean): void => {
+    ipcRenderer.send('desktopLyrics:setInteractive', interactive)
   },
   onToggle: (cb: (enabled: boolean) => void): (() => void) => {
     desktopLyricsToggleCallbacks.add(cb)

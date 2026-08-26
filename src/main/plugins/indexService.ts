@@ -36,6 +36,7 @@ interface PluginIndexCacheEnvelope {
   origin: string
   fetchedAt: string
   expiresAt: string
+  etag?: string
   index: unknown
 }
 
@@ -128,6 +129,9 @@ export class PluginIndexService {
   private loadGeneration = 0
   private latestLoadPromise: Promise<TwilightPluginIndexEntry[]> | null = null
   private cacheWriteQueue: Promise<void> = Promise.resolve()
+  private cachedIndexEtag: string | null = null
+  private indexValidatedAt = 0
+  private backgroundRevalidate: Promise<void> | null = null
 
   constructor(options: PluginIndexServiceOptions) {
     this.appVersion = options.appVersion
@@ -170,6 +174,9 @@ export class PluginIndexService {
   async list(forceRefresh = false): Promise<TwilightPluginIndexEntry[]> {
     if (!forceRefresh && this.cachedEntries) {
       this.refreshDerivedTrust()
+      if ((this.status.stale || this.status.expired) && !this.backgroundRevalidate) {
+        this.startBackgroundRevalidate()
+      }
       return this.cachedEntries
     }
     const generation = ++this.loadGeneration
@@ -182,18 +189,58 @@ export class PluginIndexService {
     }
   }
 
-  private async loadIndex(generation: number): Promise<TwilightPluginIndexEntry[]> {
+  private startBackgroundRevalidate(): void {
+    const generation = ++this.loadGeneration
+    const operation = this.loadIndex(generation, false)
+      .catch(() => undefined)
+      .then((): void => undefined)
+      .finally(() => {
+        if (this.backgroundRevalidate === operation) this.backgroundRevalidate = null
+      })
+    this.backgroundRevalidate = operation
+  }
+
+  private hasRecentlyValidatedIndex(): boolean {
+    return (
+      this.cachedEntries !== null &&
+      !this.status.expired &&
+      this.indexValidatedAt > 0 &&
+      Date.now() - this.indexValidatedAt < 60_000
+    )
+  }
+
+  private async loadIndex(
+    generation: number,
+    allowCachedResult = true
+  ): Promise<TwilightPluginIndexEntry[]> {
     const remoteUrl = this.remoteIndexUrl
     if (!remoteUrl) {
       return this.loadBundledIndex(null, generation)
     }
 
     try {
+      if (allowCachedResult) {
+        const cached = await this.tryReadCache(remoteUrl, null, generation, false)
+        if (cached && !this.status.expired) {
+          this.indexValidatedAt = Date.now()
+          this.startBackgroundRevalidate()
+          return cached
+        }
+      }
       const {
         raw,
         responseUrl: indexOrigin,
-        redirected
-      } = await this.readRemoteIndex(remoteUrl)
+        redirected,
+        etag: responseEtag
+      } = await this.readRemoteIndex(remoteUrl, this.cachedIndexEtag ?? undefined)
+      if (raw === null) {
+        const refreshed = await this.refreshNotModifiedCache(remoteUrl, generation)
+        if (refreshed) {
+          this.indexValidatedAt = Date.now()
+          return refreshed
+        }
+        throw new Error('插件索引返回 304 但缺少有效缓存')
+      }
       if (!this.isCurrentLoad(generation)) return this.latestSnapshot(generation)
       const parsed = parseJsonWithNestingLimit(raw) as unknown
       const fetchedAtDate = this.currentTime()
@@ -217,6 +264,7 @@ export class PluginIndexService {
             origin: indexOrigin,
             fetchedAt,
             expiresAt,
+            ...(responseEtag ? { etag: responseEtag } : {}),
             index: parsed
           },
           generation
@@ -244,6 +292,8 @@ export class PluginIndexService {
       }
       if (!this.isCurrentLoad(generation)) return this.latestSnapshot(generation)
       this.currentBaseUrl = indexOrigin
+      this.cachedIndexEtag = responseEtag ?? null
+      this.indexValidatedAt = Date.now()
       this.cachedEntries = entries
       this.status = this.createStatus({
         sourceUrl: indexOrigin,
@@ -282,13 +332,33 @@ export class PluginIndexService {
     return this.list(true)
   }
 
+  private async refreshNotModifiedCache(
+    remoteUrl: string,
+    generation: number
+  ): Promise<TwilightPluginIndexEntry[] | null> {
+    if (!this.cacheIndexPath || !this.cachedIndexEtag) return null
+    const raw = await this.readIndexSource(this.cacheIndexPath)
+    const envelope = parseCacheEnvelope(parseJsonWithNestingLimit(raw) as unknown)
+    if (!envelope) return null
+    const fetchedAtDate = this.currentTime()
+    const updatedEnvelope: PluginIndexCacheEnvelope = {
+      ...envelope,
+      fetchedAt: fetchedAtDate.toISOString(),
+      expiresAt: new Date(fetchedAtDate.getTime() + this.cacheTtlMs).toISOString(),
+      etag: this.cachedIndexEtag
+    }
+    const written = await this.writeCache(updatedEnvelope, generation)
+    if (!written) return null
+    return this.tryReadCache(remoteUrl, null, generation, false)
+  }
+
   getStatus(): TwilightPluginIndexStatus {
     this.refreshDerivedTrust()
     return { ...this.status }
   }
 
   async downloadPackage(id: string): Promise<DownloadedPluginPackage> {
-    await this.list(true)
+    if (!this.hasRecentlyValidatedIndex()) await this.list(true)
     this.refreshDerivedTrust()
     const entry = this.cachedEntries?.find((candidate) => candidate.id === id)
     if (!entry) throw new Error('插件索引中未找到该插件')
@@ -394,8 +464,9 @@ export class PluginIndexService {
 
   private async tryReadCache(
     remoteUrl: string,
-    remoteError: string,
-    generation: number
+    remoteError: string | null,
+    generation: number,
+    stale = true
   ): Promise<TwilightPluginIndexEntry[] | null> {
     if (!this.cacheIndexPath) return null
     try {
@@ -412,6 +483,7 @@ export class PluginIndexService {
       let expired: boolean
       let originVerified: boolean
       let cacheFormat: TwilightPluginIndexCacheFormat
+      let etag: string | null = null
 
       if (envelope) {
         indexOrigin = envelope.origin
@@ -421,6 +493,7 @@ export class PluginIndexService {
         expired = loadedAtDate.getTime() >= Date.parse(envelope.expiresAt)
         originVerified = envelope.origin === remoteUrl
         cacheFormat = 'envelope-v1'
+        etag = typeof envelope.etag === 'string' && envelope.etag ? envelope.etag : null
       } else {
         indexOrigin = remoteUrl
         index = parsed
@@ -432,13 +505,14 @@ export class PluginIndexService {
       }
 
       this.currentBaseUrl = indexOrigin
+      this.cachedIndexEtag = etag
       this.cachedEntries = this.validateIndex(
         index,
         indexOrigin,
         this.trustContext({
           indexOrigin,
           loadedFrom: 'cache',
-          stale: true,
+          stale,
           expired,
           originVerified
         }),
@@ -451,7 +525,7 @@ export class PluginIndexService {
         lastFetchedAt: fetchedAt,
         expiresAt,
         loadedAt,
-        stale: true,
+        stale,
         expired,
         originVerified,
         cacheFormat,
@@ -678,26 +752,50 @@ export class PluginIndexService {
   }
 
   private async readRemoteIndex(
-    source: string
-  ): Promise<{ raw: string; responseUrl: string; redirected: boolean }> {
-    const { buffer, responseUrl, redirected } = await this.fetchBufferWithMetadata(
+    source: string,
+    etag?: string
+  ): Promise<{
+    raw: string | null
+    responseUrl: string
+    redirected: boolean
+    etag?: string | null
+  }> {
+    const result = await this.fetchBufferWithMetadata(
       source,
-      this.indexSizeLimitBytes
+      this.indexSizeLimitBytes,
+      etag ? { 'If-None-Match': etag } : undefined
     )
-    return { raw: buffer.toString('utf-8'), responseUrl, redirected }
+    return {
+      raw: result.status === 304 ? null : result.buffer.toString('utf-8'),
+      responseUrl: result.responseUrl,
+      redirected: result.redirected,
+      etag: result.etag
+    }
   }
 
   private async fetchBufferWithMetadata(
     url: string,
-    limitBytes: number
-  ): Promise<{ buffer: Buffer; responseUrl: string; redirected: boolean }> {
-    const result = await this.withRemoteResponse(url, async (response, controller) =>
+    limitBytes: number,
+    headers?: Record<string, string>
+  ): Promise<{
+    buffer: Buffer
+    responseUrl: string
+    redirected: boolean
+    status: number
+    etag?: string | null
+  }> {
+    const result = await this.withRemoteResponse(
+      url,
+      async (response, controller) =>
       this.readResponseBuffer(response, limitBytes, controller)
+      , headers
     )
     return {
       buffer: result.value,
       responseUrl: result.responseUrl,
-      redirected: result.redirected
+      redirected: result.redirected,
+      status: result.status,
+      etag: result.etag
     }
   }
 
@@ -712,10 +810,28 @@ export class PluginIndexService {
     packagePath: string
   ): Promise<PackageSourceMetadata> {
     if (isHttpUrl(source)) {
-      const result = await this.withRemoteResponse(source, async (response, controller) =>
-        this.writeResponsePackage(response, packagePath, controller)
-      )
-      return { checksum: result.value, responseUrl: result.responseUrl }
+      let serverAcceptsRanges = false
+      try {
+        const result = await this.withRemoteResponse(
+          source,
+          async (response, controller) => {
+            serverAcceptsRanges =
+              response.headers.get('accept-ranges')?.toLowerCase().includes('bytes') === true
+            return await this.writeResponsePackage(response, packagePath, controller)
+          }
+        )
+        return { checksum: result.value, responseUrl: result.responseUrl }
+      } catch (error) {
+        const partialSize = existsSync(packagePath) ? (await stat(packagePath)).size : 0
+        if (!serverAcceptsRanges || partialSize === 0) throw error
+        const result = await this.withRemoteResponse(
+          source,
+          async (response, controller) =>
+            this.writeResponsePackage(response, packagePath, controller, partialSize),
+          { Range: `bytes=${partialSize}-` }
+        )
+        return { checksum: result.value, responseUrl: result.responseUrl }
+      }
     }
     if (!source.startsWith('file://')) throw new Error('插件包 sourceUrl 协议不受支持')
     const filePath = fileUrlToPath(source)
@@ -731,18 +847,27 @@ export class PluginIndexService {
 
   private async withRemoteResponse<T>(
     source: string,
-    consume: (response: Response, controller: AbortController) => Promise<T>
-  ): Promise<{ value: T; responseUrl: string; redirected: boolean }> {
+    consume: (response: Response, controller: AbortController) => Promise<T>,
+    headers?: Record<string, string>
+  ): Promise<{
+    value: T
+    responseUrl: string
+    redirected: boolean
+    status: number
+    etag?: string | null
+  }> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.timeoutMs)
     let activeResponse: Response | null = null
     try {
-      const response = await this.fetchRemoteResponse(source, controller)
+      const response = await this.fetchRemoteResponse(source, controller, headers)
       activeResponse = response.response
       return {
         value: await consume(activeResponse, controller),
         responseUrl: response.responseUrl,
-        redirected: response.redirected
+        redirected: response.redirected,
+        status: response.response.status,
+        etag: response.response.headers.get('etag')
       }
     } catch (error) {
       controller.abort()
@@ -755,7 +880,8 @@ export class PluginIndexService {
 
   private async fetchRemoteResponse(
     source: string,
-    controller: AbortController
+    controller: AbortController,
+    headers: Record<string, string> = {}
   ): Promise<RemoteResponseMetadata> {
     const initialUrl = new URL(source)
     assertAllowedPluginRemoteUrl(initialUrl, 'Plugin index')
@@ -767,7 +893,8 @@ export class PluginIndexService {
     while (true) {
       const response = await this.fetchImpl(currentUrl.toString(), {
         redirect: 'manual',
-        signal: controller.signal
+        signal: controller.signal,
+        headers
       })
       const location = REDIRECT_STATUSES.has(response.status)
         ? response.headers.get('location')
@@ -795,7 +922,7 @@ export class PluginIndexService {
         redirected = true
         continue
       }
-      if (!response.ok) {
+      if (!response.ok && response.status !== 304) {
         await discardResponseBody(response)
         throw new Error(`插件索引请求失败：HTTP ${response.status}`)
       }
@@ -830,11 +957,35 @@ export class PluginIndexService {
   private async writeResponsePackage(
     response: Response,
     packagePath: string,
-    controller: AbortController
+    controller: AbortController,
+    resumeFrom = 0
   ): Promise<string> {
-    return await this.writePackage(packagePath, async (writeChunk) => {
-      await consumeResponseBody(response, this.packageSizeLimitBytes, controller, writeChunk)
-    })
+    if (resumeFrom === 0) {
+      return await this.writePackage(packagePath, async (writeChunk) => {
+        await consumeResponseBody(response, this.packageSizeLimitBytes, controller, writeChunk)
+      })
+    }
+    if (response.status !== 206) {
+      await discardResponseBody(response)
+      throw new PluginIndexPolicyError('插件下载服务不支持请求的字节区间')
+    }
+    const partial = await readFile(packagePath)
+    if (partial.byteLength !== resumeFrom || partial.byteLength > this.packageSizeLimitBytes) {
+      throw new PluginIndexPolicyError('插件下载续传状态无效')
+    }
+    return await this.writePackage(
+      packagePath,
+      async (writeChunk) => {
+        await consumeResponseBody(
+          response,
+          this.packageSizeLimitBytes - resumeFrom,
+          controller,
+          writeChunk
+        )
+      },
+      partial,
+      resumeFrom
+    )
   }
 
   private async writeLocalPackage(sourcePath: string, packagePath: string): Promise<string> {
@@ -858,13 +1009,19 @@ export class PluginIndexService {
 
   private async writePackage(
     packagePath: string,
-    copy: (writeChunk: (chunk: Uint8Array) => Promise<void>) => Promise<void>
+    copy: (writeChunk: (chunk: Uint8Array) => Promise<void>) => Promise<void>,
+    existingBytes?: Buffer,
+    resumeFrom = 0
   ): Promise<string> {
     let handle: FileHandle | null = null
     let position = 0
     const hash = createHash('sha256')
     try {
-      handle = await open(packagePath, 'wx')
+      handle = await open(packagePath, existingBytes ? 'r+' : 'wx')
+      if (existingBytes) {
+        hash.update(existingBytes)
+        position = resumeFrom
+      }
       await copy(async (chunk) => {
         hash.update(chunk)
         position = await writeAll(handle!, chunk, position)
@@ -1080,6 +1237,7 @@ function parseCacheEnvelope(value: unknown): PluginIndexCacheEnvelope | null {
     origin,
     fetchedAt,
     expiresAt,
+    ...(typeof value.etag === 'string' && value.etag ? { etag: value.etag } : {}),
     index: value.index
   }
 }

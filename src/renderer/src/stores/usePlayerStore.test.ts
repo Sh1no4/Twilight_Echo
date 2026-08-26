@@ -2,6 +2,10 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { normalizeAudioDeviceOptions } from './player/audioOutputNormalize.ts'
+import { APP_LOCALES } from '../../../shared/i18n/locale.ts'
+import { translate } from '../../../shared/i18n/translate.ts'
+import { ZH_CN_MESSAGES } from '../../../shared/i18n/messages/zh-CN.ts'
+import { EN_US_MESSAGES } from '../../../shared/i18n/messages/en-US.ts'
 
 function extractFunctionBody(source: string, functionName: string): string {
   const signatureIndex = source.indexOf(`export function ${functionName}`)
@@ -730,6 +734,7 @@ test('mini player switching recovers from stale unauthorized local tracks', () =
 
   assert.match(resolvePlayTarget, /window\.api\.fs\.isAudioFileAuthorized\(track\.filePath\)/)
   assert.match(preloadSource, /ipcRenderer\.invoke\('fs:isAudioFileAuthorized', filePath\)/)
+  assert.match(preloadSource, /ipcRenderer\.invoke\('fs:areAudioFilesAuthorized', filePaths\)/)
   assert.match(handlePlaybackFallback, /await loadAndPlay\(fallback\)/)
   assert.match(handleProviderRematchFallback, /if \(failedSource !== 'local'\)/)
   assert.match(handleProviderRematchFallback, /await loadAndPlay\(rematched\)/)
@@ -794,6 +799,9 @@ test('player store prepares native queues before loading or synchronizing them',
   )
   assert.match(loadAndPlay, /const preparedQueue = await preparePlayerNativeQueue\(/)
   assert.match(loadAndPlay, /isAudioFileAuthorized: window\.api\.fs\.isAudioFileAuthorized/)
+  // The queue's local targets are authorized in one round-trip; a per-track invoke
+  // cost one IPC hop per queue entry before playback could start.
+  assert.match(loadAndPlay, /areAudioFilesAuthorized: window\.api\.fs\.areAudioFilesAuthorized/)
   assert.match(
     loadAndPlay,
     /if \(!isActiveLoad\(loadToken, track\)\) \{[\s\S]*?return[\s\S]*?\}\s*await window\.api\.audioEngine\.loadQueue/,
@@ -924,10 +932,10 @@ test('native queue switching guards the target track before applying playback-in
   )
 
   assert.match(source, /evaluateNativePlaybackInfoIntent/)
-  assert.match(
-    advanceNativePlayback,
-    /const target = playMode\.value === 'shuffle' \? null : getNativeQueueAdvanceTarget\(direction\)/
-  )
+  // The native queue mirrors the renderer's order in every mode (shuffle is applied
+  // before hand-off), so shuffle predicts its target like any other mode.
+  assert.match(advanceNativePlayback, /const target = getNativeQueueAdvanceTarget\(direction\)/)
+  assert.doesNotMatch(advanceNativePlayback, /playMode\.value === 'shuffle' \? null/)
   assert.match(advanceNativePlayback, /activateCurrentTrack\(target\.track/)
   assert.match(source, /function activateCurrentTrack/)
   assert.match(source, /function hydratePlaybackTrack/)
@@ -978,7 +986,12 @@ test('native queue switching guards the target track before applying playback-in
   assert.match(playbackSessionClockSource, /maxPredictionGapMs/)
   assert.match(playbackSessionClockSource, /needsResync: true/)
   assert.match(source, /restoredPlaybackPending &&\s*Number\.isFinite\(restoredPlaybackPosition\)/)
-  assert.match(source, /if \(isLoading\.value \|\| loadedTrackId !== track\.id\)/)
+  // A seek defers to the restore-pending slot only while a load is actually in
+  // flight; otherwise it must reach the real dispatch below instead of being
+  // dropped on a stale loadedTrackId.
+  const seekPlaybackGuardBody = extractInternalFunctionBody(source, 'seekPlayback')
+  assert.match(seekPlaybackGuardBody, /if \(isLoading\.value\) \{\s*restoredPlaybackPending = true/)
+  assert.doesNotMatch(seekPlaybackGuardBody, /loadedTrackId !== track\.id/)
   assert.match(advanceAfterPlaybackEnded, /activateCurrentTrack\(track/)
   assert.match(playQueueTrack, /activateCurrentTrack\(track, \{ resetUi: true, position: 0 \}\)/)
   assert.match(
@@ -1071,8 +1084,12 @@ test('player store does not pretend DSP bypass is strict bit-perfect mode', () =
   assert.doesNotMatch(source, /function strictBitPerfectModeEnabled\(\)/)
   assert.doesNotMatch(loadAndPlay, /严格 Bit-Perfect 模式拒绝 renderer fallback/)
   assert.match(loadAndPlay, /isHtmlAudioFallbackAllowed/)
-  assert.match(loadAndPlay, /原生音频引擎不可用：/)
-  assert.match(loadAndPlay, /原生音频引擎不可用，已启用临时播放通道/)
+  // The copy moved into the message catalog, so the distinction these two once
+  // asserted on now lives in the key: a hard stop ("native unavailable") must
+  // stay separate from a degraded-but-audible fallback ("temporary channel").
+  assert.match(loadAndPlay, /'error\.audio\.native_unavailable_detail'/)
+  assert.match(loadAndPlay, /'error\.audio\.native_unavailable'/)
+  assert.match(loadAndPlay, /'error\.audio\.native_fallback'/)
   assert.match(loadAndPlay, /playWithRendererAudio\(/)
   assert.match(setVolume, /volume\.value = vol/)
 })
@@ -1106,13 +1123,17 @@ test('player store keeps default volume at 0.7, persists softwareVolume, and exp
 
 test('player store exposes setOutputStage for HiFi sample-rate lock (graph.outputStage)', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
-  const setOutputStage = extractInternalFunctionBody(source, 'setOutputStage')
+  const controllerSource = readFileSync(
+    new URL('./player/audioOutputController.ts', import.meta.url),
+    'utf8'
+  )
+  const setOutputStage = extractInternalFunctionBody(controllerSource, 'setOutputStage')
   const refresh = extractInternalFunctionBody(source, 'refreshAudioOutputState')
 
   assert.match(source, /dspOutputStage/)
   assert.match(source, /DEFAULT_DSP_OUTPUT_STAGE/)
-  assert.match(source, /async function setOutputStage\(/)
-  assert.match(setOutputStage, /audioEngine\.setOutputStage/)
+  assert.match(controllerSource, /async function setOutputStage\(/)
+  assert.match(setOutputStage, /api\.setOutputStage/)
   assert.match(refresh, /getDspSceneState/)
 })
 
@@ -1227,11 +1248,18 @@ test('audio engine errors use the global notice channel instead of the player ba
   const storeSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const source = readFileSync(new URL('../components/PlayerBar.vue', import.meta.url), 'utf8')
 
-  assert.match(storeSource, /function setAudioEngineError\(error: string \| null\): void/)
+  // Severity is now a parameter, not a guess. It used to be inferred by
+  // substring-matching Chinese copy, which made the wording load-bearing:
+  // translating a message would have silently reclassified a recovered-with-
+  // fallback warning as a hard error.
   assert.match(
     storeSource,
-    /pushNotice\(\{ kind: isFallbackNotice \? 'warning' : 'error', message \}\)/
+    /function setAudioEngineError\(error: string \| null, kind: AppNoticeKind = 'error'\): void/
   )
+  assert.match(storeSource, /pushNotice\(\{ kind, message \}\)/)
+  assert.doesNotMatch(storeSource, /isFallbackNotice/)
+  // Every caller that keeps audio playing must say so explicitly.
+  assert.equal(storeSource.match(/setAudioEngineError\([\s\S]*?'warning'\s*\)/g)?.length, 3)
   assert.doesNotMatch(source, /audioEngineError/)
   assert.doesNotMatch(source, /player-playback-diagnostic"[^>]*>[\s\S]*audioEngineError/)
 })
@@ -1524,8 +1552,11 @@ test('player bar exposes a HiFi console drawer instead of visualization meters',
   assert.match(playerBarSource, /@refresh-cast-devices="refreshCastDevices"/)
   assert.match(playerBarSource, /@add-bookmark="onAddBookmark"/)
   // Playbar destroys the left rail on track identity change so cover art remounts.
+  // The rail is a region in the layout `v-for` now, so the track identity rides
+  // that region's key instead of sitting on a hand-written `.player-left`.
   assert.match(playerBarSource, /playerLeftKey/)
-  assert.match(playerBarSource, /:key="playerLeftKey"/)
+  assert.match(playerBarSource, /key: name === 'left' \? `left:\$\{playerLeftKey\.value\}` : name/)
+  assert.match(playerBarSource, /:key="region\.key"/)
   assert.match(playerBarSource, /CoverImg/)
   assert.doesNotMatch(playerBarSource, /coverLoadFailed/)
   assert.match(playerBarSource, /progress:\$\{currentTrack\.id\}/)
@@ -1553,6 +1584,7 @@ test('player bar visualization polling stays light and stops behind the full vis
     'utf8'
   )
 
+  assert.match(pollingSource, /VISUALIZATION_UPDATE_INTERVAL_MS = 60/)
   assert.match(pollingSource, /spectrumPoints: 64/)
   assert.match(pollingSource, /waveformPoints: 48/)
   assert.match(pollingSource, /spectrogramFrames: 32/)
@@ -1581,10 +1613,13 @@ test('audio service recovery uses the global notice channel instead of the playe
   assert.match(source, /const audioEngineRecoveryNotice = ref/)
   assert.match(source, /function publishAudioEngineRecoveryNotice/)
   assert.match(source, /pushNotice\(\{/)
-  assert.match(source, /kind: notice\.kind === 'service-crash'/)
-  assert.match(source, /label: notice\.actionLabel \|\| '继续播放'/)
+  assert.match(source, /kind: unrecoverable/)
+  assert.match(
+    source,
+    /label: notice\.actionLabel \|\| translate\(currentLocale\(\), 'action\.resumePlayback'\)/
+  )
   assert.match(source, /run: \(\) => void togglePlayState\(\)/)
-  assert.match(source, /sticky: notice\.kind === 'service-crash' \|\| notice\.canResume === false/)
+  assert.match(source, /sticky: unrecoverable \|\| notice\.kind === 'service-crash'/)
   assert.match(source, /function setAudioServiceCrashNotice/)
   assert.match(source, /function setAudioServiceReadyNotice/)
   assert.match(source, /outputRouteSynced/)
@@ -1592,9 +1627,62 @@ test('audio service recovery uses the global notice channel instead of the playe
   assert.match(source, /canResume: outputRouteSynced/)
   assert.match(source, /api\.onServiceCrash/)
   assert.match(source, /api\.onServiceReady/)
-  assert.match(source, /message\.includes\('音频服务已重启'\)/)
+  // The restart case is recognized by its structured code. It used to be
+  // detected with `message.includes('音频服务已重启')`, which made the Chinese
+  // wording load-bearing — translating the string would have silently stopped
+  // routing restarts to the recovery notice.
+  assert.match(source, /detail\.code === 'audio\.service_crashed'/)
+  assert.doesNotMatch(source, /message\.includes\('音频服务已重启'\)/)
   assert.doesNotMatch(playerBarSource, /audioEngineRecoveryNotice/)
   assert.doesNotMatch(playerBarSource, /关闭恢复提示/)
+})
+
+test('an unrecoverable audio service failure is deduped, labelled fatal, and retryable', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+
+  // One dedupe slot for the whole recovery lifecycle: the crash reason arrives
+  // on both the service-crash and error channels, so an undeduped push would
+  // replace the toast the user just closed.
+  assert.match(source, /const AUDIO_ENGINE_RECOVERY_DEDUPE_KEY = 'audio-engine-recovery'/)
+  assert.match(source, /dedupeKey: AUDIO_ENGINE_RECOVERY_DEDUPE_KEY/)
+
+  // A fatal startup failure never restarts itself, so it must not claim to.
+  // The copy moved into the message catalogs, so the invariant is checked where
+  // the sentences now live — and in every locale, not just Chinese.
+  assert.match(source, /kind: 'service-fatal'/)
+  assert.match(source, /'error\.audio\.service_fatal'/)
+  for (const locale of APP_LOCALES) {
+    const fatal = translate(locale, 'error.audio.service_fatal', { reason: 'x' })
+    const crashed = translate(locale, 'error.audio.service_crashed', { reason: 'x' })
+    assert.ok(fatal.length > 0, `${locale} must define fatal copy`)
+    assert.notEqual(fatal, crashed, `${locale} must distinguish fatal from a restart`)
+  }
+  // zh-CN is the locale whose exact wording the recovery promise lives in.
+  assert.doesNotMatch(
+    translate('zh-CN', 'error.audio.service_fatal', { reason: 'x' }),
+    /正在恢复音频服务/,
+    'a fatal notice must not promise an automatic recovery'
+  )
+  assert.match(
+    translate('zh-CN', 'error.audio.service_crashed', { reason: 'x' }),
+    /正在恢复音频服务/,
+    'a restart notice should still say recovery is under way'
+  )
+  // Classification comes from the structured code, not the prose.
+  assert.match(source, /detail\.code === 'audio\.service_fatal'/)
+  assert.doesNotMatch(source, /message\.includes\('音频服务无法启动'\)/)
+  assert.match(source, /setAudioServiceCrashNotice\(reason, \{ fatal: fatal === true \}\)/)
+
+  // Recovery is user-driven: the retry releases the suppression only after the
+  // await, because the notice host dismisses the toast as soon as run() returns.
+  assert.match(source, /async function retryAudioService/)
+  assert.match(source, /api\.restartService\(\)/)
+  const retry = source.slice(source.indexOf('async function retryAudioService'))
+  assert.ok(
+    retry.indexOf('await api.restartService()') <
+      retry.indexOf('releaseNoticeDedupe(AUDIO_ENGINE_RECOVERY_DEDUPE_KEY)'),
+    'releasing before the await would be undone by the host dismissing the toast'
+  )
 })
 
 test('renderer audio device normalization derives tri-state capability fallbacks', () => {
@@ -1742,7 +1830,19 @@ test('missing local playback searches provider results instead of stopping at th
     handleProviderRematchFallback,
     /failedSource === 'local'\s*\?\s*getTrackSource\(track\) !== 'local'/
   )
-  assert.match(handleProviderRematchFallback, /已重新匹配到/)
+  // The rematch still tells the user what happened, but the copy now comes from
+  // the message catalog instead of a template literal, so the notice is readable
+  // in every shipped locale.
+  assert.match(
+    handleProviderRematchFallback,
+    /error\.audio\.playback_fallback_rematched/,
+    'the rematch must still surface a notice, via the catalog'
+  )
+  assert.match(ZH_CN_MESSAGES['error.audio.playback_fallback_rematched'], /已重新匹配到/)
+  assert.ok(
+    EN_US_MESSAGES['error.audio.playback_fallback_rematched'].length > 0,
+    'the rematch notice needs English copy too'
+  )
 })
 
 test('play mode is persisted in settings and restored on launch', () => {
@@ -1797,13 +1897,16 @@ test('play mode is persisted in settings and restored on launch', () => {
   assert.match(setPlayModeInternal, /rendererPlayModeBoundaryPending\.value = true/)
   assert.match(setPlayModeInternal, /void updateSettings\(\{ playMode: mode \}\)/)
   assert.match(setPlayModeInternal, /queueNativePlayModeSync\(mode\)/)
-  assert.doesNotMatch(setPlayModeInternal, /queueNativeQueueStateSync\(/)
-  assert.doesNotMatch(setPlayModeInternal, /loadQueue\(/)
-  assert.doesNotMatch(setPlayModeInternal, /playQueueTrack\(|loadAndPlay\(/)
+  // A delegated engine has already preloaded its next item, so the pending reorder
+  // has to be applied and resynced at switch time or shuffle silently keeps playing
+  // in plain queue order. Everywhere else the reorder still waits for a boundary.
   assert.match(
-    queueNativePlayModeSync,
-    /mode === 'repeat' \|\| mode === 'shuffle' \? mode : 'sequential'/
+    setPlayModeInternal,
+    /if \(!castTargetUsn\.value && nativePlaybackActive && isNativeQueueDelegated\(\)\) \{[\s\S]*applyPendingRendererPlayModeAtBoundary\(\)\s*\n\s*void queueNativeQueueStateSync\(\)/
   )
+  // Switching mode must never restart playback, delegated or not.
+  assert.doesNotMatch(setPlayModeInternal, /playQueueTrack\(|loadAndPlay\(/)
+  assert.match(queueNativePlayModeSync, /toNativePlayMode\(mode\)/)
   assert.match(queueNativePlayModeSync, /window\.api\.audioEngine\.setPlayMode\(nativePlayMode\)/)
   assert.doesNotMatch(queueNativePlayModeSync, /loadQueue\(/)
   assert.match(
@@ -1827,7 +1930,18 @@ test('play mode is persisted in settings and restored on launch', () => {
   assert.match(previous, /applyPendingRendererPlayModeAtBoundary\(\)/)
   assert.match(
     loadAndPlay,
-    /playMode\.value === 'repeat' \|\| playMode\.value === 'shuffle'[\s\S]*await window\.api\.audioEngine\.setPlayMode\(nativePlayMode\)/
+    /const nativePlayMode = toNativePlayMode\(playMode\.value\)[\s\S]*await window\.api\.audioEngine\.setPlayMode\(nativePlayMode\)/
+  )
+  // Every native mode push routes through the one shared mapping. Re-inlining it
+  // is how listLoop ended up pinned to a non-wrapping native sequential.
+  assert.doesNotMatch(
+    playerSource,
+    /=== 'repeat' \|\| [a-zA-Z.]*playMode[a-zA-Z.]* === 'shuffle'\s*\n?\s*\? /,
+    'map play modes for the native engine through toNativePlayMode, not a local copy'
+  )
+  assert.match(
+    playerSource,
+    /import \{ toNativePlayMode \} from '\.\.\/\.\.\/\.\.\/shared\/playbackModes\.ts'/
   )
   assert.match(
     playerSource,
@@ -1841,24 +1955,28 @@ test('play mode is persisted in settings and restored on launch', () => {
 
 test('heart mode is gated to the liked NCM playlist and drives smart-list playback', () => {
   const playerSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const controllerSource = readFileSync(
+    new URL('./player/heartModeController.ts', import.meta.url),
+    'utf8'
+  )
   const cyclePlayMode = extractInternalFunctionBody(playerSource, 'cyclePlayMode')
   const setPlayModeInternal = extractInternalFunctionBody(playerSource, 'setPlayModeInternal')
-  const enterHeartMode = extractInternalFunctionBody(playerSource, 'enterHeartMode')
-  const refillHeartQueue = extractInternalFunctionBody(playerSource, 'refillHeartQueue')
+  const enterHeartMode = extractInternalFunctionBody(controllerSource, 'enterHeartMode')
+  const refillHeartQueue = extractInternalFunctionBody(controllerSource, 'refillHeartQueue')
   const next = extractInternalFunctionBody(playerSource, 'next')
   const advanceAfterPlaybackEnded = extractInternalFunctionBody(
     playerSource,
     'advanceAfterPlaybackEnded'
   )
-  const advanceHeartPlayback = extractInternalFunctionBody(playerSource, 'advanceHeartPlayback')
+  const advanceHeartPlayback = extractInternalFunctionBody(controllerSource, 'advanceHeartPlayback')
   const syncNativeQueueState = extractInternalFunctionBody(playerSource, 'syncNativeQueueState')
 
   // 可用性只取决于“我喜欢的音乐”歌单上下文 + 网易云流媒体曲目。
   assert.match(
-    playerSource,
+    controllerSource,
     /heartModeContext\.value\.likedPlaylistId != null[\s\S]*getTrackSource\(currentTrack\.value\) === 'ncm'/
   )
-  assert.match(playerSource, /function setHeartModeContext\(playlistId: number \| null\): void/)
+  assert.match(controllerSource, /function setHeartModeContext\(playlistId: number \| null\): void/)
   assert.match(
     cyclePlayMode,
     /heartModeAvailable\.value \? modes : modes\.filter\(\(mode\) => mode !== 'heart'\)/
@@ -1867,15 +1985,15 @@ test('heart mode is gated to the liked NCM playlist and drives smart-list playba
     setPlayModeInternal,
     /if \(mode === 'heart'\) \{[\s\S]*if \(!heartModeAvailable\.value\) return/
   )
-  assert.match(playerSource, /let heartModeFetchRequest: Promise<number> \| null = null/)
-  assert.match(playerSource, /function fetchHeartRecommendations[\s\S]*fetchIntelligenceList/)
-  assert.match(playerSource, /function enterHeartMode[\s\S]*fetchHeartRecommendations/)
+  assert.match(controllerSource, /let heartModeFetchRequest: Promise<number> \| null = null/)
+  assert.match(controllerSource, /function fetchHeartRecommendations[\s\S]*fetchIntelligenceList/)
+  assert.match(controllerSource, /function enterHeartMode[\s\S]*fetchHeartRecommendations/)
   assert.match(enterHeartMode, /commitHeartQueue\(\[seed\]\)/)
   assert.match(refillHeartQueue, /if \(heartModeFetchRequest\) return heartModeFetchRequest/)
   assert.match(refillHeartQueue, /heartModeFetchRequest = request/)
   assert.match(
     advanceHeartPlayback,
-    /if \(playMode\.value !== 'heart'\) \{[\s\S]*await advanceAfterPlaybackEnded\(\)/
+    /if \(playMode\.value !== 'heart'\) \{[\s\S]*await options\.advanceAfterPlaybackEnded\(\)/
   )
   assert.match(next, /if \(playMode\.value === 'heart'\) \{[\s\S]*advanceHeartPlayback\(\)/)
   assert.match(
@@ -1921,7 +2039,11 @@ test('playback end auto-advance stops at queue end without changing manual next 
   assert.match(advanceAfterPlaybackEnded, /isPlaying\.value = false/)
   assert.match(advanceAfterPlaybackEnded, /stopVisualizationPolling\(true\)/)
   assert.match(handleNativePlaybackEnded, /if \(!nativePlaybackActive\) return/)
-  assert.match(handleNativePlaybackEnded, /if \(isNativeQueueDelegated\(\)\) return/)
+  // Regression (issue #48): a delegated queue that reached its end must reach the
+  // renderer's boundary handling, otherwise listLoop/shuffle never wrap and the
+  // auto-advance budget equals the queue length. Main only signals EOF when the
+  // engine reports no upcoming track, so this cannot race its auto-advance.
+  assert.doesNotMatch(handleNativePlaybackEnded, /if \(isNativeQueueDelegated\(\)\) return/)
   assert.match(handleNativePlaybackEnded, /handlePlaybackEnded\(\)/)
   assert.match(setupAudioEngineListeners, /case 'eof-reached':\s*handleNativePlaybackEnded\(\)/)
   assert.match(
@@ -2076,11 +2198,15 @@ test('single-song repeat replays the current track when playback ends in fallbac
 })
 
 test('applyAudioProcessingState replaces processing locally without engine IPC', () => {
-  const storeSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const controllerSource = readFileSync(
+    new URL('./player/audioOutputController.ts', import.meta.url),
+    'utf8'
+  )
   const dspSource = readFileSync(new URL('./useAudioOutputDspStore.ts', import.meta.url), 'utf8')
-  const body = extractInternalFunctionBody(storeSource, 'applyAudioProcessingState')
+  const body = extractInternalFunctionBody(controllerSource, 'applyAudioProcessingState')
   assert.match(body, /audioProcessing\.value = cloneAudioProcessingSettings\(processing\)/)
   assert.doesNotMatch(body, /window\.api/)
+  assert.doesNotMatch(body, /getAudioEngineApi/)
   assert.match(dspSource, /applyAudioProcessingState: player\.applyAudioProcessingState/)
 })
 

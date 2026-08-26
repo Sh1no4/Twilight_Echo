@@ -148,12 +148,14 @@ export interface MediaProvider {
   searchPlaylists?: (
     keywords: string,
     limit?: number,
-    offset?: number
+    offset?: number,
+    options?: MediaProviderCallOptions
   ) => Promise<MediaProviderSearchResult<MediaProviderPlaylistSummary>>
   searchArtists?: (
     keywords: string,
     limit?: number,
-    offset?: number
+    offset?: number,
+    options?: MediaProviderCallOptions
   ) => Promise<MediaProviderSearchResult<MediaProviderArtistSummary>>
   fetchPlaylistTracks?: (playlistId: number | string, force?: boolean) => Promise<Track[]>
   checkLogin?: () => Promise<{ loggedIn: boolean; profile: MediaProviderProfile | null }>
@@ -271,36 +273,39 @@ export class MediaProviderRegistry {
     providerId: string,
     keywords: string,
     limit?: number,
-    offset?: number
+    offset?: number,
+    options?: MediaProviderCallOptions
   ): Promise<MediaProviderSearchResult<Track>> {
     const provider = this.get(providerId)
     if (!provider?.searchSongs) return { items: [], total: 0 }
     await assertProviderEnabled(provider)
-    return provider.searchSongs(keywords, limit, offset)
+    return provider.searchSongs(keywords, limit, offset, options)
   }
 
   async searchPlaylists(
     providerId: string,
     keywords: string,
     limit?: number,
-    offset?: number
+    offset?: number,
+    options?: MediaProviderCallOptions
   ): Promise<MediaProviderSearchResult<MediaProviderPlaylistSummary>> {
     const provider = this.get(providerId)
     if (!provider?.searchPlaylists) return { items: [], total: 0 }
     await assertProviderEnabled(provider)
-    return provider.searchPlaylists(keywords, limit, offset)
+    return provider.searchPlaylists(keywords, limit, offset, options)
   }
 
   async searchArtists(
     providerId: string,
     keywords: string,
     limit?: number,
-    offset?: number
+    offset?: number,
+    options?: MediaProviderCallOptions
   ): Promise<MediaProviderSearchResult<MediaProviderArtistSummary>> {
     const provider = this.get(providerId)
     if (!provider?.searchArtists) return { items: [], total: 0 }
     await assertProviderEnabled(provider)
-    return provider.searchArtists(keywords, limit, offset)
+    return provider.searchArtists(keywords, limit, offset, options)
   }
 
   async resolveLyrics(
@@ -382,6 +387,7 @@ export class MediaProviderRegistry {
     networkEntries?: Array<{ profileName: string; entry: NetworkEntry }>
     limit?: number
     offset?: number
+    signal?: AbortSignal
   }): Promise<UnifiedSearchResult> {
     const providers = this.list()
     return unifiedSearchSongs({
@@ -396,8 +402,43 @@ export class MediaProviderRegistry {
         }))
       ),
       searchProviderSongs: (providerId, keywords, limit, offset) =>
-        this.searchSongs(providerId, keywords, limit, offset)
+        this.searchSongs(providerId, keywords, limit, offset, { signal: options.signal })
     })
+  }
+
+  async call<T>(
+    providerId: string,
+    method: string,
+    args: unknown[] = [],
+    options?: MediaProviderCallOptions & { requestId?: string }
+  ): Promise<T> {
+    const provider = this.get(providerId)
+    if (!provider) throw new Error('Provider 未启用')
+    await assertProviderEnabled(provider)
+    const api = window.api?.providers
+    if (!api) throw new Error('Provider bridge is unavailable')
+    if (options?.signal?.aborted) throw new Error('Provider call was cancelled')
+    let requestId = options?.requestId
+    let onAbort: (() => void) | undefined
+    if (options?.signal && !requestId) {
+      requestId = `r${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+      onAbort = (): void => {
+        if (requestId) void api.cancel(requestId)
+      }
+      options.signal.addEventListener('abort', onAbort, { once: true })
+    }
+    try {
+      return (await api.call(
+        providerId,
+        method as never,
+        toProviderIpcArgs(args),
+        requestId ? { requestId } : undefined
+      )) as T
+    } finally {
+      if (options?.signal && onAbort) {
+        options.signal.removeEventListener('abort', onAbort)
+      }
+    }
   }
 }
 

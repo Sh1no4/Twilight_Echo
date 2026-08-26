@@ -108,3 +108,68 @@ test('radio media service imports playlist and subscribes podcast feeds', async 
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('podcast refresh runs concurrently, isolates failures, and saves once', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'te-radio-refresh-'))
+  let active = 0
+  let peak = 0
+  const requests: string[] = []
+  try {
+    const service = new RadioMediaService({
+      userDataPath: dir,
+      now: () => `2026-07-20T00:00:0${requests.length % 10}.000Z`,
+      fetchFeed: async (url) => {
+        requests.push(url)
+        active += 1
+        peak = Math.max(peak, active)
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        active -= 1
+        if (url.endsWith('broken.xml')) throw new Error('feed unavailable')
+        if (url.endsWith('unchanged.xml')) {
+          return { body: '', status: 304, etag: '"same"', lastModified: null }
+        }
+        return { body: RSS, status: 200, etag: '"changed"', lastModified: 'Tue, 21 Jul 2026 00:00:00 GMT' }
+      }
+    })
+    const subscription = (feedUrl: string, etag?: string) => ({
+      id: `podcast_${feedUrl.slice(-6)}`,
+      feedUrl,
+      title: feedUrl,
+      episodes: [],
+      createdAt: '2026-07-19T00:00:00.000Z',
+      updatedAt: '2026-07-19T00:00:00.000Z',
+      feedEtag: etag ?? null,
+      feedLastModified: null
+    })
+    await service.savePodcastSubscriptions(
+      {
+        schemaVersion: 1,
+        subscriptions: [
+          subscription('https://example.com/first.xml'),
+          subscription('https://example.com/broken.xml'),
+          subscription('https://example.com/unchanged.xml', '"same"')
+        ]
+      },
+      0
+    )
+
+    const refreshed = await service.refreshAllSubscriptions()
+
+    assert.equal(peak, 3)
+    assert.equal(requests.length, 3)
+    assert.equal(refreshed.subscriptions[0].title, 'CAS Cast')
+    assert.equal(refreshed.subscriptions[0].feedEtag, '"changed"')
+    assert.match(refreshed.subscriptions[1].lastError ?? '', /feed unavailable/)
+    assert.equal(refreshed.subscriptions[2].lastError, null)
+    assert.deepEqual(
+      refreshed.subscriptions.map((item) => item.feedUrl),
+      [
+        'https://example.com/first.xml',
+        'https://example.com/broken.xml',
+        'https://example.com/unchanged.xml'
+      ]
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

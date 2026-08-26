@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useBackHandler } from '../app/useBackStack.ts'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import type { Track } from '../types/music'
 import type {
@@ -8,8 +9,6 @@ import type {
   NetworkSourceProfileSummary
 } from '../../../shared/networkSources.ts'
 import NetworkCoverThumb from './network-sources/NetworkCoverThumb.vue'
-
-defineEmits<{ back: [] }>()
 
 const networkSourcesApi = window.api?.networkSources
 
@@ -189,6 +188,33 @@ function leaveBrowse(): void {
   entries.value = []
   browsingError.value = ''
 }
+
+// 目录浏览是页面内部的一层：标题栏返回键先沿目录树逐级上行（和面包屑同一
+// 规则），回到根路径后再返回才退出来源列表；页面层由 App.vue 注册。
+function browseBack(): void {
+  const profile = browsingProfile.value
+  if (!profile) return
+  const normalize = (path: string): string => {
+    const trimmed = path.replace(/\/+$/, '')
+    return trimmed === '' ? '/' : trimmed
+  }
+  const root = normalize(profile.rootPath || '/')
+  const path = normalize(currentPath.value)
+  if (path === root) {
+    leaveBrowse()
+    return
+  }
+  const parent = normalize(path.split('/').slice(0, -1).join('/'))
+  // 不越过该来源的挂载根。
+  const target = root !== '/' && parent !== root && !parent.startsWith(`${root}/`) ? root : parent
+  void navigateTo(target)
+}
+
+useBackHandler(
+  computed(() => browsingProfile.value !== null),
+  browseBack,
+  '返回来源列表'
+)
 
 function formatBytes(bytes: number | undefined): string {
   if (bytes == null || !Number.isFinite(bytes)) return ''
@@ -416,14 +442,6 @@ onMounted(() => {
 <template>
   <div class="network-sources-page">
     <header class="network-page-heading">
-      <button
-        type="button"
-        class="soft-button network-back"
-        data-te-back-button="pill"
-        @click="$emit('back')"
-      >
-        <i class="pi pi-arrow-left"></i><span>返回</span>
-      </button>
       <div class="network-heading-copy">
         <span class="network-kicker">REMOTE MUSIC</span>
         <h1>网络源</h1>
@@ -799,7 +817,8 @@ onMounted(() => {
 }
 .network-page-heading {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  position: relative;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 20px;
   align-items: center;
   margin-bottom: 28px;
@@ -834,7 +853,6 @@ onMounted(() => {
   font-weight: 800;
   letter-spacing: 0.12em;
 }
-.network-back,
 .network-view-toggle button,
 .network-browser button,
 .network-profiles button,
@@ -1281,6 +1299,7 @@ onMounted(() => {
   .network-page-heading {
     grid-template-columns: auto minmax(0, 1fr);
     gap: 12px;
+    padding: 52px 0 0;
   }
   .network-heading-copy {
     grid-column: 1 / -1;

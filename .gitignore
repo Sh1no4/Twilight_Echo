@@ -118,6 +118,9 @@ agent-tools/
 .local/
 .codegraph/
 .zcode/
+.pi/
+/plans/
+/orig-labels.json
 
 # Temporary files / local scratch
 tmp/

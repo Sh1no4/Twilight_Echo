@@ -13,9 +13,11 @@ import {
   normalizePlayerBarSettings,
   normalizePlayerBarVisibility,
   playerBarAutoHideApplies,
+  playerBarShapeCanAutoHide,
   resolvePlayerBarPresentation,
   resolveSeekTargetSeconds
 } from './playerBar.ts'
+import { DEFAULT_PLAYER_BAR_LAYOUT } from './playerBarLayout.ts'
 
 test('player bar defaults keep the existing standard shape', () => {
   assert.deepEqual(DEFAULT_PLAYER_BAR_SETTINGS, {
@@ -23,17 +25,23 @@ test('player bar defaults keep the existing standard shape', () => {
     playingPageMode: 'inherit',
     visibility: 'visible',
     playingPageVisibility: 'inherit',
+    layout: DEFAULT_PLAYER_BAR_LAYOUT,
     revealThresholdPx: 120,
     hideDelayMs: 900
   })
-  assert.deepEqual([...PLAYER_BAR_MODES], ['standard', 'mini'])
+  assert.deepEqual([...PLAYER_BAR_MODES], ['standard', 'mini', 'compact'])
   assert.deepEqual([...PLAYER_BAR_VISIBILITIES], ['visible', 'autoHide', 'hidden'])
+  // Deep-equal but not the same object, so editing a settings copy in place
+  // cannot rewrite the shared default layout.
+  assert.notEqual(DEFAULT_PLAYER_BAR_SETTINGS.layout, DEFAULT_PLAYER_BAR_LAYOUT)
 })
 
 test('mode normalization falls back to standard for anything unrecognized', () => {
   assert.equal(normalizePlayerBarMode('mini'), 'mini')
   assert.equal(normalizePlayerBarMode('standard'), 'standard')
-  assert.equal(normalizePlayerBarMode('compact'), 'standard')
+  assert.equal(normalizePlayerBarMode('compact'), 'compact')
+  assert.equal(normalizePlayerBarMode('inherit'), 'standard')
+  assert.equal(normalizePlayerBarMode('nonsense'), 'standard')
   assert.equal(normalizePlayerBarMode(undefined), 'standard')
   assert.equal(normalizePlayerBarMode(null), 'standard')
   assert.equal(normalizePlayerBarMode(1), 'standard')
@@ -42,6 +50,7 @@ test('mode normalization falls back to standard for anything unrecognized', () =
 test('page mode normalization falls back to inherit', () => {
   assert.equal(normalizePlayerBarPageMode('mini'), 'mini')
   assert.equal(normalizePlayerBarPageMode('standard'), 'standard')
+  assert.equal(normalizePlayerBarPageMode('compact'), 'compact')
   assert.equal(normalizePlayerBarPageMode('inherit'), 'inherit')
   assert.equal(normalizePlayerBarPageMode('nonsense'), 'inherit')
   assert.equal(normalizePlayerBarPageMode(undefined), 'inherit')
@@ -136,6 +145,12 @@ test('cloning produces an independent object', () => {
   assert.notEqual(copy, source)
   copy.hideDelayMs = 1200
   assert.equal(source.hideDelayMs, 300)
+  // The layout holds arrays per shape, so a shallow spread would let one copy
+  // rewrite the other's arrangement.
+  assert.notEqual(copy.layout, source.layout)
+  assert.notEqual(copy.layout.compact.right, source.layout.compact.right)
+  copy.layout.compact.right.push('favorite')
+  assert.deepEqual(source.layout.compact.right, DEFAULT_PLAYER_BAR_LAYOUT.compact.right)
 })
 
 test('playing page mode inherits the global shape when set to inherit', () => {
@@ -191,6 +206,48 @@ test('auto-hide can now apply globally, and degrades to visible on a standard ba
   const resolvedStandard = resolvePlayerBarPresentation(standard, { onPlayingPage: false })
   assert.equal(resolvedStandard.autoHide, false)
   assert.equal(resolvedStandard.hidden, false)
+})
+
+test('auto-hide resolves for the compact shape, which carries its own progress line', () => {
+  const compact = normalizePlayerBarSettings({ mode: 'compact', visibility: 'autoHide' })
+  for (const onPlayingPage of [true, false]) {
+    const resolved = resolvePlayerBarPresentation(compact, { onPlayingPage })
+    assert.equal(resolved.mode, 'compact')
+    assert.equal(resolved.autoHide, true)
+    assert.equal(resolved.hidden, false)
+  }
+
+  // And the page override can pick compact just to get auto-hide there.
+  const onlyOnPage = normalizePlayerBarSettings({
+    mode: 'standard',
+    playingPageMode: 'compact',
+    visibility: 'visible',
+    playingPageVisibility: 'autoHide'
+  })
+  assert.deepEqual(resolvePlayerBarPresentation(onlyOnPage, { onPlayingPage: true }), {
+    mode: 'compact',
+    autoHide: true,
+    hidden: false
+  })
+  assert.deepEqual(resolvePlayerBarPresentation(onlyOnPage, { onPlayingPage: false }), {
+    mode: 'standard',
+    autoHide: false,
+    hidden: false
+  })
+})
+
+test('the shape auto-hide precondition is exactly "has its own progress readout"', () => {
+  assert.equal(playerBarShapeCanAutoHide('standard'), false)
+  assert.equal(playerBarShapeCanAutoHide('mini'), true)
+  assert.equal(playerBarShapeCanAutoHide('compact'), true)
+  // Every shape must be covered, so a fourth one cannot silently default to on.
+  for (const mode of PLAYER_BAR_MODES) {
+    const settings = normalizePlayerBarSettings({ mode, visibility: 'autoHide' })
+    assert.equal(
+      resolvePlayerBarPresentation(settings, { onPlayingPage: false }).autoHide,
+      playerBarShapeCanAutoHide(mode)
+    )
+  }
 })
 
 test('fully hidden applies to both shapes and never reports auto-hide', () => {

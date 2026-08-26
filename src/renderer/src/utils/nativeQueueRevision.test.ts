@@ -69,3 +69,26 @@ test('out-of-order native queue sync never runs stale loadQueue or setPlayMode',
   assert.deepEqual(await newestSync, { applied: true, prepared: { id: 'new' } })
   assert.deepEqual(calls, ['load:new', 'mode:new'])
 })
+
+test('a rejected loadQueue reports the reason instead of rejecting the sync', async () => {
+  const fence = new NativeQueueRevisionFence()
+  const revision = fence.next()
+  const failure = new Error('Audio queue is invalid or too large')
+  let setPlayModeCalled = false
+
+  // Resynchronization is fire-and-forget, so a rejection here would surface only
+  // as an unhandled rejection while the caller still believed it was delegated.
+  const result = await synchronizeLatestNativeQueue(fence, revision, {
+    prepare: async () => ({ id: 'oversized' }),
+    loadQueue: async () => {
+      throw failure
+    },
+    setPlayMode: async () => {
+      setPlayModeCalled = true
+    }
+  })
+
+  assert.deepEqual(result, { applied: true, prepared: null, loadQueueError: failure })
+  assert.equal(setPlayModeCalled, false, 'a queue that never loaded must not commit a play mode')
+  assert.equal(fence.isCurrent(revision), true, 'the failure does not invalidate the revision')
+})

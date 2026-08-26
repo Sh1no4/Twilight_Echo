@@ -27,6 +27,10 @@ export type PlaylistActions = {
   playNext?: (track: Track) => void
   viewArtist?: (track: Track) => void
   viewAlbum?: (track: Track) => void
+  /** 把右键选中的曲目加进某个聚合歌单。 */
+  addToAggregatePlaylist?: (playlistId: string) => void
+  /** 打开「新建聚合歌单并加入」对话框。 */
+  createAggregatePlaylist?: () => void
 }
 
 export type TrackPlayback = {

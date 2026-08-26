@@ -110,6 +110,7 @@ function applyMiniPlayerWindowSettings(settings: MiniPlayerSettings): void {
   }
   win.setBackgroundColor('#00000000')
   win.setMovable(!settings.positionLocked)
+  win.setSkipTaskbar(!settings.showInTaskbar)
   applyMiniPlayerWindowShape(win, settings)
   fitMiniPlayerToWorkArea(win, settings)
 }
@@ -224,7 +225,7 @@ function createMiniPlayerWindow(): BrowserWindow {
     minimizable: true,
     maximizable: false,
     fullscreenable: false,
-    skipTaskbar: false,
+    skipTaskbar: !settings.showInTaskbar,
     hasShadow: false,
     roundedCorners: false,
     thickFrame: process.platform === 'win32',
@@ -339,6 +340,7 @@ function updateMiniPlayerSettings(patch: unknown): MiniPlayerSettings {
   const candidate: Record<string, unknown> = { ...current }
   const allowedKeys: (keyof MiniPlayerSettingsPatch)[] = [
     'alwaysOnTop',
+    'showInTaskbar',
     'positionLocked',
     'activeStyleId',
     'profiles',

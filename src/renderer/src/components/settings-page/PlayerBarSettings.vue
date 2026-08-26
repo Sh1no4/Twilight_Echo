@@ -4,10 +4,11 @@ import EditableRangeValue from '../EditableRangeValue.vue'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import {
   PLAYER_BAR_BOUNDS,
+  normalizePlayerBarPageMode,
   normalizePlayerBarPageVisibility,
   playerBarAutoHideApplies,
+  playerBarShapeCanAutoHide,
   type PlayerBarMode,
-  type PlayerBarPageMode,
   type PlayerBarPageVisibility,
   type PlayerBarVisibility
 } from '../../../../shared/playerBar.ts'
@@ -28,8 +29,7 @@ function setPlayerBarMode(mode: PlayerBarMode): void {
 }
 
 function setPlayerBarPlayingPageMode(value: string): void {
-  const playingPageMode: PlayerBarPageMode =
-    value === 'mini' || value === 'standard' ? value : 'inherit'
+  const playingPageMode = normalizePlayerBarPageMode(value)
   if (settings.value.playerBar.playingPageMode === playingPageMode) return
   void updateSettings({ playerBar: { ...settings.value.playerBar, playingPageMode } })
 }
@@ -62,23 +62,28 @@ const autoHideAppliesAnywhere = computed(() => {
   )
 })
 
-/** Shape resolved for each scope, for explaining why auto-hide is unavailable. */
-const globalResolvesMini = computed(() => settings.value.playerBar.mode === 'mini')
-const playingPageResolvesMini = computed(() => {
+/** Whether each scope resolves to a shape that carries its own progress readout. */
+const globalShapeCanAutoHide = computed(() =>
+  playerBarShapeCanAutoHide(settings.value.playerBar.mode)
+)
+const playingPageShapeCanAutoHide = computed(() => {
   const bar = settings.value.playerBar
-  return bar.playingPageMode === 'inherit' ? bar.mode === 'mini' : bar.playingPageMode === 'mini'
+  return playerBarShapeCanAutoHide(
+    bar.playingPageMode === 'inherit' ? bar.mode : bar.playingPageMode
+  )
 })
 
 /**
- * Auto-hide needs the mini shape. Rather than letting the user pick a step that
+ * Auto-hide needs a shape with its own progress readout — mini's long rail or
+ * compact's top-edge line. Rather than letting the user pick a step that
  * silently does nothing, mark it unavailable per scope and say why.
  */
 function visibilityOptionDisabled(value: PlayerBarVisibility | PlayerBarPageVisibility): boolean {
-  return value === 'autoHide' && !globalResolvesMini.value
+  return value === 'autoHide' && !globalShapeCanAutoHide.value
 }
 
 function pageVisibilityOptionDisabled(value: PlayerBarPageVisibility): boolean {
-  return value === 'autoHide' && !playingPageResolvesMini.value
+  return value === 'autoHide' && !playingPageShapeCanAutoHide.value
 }
 </script>
 
@@ -93,7 +98,7 @@ function pageVisibilityOptionDisabled(value: PlayerBarPageVisibility): boolean {
     <span class="setting-copy">
       <strong>播放条形态与可见性</strong>
       <span
-        >标准或迷你形态，配合常显 / 自动隐藏 /
+        >标准 / 迷你 / 紧凑三种形态，配合常显 / 自动隐藏 /
         完全隐藏三档可见性；两者都可以在播放页单独覆盖。</span
       >
     </span>
@@ -105,7 +110,8 @@ function pageVisibilityOptionDisabled(value: PlayerBarPageVisibility): boolean {
       <div class="setting-copy">
         <strong>播放条形态</strong>
         <span
-          >迷你形态使用紧凑扁平布局：左侧播放，中间长进度轨，右侧保留播放顺序、播放列表、HiFi、音量；播放页另有退出按钮。</span
+          >迷你形态是 40px
+          扁平长进度条；紧凑形态贴着窗口底边通栏，进度走顶边细线。每种形态装哪些按钮见下面的「播放条按钮编排」。</span
         >
       </div>
       <div class="segmented-control">
@@ -125,7 +131,7 @@ function pageVisibilityOptionDisabled(value: PlayerBarPageVisibility): boolean {
     <div class="setting-item">
       <div class="setting-copy">
         <strong>播放页形态</strong>
-        <span>可以只在播放页使用迷你播放条，其余界面保持标准形态。</span>
+        <span>可以只在播放页换一种形态，其余界面保持全局形态。</span>
       </div>
       <select
         class="preview-select"
@@ -146,7 +152,7 @@ function pageVisibilityOptionDisabled(value: PlayerBarPageVisibility): boolean {
       <div class="setting-copy">
         <strong>播放条可见性</strong>
         <span>
-          常显始终保留播放条；自动隐藏平时收起、鼠标靠近窗口底边时滑出（需迷你形态）；完全隐藏则不再出现，也不会被鼠标唤出。
+          常显始终保留播放条；自动隐藏平时收起、鼠标靠近窗口底边时滑出（需迷你或紧凑形态）；完全隐藏则不再出现，也不会被鼠标唤出。
         </span>
       </div>
       <div class="segmented-control">
@@ -159,7 +165,7 @@ function pageVisibilityOptionDisabled(value: PlayerBarPageVisibility): boolean {
             disabled: visibilityOptionDisabled(option.value)
           }"
           :disabled="visibilityOptionDisabled(option.value)"
-          :title="visibilityOptionDisabled(option.value) ? '自动隐藏需要全局形态为迷你' : ''"
+          :title="visibilityOptionDisabled(option.value) ? '自动隐藏需要全局形态为迷你或紧凑' : ''"
           @click="setPlayerBarVisibility(option.value)"
         >
           <i :class="option.icon"></i>

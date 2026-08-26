@@ -11,6 +11,7 @@
 
 .streaming-content-header {
   display: flex;
+  position: relative;
   align-items: center;
   gap: 16px;
   min-height: 64px;
@@ -47,29 +48,7 @@
   margin: 4px 0 0;
 }
 
-.btn-back {
-  width: 32px;
-  height: 32px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 16px;
-  transition:
-    background 0.18s,
-    border-color 0.18s,
-    color 0.18s,
-    transform 0.18s var(--te-ease-soft);
-  flex-shrink: 0;
-  animation: stream-chrome-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
-.btn-back:hover {
-  transform: translateX(-1px);
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .btn-back,
   .streaming-header-kicker {
     animation: none !important;
   }
@@ -342,7 +321,6 @@
 }
 
 :global(html[data-window-transparent='on'] .streaming-page .streaming-search-box),
-:global(html[data-window-transparent='on'] .streaming-page .btn-back),
 :global(html[data-window-transparent='on'] .streaming-page .streaming-round-btn),
 :global(html[data-window-transparent='on'] .streaming-page .streaming-avatar-btn) {
   background: var(--te-tp-card) !important;
@@ -450,26 +428,6 @@
 .streaming-content-header.is-detail .streaming-content-title,
 .streaming-content-header.is-searching .streaming-content-title {
   font-size: clamp(18px, 2vw, 22px);
-}
-
-.btn-back {
-  width: 36px;
-  height: 36px;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 15px;
-  cursor: pointer;
-  transition:
-    background 0.16s var(--bar-ease),
-    border-color 0.16s,
-    color 0.16s,
-    transform 0.16s var(--bar-ease);
-}
-
-.btn-back:hover {
-  transform: translateX(-1px);
 }
 
 .streaming-header-right {
@@ -667,6 +625,7 @@
 
 @media (max-width: 900px) {
   .streaming-content-header {
+    padding-top: 58px;
     align-items: flex-start;
     flex-direction: column;
     gap: 12px;

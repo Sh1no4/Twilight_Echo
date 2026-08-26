@@ -56,11 +56,12 @@ export function refreshSmtcButtons(force = false): void {
   if (process.platform !== 'win32') return
   const win = runtime.mainWindow
   if (!win || win.isDestroyed()) return
+  const enabled = runtime.appSettings.taskbarThumbarButtonsEnabled !== false
   const state = runtime.latestMiniPlayerState
-  const signature = `${state?.track?.id ?? null}:${state?.isPlaying === true}`
+  const signature = `${enabled ? 'on' : 'off'}:${state?.track?.id ?? null}:${state?.isPlaying === true}`
   if (!force && signature === lastSignature) return
   lastSignature = signature
-  win.setThumbarButtons(buildThumbarButtons())
+  win.setThumbarButtons(enabled ? buildThumbarButtons() : [])
 }
 
 export function createSmtcButtons(): void {
