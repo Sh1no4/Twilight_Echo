@@ -228,11 +228,6 @@ pnpm run dev</code></pre>
 
 反馈问题时，建议附上 Twilight Echo 版本、Windows 版本、音频输出后端、设备/驱动名称、复现步骤和相关日志；音频问题如涉及 DSD、ASIO 或独占模式，也请注明文件格式与采样参数。
 
-## 致谢
-
-- 沉浸式歌词舞台基于 [AMLL / Apple Music-like Lyrics](https://github.com/amll-dev/applemusic-like-lyrics) 的歌词渲染能力实现。感谢 AMLL 项目维护者和贡献者提供出色的开源歌词动画与逐词渲染方案。
-- AMLL 以 **AGPL-3.0-only** 许可证发布；本项目使用该依赖时应同时遵守其许可证要求。
-
 ## License
 
 Twilight Echo 采用 [Apache License 2.0](./LICENSE) 开源。
